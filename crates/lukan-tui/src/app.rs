@@ -9,6 +9,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
 };
+use std::collections::HashMap;
 use std::io::stdout;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -517,16 +518,111 @@ impl App {
                 // Reconstruct chat messages from agent history
                 let session = SessionManager::load(&session_id).await.ok().flatten();
                 if let Some(session) = session {
+                    use lukan_core::models::messages::{ContentBlock, MessageContent, Role};
+
+                    // First pass: collect tool results by tool_use_id
+                    let mut tool_results: HashMap<String, (String, bool, Option<String>)> =
+                        HashMap::new();
+                    for msg in &session.messages {
+                        if let MessageContent::Blocks(blocks) = &msg.content {
+                            for block in blocks {
+                                if let ContentBlock::ToolResult {
+                                    tool_use_id,
+                                    content,
+                                    is_error,
+                                    diff,
+                                    ..
+                                } = block
+                                {
+                                    tool_results.insert(
+                                        tool_use_id.clone(),
+                                        (content.clone(), is_error.unwrap_or(false), diff.clone()),
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    // Second pass: reconstruct UI messages
                     for msg in &session.messages {
                         match msg.role {
-                            lukan_core::models::messages::Role::User => {
-                                self.messages
-                                    .push(ChatMessage::new("user", msg.content.to_text()));
+                            Role::User => {
+                                // Only show user messages that have text (skip tool-result-only messages)
+                                let text = match &msg.content {
+                                    MessageContent::Text(s) => Some(s.clone()),
+                                    MessageContent::Blocks(blocks) => {
+                                        let texts: Vec<&str> = blocks
+                                            .iter()
+                                            .filter_map(|b| {
+                                                if let ContentBlock::Text { text } = b {
+                                                    Some(text.as_str())
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect();
+                                        if texts.is_empty() {
+                                            None
+                                        } else {
+                                            Some(texts.join("\n"))
+                                        }
+                                    }
+                                };
+                                if let Some(text) = text
+                                    && !text.is_empty()
+                                {
+                                    self.messages.push(ChatMessage::new("user", text));
+                                }
                             }
-                            lukan_core::models::messages::Role::Assistant => {
-                                self.messages
-                                    .push(ChatMessage::new("assistant", msg.content.to_text()));
-                            }
+                            Role::Assistant => match &msg.content {
+                                MessageContent::Text(text) => {
+                                    if !text.is_empty() {
+                                        self.messages
+                                            .push(ChatMessage::new("assistant", text.clone()));
+                                    }
+                                }
+                                MessageContent::Blocks(blocks) => {
+                                    // Collect text blocks
+                                    let text: String = blocks
+                                        .iter()
+                                        .filter_map(|b| {
+                                            if let ContentBlock::Text { text } = b {
+                                                Some(text.as_str())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+
+                                    if !text.is_empty() {
+                                        self.messages.push(ChatMessage::new("assistant", text));
+                                    }
+
+                                    // Render tool uses with their results
+                                    for block in blocks {
+                                        if let ContentBlock::ToolUse { id, name, input } = block {
+                                            let summary = summarize_tool_input(name, input);
+                                            self.messages.push(ChatMessage::new(
+                                                "tool_call",
+                                                format!("● {name}({summary})"),
+                                            ));
+
+                                            if let Some((content, is_error, diff)) =
+                                                tool_results.get(id)
+                                            {
+                                                let formatted =
+                                                    format_tool_result(content, *is_error);
+                                                self.messages.push(ChatMessage::with_diff(
+                                                    "tool_result",
+                                                    formatted,
+                                                    diff.clone(),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            },
                             _ => {}
                         }
                     }

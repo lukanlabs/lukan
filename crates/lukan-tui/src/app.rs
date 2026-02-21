@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::{
     ExecutableCommand,
-    event::KeyCode,
+    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, MouseEventKind},
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
@@ -14,14 +14,17 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::error;
 
-use lukan_agent::{AgentConfig, AgentLoop};
+use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
 use lukan_core::config::{ConfigManager, CredentialsManager, ProviderName, ResolvedConfig};
 use lukan_core::models::events::StreamEvent;
+use lukan_core::models::sessions::SessionSummary;
 use lukan_providers::{Provider, SystemPrompt, create_provider};
 use lukan_tools::create_default_registry;
 
+use chrono::Utc;
+
 use crate::event::{AppEvent, is_quit, spawn_event_reader};
-use crate::widgets::chat::{ChatMessage, ChatWidget};
+use crate::widgets::chat::{ChatMessage, ChatWidget, rendered_line_count};
 use crate::widgets::input::InputWidget;
 use crate::widgets::status_bar::StatusBarWidget;
 
@@ -33,6 +36,7 @@ pub struct App {
     streaming_text: String,
     is_streaming: bool,
     scroll_offset: u16,
+    auto_scroll: bool,
     input_tokens: u64,
     output_tokens: u64,
     provider: Arc<dyn Provider>,
@@ -40,10 +44,16 @@ pub struct App {
     should_quit: bool,
     /// Model picker state
     model_picker: Option<ModelPicker>,
+    /// Session picker state
+    session_picker: Option<SessionPicker>,
     /// Persistent agent loop (maintains history across messages)
     agent: Option<AgentLoop>,
+    /// Channel to receive agent back after a turn completes
+    agent_return_rx: Option<tokio::sync::oneshot::Receiver<AgentLoop>>,
     /// Current tool being executed (for status display)
     active_tool: Option<String>,
+    /// Current session ID for display
+    session_id: Option<String>,
 }
 
 /// Interactive model picker state
@@ -51,6 +61,13 @@ struct ModelPicker {
     models: Vec<String>,
     selected: usize,
     current: String,
+}
+
+/// Interactive session picker state
+struct SessionPicker {
+    sessions: Vec<SessionSummary>,
+    selected: usize,
+    current_id: Option<String>,
 }
 
 impl App {
@@ -64,41 +81,62 @@ impl App {
             streaming_text: String::new(),
             is_streaming: false,
             scroll_offset: 0,
+            auto_scroll: true,
             input_tokens: 0,
             output_tokens: 0,
             provider,
             config,
             should_quit: false,
             model_picker: None,
+            session_picker: None,
             agent: None,
+            agent_return_rx: None,
             active_tool: None,
+            session_id: None,
         }
     }
 
-    /// Create or get the agent loop, initializing it on first use
-    fn ensure_agent(&mut self) -> &mut AgentLoop {
+    /// Create or get the agent loop, initializing it on first use (async)
+    async fn ensure_agent(&mut self) -> &mut AgentLoop {
         if self.agent.is_none() {
-            let system_prompt =
-                SystemPrompt::Text(include_str!("../../../prompts/base.txt").to_string());
-
-            let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
-
-            let config = AgentConfig {
-                provider: Arc::clone(&self.provider),
-                tools: create_default_registry(),
-                system_prompt,
-                cwd,
-            };
-
-            self.agent = Some(AgentLoop::new(config));
+            let agent = self.create_agent().await;
+            self.session_id = Some(agent.session_id().to_string());
+            self.agent = Some(agent);
         }
 
         self.agent.as_mut().unwrap()
     }
 
+    /// Create a new AgentLoop with a fresh session
+    async fn create_agent(&self) -> AgentLoop {
+        let system_prompt =
+            SystemPrompt::Text(include_str!("../../../prompts/base.txt").to_string());
+
+        let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
+
+        let config = AgentConfig {
+            provider: Arc::clone(&self.provider),
+            tools: create_default_registry(),
+            system_prompt,
+            cwd,
+            provider_name: self.config.config.provider.to_string(),
+            model_name: self.config.effective_model(),
+        };
+
+        match AgentLoop::new(config).await {
+            Ok(agent) => agent,
+            Err(e) => {
+                // Fallback: if session creation fails, log error and panic
+                // This shouldn't happen in normal operation
+                panic!("Failed to create agent session: {e}");
+            }
+        }
+    }
+
     pub async fn run(mut self) -> Result<()> {
         enable_raw_mode()?;
         stdout().execute(EnterAlternateScreen)?;
+        stdout().execute(EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout());
         let mut terminal = Terminal::new(backend)?;
         terminal.clear()?;
@@ -109,12 +147,21 @@ impl App {
         let (agent_tx, mut agent_rx) = mpsc::channel::<StreamEvent>(256);
 
         // Welcome banner
-        self.messages.push(ChatMessage {
-            role: "banner".to_string(),
-            content: build_welcome_banner(self.provider.name(), &self.config.effective_model()),
-        });
+        self.messages.push(ChatMessage::new(
+            "banner",
+            build_welcome_banner(self.provider.name(), &self.config.effective_model()),
+        ));
 
         loop {
+            // Auto-scroll to bottom when following new content
+            if self.auto_scroll {
+                let size = terminal.size()?;
+                // viewport = total height minus input (3 rows) and status bar (1 row)
+                let viewport_h = size.height.saturating_sub(4);
+                let total = rendered_line_count(&self.messages, &self.streaming_text);
+                self.scroll_offset = total.saturating_sub(viewport_h);
+            }
+
             // Draw UI
             terminal.draw(|frame| {
                 let chunks = Layout::default()
@@ -126,8 +173,11 @@ impl App {
                     ])
                     .split(frame.area());
 
-                // Chat (or model picker overlay)
-                if let Some(ref picker) = self.model_picker {
+                // Chat (or picker overlay)
+                if let Some(ref picker) = self.session_picker {
+                    let widget = SessionPickerWidget::new(picker);
+                    frame.render_widget(widget, chunks[0]);
+                } else if let Some(ref picker) = self.model_picker {
                     let widget = ModelPickerWidget::new(picker);
                     frame.render_widget(widget, chunks[0]);
                 } else {
@@ -137,7 +187,7 @@ impl App {
                 }
 
                 // Input
-                let input_widget = if self.model_picker.is_some() {
+                let input_widget = if self.session_picker.is_some() || self.model_picker.is_some() {
                     InputWidget::new("↑↓ navigate · Enter select · ESC close", 0, false)
                 } else {
                     InputWidget::new(&self.input, self.cursor_pos, !self.is_streaming)
@@ -156,7 +206,10 @@ impl App {
                 frame.render_widget(status, chunks[2]);
 
                 // Set cursor position only when not in picker and not streaming
-                if self.model_picker.is_none() && !self.is_streaming {
+                if self.session_picker.is_none()
+                    && self.model_picker.is_none()
+                    && !self.is_streaming
+                {
                     let cursor_x = chunks[1].x + 1 + self.cursor_pos as u16;
                     let cursor_y = chunks[1].y + 1;
                     frame.set_cursor_position((cursor_x, cursor_y));
@@ -168,7 +221,36 @@ impl App {
                 Some(event) = event_rx.recv() => {
                     match event {
                         AppEvent::Key(key) => {
-                            if self.model_picker.is_some() {
+                            if self.session_picker.is_some() {
+                                // Session picker mode
+                                match key.code {
+                                    KeyCode::Up => {
+                                        if let Some(ref mut picker) = self.session_picker
+                                            && picker.selected > 0
+                                        {
+                                            picker.selected -= 1;
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if let Some(ref mut picker) = self.session_picker
+                                            && picker.selected + 1
+                                                < picker.sessions.len()
+                                        {
+                                            picker.selected += 1;
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        let idx =
+                                            self.session_picker.as_ref().unwrap().selected;
+                                        self.load_selected_session(idx).await;
+                                        self.session_picker = None;
+                                    }
+                                    KeyCode::Esc => {
+                                        self.session_picker = None;
+                                    }
+                                    _ => {}
+                                }
+                            } else if self.model_picker.is_some() {
                                 // Model picker mode
                                 match key.code {
                                     KeyCode::Up => {
@@ -197,6 +279,21 @@ impl App {
                                 }
                             } else if is_quit(&key) {
                                 self.should_quit = true;
+                            } else if key.code == KeyCode::PageUp {
+                                // Scroll up (works even while streaming)
+                                self.auto_scroll = false;
+                                let half = terminal.size().map(|s| s.height / 2).unwrap_or(10);
+                                self.scroll_offset = self.scroll_offset.saturating_sub(half);
+                            } else if key.code == KeyCode::PageDown {
+                                // Scroll down (works even while streaming)
+                                let size = terminal.size().unwrap_or_default();
+                                let viewport_h = size.height.saturating_sub(4);
+                                let total = rendered_line_count(&self.messages, &self.streaming_text);
+                                let max_scroll = total.saturating_sub(viewport_h);
+                                self.scroll_offset = (self.scroll_offset + size.height / 2).min(max_scroll);
+                                if self.scroll_offset >= max_scroll {
+                                    self.auto_scroll = true;
+                                }
                             } else if !self.is_streaming {
                                 match key.code {
                                     KeyCode::Enter => {
@@ -230,6 +327,25 @@ impl App {
                                 }
                             }
                         }
+                        AppEvent::Mouse(mouse) => {
+                            match mouse.kind {
+                                MouseEventKind::ScrollUp => {
+                                    self.auto_scroll = false;
+                                    self.scroll_offset = self.scroll_offset.saturating_sub(3);
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    let size = terminal.size().unwrap_or_default();
+                                    let viewport_h = size.height.saturating_sub(4);
+                                    let total = rendered_line_count(&self.messages, &self.streaming_text);
+                                    let max_scroll = total.saturating_sub(viewport_h);
+                                    self.scroll_offset = (self.scroll_offset + 3).min(max_scroll);
+                                    if self.scroll_offset >= max_scroll {
+                                        self.auto_scroll = true;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
                         AppEvent::Resize(_, _) => {}
                         AppEvent::Tick => {}
                     }
@@ -239,11 +355,29 @@ impl App {
                 }
             }
 
+            // Recover agent after turn completes (when no longer streaming)
+            if !self.is_streaming
+                && let Some(mut rx) = self.agent_return_rx.take()
+            {
+                match rx.try_recv() {
+                    Ok(agent) => {
+                        self.session_id = Some(agent.session_id().to_string());
+                        self.agent = Some(agent);
+                    }
+                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                        // Not ready yet, put it back
+                        self.agent_return_rx = Some(rx);
+                    }
+                    Err(_) => {} // Sender dropped, agent lost
+                }
+            }
+
             if self.should_quit {
                 break;
             }
         }
 
+        stdout().execute(DisableMouseCapture)?;
         disable_raw_mode()?;
         stdout().execute(LeaveAlternateScreen)?;
         Ok(())
@@ -253,6 +387,12 @@ impl App {
         let text = self.input.trim().to_string();
         self.input.clear();
         self.cursor_pos = 0;
+
+        // Handle /chats command
+        if text == "/chats" {
+            self.open_session_picker().await;
+            return;
+        }
 
         // Handle /model command
         if text == "/model" || text.starts_with("/model ") {
@@ -265,35 +405,34 @@ impl App {
             self.messages.clear();
             self.input_tokens = 0;
             self.output_tokens = 0;
-            // Reset agent to clear history
+            // Reset agent — a new session will be created on next message
             self.agent = None;
+            self.session_id = None;
             return;
         }
 
         // Regular message
-        self.messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: text.clone(),
-        });
+        self.messages.push(ChatMessage::new("user", text.clone()));
 
         self.is_streaming = true;
         self.streaming_text.clear();
         self.active_tool = None;
+        self.auto_scroll = true;
 
-        // Ensure agent exists and run the turn
+        // Ensure agent exists (create new session if needed) and run the turn
         // We need to take the agent out to avoid borrow issues with self
-        let mut agent = self.agent.take().unwrap_or_else(|| {
-            let system_prompt =
-                SystemPrompt::Text(include_str!("../../../prompts/base.txt").to_string());
-            let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
-            AgentLoop::new(AgentConfig {
-                provider: Arc::clone(&self.provider),
-                tools: create_default_registry(),
-                system_prompt,
-                cwd,
-            })
-        });
+        let agent = match self.agent.take() {
+            Some(a) => a,
+            None => self.create_agent().await,
+        };
 
+        self.session_id = Some(agent.session_id().to_string());
+
+        // Oneshot channel to get the agent back after the turn
+        let (return_tx, return_rx) = tokio::sync::oneshot::channel::<AgentLoop>();
+        self.agent_return_rx = Some(return_rx);
+
+        let mut agent = agent;
         tokio::spawn(async move {
             if let Err(e) = agent.run_turn(&text, agent_tx.clone()).await {
                 error!("Agent loop error: {e}");
@@ -305,24 +444,112 @@ impl App {
                     .ok();
             }
 
-            // Signal end of agent turn so TUI can recover the agent
-            // We send a final MessageEnd if the agent loop didn't already
-            // (the agent loop forwards provider's MessageEnd, so this is just safety)
-            agent_tx
-                .send(StreamEvent::MessageEnd {
-                    stop_reason: lukan_core::models::events::StopReason::EndTurn,
-                })
-                .await
-                .ok();
-
-            // Return the agent for reuse
-            agent
+            // Return the agent so history persists
+            let _ = return_tx.send(agent);
         });
+    }
 
-        // Note: We lose the agent here since we can't get it back from the spawned task
-        // easily. We'll recreate it on next message. For full persistence, we'd need
-        // a different architecture (e.g., agent lives in its own task permanently).
-        // TODO: Use a oneshot channel to return the agent back after the turn completes.
+    /// Open the interactive session picker
+    async fn open_session_picker(&mut self) {
+        let sessions = match SessionManager::list().await {
+            Ok(s) => s,
+            Err(e) => {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Failed to load sessions: {e}"),
+                ));
+                return;
+            }
+        };
+
+        if sessions.is_empty() {
+            self.messages
+                .push(ChatMessage::new("system", "No saved sessions."));
+            return;
+        }
+
+        // Pre-select the current session
+        let current_id = self.session_id.clone();
+        let selected = current_id
+            .as_ref()
+            .and_then(|id| sessions.iter().position(|s| s.id == *id))
+            .unwrap_or(0);
+
+        self.session_picker = Some(SessionPicker {
+            sessions,
+            selected,
+            current_id,
+        });
+    }
+
+    /// Load the selected session from the picker
+    async fn load_selected_session(&mut self, idx: usize) {
+        let session_id = {
+            let picker = self.session_picker.as_ref().unwrap();
+            picker.sessions[idx].id.clone()
+        };
+
+        // Don't reload the current session
+        if self.session_id.as_deref() == Some(&session_id) {
+            self.messages
+                .push(ChatMessage::new("system", "Already in this session."));
+            return;
+        }
+
+        let system_prompt =
+            SystemPrompt::Text(include_str!("../../../prompts/base.txt").to_string());
+        let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
+
+        let config = AgentConfig {
+            provider: Arc::clone(&self.provider),
+            tools: create_default_registry(),
+            system_prompt,
+            cwd,
+            provider_name: self.config.config.provider.to_string(),
+            model_name: self.config.effective_model(),
+        };
+
+        match AgentLoop::load_session(config, &session_id).await {
+            Ok(agent) => {
+                // Rebuild UI messages from the loaded session
+                self.messages.clear();
+
+                // Reconstruct chat messages from agent history
+                let session = SessionManager::load(&session_id).await.ok().flatten();
+                if let Some(session) = session {
+                    for msg in &session.messages {
+                        match msg.role {
+                            lukan_core::models::messages::Role::User => {
+                                self.messages
+                                    .push(ChatMessage::new("user", msg.content.to_text()));
+                            }
+                            lukan_core::models::messages::Role::Assistant => {
+                                self.messages
+                                    .push(ChatMessage::new("assistant", msg.content.to_text()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                self.input_tokens = agent.input_tokens();
+                self.output_tokens = agent.output_tokens();
+                self.session_id = Some(agent.session_id().to_string());
+                self.agent = Some(agent);
+                self.auto_scroll = true;
+
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Loaded session {session_id}"),
+                ));
+            }
+            Err(e) => {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Failed to load session: {e}"),
+                ));
+            }
+        }
     }
 
     /// Open the interactive model picker
@@ -330,20 +557,19 @@ impl App {
         let models = match ConfigManager::get_models().await {
             Ok(m) => m,
             Err(e) => {
-                self.messages.push(ChatMessage {
-                    role: "system".to_string(),
-                    content: format!("Failed to load models: {e}"),
-                });
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Failed to load models: {e}"),
+                ));
                 return;
             }
         };
 
         if models.is_empty() {
-            self.messages.push(ChatMessage {
-                role: "system".to_string(),
-                content: "No models available. Run 'lukan setup' to configure providers."
-                    .to_string(),
-            });
+            self.messages.push(ChatMessage::new(
+                "system",
+                "No models available. Run 'lukan setup' to configure providers.",
+            ));
             return;
         }
 
@@ -369,10 +595,10 @@ impl App {
         let entry = &picker.models[idx];
 
         let Some((provider_str, model_name)) = entry.split_once(':') else {
-            self.messages.push(ChatMessage {
-                role: "system".to_string(),
-                content: format!("Invalid model format: {entry}"),
-            });
+            self.messages.push(ChatMessage::new(
+                "system",
+                format!("Invalid model format: {entry}"),
+            ));
             return;
         };
 
@@ -380,10 +606,10 @@ impl App {
             match serde_json::from_value(serde_json::Value::String(provider_str.to_string())) {
                 Ok(p) => p,
                 Err(_) => {
-                    self.messages.push(ChatMessage {
-                        role: "system".to_string(),
-                        content: format!("Unknown provider: {provider_str}"),
-                    });
+                    self.messages.push(ChatMessage::new(
+                        "system",
+                        format!("Unknown provider: {provider_str}"),
+                    ));
                     return;
                 }
             };
@@ -391,10 +617,10 @@ impl App {
         let credentials = match CredentialsManager::load().await {
             Ok(c) => c,
             Err(e) => {
-                self.messages.push(ChatMessage {
-                    role: "system".to_string(),
-                    content: format!("Failed to load credentials: {e}"),
-                });
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Failed to load credentials: {e}"),
+                ));
                 return;
             }
         };
@@ -408,18 +634,15 @@ impl App {
             Ok(new_provider) => {
                 self.provider = Arc::from(new_provider);
                 self.config = new_config;
-                // Reset agent so it picks up the new provider
+                // Reset agent so it picks up the new provider (new session)
                 self.agent = None;
-                self.messages.push(ChatMessage {
-                    role: "system".to_string(),
-                    content: format!("Switched to {entry}"),
-                });
+                self.session_id = None;
+                self.messages
+                    .push(ChatMessage::new("system", format!("Switched to {entry}")));
             }
             Err(e) => {
-                self.messages.push(ChatMessage {
-                    role: "system".to_string(),
-                    content: format!("Failed to switch: {e}"),
-                });
+                self.messages
+                    .push(ChatMessage::new("system", format!("Failed to switch: {e}")));
             }
         }
     }
@@ -441,43 +664,33 @@ impl App {
                 self.active_tool = Some(name.clone());
                 if !self.streaming_text.is_empty() {
                     let content = std::mem::take(&mut self.streaming_text);
-                    self.messages.push(ChatMessage {
-                        role: "assistant".to_string(),
-                        content,
-                    });
+                    self.messages.push(ChatMessage::new("assistant", content));
                 }
             }
             StreamEvent::ToolUseEnd { name, input, .. } => {
                 // ● ToolName(input summary)
                 let summary = summarize_tool_input(&name, &input);
-                self.messages.push(ChatMessage {
-                    role: "tool_call".to_string(),
-                    content: format!("● {name}({summary})"),
-                });
+                self.messages.push(ChatMessage::new(
+                    "tool_call",
+                    format!("● {name}({summary})"),
+                ));
             }
             StreamEvent::ToolProgress { name, content, .. } => {
                 self.active_tool = Some(name);
-                self.messages.push(ChatMessage {
-                    role: "tool_result".to_string(),
-                    content: format!("  ⎿  {content}"),
-                });
+                self.messages
+                    .push(ChatMessage::new("tool_result", format!("  ⎿  {content}")));
             }
             StreamEvent::ToolResult {
-                content, is_error, ..
+                content,
+                is_error,
+                diff,
+                ..
             } => {
                 self.active_tool = None;
-                // Truncate long results for display
-                let display_content = if content.len() > 1000 {
-                    format!("{}...", &content[..1000])
-                } else {
-                    content
-                };
-                // Indent each line with   ⎿  prefix
-                let formatted = format_tool_result(&display_content, is_error.unwrap_or(false));
-                self.messages.push(ChatMessage {
-                    role: "tool_result".to_string(),
-                    content: formatted,
-                });
+                // Build summary line
+                let formatted = format_tool_result(&content, is_error.unwrap_or(false));
+                self.messages
+                    .push(ChatMessage::with_diff("tool_result", formatted, diff));
             }
             StreamEvent::Usage {
                 input_tokens,
@@ -490,19 +703,14 @@ impl App {
             StreamEvent::MessageEnd { .. } => {
                 if !self.streaming_text.is_empty() {
                     let content = std::mem::take(&mut self.streaming_text);
-                    self.messages.push(ChatMessage {
-                        role: "assistant".to_string(),
-                        content,
-                    });
+                    self.messages.push(ChatMessage::new("assistant", content));
                 }
                 self.is_streaming = false;
                 self.active_tool = None;
             }
             StreamEvent::Error { error } => {
-                self.messages.push(ChatMessage {
-                    role: "assistant".to_string(),
-                    content: format!("Error: {error}"),
-                });
+                self.messages
+                    .push(ChatMessage::new("assistant", format!("Error: {error}")));
                 self.is_streaming = false;
             }
             _ => {}
@@ -623,7 +831,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
  ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
- /model  Switch AI model    /clear  Clear chat    Ctrl+C  Quit"
+ /model  Switch model    /chats  Load session    /clear  Clear chat    Ctrl+C  Quit"
     )
 }
 
@@ -718,4 +926,132 @@ impl Widget for ModelPickerWidget<'_> {
             .wrap(Wrap { trim: false });
         paragraph.render(area, buf);
     }
+}
+
+// ── Session Picker Widget ───────────────────────────────────────────────
+
+struct SessionPickerWidget<'a> {
+    picker: &'a SessionPicker,
+}
+
+impl<'a> SessionPickerWidget<'a> {
+    fn new(picker: &'a SessionPicker) -> Self {
+        Self { picker }
+    }
+}
+
+impl Widget for SessionPickerWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        lines.push(Line::from(Span::styled(
+            " Select Session",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        for (i, session) in self.picker.sessions.iter().enumerate() {
+            let is_selected = i == self.picker.selected;
+            let is_current = self
+                .picker
+                .current_id
+                .as_ref()
+                .is_some_and(|id| *id == session.id);
+
+            let pointer = if is_selected { "▸ " } else { "  " };
+
+            let provider_model = match (&session.provider, &session.model) {
+                (Some(p), Some(m)) => format!("{p}:{m}"),
+                (Some(p), None) => p.clone(),
+                _ => "unknown".to_string(),
+            };
+
+            let time_ago = format_time_ago(session.updated_at);
+            let msg_count = session.message_count;
+
+            let mut spans = vec![
+                Span::styled(
+                    pointer,
+                    if is_selected {
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    },
+                ),
+                Span::styled(
+                    format!("[{}]", session.id),
+                    if is_selected {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Yellow)
+                    },
+                ),
+                Span::styled(" ", Style::default()),
+                Span::styled(
+                    provider_model,
+                    if is_selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    },
+                ),
+                Span::styled(
+                    format!(" · {msg_count} msgs · {time_ago}"),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ];
+
+            if is_current {
+                spans.push(Span::styled(
+                    " (current)",
+                    Style::default().fg(Color::Green),
+                ));
+            }
+
+            lines.push(Line::from(spans));
+        }
+
+        let block = Block::default().borders(Borders::NONE);
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        paragraph.render(area, buf);
+    }
+}
+
+/// Format a timestamp as a human-readable "time ago" string
+fn format_time_ago(dt: chrono::DateTime<Utc>) -> String {
+    let now = Utc::now();
+    let duration = now.signed_duration_since(dt);
+
+    let seconds = duration.num_seconds();
+    if seconds < 60 {
+        return format!("{seconds}s ago");
+    }
+
+    let minutes = duration.num_minutes();
+    if minutes < 60 {
+        return format!("{minutes}m ago");
+    }
+
+    let hours = duration.num_hours();
+    if hours < 24 {
+        return format!("{hours}h ago");
+    }
+
+    let days = duration.num_days();
+    if days < 30 {
+        return format!("{days}d ago");
+    }
+
+    let months = days / 30;
+    format!("{months}mo ago")
 }

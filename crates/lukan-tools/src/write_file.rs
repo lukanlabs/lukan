@@ -5,7 +5,7 @@ use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 use similar::{ChangeTag, TextDiff};
 
-use crate::{Tool, ToolContext};
+use crate::{Tool, ToolContext, format_stats};
 
 pub struct WriteFileTool;
 
@@ -52,11 +52,11 @@ impl Tool for WriteFileTool {
             .ok_or_else(|| anyhow::anyhow!("Missing required field: content"))?;
 
         let path = PathBuf::from(file_path_str);
-        if !path.is_absolute() {
-            return Ok(ToolResult::error(format!(
-                "Path must be absolute: {file_path_str}"
-            )));
-        }
+        let path = if path.is_absolute() {
+            path
+        } else {
+            ctx.cwd.join(&path)
+        };
 
         // Check if file exists and was read
         let old_content = if path.exists() {
@@ -85,20 +85,30 @@ impl Tool for WriteFileTool {
         let old = old_content.as_deref().unwrap_or("");
         let diff = TextDiff::from_lines(old, content);
         let mut diff_str = String::new();
+        let mut added = 0usize;
+        let mut removed = 0usize;
         for change in diff.iter_all_changes() {
             let sign = match change.tag() {
-                ChangeTag::Delete => "-",
-                ChangeTag::Insert => "+",
+                ChangeTag::Delete => {
+                    removed += 1;
+                    "-"
+                }
+                ChangeTag::Insert => {
+                    added += 1;
+                    "+"
+                }
                 ChangeTag::Equal => " ",
             };
             diff_str.push_str(&format!("{sign}{change}"));
         }
 
-        let msg = if old_content.is_some() {
-            format!("Updated {file_path_str}")
+        let action = if old_content.is_some() {
+            "Update"
         } else {
-            format!("Created {file_path_str}")
+            "Create"
         };
+        let stats = format_stats(added, removed);
+        let msg = format!("● {action}({file_path_str})\n  ⎿  {stats}");
 
         Ok(ToolResult::success(msg).with_diff(diff_str))
     }

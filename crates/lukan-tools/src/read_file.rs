@@ -54,11 +54,11 @@ impl Tool for ReadFileTool {
             .ok_or_else(|| anyhow::anyhow!("Missing required field: file_path"))?;
 
         let path = PathBuf::from(file_path_str);
-        if !path.is_absolute() {
-            return Ok(ToolResult::error(format!(
-                "Path must be absolute: {file_path_str}"
-            )));
-        }
+        let path = if path.is_absolute() {
+            path
+        } else {
+            ctx.cwd.join(&path)
+        };
 
         let offset = input.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
         let limit = input

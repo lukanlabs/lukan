@@ -11,6 +11,32 @@ use ratatui::{
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    /// Optional unified diff for file changes (WriteFile/EditFile)
+    pub diff: Option<String>,
+}
+
+impl ChatMessage {
+    /// Create a simple message without diff
+    pub fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: content.into(),
+            diff: None,
+        }
+    }
+
+    /// Create a message with an attached diff
+    pub fn with_diff(
+        role: impl Into<String>,
+        content: impl Into<String>,
+        diff: Option<String>,
+    ) -> Self {
+        Self {
+            role: role.into(),
+            content: content.into(),
+            diff,
+        }
+    }
 }
 
 /// Widget that renders the chat history
@@ -64,12 +90,63 @@ impl<'a> ChatWidget<'a> {
                     }
                 }
                 "tool_result" => {
-                    // ⎿ result lines — dim gray
+                    // ⎿ result summary — dim gray
                     for line in msg.content.lines() {
                         lines.push(Line::from(Span::styled(
                             line.to_string(),
                             Style::default().fg(Color::DarkGray),
                         )));
+                    }
+                    // Render diff if present (max 20 changed lines)
+                    if let Some(ref diff) = msg.diff {
+                        let max_lines = 20;
+                        let mut shown = 0;
+                        let total_changed = diff
+                            .lines()
+                            .filter(|l| l.starts_with('+') || l.starts_with('-'))
+                            .count();
+
+                        for diff_line in diff.lines() {
+                            // Only count +/- lines toward the limit
+                            let is_change =
+                                diff_line.starts_with('+') || diff_line.starts_with('-');
+                            if is_change {
+                                shown += 1;
+                                if shown > max_lines {
+                                    continue;
+                                }
+                            } else if shown > max_lines {
+                                continue;
+                            }
+
+                            let line_obj = if diff_line.starts_with('+') {
+                                Line::from(Span::styled(
+                                    format!("     {diff_line}"),
+                                    Style::default().fg(Color::Green),
+                                ))
+                            } else if diff_line.starts_with('-') {
+                                Line::from(Span::styled(
+                                    format!("     {diff_line}"),
+                                    Style::default().fg(Color::Red),
+                                ))
+                            } else {
+                                Line::from(Span::styled(
+                                    format!("     {diff_line}"),
+                                    Style::default().fg(Color::DarkGray),
+                                ))
+                            };
+                            lines.push(line_obj);
+                        }
+
+                        if total_changed > max_lines {
+                            lines.push(Line::from(Span::styled(
+                                format!(
+                                    "     ... ({} more changes not shown)",
+                                    total_changed - max_lines
+                                ),
+                                Style::default().fg(Color::DarkGray),
+                            )));
+                        }
                     }
                 }
                 "system" => {
@@ -139,4 +216,10 @@ impl Widget for ChatWidget<'_> {
 
         paragraph.render(area, buf);
     }
+}
+
+/// Count the total number of rendered lines (for auto-scroll calculation)
+pub fn rendered_line_count(messages: &[ChatMessage], streaming_text: &str) -> u16 {
+    let tmp = ChatWidget::new(messages, streaming_text, 0);
+    tmp.render_messages().len() as u16
 }

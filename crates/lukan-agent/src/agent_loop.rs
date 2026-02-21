@@ -3,12 +3,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
+use chrono::Utc;
 use lukan_core::models::events::{StopReason, StreamEvent};
 use lukan_core::models::messages::{ContentBlock, Message, MessageContent};
+use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, warn};
+
+use crate::message_history::MessageHistory;
+use crate::session_manager::SessionManager;
 
 /// Configuration for creating an AgentLoop
 pub struct AgentConfig {
@@ -16,6 +21,10 @@ pub struct AgentConfig {
     pub tools: ToolRegistry,
     pub system_prompt: SystemPrompt,
     pub cwd: PathBuf,
+    /// Provider name for session metadata
+    pub provider_name: String,
+    /// Model name for session metadata
+    pub model_name: String,
 }
 
 /// Pending tool call accumulated from stream events
@@ -31,24 +40,55 @@ pub struct AgentLoop {
     tools: Arc<ToolRegistry>,
     system_prompt: SystemPrompt,
     cwd: PathBuf,
-    history: Vec<Message>,
+    history: MessageHistory,
+    session: ChatSession,
     input_tokens: u64,
     output_tokens: u64,
     read_files: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 impl AgentLoop {
-    pub fn new(config: AgentConfig) -> Self {
-        Self {
+    /// Create a new agent with a fresh session
+    pub async fn new(config: AgentConfig) -> Result<Self> {
+        let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
+        Ok(Self {
             provider: config.provider,
             tools: Arc::new(config.tools),
             system_prompt: config.system_prompt,
             cwd: config.cwd,
-            history: Vec::new(),
+            history: MessageHistory::new(),
+            session,
             input_tokens: 0,
             output_tokens: 0,
             read_files: Arc::new(Mutex::new(HashSet::new())),
-        }
+        })
+    }
+
+    /// Load an existing session and restore history
+    pub async fn load_session(config: AgentConfig, session_id: &str) -> Result<Self> {
+        let session = SessionManager::load(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
+
+        let mut history = MessageHistory::new();
+        history.load_from_json(session.messages.clone());
+
+        Ok(Self {
+            provider: config.provider,
+            tools: Arc::new(config.tools),
+            system_prompt: config.system_prompt,
+            cwd: config.cwd,
+            history,
+            input_tokens: session.total_input_tokens,
+            output_tokens: session.total_output_tokens,
+            session,
+            read_files: Arc::new(Mutex::new(HashSet::new())),
+        })
+    }
+
+    /// Get the session ID
+    pub fn session_id(&self) -> &str {
+        &self.session.id
     }
 
     /// Total input tokens used across all turns
@@ -68,7 +108,7 @@ impl AgentLoop {
         event_tx: mpsc::Sender<StreamEvent>,
     ) -> Result<()> {
         // Add user message to history
-        self.history.push(Message::user(user_message));
+        self.history.add_user_message(user_message);
 
         // Inner loop: call LLM → execute tools → repeat until done
         loop {
@@ -76,7 +116,7 @@ impl AgentLoop {
 
             let params = StreamParams {
                 system_prompt: self.system_prompt.clone(),
-                messages: self.history.clone(),
+                messages: self.history.messages().to_vec(),
                 tools: tool_defs,
             };
 
@@ -162,7 +202,7 @@ impl AgentLoop {
             }
 
             if !blocks.is_empty() {
-                self.history.push(Message::assistant_blocks(blocks));
+                self.history.add_assistant_blocks(blocks);
             }
 
             // If no tool calls, we're done
@@ -203,7 +243,7 @@ impl AgentLoop {
                     .await;
             }
 
-            self.history.push(Message {
+            self.history.add(Message {
                 role: lukan_core::models::messages::Role::User,
                 content: MessageContent::Blocks(result_blocks),
                 tool_call_id: None,
@@ -213,7 +253,19 @@ impl AgentLoop {
             // Loop continues — LLM will see the tool results and decide next action
         }
 
+        // Auto-save session after each turn
+        self.save_session().await?;
+
         Ok(())
+    }
+
+    /// Save current state to disk
+    async fn save_session(&mut self) -> Result<()> {
+        self.session.messages = self.history.to_json();
+        self.session.total_input_tokens = self.input_tokens;
+        self.session.total_output_tokens = self.output_tokens;
+        self.session.updated_at = Utc::now();
+        SessionManager::save(&mut self.session).await
     }
 
     /// Execute multiple tool calls in parallel

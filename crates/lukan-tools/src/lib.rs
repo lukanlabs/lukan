@@ -101,6 +101,16 @@ impl Default for ToolRegistry {
     }
 }
 
+/// Format diff stats like "Added 5 lines, removed 2 lines"
+pub(crate) fn format_stats(added: usize, removed: usize) -> String {
+    match (added, removed) {
+        (0, 0) => "No changes".to_string(),
+        (a, 0) => format!("Added {a} lines"),
+        (0, r) => format!("Removed {r} lines"),
+        (a, r) => format!("Added {a} lines, removed {r} lines"),
+    }
+}
+
 /// Create a registry with all default tools
 pub fn create_default_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();

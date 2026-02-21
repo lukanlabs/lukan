@@ -15,3 +15,5 @@ serde_json.workspace = true
 tracing.workspace = true
 futures.workspace = true
 uuid.workspace = true
+chrono.workspace = true
+rand.workspace = true

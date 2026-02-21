@@ -1045,10 +1045,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "futures",
  "lukan-core",
  "lukan-providers",
  "lukan-tools",
+ "rand",
  "serde",
  "serde_json",
  "tokio",
@@ -1132,6 +1134,7 @@ name = "lukan-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "crossterm",
  "lukan-agent",
  "lukan-core",

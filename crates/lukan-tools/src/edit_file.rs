@@ -5,7 +5,7 @@ use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 use similar::{ChangeTag, TextDiff};
 
-use crate::{Tool, ToolContext};
+use crate::{Tool, ToolContext, format_stats};
 
 pub struct EditFileTool;
 
@@ -71,11 +71,11 @@ impl Tool for EditFileTool {
             .unwrap_or(false);
 
         let path = PathBuf::from(file_path_str);
-        if !path.is_absolute() {
-            return Ok(ToolResult::error(format!(
-                "Path must be absolute: {file_path_str}"
-            )));
-        }
+        let path = if path.is_absolute() {
+            path
+        } else {
+            ctx.cwd.join(&path)
+        };
 
         // Must have been read first
         if !ctx.read_files.lock().await.contains(&path) {
@@ -116,20 +116,25 @@ impl Tool for EditFileTool {
         // Generate diff
         let diff = TextDiff::from_lines(&content, &new_content);
         let mut diff_str = String::new();
+        let mut added = 0usize;
+        let mut removed = 0usize;
         for change in diff.iter_all_changes() {
             let sign = match change.tag() {
-                ChangeTag::Delete => "-",
-                ChangeTag::Insert => "+",
+                ChangeTag::Delete => {
+                    removed += 1;
+                    "-"
+                }
+                ChangeTag::Insert => {
+                    added += 1;
+                    "+"
+                }
                 ChangeTag::Equal => " ",
             };
             diff_str.push_str(&format!("{sign}{change}"));
         }
 
-        let msg = if replace_all {
-            format!("Replaced {count} occurrences in {file_path_str}")
-        } else {
-            format!("Edited {file_path_str}")
-        };
+        let stats = format_stats(added, removed);
+        let msg = format!("● Update({file_path_str})\n  ⎿  {stats}");
 
         Ok(ToolResult::success(msg).with_diff(diff_str))
     }

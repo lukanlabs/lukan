@@ -6,6 +6,8 @@ use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, Resolved
 use lukan_providers::create_provider;
 use lukan_tui::app::App;
 
+mod setup;
+
 #[derive(Parser)]
 #[command(name = "lukan", version, about = "AI agent CLI")]
 struct Cli {
@@ -32,6 +34,10 @@ enum Commands {
         #[arg(long, short)]
         model: Option<String>,
     },
+    /// Interactive setup wizard (provider, model, API keys)
+    Setup,
+    /// Show current configuration and diagnostic info
+    Doctor,
 }
 
 #[tokio::main]
@@ -53,6 +59,18 @@ async fn main() -> Result<()> {
     // Ensure config dirs exist
     LukanPaths::ensure_dirs().await?;
 
+    match &cli.command {
+        Some(Commands::Setup) => {
+            setup::run_setup().await?;
+            return Ok(());
+        }
+        Some(Commands::Doctor) => {
+            setup::run_doctor().await?;
+            return Ok(());
+        }
+        _ => {}
+    }
+
     // Determine provider/model overrides
     let (provider_override, model_override) = match &cli.command {
         Some(Commands::Chat { provider, model }) => (
@@ -60,6 +78,7 @@ async fn main() -> Result<()> {
             model.clone().or(cli.model.clone()),
         ),
         None => (cli.provider.clone(), cli.model.clone()),
+        _ => (None, None),
     };
 
     // Load config
@@ -68,7 +87,7 @@ async fn main() -> Result<()> {
     // Apply CLI overrides
     if let Some(p) = provider_override {
         config.provider = serde_json::from_value(serde_json::Value::String(p))
-            .context("Invalid provider name")?;
+            .context("Invalid provider name. Valid: anthropic, nebius, fireworks, github-copilot, openai-codex, zai, openai-compatible")?;
     }
     if let Some(m) = model_override {
         config.model = Some(m);

@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
 pub mod anthropic;
+pub mod codex_auth;
 pub mod contracts;
+pub mod openai_codex;
 pub mod schema_adapter;
 pub mod sse;
 pub mod think_tag_parser;
@@ -26,9 +28,14 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
                 api_key, model, max_tokens,
             )))
         }
+        ProviderName::OpenaiCodex => Ok(Box::new(openai_codex::OpenAICodexProvider::new(
+            model,
+            max_tokens,
+            config.credentials.clone(),
+        )?)),
         provider => {
             bail!(
-                "Provider '{}' is not yet implemented in the Rust version. Only 'anthropic' is available in Phase 1.",
+                "Provider '{}' is not yet implemented. Available: anthropic, openai-codex",
                 provider
             );
         }

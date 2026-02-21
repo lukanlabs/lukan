@@ -58,6 +58,9 @@ dotenvy = "0.15"
 rand = "0.9"
 base64 = "0.22"
 url = "2"
+sha2 = "0.10"
+open = "5"
+urlencoding = "2"
 
 # Workspace crates
 lukan-core = { path = "crates/lukan-core" }
@@ -87,3 +90,4 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 dotenvy.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
+reqwest.workspace = true

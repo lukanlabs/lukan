@@ -38,6 +38,12 @@ enum Commands {
     Setup,
     /// Show current configuration and diagnostic info
     Doctor,
+    /// Authenticate with OpenAI Codex (OAuth)
+    CodexAuth {
+        /// Use device code flow instead of browser
+        #[arg(long)]
+        device: bool,
+    },
 }
 
 #[tokio::main]
@@ -66,6 +72,10 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Doctor) => {
             setup::run_doctor().await?;
+            return Ok(());
+        }
+        Some(Commands::CodexAuth { device }) => {
+            setup::run_codex_auth(*device).await?;
             return Ok(());
         }
         _ => {}

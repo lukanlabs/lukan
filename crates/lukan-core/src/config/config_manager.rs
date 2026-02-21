@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use tracing::debug;
 
+use super::credentials::CredentialsManager;
 use super::paths::LukanPaths;
-use super::types::AppConfig;
+use super::types::{AppConfig, ProviderName};
 
 /// Manages loading and saving the main application config
 pub struct ConfigManager;
@@ -44,6 +45,49 @@ impl ConfigManager {
         let json = serde_json::to_value(&config)?;
         let value = get_nested_value(&json, key);
         Ok(value)
+    }
+
+    /// Get available models as "provider:model" entries.
+    ///
+    /// If the user has custom models in config, return those.
+    /// Otherwise, return default models for providers with credentials.
+    pub async fn get_models() -> Result<Vec<String>> {
+        let config = Self::load().await?;
+
+        // If user has custom models, return them
+        if let Some(ref models) = config.models
+            && !models.is_empty()
+        {
+            return Ok(models.clone());
+        }
+
+        // Otherwise, build from defaults for providers with credentials
+        let creds = CredentialsManager::load().await?;
+        let all_providers = [
+            ProviderName::Anthropic,
+            ProviderName::Nebius,
+            ProviderName::Fireworks,
+            ProviderName::GithubCopilot,
+            ProviderName::OpenaiCodex,
+            ProviderName::Zai,
+            ProviderName::OpenaiCompatible,
+        ];
+
+        let mut models: Vec<String> = Vec::new();
+        for provider in &all_providers {
+            if CredentialsManager::get_api_key(&creds, provider).is_some() {
+                models.push(format!("{}:{}", provider, provider.default_model()));
+            }
+        }
+
+        // Fallback: if no credentials at all, show all defaults
+        if models.is_empty() {
+            for provider in &all_providers {
+                models.push(format!("{}:{}", provider, provider.default_model()));
+            }
+        }
+
+        Ok(models)
     }
 
     /// Set a config value by dot-separated key path

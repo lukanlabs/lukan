@@ -14,10 +14,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::error;
 
-use lukan_core::config::ResolvedConfig;
+use lukan_core::config::{ConfigManager, CredentialsManager, ProviderName, ResolvedConfig};
 use lukan_core::models::events::StreamEvent;
 use lukan_core::models::messages::Message;
-use lukan_providers::{Provider, StreamParams, SystemPrompt};
+use lukan_providers::{Provider, StreamParams, SystemPrompt, create_provider};
 
 use crate::event::{AppEvent, is_quit, spawn_event_reader};
 use crate::widgets::chat::{ChatMessage, ChatWidget};
@@ -26,29 +26,27 @@ use crate::widgets::status_bar::StatusBarWidget;
 
 /// Application state
 pub struct App {
-    /// Chat message history for display
     messages: Vec<ChatMessage>,
-    /// Canonical message history for the provider
     history: Vec<Message>,
-    /// Current input text
     input: String,
-    /// Cursor position in input
     cursor_pos: usize,
-    /// Text being streamed from the LLM
     streaming_text: String,
-    /// Whether we're currently streaming a response
     is_streaming: bool,
-    /// Scroll offset for chat area
     scroll_offset: u16,
-    /// Total tokens
     input_tokens: u64,
     output_tokens: u64,
-    /// Provider (Arc for spawning into tasks)
     provider: Arc<dyn Provider>,
-    /// Config
     config: ResolvedConfig,
-    /// Should the app exit
     should_quit: bool,
+    /// Model picker state
+    model_picker: Option<ModelPicker>,
+}
+
+/// Interactive model picker state
+struct ModelPicker {
+    models: Vec<String>,
+    selected: usize,
+    current: String,
 }
 
 impl App {
@@ -66,33 +64,26 @@ impl App {
             provider: Arc::from(provider),
             config,
             should_quit: false,
+            model_picker: None,
         }
     }
 
-    /// Run the main TUI event loop
     pub async fn run(mut self) -> Result<()> {
-        // Setup terminal
         enable_raw_mode()?;
         stdout().execute(EnterAlternateScreen)?;
         let backend = CrosstermBackend::new(stdout());
         let mut terminal = Terminal::new(backend)?;
         terminal.clear()?;
 
-        // Event channel
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AppEvent>();
         spawn_event_reader(event_tx);
 
-        // Agent response channel
         let (agent_tx, mut agent_rx) = mpsc::channel::<StreamEvent>(256);
 
-        // Welcome message
+        // Welcome banner
         self.messages.push(ChatMessage {
-            role: "assistant".to_string(),
-            content: format!(
-                "Hello! I'm lukan, powered by {} / {}. How can I help?",
-                self.provider.name(),
-                self.config.effective_model()
-            ),
+            role: "banner".to_string(),
+            content: build_welcome_banner(self.provider.name(), &self.config.effective_model()),
         });
 
         loop {
@@ -107,14 +98,22 @@ impl App {
                     ])
                     .split(frame.area());
 
-                // Chat
-                let chat =
-                    ChatWidget::new(&self.messages, &self.streaming_text, self.scroll_offset);
-                frame.render_widget(chat, chunks[0]);
+                // Chat (or model picker overlay)
+                if let Some(ref picker) = self.model_picker {
+                    let widget = ModelPickerWidget::new(picker);
+                    frame.render_widget(widget, chunks[0]);
+                } else {
+                    let chat =
+                        ChatWidget::new(&self.messages, &self.streaming_text, self.scroll_offset);
+                    frame.render_widget(chat, chunks[0]);
+                }
 
                 // Input
-                let input_widget =
-                    InputWidget::new(&self.input, self.cursor_pos, !self.is_streaming);
+                let input_widget = if self.model_picker.is_some() {
+                    InputWidget::new("↑↓ navigate · Enter select · ESC close", 0, false)
+                } else {
+                    InputWidget::new(&self.input, self.cursor_pos, !self.is_streaming)
+                };
                 frame.render_widget(input_widget, chunks[1]);
 
                 // Status bar
@@ -128,8 +127,8 @@ impl App {
                 );
                 frame.render_widget(status, chunks[2]);
 
-                // Set cursor position
-                if !self.is_streaming {
+                // Set cursor position only when not in picker and not streaming
+                if self.model_picker.is_none() && !self.is_streaming {
                     let cursor_x = chunks[1].x + 1 + self.cursor_pos as u16;
                     let cursor_y = chunks[1].y + 1;
                     frame.set_cursor_position((cursor_x, cursor_y));
@@ -141,13 +140,40 @@ impl App {
                 Some(event) = event_rx.recv() => {
                     match event {
                         AppEvent::Key(key) => {
-                            if is_quit(&key) {
+                            if self.model_picker.is_some() {
+                                // Model picker mode
+                                match key.code {
+                                    KeyCode::Up => {
+                                        if let Some(ref mut picker) = self.model_picker
+                                            && picker.selected > 0
+                                        {
+                                            picker.selected -= 1;
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if let Some(ref mut picker) = self.model_picker
+                                            && picker.selected + 1 < picker.models.len()
+                                        {
+                                            picker.selected += 1;
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        let idx = self.model_picker.as_ref().unwrap().selected;
+                                        self.select_model(idx).await;
+                                        self.model_picker = None;
+                                    }
+                                    KeyCode::Esc => {
+                                        self.model_picker = None;
+                                    }
+                                    _ => {}
+                                }
+                            } else if is_quit(&key) {
                                 self.should_quit = true;
                             } else if !self.is_streaming {
                                 match key.code {
                                     KeyCode::Enter => {
                                         if !self.input.trim().is_empty() {
-                                            self.submit_message(agent_tx.clone());
+                                            self.submit_message(agent_tx.clone()).await;
                                         }
                                     }
                                     KeyCode::Char(c) => {
@@ -170,12 +196,8 @@ impl App {
                                             self.cursor_pos += 1;
                                         }
                                     }
-                                    KeyCode::Home => {
-                                        self.cursor_pos = 0;
-                                    }
-                                    KeyCode::End => {
-                                        self.cursor_pos = self.input.len();
-                                    }
+                                    KeyCode::Home => self.cursor_pos = 0,
+                                    KeyCode::End => self.cursor_pos = self.input.len(),
                                     _ => {}
                                 }
                             }
@@ -194,33 +216,41 @@ impl App {
             }
         }
 
-        // Restore terminal
         disable_raw_mode()?;
         stdout().execute(LeaveAlternateScreen)?;
-
         Ok(())
     }
 
-    /// Submit the current input as a user message and spawn a streaming task
-    fn submit_message(&mut self, agent_tx: mpsc::Sender<StreamEvent>) {
+    async fn submit_message(&mut self, agent_tx: mpsc::Sender<StreamEvent>) {
         let text = self.input.trim().to_string();
         self.input.clear();
         self.cursor_pos = 0;
 
-        // Add to display
+        // Handle /model command
+        if text == "/model" || text.starts_with("/model ") {
+            self.open_model_picker().await;
+            return;
+        }
+
+        // Handle /clear
+        if text == "/clear" {
+            self.messages.clear();
+            self.history.clear();
+            self.input_tokens = 0;
+            self.output_tokens = 0;
+            return;
+        }
+
+        // Regular message
         self.messages.push(ChatMessage {
             role: "user".to_string(),
             content: text.clone(),
         });
-
-        // Add to history
         self.history.push(Message::user(&text));
 
-        // Start streaming
         self.is_streaming = true;
         self.streaming_text.clear();
 
-        // Build params
         let system_prompt =
             SystemPrompt::Text(include_str!("../../../prompts/base.txt").to_string());
 
@@ -230,7 +260,6 @@ impl App {
             tools: Vec::new(),
         };
 
-        // Spawn streaming task with Arc<dyn Provider>
         let provider = Arc::clone(&self.provider);
         tokio::spawn(async move {
             if let Err(e) = provider.stream(params, agent_tx.clone()).await {
@@ -245,7 +274,103 @@ impl App {
         });
     }
 
-    /// Handle a streaming event from the provider
+    /// Open the interactive model picker
+    async fn open_model_picker(&mut self) {
+        let models = match ConfigManager::get_models().await {
+            Ok(m) => m,
+            Err(e) => {
+                self.messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: format!("Failed to load models: {e}"),
+                });
+                return;
+            }
+        };
+
+        if models.is_empty() {
+            self.messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: "No models available. Run 'lukan setup' to configure providers."
+                    .to_string(),
+            });
+            return;
+        }
+
+        let current = format!(
+            "{}:{}",
+            self.config.config.provider,
+            self.config.effective_model()
+        );
+
+        // Pre-select the current model
+        let selected = models.iter().position(|m| *m == current).unwrap_or(0);
+
+        self.model_picker = Some(ModelPicker {
+            models,
+            selected,
+            current,
+        });
+    }
+
+    /// Switch to the selected model from the picker
+    async fn select_model(&mut self, idx: usize) {
+        let picker = self.model_picker.as_ref().unwrap();
+        let entry = &picker.models[idx];
+
+        let Some((provider_str, model_name)) = entry.split_once(':') else {
+            self.messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: format!("Invalid model format: {entry}"),
+            });
+            return;
+        };
+
+        let provider_name: ProviderName =
+            match serde_json::from_value(serde_json::Value::String(provider_str.to_string())) {
+                Ok(p) => p,
+                Err(_) => {
+                    self.messages.push(ChatMessage {
+                        role: "system".to_string(),
+                        content: format!("Unknown provider: {provider_str}"),
+                    });
+                    return;
+                }
+            };
+
+        let credentials = match CredentialsManager::load().await {
+            Ok(c) => c,
+            Err(e) => {
+                self.messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: format!("Failed to load credentials: {e}"),
+                });
+                return;
+            }
+        };
+
+        let mut new_config = self.config.clone();
+        new_config.config.provider = provider_name;
+        new_config.config.model = Some(model_name.to_string());
+        new_config.credentials = credentials;
+
+        match create_provider(&new_config) {
+            Ok(new_provider) => {
+                self.provider = Arc::from(new_provider);
+                self.config = new_config;
+                self.messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: format!("Switched to {entry}"),
+                });
+            }
+            Err(e) => {
+                self.messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: format!("Failed to switch: {e}"),
+                });
+            }
+        }
+    }
+
     fn handle_stream_event(&mut self, event: StreamEvent) {
         match event {
             StreamEvent::MessageStart => {
@@ -283,7 +408,120 @@ impl App {
                 });
                 self.is_streaming = false;
             }
-            _ => {} // Other events handled in Phase 2+
+            _ => {}
         }
+    }
+}
+
+// ── Welcome Banner ────────────────────────────────────────────────────────
+
+fn build_welcome_banner(provider: &str, model: &str) -> String {
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "?".to_string());
+
+    format!(
+        "\
+ ██╗     ██╗   ██╗██╗  ██╗ █████╗ ███╗   ██╗
+ ██║     ██║   ██║██║ ██╔╝██╔══██╗████╗  ██║   AI Agent CLI
+ ██║     ██║   ██║█████╔╝ ███████║██╔██╗ ██║   {provider} > {model}
+ ██║     ██║   ██║██╔═██╗ ██╔══██║██║╚██╗██║
+ ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
+ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
+
+ /model  Switch AI model    /clear  Clear chat    Ctrl+C  Quit"
+    )
+}
+
+// ── Model Picker Widget ──────────────────────────────────────────────────
+
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+};
+
+struct ModelPickerWidget<'a> {
+    picker: &'a ModelPicker,
+}
+
+impl<'a> ModelPickerWidget<'a> {
+    fn new(picker: &'a ModelPicker) -> Self {
+        Self { picker }
+    }
+}
+
+impl Widget for ModelPickerWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        lines.push(Line::from(Span::styled(
+            " Select Model",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        for (i, entry) in self.picker.models.iter().enumerate() {
+            let is_selected = i == self.picker.selected;
+            let is_current = *entry == self.picker.current;
+
+            let pointer = if is_selected { "▸ " } else { "  " };
+
+            // Split provider:model
+            let (provider, model) = entry.split_once(':').unwrap_or(("?", entry.as_str()));
+
+            let mut spans = vec![
+                Span::styled(
+                    pointer,
+                    if is_selected {
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    },
+                ),
+                Span::styled(
+                    provider,
+                    if is_selected {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Yellow)
+                    },
+                ),
+                Span::styled(":", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    model,
+                    if is_selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    },
+                ),
+            ];
+
+            if is_current {
+                spans.push(Span::styled(
+                    " (current)",
+                    Style::default().fg(Color::Green),
+                ));
+            }
+
+            lines.push(Line::from(spans));
+        }
+
+        let block = Block::default().borders(Borders::NONE);
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        paragraph.render(area, buf);
     }
 }

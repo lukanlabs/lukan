@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use lukan_core::config::{
     AppConfig, ConfigManager, Credentials, CredentialsManager, LukanPaths, ProviderName,
 };
+use lukan_providers::codex_auth;
 
 // ── Colors ─────────────────────────────────────────────────────────────────
 
@@ -253,6 +254,51 @@ fn prompt_credential(label: &str, env_var: &str, current: Option<&str>) -> Resul
     }
 }
 
+// ── Codex Auth ────────────────────────────────────────────────────────────
+
+pub async fn run_codex_auth(device: bool) -> Result<()> {
+    println!("\n{BOLD}{CYAN}  lukan codex-auth{RESET}");
+    println!("{DIM}  OpenAI Codex authentication{RESET}\n");
+
+    let client = reqwest::Client::new();
+
+    let tokens = if device {
+        println!("{DIM}Using device code flow...{RESET}");
+        codex_auth::auth_device_flow(&client).await?
+    } else {
+        println!("{DIM}Using browser flow...{RESET}");
+        codex_auth::auth_browser_flow(&client).await?
+    };
+
+    // Save tokens to credentials
+    let mut creds = CredentialsManager::load().await?;
+    creds.codex_access_token = Some(tokens.access_token.clone());
+    creds.codex_refresh_token = Some(tokens.refresh_token);
+    creds.codex_token_expiry = Some(tokens.expires_at);
+    CredentialsManager::save(&creds).await?;
+
+    // Also set provider to openai-codex
+    let mut config = ConfigManager::load().await?;
+    config.provider = ProviderName::OpenaiCodex;
+    ConfigManager::save(&config).await?;
+
+    println!("{GREEN}✓{RESET} Codex authentication successful!");
+    println!(
+        "{GREEN}✓{RESET} Credentials saved to {DIM}{}{RESET}",
+        LukanPaths::credentials_file().display()
+    );
+    println!("{GREEN}✓{RESET} Provider set to {BOLD}openai-codex{RESET}");
+
+    // Show account ID if extractable
+    if let Some(acct_id) = codex_auth::extract_account_id(&tokens.access_token) {
+        println!("{GREEN}✓{RESET} Account ID: {DIM}{acct_id}{RESET}");
+    }
+
+    println!("\n{DIM}Run 'lukan chat' to start chatting with Codex.{RESET}\n");
+
+    Ok(())
+}
+
 // ── Doctor command ─────────────────────────────────────────────────────────
 
 pub async fn run_doctor() -> Result<()> {
@@ -310,6 +356,11 @@ pub async fn run_doctor() -> Result<()> {
         "FIREWORKS_API_KEY",
     );
     print_key_status("GitHub", creds.github_token.as_deref(), "GITHUB_TOKEN");
+    print_key_status(
+        "Codex",
+        creds.codex_access_token.as_deref(),
+        "lukan codex-auth",
+    );
     print_key_status("z.ai", creds.zai_api_key.as_deref(), "ZAI_API_KEY");
     print_key_status(
         "OpenAI-compat",

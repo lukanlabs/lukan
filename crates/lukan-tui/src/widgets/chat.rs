@@ -33,31 +33,53 @@ impl<'a> ChatWidget<'a> {
         let mut lines = Vec::new();
 
         for msg in self.messages {
-            // Role header
-            let (role_text, role_style) = match msg.role.as_str() {
-                "user" => (
-                    "You",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                "assistant" => (
-                    "lukan",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                _ => ("system", Style::default().fg(Color::Yellow)),
-            };
-
-            lines.push(Line::from(Span::styled(role_text, role_style)));
-
-            // Content lines
-            for line in msg.content.lines() {
-                lines.push(Line::from(line.to_string()));
+            match msg.role.as_str() {
+                "banner" => {
+                    // Banner lines are pre-styled, render as-is
+                    for line in msg.content.lines() {
+                        lines.push(Line::from(Span::styled(
+                            line.to_string(),
+                            Style::default().fg(Color::Cyan),
+                        )));
+                    }
+                    lines.push(Line::from(""));
+                }
+                "system" => {
+                    // System messages: no header, dim style
+                    for line in msg.content.lines() {
+                        lines.push(Line::from(Span::styled(
+                            line.to_string(),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                    lines.push(Line::from(""));
+                }
+                "user" => {
+                    lines.push(Line::from(Span::styled(
+                        "You",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                    for line in msg.content.lines() {
+                        lines.push(Line::from(line.to_string()));
+                    }
+                    lines.push(Line::from(""));
+                }
+                _ => {
+                    // assistant
+                    lines.push(Line::from(Span::styled(
+                        "lukan",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                    for line in msg.content.lines() {
+                        lines.push(Line::from(line.to_string()));
+                    }
+                    lines.push(Line::from(""));
+                }
             }
-
-            lines.push(Line::from("")); // Spacing between messages
         }
 
         // Streaming text

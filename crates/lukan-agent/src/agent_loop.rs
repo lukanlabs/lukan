@@ -86,7 +86,8 @@ impl AgentLoop {
             config.cwd.clone(),
             config.provider_name.clone(),
             config.model_name.clone(),
-        );
+        )
+        .await;
 
         let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
         Ok(Self {
@@ -120,7 +121,8 @@ impl AgentLoop {
             config.cwd.clone(),
             config.provider_name.clone(),
             config.model_name.clone(),
-        );
+        )
+        .await;
 
         let session = SessionManager::load(session_id)
             .await?

@@ -25,22 +25,19 @@ static MANAGER: std::sync::LazyLock<RwLock<SubAgentManager>> =
     std::sync::LazyLock::new(|| RwLock::new(SubAgentManager::new()));
 
 /// Configure the sub-agent manager with the parent's provider info
-pub fn configure(
+pub async fn configure(
     provider: Arc<dyn Provider>,
     system_prompt: SystemPrompt,
     cwd: std::path::PathBuf,
     provider_name: String,
     model_name: String,
 ) {
-    let rt = tokio::runtime::Handle::current();
-    rt.block_on(async {
-        let mut mgr = MANAGER.write().await;
-        mgr.provider = Some(provider);
-        mgr.system_prompt = Some(system_prompt);
-        mgr.cwd = Some(cwd);
-        mgr.provider_name = Some(provider_name);
-        mgr.model_name = Some(model_name);
-    });
+    let mut mgr = MANAGER.write().await;
+    mgr.provider = Some(provider);
+    mgr.system_prompt = Some(system_prompt);
+    mgr.cwd = Some(cwd);
+    mgr.provider_name = Some(provider_name);
+    mgr.model_name = Some(model_name);
 }
 
 // ── Manager ───────────────────────────────────────────────────────────────

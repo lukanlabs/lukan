@@ -1,0 +1,8 @@
+Review the conversation and update MEMORY.md with important information the user would want preserved across sessions:
+
+- Key decisions made
+- User preferences discovered
+- Project-specific patterns
+- Solutions to problems encountered
+
+Keep entries concise. Remove outdated information. Organize by topic.

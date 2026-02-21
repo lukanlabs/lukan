@@ -1,0 +1,15 @@
+[package]
+name = "lukan-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lukan-core.workspace = true
+lukan-providers.workspace = true
+lukan-tools.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true

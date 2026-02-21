@@ -1,0 +1,7 @@
+The conversation has been compacted to reduce context size. Previous messages have been summarized.
+
+When continuing after compaction:
+- The user's original intent and goals are preserved in the summary
+- File changes made before compaction are already applied
+- You may need to re-read files to refresh your understanding
+- Continue working towards the user's goals naturally

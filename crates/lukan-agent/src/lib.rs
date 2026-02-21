@@ -1,6 +1,7 @@
 mod agent_loop;
 pub mod message_history;
 pub mod session_manager;
+pub mod sub_agent;
 
 pub use agent_loop::{AgentConfig, AgentLoop};
 pub use message_history::MessageHistory;

@@ -4,16 +4,33 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::Utc;
+use lukan_core::config::LukanPaths;
 use lukan_core::models::events::{StopReason, StreamEvent};
-use lukan_core::models::messages::{ContentBlock, Message, MessageContent};
+use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
 use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
 use tokio::sync::{Mutex, mpsc};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::message_history::MessageHistory;
 use crate::session_manager::SessionManager;
+
+// ── Thresholds ────────────────────────────────────────────────────────────
+
+/// When context tokens reach this, trigger MEMORY.md update
+const MEMORY_UPDATE_THRESHOLD: u64 = 50_000;
+/// When context tokens reach this, trigger auto-compaction
+const COMPACTION_THRESHOLD: u64 = 150_000;
+/// Keep last N messages during compaction; summarize everything before
+const COMPACTION_KEEP_MESSAGES: usize = 10;
+
+// ── Prompts (embedded at compile time) ────────────────────────────────────
+
+const COMPACTION_SIMPLE_PROMPT: &str = include_str!("../../../prompts/compaction-simple.txt");
+const COMPACTION_WITH_MEMORY_PROMPT: &str =
+    include_str!("../../../prompts/compaction-with-memory.txt");
+const MEMORY_UPDATE_PROMPT: &str = include_str!("../../../prompts/memory_update.txt");
 
 /// Configuration for creating an AgentLoop
 pub struct AgentConfig {
@@ -44,12 +61,33 @@ pub struct AgentLoop {
     session: ChatSession,
     input_tokens: u64,
     output_tokens: u64,
+    /// Last context size (input tokens from most recent LLM call)
+    last_context_size: u64,
+    /// Tokens at last memory update
+    last_memory_update_tokens: u64,
     read_files: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 impl AgentLoop {
     /// Create a new agent with a fresh session
-    pub async fn new(config: AgentConfig) -> Result<Self> {
+    pub async fn new(mut config: AgentConfig) -> Result<Self> {
+        // Register sub-agent tools
+        config
+            .tools
+            .register(Box::new(crate::sub_agent::SubAgentTool));
+        config
+            .tools
+            .register(Box::new(crate::sub_agent::SubAgentResultTool));
+
+        // Configure the global sub-agent manager
+        crate::sub_agent::configure(
+            Arc::clone(&config.provider),
+            config.system_prompt.clone(),
+            config.cwd.clone(),
+            config.provider_name.clone(),
+            config.model_name.clone(),
+        );
+
         let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
         Ok(Self {
             provider: config.provider,
@@ -60,12 +98,30 @@ impl AgentLoop {
             session,
             input_tokens: 0,
             output_tokens: 0,
+            last_context_size: 0,
+            last_memory_update_tokens: 0,
             read_files: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
     /// Load an existing session and restore history
-    pub async fn load_session(config: AgentConfig, session_id: &str) -> Result<Self> {
+    pub async fn load_session(mut config: AgentConfig, session_id: &str) -> Result<Self> {
+        // Register sub-agent tools
+        config
+            .tools
+            .register(Box::new(crate::sub_agent::SubAgentTool));
+        config
+            .tools
+            .register(Box::new(crate::sub_agent::SubAgentResultTool));
+
+        crate::sub_agent::configure(
+            Arc::clone(&config.provider),
+            config.system_prompt.clone(),
+            config.cwd.clone(),
+            config.provider_name.clone(),
+            config.model_name.clone(),
+        );
+
         let session = SessionManager::load(session_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
@@ -81,6 +137,8 @@ impl AgentLoop {
             history,
             input_tokens: session.total_input_tokens,
             output_tokens: session.total_output_tokens,
+            last_context_size: session.last_context_size,
+            last_memory_update_tokens: session.last_memory_update_tokens,
             session,
             read_files: Arc::new(Mutex::new(HashSet::new())),
         })
@@ -158,6 +216,8 @@ impl AgentLoop {
                     } => {
                         self.input_tokens += input_tokens;
                         self.output_tokens += output_tokens;
+                        // Track last context size for compaction decisions
+                        self.last_context_size = *input_tokens;
                     }
                     StreamEvent::MessageEnd {
                         stop_reason: reason,
@@ -244,7 +304,7 @@ impl AgentLoop {
             }
 
             self.history.add(Message {
-                role: lukan_core::models::messages::Role::User,
+                role: Role::User,
                 content: MessageContent::Blocks(result_blocks),
                 tool_call_id: None,
                 name: None,
@@ -256,6 +316,9 @@ impl AgentLoop {
         // Auto-save session after each turn
         self.save_session().await?;
 
+        // Check if we need compaction or memory update (non-blocking)
+        self.check_auto_ops(&event_tx).await;
+
         Ok(())
     }
 
@@ -264,8 +327,208 @@ impl AgentLoop {
         self.session.messages = self.history.to_json();
         self.session.total_input_tokens = self.input_tokens;
         self.session.total_output_tokens = self.output_tokens;
+        self.session.last_context_size = self.last_context_size;
+        self.session.last_memory_update_tokens = self.last_memory_update_tokens;
         self.session.updated_at = Utc::now();
         SessionManager::save(&mut self.session).await
+    }
+
+    // ── Auto Operations ───────────────────────────────────────────────────
+
+    /// Check if compaction or memory update is needed
+    async fn check_auto_ops(&mut self, event_tx: &mpsc::Sender<StreamEvent>) {
+        let ctx = self.last_context_size;
+
+        // Auto-compaction at 150k context tokens
+        if ctx >= COMPACTION_THRESHOLD {
+            if let Err(e) = self.compact_history(event_tx).await {
+                error!("Compaction failed: {e}");
+            }
+            return;
+        }
+
+        // Memory update at 50k context tokens
+        if ctx >= MEMORY_UPDATE_THRESHOLD {
+            let total_used = self.input_tokens + self.output_tokens;
+            if total_used - self.last_memory_update_tokens >= MEMORY_UPDATE_THRESHOLD
+                && let Err(e) = self.update_memory().await
+            {
+                error!("Memory update failed: {e}");
+            }
+        }
+    }
+
+    // ── Compaction ────────────────────────────────────────────────────────
+
+    /// Compact history: summarize old messages, keep last N
+    async fn compact_history(&mut self, event_tx: &mpsc::Sender<StreamEvent>) -> Result<()> {
+        let messages = self.history.messages();
+        if messages.len() <= COMPACTION_KEEP_MESSAGES {
+            return Ok(());
+        }
+
+        // Notify TUI
+        let _ = event_tx
+            .send(StreamEvent::ToolProgress {
+                id: String::new(),
+                name: "system".to_string(),
+                content: "Compacting conversation...".to_string(),
+            })
+            .await;
+
+        let msg_count_before = messages.len();
+        let split = messages.len() - COMPACTION_KEEP_MESSAGES;
+        let old_messages = &messages[..split];
+        let recent_messages = &messages[split..];
+
+        let old_context = format_messages_for_context(old_messages);
+        let recent_context = format_messages_for_context(recent_messages);
+
+        let full_context = format!(
+            "--- OLDER MESSAGES (to be summarized) ---\n{old_context}\n\n\
+             --- RECENT MESSAGES (still in context, shown for reference) ---\n{recent_context}"
+        );
+
+        // Check if MEMORY.md exists
+        let memory_path = LukanPaths::global_memory_file();
+        let memory_active = tokio::fs::metadata(&memory_path).await.is_ok();
+
+        let summary;
+
+        if memory_active {
+            let current_memory = tokio::fs::read_to_string(&memory_path)
+                .await
+                .unwrap_or_else(|_| "# Project Memory\n\n".to_string());
+
+            let user_prompt = format!(
+                "Current MEMORY.md:\n```\n{current_memory}\n```\n\nConversation to summarize:\n{full_context}"
+            );
+
+            let result = self
+                .call_llm_for_memory(COMPACTION_WITH_MEMORY_PROMPT, &user_prompt)
+                .await?;
+
+            // Parse ---SUMMARY--- and ---MEMORY--- sections
+            let summary_match = extract_section(&result, "---SUMMARY---", "---MEMORY---");
+            let memory_match = extract_section(&result, "---MEMORY---", "");
+
+            summary = summary_match
+                .unwrap_or_else(|| "Previous conversation context was compacted.".to_string());
+
+            if let Some(updated_memory) = memory_match {
+                write_memory_file(&updated_memory).await;
+            }
+        } else {
+            summary = self
+                .call_llm_for_memory(COMPACTION_SIMPLE_PROMPT, &full_context)
+                .await
+                .unwrap_or_else(|_| "Previous conversation context was compacted.".to_string());
+        }
+
+        // Rebuild history: compaction message + recent messages
+        let compaction_msg = format!(
+            "[System: Conversation was auto-compacted. Below is a summary of earlier context. \
+             Continue working from where you left off — check the \"Active Task\" section for what you were doing.]\n\n\
+             {summary}"
+        );
+
+        let recent = self.history.messages()[split..].to_vec();
+        self.history.clear();
+        self.history.add_user_message(&compaction_msg);
+        for msg in recent {
+            self.history.add(msg);
+        }
+
+        // Reset token counters
+        self.session.compaction_count += 1;
+        self.session.compaction_summary = Some(summary);
+        self.input_tokens = 0;
+        self.output_tokens = 0;
+        self.last_context_size = 0;
+        self.last_memory_update_tokens = 0;
+
+        self.save_session().await?;
+
+        let msg_count_after = self.history.messages().len();
+        info!(
+            before = msg_count_before,
+            after = msg_count_after,
+            "Compacted history"
+        );
+
+        let _ = event_tx
+            .send(StreamEvent::ToolProgress {
+                id: String::new(),
+                name: "system".to_string(),
+                content: format!("Compacted: {msg_count_before} msgs → {msg_count_after} msgs."),
+            })
+            .await;
+
+        Ok(())
+    }
+
+    // ── Memory Update ─────────────────────────────────────────────────────
+
+    /// Update MEMORY.md with insights from the conversation
+    async fn update_memory(&mut self) -> Result<()> {
+        let messages = self.history.messages();
+        let context = format_messages_for_context(messages);
+
+        let memory_path = LukanPaths::global_memory_file();
+        let current_memory = tokio::fs::read_to_string(&memory_path)
+            .await
+            .unwrap_or_else(|_| "# Project Memory\n\n".to_string());
+
+        let user_prompt = format!(
+            "Current MEMORY.md:\n```\n{current_memory}\n```\n\n\
+             Conversation:\n{context}\n\n\
+             Analyze the conversation and update MEMORY.md. \
+             Preserve existing useful information, add new patterns/decisions/solutions \
+             discovered in the conversation. Remove outdated information. \
+             Output only the updated markdown content."
+        );
+
+        let updated = self
+            .call_llm_for_memory(MEMORY_UPDATE_PROMPT, &user_prompt)
+            .await?;
+
+        if !updated.is_empty() {
+            write_memory_file(&updated).await;
+        }
+
+        self.last_memory_update_tokens = self.input_tokens + self.output_tokens;
+        info!("Updated MEMORY.md");
+
+        Ok(())
+    }
+
+    // ── LLM Helper ────────────────────────────────────────────────────────
+
+    /// Make a simple LLM call for compaction/memory (no tools, no streaming to UI)
+    async fn call_llm_for_memory(&self, system_prompt: &str, user_message: &str) -> Result<String> {
+        let params = StreamParams {
+            system_prompt: SystemPrompt::Text(system_prompt.to_string()),
+            messages: vec![Message::user(user_message)],
+            tools: vec![],
+        };
+
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(256);
+        let provider = Arc::clone(&self.provider);
+
+        tokio::spawn(async move {
+            if let Err(e) = provider.stream(params, tx).await {
+                error!("Memory LLM call error: {e}");
+            }
+        });
+
+        let mut result = String::new();
+        while let Some(event) = rx.recv().await {
+            if let StreamEvent::TextDelta { text } = event {
+                result.push_str(&text);
+            }
+        }
+
+        Ok(result)
     }
 
     /// Execute multiple tool calls in parallel
@@ -326,5 +589,96 @@ impl AgentLoop {
         }
 
         results
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+/// Format messages into a text representation for compaction/memory LLM calls
+fn format_messages_for_context(messages: &[Message]) -> String {
+    let mut output = String::new();
+    for msg in messages {
+        let role = match msg.role {
+            Role::User => "User",
+            Role::Assistant => "Assistant",
+            Role::Tool => "Tool",
+        };
+
+        match &msg.content {
+            MessageContent::Text(text) => {
+                output.push_str(&format!("[{role}]: {text}\n\n"));
+            }
+            MessageContent::Blocks(blocks) => {
+                for block in blocks {
+                    match block {
+                        ContentBlock::Text { text } => {
+                            output.push_str(&format!("[{role}]: {text}\n\n"));
+                        }
+                        ContentBlock::Thinking { text } => {
+                            output.push_str(&format!("[{role} thinking]: {text}\n\n"));
+                        }
+                        ContentBlock::ToolUse { name, input, .. } => {
+                            let input_str = serde_json::to_string(input).unwrap_or_default();
+                            let truncated = if input_str.len() > 500 {
+                                format!("{}...", &input_str[..500])
+                            } else {
+                                input_str
+                            };
+                            output.push_str(&format!("[{role} tool_use]: {name}({truncated})\n\n"));
+                        }
+                        ContentBlock::ToolResult {
+                            content, is_error, ..
+                        } => {
+                            let prefix = if *is_error == Some(true) {
+                                "ERROR"
+                            } else {
+                                "result"
+                            };
+                            // Truncate long tool results
+                            let truncated = if content.len() > 2000 {
+                                format!("{}...(truncated)", &content[..2000])
+                            } else {
+                                content.clone()
+                            };
+                            output.push_str(&format!("[Tool {prefix}]: {truncated}\n\n"));
+                        }
+                        ContentBlock::Image { .. } => {
+                            output.push_str(&format!("[{role}]: [Image]\n\n"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    output
+}
+
+/// Extract a section between two markers from LLM output
+fn extract_section(text: &str, start_marker: &str, end_marker: &str) -> Option<String> {
+    let start = text.find(start_marker)?;
+    let content_start = start + start_marker.len();
+    let content = if end_marker.is_empty() {
+        &text[content_start..]
+    } else if let Some(end) = text[content_start..].find(end_marker) {
+        &text[content_start..content_start + end]
+    } else {
+        &text[content_start..]
+    };
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Write MEMORY.md to disk
+async fn write_memory_file(content: &str) {
+    let path = LukanPaths::global_memory_file();
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if let Err(e) = tokio::fs::write(&path, content).await {
+        error!("Failed to write MEMORY.md: {e}");
     }
 }

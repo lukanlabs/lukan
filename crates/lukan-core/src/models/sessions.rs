@@ -22,6 +22,15 @@ pub struct ChatSession {
     pub total_output_tokens: u64,
     #[serde(default)]
     pub compaction_count: u32,
+    /// Tokens at last memory update (to track when next update is due)
+    #[serde(default)]
+    pub last_memory_update_tokens: u64,
+    /// Last context size (input tokens from most recent LLM call)
+    #[serde(default)]
+    pub last_context_size: u64,
+    /// Summary from last compaction
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_summary: Option<String>,
 }
 
 /// Summary of a session for listing
@@ -52,6 +61,9 @@ impl ChatSession {
             total_input_tokens: 0,
             total_output_tokens: 0,
             compaction_count: 0,
+            last_memory_update_tokens: 0,
+            last_context_size: 0,
+            compaction_summary: None,
         }
     }
 

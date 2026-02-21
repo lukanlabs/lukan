@@ -44,8 +44,35 @@ impl<'a> ChatWidget<'a> {
                     }
                     lines.push(Line::from(""));
                 }
+                "tool_call" => {
+                    // ● ToolName(input) — yellow bullet, white content
+                    for line in msg.content.lines() {
+                        if line.starts_with('●') {
+                            lines.push(Line::from(vec![
+                                Span::styled("● ", Style::default().fg(Color::Yellow)),
+                                Span::styled(
+                                    line.trim_start_matches('●').trim_start().to_string(),
+                                    Style::default().fg(Color::White),
+                                ),
+                            ]));
+                        } else {
+                            lines.push(Line::from(Span::styled(
+                                line.to_string(),
+                                Style::default().fg(Color::White),
+                            )));
+                        }
+                    }
+                }
+                "tool_result" => {
+                    // ⎿ result lines — dim gray
+                    for line in msg.content.lines() {
+                        lines.push(Line::from(Span::styled(
+                            line.to_string(),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                }
                 "system" => {
-                    // System messages: no header, dim style
                     for line in msg.content.lines() {
                         lines.push(Line::from(Span::styled(
                             line.to_string(),

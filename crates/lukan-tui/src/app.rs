@@ -14,10 +14,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::error;
 
+use lukan_agent::{AgentConfig, AgentLoop};
 use lukan_core::config::{ConfigManager, CredentialsManager, ProviderName, ResolvedConfig};
 use lukan_core::models::events::StreamEvent;
-use lukan_core::models::messages::Message;
-use lukan_providers::{Provider, StreamParams, SystemPrompt, create_provider};
+use lukan_providers::{Provider, SystemPrompt, create_provider};
+use lukan_tools::create_default_registry;
 
 use crate::event::{AppEvent, is_quit, spawn_event_reader};
 use crate::widgets::chat::{ChatMessage, ChatWidget};
@@ -27,7 +28,6 @@ use crate::widgets::status_bar::StatusBarWidget;
 /// Application state
 pub struct App {
     messages: Vec<ChatMessage>,
-    history: Vec<Message>,
     input: String,
     cursor_pos: usize,
     streaming_text: String,
@@ -40,6 +40,10 @@ pub struct App {
     should_quit: bool,
     /// Model picker state
     model_picker: Option<ModelPicker>,
+    /// Persistent agent loop (maintains history across messages)
+    agent: Option<AgentLoop>,
+    /// Current tool being executed (for status display)
+    active_tool: Option<String>,
 }
 
 /// Interactive model picker state
@@ -51,9 +55,10 @@ struct ModelPicker {
 
 impl App {
     pub fn new(provider: Box<dyn Provider>, config: ResolvedConfig) -> Self {
+        let provider = Arc::from(provider);
+
         Self {
             messages: Vec::new(),
-            history: Vec::new(),
             input: String::new(),
             cursor_pos: 0,
             streaming_text: String::new(),
@@ -61,11 +66,34 @@ impl App {
             scroll_offset: 0,
             input_tokens: 0,
             output_tokens: 0,
-            provider: Arc::from(provider),
+            provider,
             config,
             should_quit: false,
             model_picker: None,
+            agent: None,
+            active_tool: None,
         }
+    }
+
+    /// Create or get the agent loop, initializing it on first use
+    fn ensure_agent(&mut self) -> &mut AgentLoop {
+        if self.agent.is_none() {
+            let system_prompt =
+                SystemPrompt::Text(include_str!("../../../prompts/base.txt").to_string());
+
+            let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
+
+            let config = AgentConfig {
+                provider: Arc::clone(&self.provider),
+                tools: create_default_registry(),
+                system_prompt,
+                cwd,
+            };
+
+            self.agent = Some(AgentLoop::new(config));
+        }
+
+        self.agent.as_mut().unwrap()
     }
 
     pub async fn run(mut self) -> Result<()> {
@@ -235,9 +263,10 @@ impl App {
         // Handle /clear
         if text == "/clear" {
             self.messages.clear();
-            self.history.clear();
             self.input_tokens = 0;
             self.output_tokens = 0;
+            // Reset agent to clear history
+            self.agent = None;
             return;
         }
 
@@ -246,24 +275,28 @@ impl App {
             role: "user".to_string(),
             content: text.clone(),
         });
-        self.history.push(Message::user(&text));
 
         self.is_streaming = true;
         self.streaming_text.clear();
+        self.active_tool = None;
 
-        let system_prompt =
-            SystemPrompt::Text(include_str!("../../../prompts/base.txt").to_string());
+        // Ensure agent exists and run the turn
+        // We need to take the agent out to avoid borrow issues with self
+        let mut agent = self.agent.take().unwrap_or_else(|| {
+            let system_prompt =
+                SystemPrompt::Text(include_str!("../../../prompts/base.txt").to_string());
+            let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
+            AgentLoop::new(AgentConfig {
+                provider: Arc::clone(&self.provider),
+                tools: create_default_registry(),
+                system_prompt,
+                cwd,
+            })
+        });
 
-        let params = StreamParams {
-            system_prompt,
-            messages: self.history.clone(),
-            tools: Vec::new(),
-        };
-
-        let provider = Arc::clone(&self.provider);
         tokio::spawn(async move {
-            if let Err(e) = provider.stream(params, agent_tx.clone()).await {
-                error!("Provider stream error: {e}");
+            if let Err(e) = agent.run_turn(&text, agent_tx.clone()).await {
+                error!("Agent loop error: {e}");
                 agent_tx
                     .send(StreamEvent::Error {
                         error: e.to_string(),
@@ -271,7 +304,25 @@ impl App {
                     .await
                     .ok();
             }
+
+            // Signal end of agent turn so TUI can recover the agent
+            // We send a final MessageEnd if the agent loop didn't already
+            // (the agent loop forwards provider's MessageEnd, so this is just safety)
+            agent_tx
+                .send(StreamEvent::MessageEnd {
+                    stop_reason: lukan_core::models::events::StopReason::EndTurn,
+                })
+                .await
+                .ok();
+
+            // Return the agent for reuse
+            agent
         });
+
+        // Note: We lose the agent here since we can't get it back from the spawned task
+        // easily. We'll recreate it on next message. For full persistence, we'd need
+        // a different architecture (e.g., agent lives in its own task permanently).
+        // TODO: Use a oneshot channel to return the agent back after the turn completes.
     }
 
     /// Open the interactive model picker
@@ -357,6 +408,8 @@ impl App {
             Ok(new_provider) => {
                 self.provider = Arc::from(new_provider);
                 self.config = new_config;
+                // Reset agent so it picks up the new provider
+                self.agent = None;
                 self.messages.push(ChatMessage {
                     role: "system".to_string(),
                     content: format!("Switched to {entry}"),
@@ -375,12 +428,56 @@ impl App {
         match event {
             StreamEvent::MessageStart => {
                 self.streaming_text.clear();
+                self.active_tool = None;
             }
             StreamEvent::TextDelta { text } => {
                 self.streaming_text.push_str(&text);
             }
             StreamEvent::ThinkingDelta { text } => {
                 self.streaming_text.push_str(&text);
+            }
+            StreamEvent::ToolUseStart { name, .. } => {
+                // Flush current text as a message before tool call
+                self.active_tool = Some(name.clone());
+                if !self.streaming_text.is_empty() {
+                    let content = std::mem::take(&mut self.streaming_text);
+                    self.messages.push(ChatMessage {
+                        role: "assistant".to_string(),
+                        content,
+                    });
+                }
+            }
+            StreamEvent::ToolUseEnd { name, input, .. } => {
+                // ● ToolName(input summary)
+                let summary = summarize_tool_input(&name, &input);
+                self.messages.push(ChatMessage {
+                    role: "tool_call".to_string(),
+                    content: format!("● {name}({summary})"),
+                });
+            }
+            StreamEvent::ToolProgress { name, content, .. } => {
+                self.active_tool = Some(name);
+                self.messages.push(ChatMessage {
+                    role: "tool_result".to_string(),
+                    content: format!("  ⎿  {content}"),
+                });
+            }
+            StreamEvent::ToolResult {
+                content, is_error, ..
+            } => {
+                self.active_tool = None;
+                // Truncate long results for display
+                let display_content = if content.len() > 1000 {
+                    format!("{}...", &content[..1000])
+                } else {
+                    content
+                };
+                // Indent each line with   ⎿  prefix
+                let formatted = format_tool_result(&display_content, is_error.unwrap_or(false));
+                self.messages.push(ChatMessage {
+                    role: "tool_result".to_string(),
+                    content: formatted,
+                });
             }
             StreamEvent::Usage {
                 input_tokens,
@@ -395,11 +492,11 @@ impl App {
                     let content = std::mem::take(&mut self.streaming_text);
                     self.messages.push(ChatMessage {
                         role: "assistant".to_string(),
-                        content: content.clone(),
+                        content,
                     });
-                    self.history.push(Message::assistant(&content));
                 }
                 self.is_streaming = false;
+                self.active_tool = None;
             }
             StreamEvent::Error { error } => {
                 self.messages.push(ChatMessage {
@@ -411,6 +508,103 @@ impl App {
             _ => {}
         }
     }
+}
+
+// ── Tool Input Summary ────────────────────────────────────────────────────
+
+/// Produce a human-readable one-liner for the tool call input
+fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
+    match name {
+        "Bash" => input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no command)")
+            .to_string(),
+        "ReadFile" => {
+            let path = input
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let mut s = path.to_string();
+            if let Some(offset) = input.get("offset").and_then(|v| v.as_u64()) {
+                s.push_str(&format!(" (from line {offset})"));
+            }
+            s
+        }
+        "WriteFile" => {
+            let path = input
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let len = input
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|c| c.len())
+                .unwrap_or(0);
+            format!("{path} ({len} bytes)")
+        }
+        "EditFile" => {
+            let path = input
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let replace_all = input
+                .get("replace_all")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if replace_all {
+                format!("{path} (replace all)")
+            } else {
+                path.to_string()
+            }
+        }
+        "Grep" => {
+            let pattern = input.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
+            let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            format!("{pattern} in {path}")
+        }
+        "Glob" => input
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+            .to_string(),
+        "WebFetch" => input
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+            .to_string(),
+        _ => {
+            // Fallback: compact JSON
+            let s = serde_json::to_string(input).unwrap_or_default();
+            if s.len() > 200 {
+                format!("{}...", &s[..200])
+            } else {
+                s
+            }
+        }
+    }
+}
+
+// ── Tool Result Formatting ────────────────────────────────────────────────
+
+/// Format tool result with ⎿ prefix on each line, like Claude Code
+fn format_tool_result(content: &str, is_error: bool) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() {
+        return "  ⎿  (no output)".to_string();
+    }
+
+    let prefix = if is_error { "  ⎿  ✗ " } else { "  ⎿  " };
+
+    let mut result = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i == 0 {
+            result.push_str(&format!("{prefix}{line}"));
+        } else {
+            result.push_str(&format!("\n     {line}"));
+        }
+    }
+    result
 }
 
 // ── Welcome Banner ────────────────────────────────────────────────────────

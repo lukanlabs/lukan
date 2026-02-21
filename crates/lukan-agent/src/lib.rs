@@ -1,3 +1,3 @@
-#![allow(dead_code)]
+mod agent_loop;
 
-// Stub — Phase 2 will implement agent loop, message history, system prompt
+pub use agent_loop::{AgentConfig, AgentLoop};

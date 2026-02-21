@@ -6,6 +6,8 @@ edition.workspace = true
 [dependencies]
 lukan-core.workspace = true
 lukan-providers.workspace = true
+lukan-agent.workspace = true
+lukan-tools.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 tokio.workspace = true

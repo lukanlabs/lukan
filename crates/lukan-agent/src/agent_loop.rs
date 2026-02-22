@@ -12,7 +12,7 @@ use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
 use rand::Rng;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, watch};
 use tracing::{debug, error, info, warn};
 
 use crate::message_history::MessageHistory;
@@ -44,6 +44,8 @@ pub struct AgentConfig {
     pub provider_name: String,
     /// Model name for session metadata
     pub model_name: String,
+    /// Optional signal receiver for Alt+B (send Bash to background)
+    pub bg_signal: Option<watch::Receiver<()>>,
 }
 
 /// Pending tool call accumulated from stream events
@@ -68,6 +70,8 @@ pub struct AgentLoop {
     /// Tokens at last memory update
     last_memory_update_tokens: u64,
     read_files: Arc<Mutex<HashSet<PathBuf>>>,
+    /// Optional signal receiver for Alt+B (send Bash to background)
+    bg_signal: Option<watch::Receiver<()>>,
 }
 
 impl AgentLoop {
@@ -91,6 +95,7 @@ impl AgentLoop {
         )
         .await;
 
+        let bg_signal = config.bg_signal.take();
         let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
         Ok(Self {
             provider: config.provider,
@@ -104,6 +109,7 @@ impl AgentLoop {
             last_context_size: 0,
             last_memory_update_tokens: 0,
             read_files: Arc::new(Mutex::new(HashSet::new())),
+            bg_signal,
         })
     }
 
@@ -126,6 +132,7 @@ impl AgentLoop {
         )
         .await;
 
+        let bg_signal = config.bg_signal.take();
         let session = SessionManager::load(session_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
@@ -145,6 +152,7 @@ impl AgentLoop {
             last_memory_update_tokens: session.last_memory_update_tokens,
             session,
             read_files: Arc::new(Mutex::new(HashSet::new())),
+            bg_signal,
         })
     }
 
@@ -599,6 +607,7 @@ impl AgentLoop {
             let id = tool_call.id.clone();
             let input = tool_call.input.clone();
             let tx = event_tx.clone();
+            let bg_signal = self.bg_signal.clone();
 
             handles.push(tokio::spawn(async move {
                 // Send progress start
@@ -614,6 +623,7 @@ impl AgentLoop {
                     progress_tx: None,
                     read_files,
                     cwd,
+                    bg_signal,
                 };
 
                 match registry.execute(&name, input, &ctx).await {

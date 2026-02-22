@@ -12,12 +12,12 @@ use ratatui::{
 use std::collections::HashMap;
 use std::io::{Stdout, stdout};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::error;
 
 use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
 use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig};
-use lukan_core::models::events::StreamEvent;
+use lukan_core::models::events::{StopReason, StreamEvent};
 use lukan_core::models::sessions::SessionSummary;
 use lukan_providers::{Provider, SystemPrompt, create_provider};
 use lukan_tools::create_default_registry;
@@ -25,10 +25,11 @@ use lukan_tools::create_default_registry;
 use chrono::Utc;
 
 use crate::event::{AppEvent, is_quit, spawn_event_reader};
+use crate::widgets::bg_picker::{BgEntry, BgPicker, BgPickerView, BgPickerWidget};
 use crate::widgets::chat::{
     ChatMessage, ChatWidget, build_message_lines, physical_row_count, sanitize_for_display,
 };
-use crate::widgets::input::InputWidget;
+use crate::widgets::input::{InputWidget, cursor_position, input_height};
 use crate::widgets::status_bar::StatusBarWidget;
 
 /// Application state
@@ -68,6 +69,14 @@ pub struct App {
     force_redraw: bool,
     /// First ESC was pressed — show hint and clear on second ESC
     esc_pending: bool,
+    /// When set: (start_byte, end_byte, preview_label). Paste block inside self.input.
+    paste_info: Option<(usize, usize, String)>,
+    /// Background process picker state
+    bg_picker: Option<BgPicker>,
+    /// Sender to signal Alt+B (send running Bash to background)
+    bg_signal_tx: watch::Sender<()>,
+    /// Receiver half (cloned into AgentConfig)
+    bg_signal_rx: watch::Receiver<()>,
 }
 
 /// Interactive model picker state
@@ -94,6 +103,7 @@ struct SessionPicker {
 impl App {
     pub fn new(provider: Box<dyn Provider>, config: ResolvedConfig) -> Self {
         let provider = Arc::from(provider);
+        let (bg_signal_tx, bg_signal_rx) = watch::channel(());
 
         Self {
             messages: Vec::new(),
@@ -118,6 +128,41 @@ impl App {
             reasoning_picker: None,
             force_redraw: false,
             esc_pending: false,
+            paste_info: None,
+            bg_picker: None,
+            bg_signal_tx,
+            bg_signal_rx,
+        }
+    }
+
+    /// Build the display text for the input widget.
+    /// Shows: text_before + [Pasted Content N chars] + text_after
+    fn display_input(&self) -> String {
+        if let Some((start, end, ref label)) = self.paste_info {
+            let before = &self.input[..start];
+            let after = &self.input[end..];
+            format!("{before}{label}{after}")
+        } else {
+            self.input.clone()
+        }
+    }
+
+    /// Convert a byte position in self.input to a byte position in the display string.
+    fn display_cursor(&self) -> usize {
+        if let Some((start, end, ref label)) = self.paste_info {
+            if self.cursor_pos <= start {
+                // Before paste block — maps 1:1
+                self.cursor_pos
+            } else if self.cursor_pos < end {
+                // Inside paste block — show at start of label
+                start + label.len()
+            } else {
+                // After paste block — offset by (label.len - paste_len)
+                let paste_len = end - start;
+                self.cursor_pos - paste_len + label.len()
+            }
+        } else {
+            self.cursor_pos
         }
     }
 
@@ -145,6 +190,7 @@ impl App {
             cwd,
             provider_name: self.config.config.provider.to_string(),
             model_name: self.config.effective_model(),
+            bg_signal: Some(self.bg_signal_rx.clone()),
         };
 
         match AgentLoop::new(config).await {
@@ -162,6 +208,8 @@ impl App {
         // otherwise the first rendered line inherits the shell prompt's column offset.
         stdout().execute(crossterm::cursor::MoveToColumn(0))?;
         enable_raw_mode()?;
+        // Enable bracketed paste so we get Paste events instead of individual keystrokes
+        stdout().execute(crossterm::event::EnableBracketedPaste)?;
         // NO AlternateScreen, NO EnableMouseCapture — we use inline viewport
         // so content scrolls into the native terminal scrollback.
         let backend = CrosstermBackend::new(stdout());
@@ -189,8 +237,10 @@ impl App {
             // (skip when session picker is open — insert_before shifts the
             // viewport and leaves visual artifacts over the picker overlay)
             let term_size = terminal.size()?;
-            let chat_area_h = term_size.height.saturating_sub(4);
-            if self.session_picker.is_none() {
+            let display_input = self.display_input();
+            let cur_input_h = input_height(&display_input, term_size.width, 8);
+            let chat_area_h = term_size.height.saturating_sub(cur_input_h + 1);
+            if self.session_picker.is_none() && self.bg_picker.is_none() {
                 commit_overflow(
                     &self.messages,
                     &mut self.committed_msg_idx,
@@ -202,11 +252,13 @@ impl App {
 
             // Pre-compute palette state for this frame
             let filtered_cmds = filtered_commands(&self.input);
+            let bg_picker_active = self.bg_picker.is_some();
             let cmd_palette_active = !filtered_cmds.is_empty()
                 && !self.is_streaming
                 && self.session_picker.is_none()
                 && self.model_picker.is_none()
-                && self.reasoning_picker.is_none();
+                && self.reasoning_picker.is_none()
+                && !bg_picker_active;
             let model_picker_active = self.model_picker.is_some() && self.session_picker.is_none();
             let reasoning_picker_active = self.reasoning_picker.is_some();
             let palette_visible =
@@ -230,6 +282,8 @@ impl App {
                 self.force_redraw = false;
             }
 
+            let input_h = cur_input_h;
+
             // Draw UI
             terminal.draw(|frame| {
                 let area = frame.area();
@@ -240,7 +294,7 @@ impl App {
                         .direction(Direction::Vertical)
                         .constraints([
                             Constraint::Min(1),
-                            Constraint::Length(3),
+                            Constraint::Length(input_h),
                             Constraint::Length(palette_h),
                             Constraint::Length(1),
                         ])
@@ -251,15 +305,18 @@ impl App {
                         .direction(Direction::Vertical)
                         .constraints([
                             Constraint::Min(1),
-                            Constraint::Length(3),
+                            Constraint::Length(input_h),
                             Constraint::Length(1),
                         ])
                         .split(area);
                     (chunks[0], chunks[1], None, chunks[2])
                 };
 
-                // Chat (or session picker overlay)
-                if let Some(ref picker) = self.session_picker {
+                // Chat (or overlay pickers)
+                if let Some(ref picker) = self.bg_picker {
+                    let widget = BgPickerWidget::new(picker);
+                    frame.render_widget(widget, chat_area);
+                } else if let Some(ref picker) = self.session_picker {
                     let widget = SessionPickerWidget::new(picker);
                     frame.render_widget(widget, chat_area);
                 } else {
@@ -286,14 +343,23 @@ impl App {
                     }
                 }
 
-                // Input
-                let input_widget = if self.session_picker.is_some()
+                // Input — show paste preview + typed-after text when available
+                let di = self.display_input();
+                let dc = self.display_cursor();
+                let input_widget = if self.bg_picker.is_some() {
+                    let hint = match self.bg_picker.as_ref().map(|p| p.view) {
+                        Some(BgPickerView::List) => "↑↓ navigate · l=logs · k=kill · ESC close",
+                        Some(BgPickerView::Log) => "ESC=back · k=kill",
+                        None => "",
+                    };
+                    InputWidget::new(hint, 0, false)
+                } else if self.session_picker.is_some()
                     || self.model_picker.is_some()
                     || self.reasoning_picker.is_some()
                 {
                     InputWidget::new("↑↓ navigate · Enter select · ESC close", 0, false)
                 } else {
-                    InputWidget::new(&self.input, self.cursor_pos, !self.is_streaming)
+                    InputWidget::new(&di, dc, !self.is_streaming)
                 };
                 frame.render_widget(input_widget, input_area);
 
@@ -303,13 +369,13 @@ impl App {
                     let hint_len = hint.len() as u16;
                     if input_area.width > hint_len + 4 {
                         let x = input_area.x + input_area.width - hint_len - 1;
-                        let y = input_area.y + 1; // inside the border
+                        let y = input_area.y + input_area.height.saturating_sub(2); // last content row
                         let buf = frame.buffer_mut();
                         buf.set_string(
                             x,
                             y,
                             hint,
-                            Style::default().fg(Color::Yellow),
+                            Style::default().fg(Color::DarkGray),
                         );
                     }
                 }
@@ -322,17 +388,18 @@ impl App {
                     self.input_tokens,
                     self.output_tokens,
                     self.is_streaming,
+                    self.active_tool.as_deref(),
                 );
                 frame.render_widget(status, status_area);
 
                 // Set cursor position only when not in picker and not streaming
-                if self.session_picker.is_none()
+                if self.bg_picker.is_none()
+                    && self.session_picker.is_none()
                     && self.model_picker.is_none()
                     && !self.is_streaming
                 {
-                    let cursor_x = input_area.x + 1 + self.cursor_pos as u16;
-                    let cursor_y = input_area.y + 1;
-                    frame.set_cursor_position((cursor_x, cursor_y));
+                    let (cx, cy) = cursor_position(&di, dc, input_area);
+                    frame.set_cursor_position((cx, cy));
                 }
             })?;
 
@@ -341,7 +408,97 @@ impl App {
                 Some(event) = event_rx.recv() => {
                     match event {
                         AppEvent::Key(key) => {
-                            if self.reasoning_picker.is_some() {
+                            if self.bg_picker.is_some() {
+                                // Background process picker mode
+                                match key.code {
+                                    KeyCode::Up => {
+                                        if let Some(ref mut picker) = self.bg_picker
+                                            && picker.view == BgPickerView::List
+                                            && picker.selected > 0
+                                        {
+                                            picker.selected -= 1;
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if let Some(ref mut picker) = self.bg_picker
+                                            && picker.view == BgPickerView::List
+                                            && picker.selected + 1 < picker.entries.len()
+                                        {
+                                            picker.selected += 1;
+                                        }
+                                    }
+                                    KeyCode::Char('l') | KeyCode::Enter => {
+                                        if let Some(ref mut picker) = self.bg_picker
+                                            && picker.view == BgPickerView::List
+                                        {
+                                            picker.load_log();
+                                        }
+                                    }
+                                    KeyCode::Char('k') | KeyCode::Delete => {
+                                        if let Some(ref mut picker) = self.bg_picker {
+                                            let pid = if picker.view == BgPickerView::Log {
+                                                Some(picker.log_pid)
+                                            } else {
+                                                picker.selected_pid()
+                                            };
+                                            if let Some(pid) = pid {
+                                                // Get command name before killing for the message
+                                                let cmd_preview = picker
+                                                    .entries
+                                                    .iter()
+                                                    .find(|e| e.pid == pid)
+                                                    .map(|e| {
+                                                        if e.command.len() > 40 {
+                                                            format!("{}…", &e.command[..39])
+                                                        } else {
+                                                            e.command.clone()
+                                                        }
+                                                    })
+                                                    .unwrap_or_default();
+
+                                                let was_alive =
+                                                    lukan_tools::bg_processes::is_process_alive(pid);
+                                                if was_alive {
+                                                    lukan_tools::bg_processes::kill_bg_process(pid);
+                                                }
+                                                // Remove from tracker so it disappears from the list
+                                                lukan_tools::bg_processes::remove_bg_process(pid);
+
+                                                // Show confirmation
+                                                let action =
+                                                    if was_alive { "Killed" } else { "Removed" };
+                                                self.messages.push(ChatMessage::new(
+                                                    "system",
+                                                    format!("{action} process {pid} ({cmd_preview})"),
+                                                ));
+
+                                                // Refresh and go back to list view
+                                                picker.refresh();
+                                                if picker.view == BgPickerView::Log {
+                                                    picker.view = BgPickerView::List;
+                                                }
+
+                                                // Close picker if no more processes
+                                                if picker.entries.is_empty() {
+                                                    self.bg_picker = None;
+                                                    self.force_redraw = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Esc => {
+                                        if let Some(ref mut picker) = self.bg_picker {
+                                            if picker.view == BgPickerView::Log {
+                                                picker.view = BgPickerView::List;
+                                            } else {
+                                                self.bg_picker = None;
+                                                self.force_redraw = true;
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            } else if self.reasoning_picker.is_some() {
                                 // Reasoning effort picker mode
                                 match key.code {
                                     KeyCode::Up => {
@@ -443,6 +600,16 @@ impl App {
                                 }
                             } else if is_quit(&key) {
                                 self.should_quit = true;
+                            } else if key.code == KeyCode::Char('b')
+                                && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
+                                && self.is_streaming
+                            {
+                                // Alt+B: send running Bash command to background
+                                let _ = self.bg_signal_tx.send(());
+                                self.messages.push(ChatMessage::new(
+                                    "system",
+                                    "Sending current command to background...",
+                                ));
                             } else if !self.is_streaming {
                                 let cmds = filtered_commands(&self.input);
                                 let has_palette = !cmds.is_empty()
@@ -464,18 +631,17 @@ impl App {
                                     }
                                     KeyCode::Esc => {
                                         if has_palette && !self.esc_pending {
-                                            // Close palette first
                                             self.input.clear();
                                             self.cursor_pos = 0;
                                             self.cmd_palette_idx = 0;
+                                            self.paste_info = None;
                                         } else if self.esc_pending {
-                                            // Second ESC: clear input
                                             self.input.clear();
                                             self.cursor_pos = 0;
                                             self.cmd_palette_idx = 0;
                                             self.esc_pending = false;
+                                            self.paste_info = None;
                                         } else if !self.input.is_empty() {
-                                            // First ESC with text: show hint
                                             self.esc_pending = true;
                                         }
                                     }
@@ -492,27 +658,83 @@ impl App {
                                         }
                                     }
                                     KeyCode::Char(c) => {
+                                        let clen = c.len_utf8();
                                         self.input.insert(self.cursor_pos, c);
-                                        self.cursor_pos += 1;
+                                        // Shift paste boundaries if inserting before/at start
+                                        if let Some((ref mut s, ref mut e, _)) = self.paste_info
+                                            && self.cursor_pos <= *s
+                                        {
+                                            *s += clen;
+                                            *e += clen;
+                                        }
+                                        self.cursor_pos += clen;
                                         self.cmd_palette_idx = 0;
                                         self.esc_pending = false;
                                     }
                                     KeyCode::Backspace => {
-                                        if self.cursor_pos > 0 {
-                                            self.cursor_pos -= 1;
-                                            self.input.remove(self.cursor_pos);
-                                            self.cmd_palette_idx = 0;
-                                            self.esc_pending = false;
+                                        if let Some((ps, pe, _)) = self.paste_info {
+                                            if self.cursor_pos == pe {
+                                                // At paste end → delete entire paste block
+                                                self.input.drain(ps..pe);
+                                                self.cursor_pos = ps;
+                                                self.paste_info = None;
+                                            } else if self.cursor_pos > pe && self.cursor_pos > 0 {
+                                                // After paste block — normal delete
+                                                let prev = self.input[..self.cursor_pos]
+                                                    .char_indices().next_back()
+                                                    .map(|(i, _)| i).unwrap_or(0);
+                                                self.input.drain(prev..self.cursor_pos);
+                                                self.cursor_pos = prev;
+                                            } else if self.cursor_pos <= ps && self.cursor_pos > 0 {
+                                                // Before paste block — normal delete, shift paste
+                                                let prev = self.input[..self.cursor_pos]
+                                                    .char_indices().next_back()
+                                                    .map(|(i, _)| i).unwrap_or(0);
+                                                let removed = self.cursor_pos - prev;
+                                                self.input.drain(prev..self.cursor_pos);
+                                                self.cursor_pos = prev;
+                                                if let Some((ref mut s, ref mut e, _)) = self.paste_info {
+                                                    *s -= removed;
+                                                    *e -= removed;
+                                                }
+                                            }
+                                        } else if self.cursor_pos > 0 {
+                                            let prev = self.input[..self.cursor_pos]
+                                                .char_indices().next_back()
+                                                .map(|(i, _)| i).unwrap_or(0);
+                                            self.input.drain(prev..self.cursor_pos);
+                                            self.cursor_pos = prev;
                                         }
+                                        self.cmd_palette_idx = 0;
+                                        self.esc_pending = false;
                                     }
                                     KeyCode::Left => {
                                         if self.cursor_pos > 0 {
-                                            self.cursor_pos -= 1;
+                                            if let Some((ps, pe, _)) = self.paste_info
+                                                && self.cursor_pos > ps && self.cursor_pos <= pe
+                                            {
+                                                // Jump over paste block
+                                                self.cursor_pos = ps;
+                                            } else {
+                                                self.cursor_pos = self.input[..self.cursor_pos]
+                                                    .char_indices().next_back()
+                                                    .map(|(i, _)| i).unwrap_or(0);
+                                            }
                                         }
                                     }
                                     KeyCode::Right => {
                                         if self.cursor_pos < self.input.len() {
-                                            self.cursor_pos += 1;
+                                            if let Some((ps, pe, _)) = self.paste_info
+                                                && self.cursor_pos >= ps && self.cursor_pos < pe
+                                            {
+                                                // Jump over paste block
+                                                self.cursor_pos = pe;
+                                            } else {
+                                                self.cursor_pos = self.input[self.cursor_pos..]
+                                                    .char_indices().nth(1)
+                                                    .map(|(i, _)| self.cursor_pos + i)
+                                                    .unwrap_or(self.input.len());
+                                            }
                                         }
                                     }
                                     KeyCode::Home => self.cursor_pos = 0,
@@ -521,8 +743,30 @@ impl App {
                                 }
                             }
                         }
+                        AppEvent::Paste(text) => {
+                            if !self.is_streaming
+                                && self.session_picker.is_none()
+                                && self.model_picker.is_none()
+                                && self.reasoning_picker.is_none()
+                            {
+                                let char_count = text.len();
+                                let label = format!("[Pasted Content {char_count} chars]");
+                                let start = self.cursor_pos;
+                                self.input.insert_str(start, &text);
+                                let end = start + text.len();
+                                self.cursor_pos = end;
+                                self.paste_info = Some((start, end, label));
+                                self.esc_pending = false;
+                                self.cmd_palette_idx = 0;
+                            }
+                        }
                         AppEvent::Resize(_, _) => {}
-                        AppEvent::Tick => {}
+                        AppEvent::Tick => {
+                            // Auto-refresh bg_picker log view
+                            if let Some(ref mut picker) = self.bg_picker {
+                                picker.refresh_log();
+                            }
+                        }
                     }
                 }
                 Some(stream_event) = agent_rx.recv() => {
@@ -552,6 +796,10 @@ impl App {
             }
         }
 
+        // Clean up background processes before exiting
+        lukan_tools::bg_processes::cleanup_all();
+
+        stdout().execute(crossterm::event::DisableBracketedPaste)?;
         disable_raw_mode()?;
         println!(); // new line so the shell prompt starts clean
         Ok(())
@@ -559,8 +807,10 @@ impl App {
 
     async fn submit_message(&mut self, agent_tx: mpsc::Sender<StreamEvent>) {
         let text = self.input.trim().to_string();
+        let display = self.display_input().trim().to_string();
         self.input.clear();
         self.cursor_pos = 0;
+        self.paste_info = None;
 
         // Handle /exit
         if text == "/exit" {
@@ -751,6 +1001,29 @@ impl App {
             return;
         }
 
+        // Handle /bg
+        if text == "/bg" {
+            let processes = lukan_tools::bg_processes::get_bg_processes();
+            if processes.is_empty() {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "No background processes.",
+                ));
+            } else {
+                let entries: Vec<BgEntry> = processes
+                    .into_iter()
+                    .map(|(pid, command, started_at, alive)| BgEntry {
+                        pid,
+                        command,
+                        started_at,
+                        alive,
+                    })
+                    .collect();
+                self.bg_picker = Some(BgPicker::new(entries));
+            }
+            return;
+        }
+
         // Handle /checkpoints
         if text == "/checkpoints" {
             let checkpoints = self
@@ -780,8 +1053,8 @@ impl App {
             return;
         }
 
-        // Regular message
-        self.messages.push(ChatMessage::new("user", text.clone()));
+        // Regular message — show truncated preview in chat, send full text to agent
+        self.messages.push(ChatMessage::new("user", display));
 
         self.is_streaming = true;
         self.streaming_text.clear();
@@ -875,6 +1148,7 @@ impl App {
             cwd,
             provider_name: self.config.config.provider.to_string(),
             model_name: self.config.effective_model(),
+            bg_signal: Some(self.bg_signal_rx.clone()),
         };
 
         match AgentLoop::load_session(config, &session_id).await {
@@ -1298,13 +1572,19 @@ impl App {
                 self.input_tokens += input_tokens;
                 self.output_tokens += output_tokens;
             }
-            StreamEvent::MessageEnd { .. } => {
+            StreamEvent::MessageEnd { stop_reason } => {
                 if !self.streaming_text.is_empty() {
                     let content = std::mem::take(&mut self.streaming_text);
                     self.messages.push(ChatMessage::new("assistant", content));
                 }
-                self.is_streaming = false;
-                self.active_tool = None;
+                // When stop_reason is ToolUse, tools are about to execute —
+                // keep is_streaming=true so Alt+B works and the UI shows
+                // "streaming" status. ToolResult events will follow, and
+                // the final MessageEnd (with EndTurn) will set it to false.
+                if stop_reason != StopReason::ToolUse {
+                    self.is_streaming = false;
+                    self.active_tool = None;
+                }
             }
             StreamEvent::Error { error } => {
                 self.messages
@@ -1505,7 +1785,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
  ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
- /model  Switch model    /resume  Sessions    /clear  Clear chat    /compact  Compact    Ctrl+C  Quit"
+ /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Ctrl+C  Quit"
     )
 }
 
@@ -1514,6 +1794,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
 const COMMANDS: &[(&str, &str)] = &[
     ("/model", "choose model to use"),
     ("/resume", "resume a saved session"),
+    ("/bg", "view and manage background processes"),
     ("/clear", "clear chat and start fresh"),
     ("/compact", "compact conversation history"),
     ("/memories", "manage project memory (activate | deactivate | add <text>)"),

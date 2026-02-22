@@ -1,3 +1,4 @@
+pub mod bg_processes;
 mod bash;
 mod edit_file;
 mod glob_tool;
@@ -12,7 +13,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use lukan_core::models::tools::{ToolDefinition, ToolResult};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, watch};
 
 /// Context passed to every tool execution
 pub struct ToolContext {
@@ -22,6 +23,8 @@ pub struct ToolContext {
     pub read_files: Arc<Mutex<HashSet<PathBuf>>>,
     /// Current working directory
     pub cwd: PathBuf,
+    /// Signal to send a running Bash command to background (Alt+B)
+    pub bg_signal: Option<watch::Receiver<()>>,
 }
 
 /// Trait that all tools must implement

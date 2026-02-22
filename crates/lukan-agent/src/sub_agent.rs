@@ -317,6 +317,7 @@ async fn run_sub_agent(
                     progress_tx: None,
                     read_files: rf,
                     cwd: c,
+                    bg_signal: None,
                 };
                 match reg.execute(&n, inp, &ctx).await {
                     Ok(r) => r,

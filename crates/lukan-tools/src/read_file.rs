@@ -8,6 +8,7 @@ use crate::{Tool, ToolContext};
 
 const DEFAULT_LIMIT: u64 = 2000;
 const MAX_LINE_LEN: usize = 2000;
+const BG_LOG_TAIL_LINES: usize = 50;
 
 pub struct ReadFileTool;
 
@@ -60,7 +61,8 @@ impl Tool for ReadFileTool {
             ctx.cwd.join(&path)
         };
 
-        let offset = input.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
+        let explicit_offset = input.get("offset").and_then(|v| v.as_u64());
+        let offset = explicit_offset.unwrap_or(0);
         let limit = input
             .get("limit")
             .and_then(|v| v.as_u64())
@@ -72,12 +74,22 @@ impl Tool for ReadFileTool {
         };
 
         // Track that we've read this file
-        ctx.read_files.lock().await.insert(path);
+        ctx.read_files.lock().await.insert(path.clone());
 
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
 
-        let start = if offset > 0 {
+        // Auto-tail background process log files: show last N lines when no
+        // explicit offset is given (matches Node.js kite-agent behavior)
+        let is_bg_log = path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .map(|f| f.starts_with("lukan-bg-") && f.ends_with(".log"))
+            .unwrap_or(false);
+
+        let start = if is_bg_log && explicit_offset.is_none() && total_lines > BG_LOG_TAIL_LINES {
+            total_lines - BG_LOG_TAIL_LINES
+        } else if offset > 0 {
             (offset as usize).saturating_sub(1)
         } else {
             0
@@ -93,6 +105,16 @@ impl Tool for ReadFileTool {
                 line.to_string()
             };
             result.push_str(&format!("{line_num:>5}\t{display_line}\n"));
+        }
+
+        // Prepend header when auto-tailing a bg log
+        if is_bg_log && explicit_offset.is_none() && start > 0 {
+            let header = format!(
+                "(showing last {} of {} lines — background process log)\n\n",
+                total_lines - start,
+                total_lines
+            );
+            result.insert_str(0, &header);
         }
 
         if result.is_empty() {

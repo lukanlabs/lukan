@@ -13,6 +13,7 @@ pub struct StatusBarWidget<'a> {
     input_tokens: u64,
     output_tokens: u64,
     is_streaming: bool,
+    active_tool: Option<&'a str>,
 }
 
 impl<'a> StatusBarWidget<'a> {
@@ -22,6 +23,7 @@ impl<'a> StatusBarWidget<'a> {
         input_tokens: u64,
         output_tokens: u64,
         is_streaming: bool,
+        active_tool: Option<&'a str>,
     ) -> Self {
         Self {
             provider,
@@ -29,6 +31,7 @@ impl<'a> StatusBarWidget<'a> {
             input_tokens,
             output_tokens,
             is_streaming,
+            active_tool,
         }
     }
 }
@@ -56,9 +59,25 @@ impl Widget for StatusBarWidget<'_> {
             Style::default().fg(Color::DarkGray),
         );
 
+        // Show Alt+B hint when Bash tool is actively running
+        let bash_hint = if self.active_tool == Some("Bash") {
+            Span::styled(
+                " Alt+B background ",
+                Style::default().fg(Color::Yellow),
+            )
+        } else {
+            Span::raw("")
+        };
+
         let quit_hint = Span::styled(" Ctrl+C quit ", Style::default().fg(Color::DarkGray));
 
-        let line = Line::from(vec![status_indicator, provider_info, tokens, quit_hint]);
+        let line = Line::from(vec![
+            status_indicator,
+            provider_info,
+            tokens,
+            bash_hint,
+            quit_hint,
+        ]);
 
         let paragraph = Paragraph::new(line);
         paragraph.render(area, buf);

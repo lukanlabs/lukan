@@ -19,3 +19,5 @@ reqwest.workspace = true
 dirs.workspace = true
 url.workspace = true
 futures.workspace = true
+chrono.workspace = true
+libc.workspace = true

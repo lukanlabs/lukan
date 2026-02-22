@@ -38,6 +38,7 @@ pub struct OpenAICodexProvider {
     max_tokens: u32,
     tokens: Arc<Mutex<CodexTokens>>,
     credentials: Credentials,
+    reasoning_effort: std::sync::Mutex<String>,
 }
 
 impl OpenAICodexProvider {
@@ -64,6 +65,7 @@ impl OpenAICodexProvider {
             max_tokens,
             tokens: Arc::new(Mutex::new(tokens)),
             credentials,
+            reasoning_effort: std::sync::Mutex::new("medium".to_string()),
         })
     }
 
@@ -112,6 +114,23 @@ impl Provider for OpenAICodexProvider {
 
     fn supports_images(&self) -> bool {
         true
+    }
+
+    fn set_reasoning_effort(&self, effort: &str) {
+        if let Ok(mut e) = self.reasoning_effort.lock() {
+            *e = effort.to_string();
+        }
+    }
+
+    fn reasoning_effort(&self) -> Option<&'static str> {
+        // Return a static str based on current value
+        let effort = self.reasoning_effort.lock().ok()?;
+        match effort.as_str() {
+            "low" => Some("low"),
+            "high" => Some("high"),
+            "extra_high" => Some("extra_high"),
+            _ => Some("medium"),
+        }
     }
 
     async fn stream(&self, params: StreamParams, tx: mpsc::Sender<StreamEvent>) -> Result<()> {
@@ -167,8 +186,9 @@ impl Provider for OpenAICodexProvider {
         }
 
         if self.is_reasoning_model() {
+            let effort = self.reasoning_effort.lock().unwrap().clone();
             body["reasoning"] = json!({
-                "effort": "high",
+                "effort": effort,
                 "summary": "auto",
             });
         }
@@ -651,16 +671,10 @@ fn normalize_tool_input(raw: &str) -> Option<String> {
 pub fn codex_models() -> Vec<String> {
     vec![
         "gpt-5.3-codex".to_string(),
-        "gpt-5.3-codex-spark".to_string(),
         "gpt-5.2-codex".to_string(),
         "gpt-5.1-codex-max".to_string(),
-        "gpt-5.1-codex".to_string(),
-        "gpt-5.1-codex-mini".to_string(),
         "gpt-5.2".to_string(),
-        "gpt-5.1".to_string(),
-        "gpt-5-codex".to_string(),
-        "gpt-5-codex-mini".to_string(),
-        "gpt-5".to_string(),
+        "gpt-5.1-codex-mini".to_string(),
     ]
 }
 
@@ -761,6 +775,6 @@ mod tests {
     fn test_codex_models_list() {
         let models = codex_models();
         assert!(models.contains(&"gpt-5.3-codex".to_string()));
-        assert!(models.len() >= 10);
+        assert_eq!(models.len(), 5);
     }
 }

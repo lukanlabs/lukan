@@ -1,16 +1,16 @@
 use anyhow::Result;
 use crossterm::{
     ExecutableCommand,
-    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, MouseEventKind},
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    event::KeyCode,
+    terminal::{disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
-    Terminal,
+    Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
 };
 use std::collections::HashMap;
-use std::io::stdout;
+use std::io::{Stdout, stdout};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::error;
@@ -25,7 +25,9 @@ use lukan_tools::create_default_registry;
 use chrono::Utc;
 
 use crate::event::{AppEvent, is_quit, spawn_event_reader};
-use crate::widgets::chat::{ChatMessage, ChatWidget, rendered_line_count};
+use crate::widgets::chat::{
+    ChatMessage, ChatWidget, build_message_lines, physical_row_count, sanitize_for_display,
+};
 use crate::widgets::input::InputWidget;
 use crate::widgets::status_bar::StatusBarWidget;
 
@@ -35,9 +37,9 @@ pub struct App {
     input: String,
     cursor_pos: usize,
     streaming_text: String,
+    /// Accumulated thinking/reasoning text from the model (separate from response text)
+    streaming_thinking: String,
     is_streaming: bool,
-    scroll_offset: u16,
-    auto_scroll: bool,
     input_tokens: u64,
     output_tokens: u64,
     provider: Arc<dyn Provider>,
@@ -55,6 +57,13 @@ pub struct App {
     active_tool: Option<String>,
     /// Current session ID for display
     session_id: Option<String>,
+    /// Index of the first message NOT yet committed to the terminal scrollback.
+    /// Messages before this index have already been pushed via `insert_before`.
+    committed_msg_idx: usize,
+    /// Selected index in the command palette (when typing `/`)
+    cmd_palette_idx: usize,
+    /// Reasoning effort picker state (shown after selecting a codex model)
+    reasoning_picker: Option<ReasoningPicker>,
 }
 
 /// Interactive model picker state
@@ -62,6 +71,13 @@ struct ModelPicker {
     models: Vec<String>,
     selected: usize,
     current: String,
+}
+
+/// Reasoning effort picker state
+struct ReasoningPicker {
+    model_entry: String,
+    levels: Vec<(&'static str, &'static str, &'static str)>, // (value, label, description)
+    selected: usize,
 }
 
 /// Interactive session picker state
@@ -80,9 +96,8 @@ impl App {
             input: String::new(),
             cursor_pos: 0,
             streaming_text: String::new(),
+            streaming_thinking: String::new(),
             is_streaming: false,
-            scroll_offset: 0,
-            auto_scroll: true,
             input_tokens: 0,
             output_tokens: 0,
             provider,
@@ -94,6 +109,9 @@ impl App {
             agent_return_rx: None,
             active_tool: None,
             session_id: None,
+            committed_msg_idx: 0,
+            cmd_palette_idx: 0,
+            reasoning_picker: None,
         }
     }
 
@@ -135,12 +153,20 @@ impl App {
     }
 
     pub async fn run(mut self) -> Result<()> {
+        // Ensure cursor starts at column 0 before creating the inline viewport,
+        // otherwise the first rendered line inherits the shell prompt's column offset.
+        stdout().execute(crossterm::cursor::MoveToColumn(0))?;
         enable_raw_mode()?;
-        stdout().execute(EnterAlternateScreen)?;
-        stdout().execute(EnableMouseCapture)?;
+        // NO AlternateScreen, NO EnableMouseCapture — we use inline viewport
+        // so content scrolls into the native terminal scrollback.
         let backend = CrosstermBackend::new(stdout());
-        let mut terminal = Terminal::new(backend)?;
-        terminal.clear()?;
+        let size = crossterm::terminal::size()?;
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(size.1),
+            },
+        )?;
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AppEvent>();
         spawn_event_reader(event_tx);
@@ -154,46 +180,107 @@ impl App {
         ));
 
         loop {
-            // Auto-scroll to bottom when following new content
-            if self.auto_scroll {
-                let size = terminal.size()?;
-                // viewport = total height minus input (3 rows) and status bar (1 row)
-                let viewport_h = size.height.saturating_sub(4);
-                let total = rendered_line_count(&self.messages, &self.streaming_text);
-                self.scroll_offset = total.saturating_sub(viewport_h);
-            }
+            // Push overflow messages into the terminal scrollback
+            let term_size = terminal.size()?;
+            let chat_area_h = term_size.height.saturating_sub(4);
+            commit_overflow(
+                &self.messages,
+                &mut self.committed_msg_idx,
+                &mut terminal,
+                chat_area_h,
+                term_size.width,
+            )?;
+
+            // Pre-compute palette state for this frame
+            let filtered_cmds = filtered_commands(&self.input);
+            let cmd_palette_active = !filtered_cmds.is_empty()
+                && !self.is_streaming
+                && self.session_picker.is_none()
+                && self.model_picker.is_none()
+                && self.reasoning_picker.is_none();
+            let model_picker_active = self.model_picker.is_some() && self.session_picker.is_none();
+            let reasoning_picker_active = self.reasoning_picker.is_some();
+            let palette_visible =
+                cmd_palette_active || model_picker_active || reasoning_picker_active;
+            let palette_h = if reasoning_picker_active {
+                self.reasoning_picker.as_ref().unwrap().levels.len() as u16 + 2
+            } else if model_picker_active {
+                self.model_picker.as_ref().unwrap().models.len() as u16 + 2
+            } else if cmd_palette_active {
+                filtered_cmds.len() as u16 + 1
+            } else {
+                0
+            };
+            let palette_idx = self
+                .cmd_palette_idx
+                .min(filtered_cmds.len().saturating_sub(1));
 
             // Draw UI
             terminal.draw(|frame| {
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Min(1),    // Chat area
-                        Constraint::Length(3), // Input
-                        Constraint::Length(1), // Status bar
-                    ])
-                    .split(frame.area());
+                let area = frame.area();
 
-                // Chat (or picker overlay)
+                // Dynamic layout: palette below input, above status bar
+                let (chat_area, input_area, palette_area, status_area) = if palette_visible {
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Min(1),
+                            Constraint::Length(3),
+                            Constraint::Length(palette_h),
+                            Constraint::Length(1),
+                        ])
+                        .split(area);
+                    (chunks[0], chunks[1], Some(chunks[2]), chunks[3])
+                } else {
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Min(1),
+                            Constraint::Length(3),
+                            Constraint::Length(1),
+                        ])
+                        .split(area);
+                    (chunks[0], chunks[1], None, chunks[2])
+                };
+
+                // Chat (or session picker overlay)
                 if let Some(ref picker) = self.session_picker {
                     let widget = SessionPickerWidget::new(picker);
-                    frame.render_widget(widget, chunks[0]);
-                } else if let Some(ref picker) = self.model_picker {
-                    let widget = ModelPickerWidget::new(picker);
-                    frame.render_widget(widget, chunks[0]);
+                    frame.render_widget(widget, chat_area);
                 } else {
-                    let chat =
-                        ChatWidget::new(&self.messages, &self.streaming_text, self.scroll_offset);
-                    frame.render_widget(chat, chunks[0]);
+                    let chat = ChatWidget::new(
+                        &self.messages[self.committed_msg_idx..],
+                        &self.streaming_text,
+                        &self.streaming_thinking,
+                        self.is_streaming,
+                    );
+                    frame.render_widget(chat, chat_area);
+                }
+
+                // Palette area: reasoning picker, model picker, or command palette
+                if let Some(p_area) = palette_area {
+                    if let Some(ref picker) = self.reasoning_picker {
+                        let widget = ReasoningPaletteWidget::new(picker);
+                        frame.render_widget(widget, p_area);
+                    } else if let Some(ref picker) = self.model_picker {
+                        let widget = ModelPaletteWidget::new(picker);
+                        frame.render_widget(widget, p_area);
+                    } else {
+                        let widget = CommandPaletteWidget::new(&filtered_cmds, palette_idx);
+                        frame.render_widget(widget, p_area);
+                    }
                 }
 
                 // Input
-                let input_widget = if self.session_picker.is_some() || self.model_picker.is_some() {
+                let input_widget = if self.session_picker.is_some()
+                    || self.model_picker.is_some()
+                    || self.reasoning_picker.is_some()
+                {
                     InputWidget::new("↑↓ navigate · Enter select · ESC close", 0, false)
                 } else {
                     InputWidget::new(&self.input, self.cursor_pos, !self.is_streaming)
                 };
-                frame.render_widget(input_widget, chunks[1]);
+                frame.render_widget(input_widget, input_area);
 
                 // Status bar
                 let effective_model = self.config.effective_model();
@@ -204,15 +291,15 @@ impl App {
                     self.output_tokens,
                     self.is_streaming,
                 );
-                frame.render_widget(status, chunks[2]);
+                frame.render_widget(status, status_area);
 
                 // Set cursor position only when not in picker and not streaming
                 if self.session_picker.is_none()
                     && self.model_picker.is_none()
                     && !self.is_streaming
                 {
-                    let cursor_x = chunks[1].x + 1 + self.cursor_pos as u16;
-                    let cursor_y = chunks[1].y + 1;
+                    let cursor_x = input_area.x + 1 + self.cursor_pos as u16;
+                    let cursor_y = input_area.y + 1;
                     frame.set_cursor_position((cursor_x, cursor_y));
                 }
             })?;
@@ -222,7 +309,38 @@ impl App {
                 Some(event) = event_rx.recv() => {
                     match event {
                         AppEvent::Key(key) => {
-                            if self.session_picker.is_some() {
+                            if self.reasoning_picker.is_some() {
+                                // Reasoning effort picker mode
+                                match key.code {
+                                    KeyCode::Up => {
+                                        if let Some(ref mut picker) = self.reasoning_picker
+                                            && picker.selected > 0
+                                        {
+                                            picker.selected -= 1;
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if let Some(ref mut picker) = self.reasoning_picker
+                                            && picker.selected + 1 < picker.levels.len()
+                                        {
+                                            picker.selected += 1;
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        let picker = self.reasoning_picker.take().unwrap();
+                                        let (effort, _, _) = picker.levels[picker.selected];
+                                        self.apply_model_switch_with_effort(
+                                            &picker.model_entry,
+                                            Some(effort),
+                                        )
+                                        .await;
+                                    }
+                                    KeyCode::Esc => {
+                                        self.reasoning_picker = None;
+                                    }
+                                    _ => {}
+                                }
+                            } else if self.session_picker.is_some() {
                                 // Session picker mode
                                 match key.code {
                                     KeyCode::Up => {
@@ -280,24 +398,38 @@ impl App {
                                 }
                             } else if is_quit(&key) {
                                 self.should_quit = true;
-                            } else if key.code == KeyCode::PageUp {
-                                // Scroll up (works even while streaming)
-                                self.auto_scroll = false;
-                                let half = terminal.size().map(|s| s.height / 2).unwrap_or(10);
-                                self.scroll_offset = self.scroll_offset.saturating_sub(half);
-                            } else if key.code == KeyCode::PageDown {
-                                // Scroll down (works even while streaming)
-                                let size = terminal.size().unwrap_or_default();
-                                let viewport_h = size.height.saturating_sub(4);
-                                let total = rendered_line_count(&self.messages, &self.streaming_text);
-                                let max_scroll = total.saturating_sub(viewport_h);
-                                self.scroll_offset = (self.scroll_offset + size.height / 2).min(max_scroll);
-                                if self.scroll_offset >= max_scroll {
-                                    self.auto_scroll = true;
-                                }
                             } else if !self.is_streaming {
+                                let cmds = filtered_commands(&self.input);
+                                let has_palette = !cmds.is_empty()
+                                    && self.session_picker.is_none()
+                                    && self.model_picker.is_none();
+
                                 match key.code {
+                                    KeyCode::Up if has_palette => {
+                                        if self.cmd_palette_idx > 0 {
+                                            self.cmd_palette_idx -= 1;
+                                        } else {
+                                            self.cmd_palette_idx =
+                                                cmds.len().saturating_sub(1);
+                                        }
+                                    }
+                                    KeyCode::Down if has_palette => {
+                                        self.cmd_palette_idx =
+                                            (self.cmd_palette_idx + 1) % cmds.len().max(1);
+                                    }
+                                    KeyCode::Esc if has_palette => {
+                                        self.input.clear();
+                                        self.cursor_pos = 0;
+                                        self.cmd_palette_idx = 0;
+                                    }
                                     KeyCode::Enter => {
+                                        if has_palette {
+                                            let idx = self.cmd_palette_idx
+                                                .min(cmds.len().saturating_sub(1));
+                                            self.input = cmds[idx].0.to_string();
+                                            self.cursor_pos = self.input.len();
+                                            self.cmd_palette_idx = 0;
+                                        }
                                         if !self.input.trim().is_empty() {
                                             self.submit_message(agent_tx.clone()).await;
                                         }
@@ -305,11 +437,13 @@ impl App {
                                     KeyCode::Char(c) => {
                                         self.input.insert(self.cursor_pos, c);
                                         self.cursor_pos += 1;
+                                        self.cmd_palette_idx = 0;
                                     }
                                     KeyCode::Backspace => {
                                         if self.cursor_pos > 0 {
                                             self.cursor_pos -= 1;
                                             self.input.remove(self.cursor_pos);
+                                            self.cmd_palette_idx = 0;
                                         }
                                     }
                                     KeyCode::Left => {
@@ -326,25 +460,6 @@ impl App {
                                     KeyCode::End => self.cursor_pos = self.input.len(),
                                     _ => {}
                                 }
-                            }
-                        }
-                        AppEvent::Mouse(mouse) => {
-                            match mouse.kind {
-                                MouseEventKind::ScrollUp => {
-                                    self.auto_scroll = false;
-                                    self.scroll_offset = self.scroll_offset.saturating_sub(3);
-                                }
-                                MouseEventKind::ScrollDown => {
-                                    let size = terminal.size().unwrap_or_default();
-                                    let viewport_h = size.height.saturating_sub(4);
-                                    let total = rendered_line_count(&self.messages, &self.streaming_text);
-                                    let max_scroll = total.saturating_sub(viewport_h);
-                                    self.scroll_offset = (self.scroll_offset + 3).min(max_scroll);
-                                    if self.scroll_offset >= max_scroll {
-                                        self.auto_scroll = true;
-                                    }
-                                }
-                                _ => {}
                             }
                         }
                         AppEvent::Resize(_, _) => {}
@@ -378,9 +493,8 @@ impl App {
             }
         }
 
-        stdout().execute(DisableMouseCapture)?;
         disable_raw_mode()?;
-        stdout().execute(LeaveAlternateScreen)?;
+        println!(); // new line so the shell prompt starts clean
         Ok(())
     }
 
@@ -404,6 +518,7 @@ impl App {
         // Handle /clear
         if text == "/clear" {
             self.messages.clear();
+            self.committed_msg_idx = 0;
             self.input_tokens = 0;
             self.output_tokens = 0;
             // Reset agent — a new session will be created on next message
@@ -417,8 +532,8 @@ impl App {
 
         self.is_streaming = true;
         self.streaming_text.clear();
+        self.streaming_thinking.clear();
         self.active_tool = None;
-        self.auto_scroll = true;
 
         // Ensure agent exists (create new session if needed) and run the turn
         // We need to take the agent out to avoid borrow issues with self
@@ -514,6 +629,7 @@ impl App {
             Ok(agent) => {
                 // Rebuild UI messages from the loaded session
                 self.messages.clear();
+                self.committed_msg_idx = 0;
 
                 // Reconstruct chat messages from agent history
                 let session = SessionManager::load(&session_id).await.ok().flatten();
@@ -632,7 +748,6 @@ impl App {
                 self.output_tokens = agent.output_tokens();
                 self.session_id = Some(agent.session_id().to_string());
                 self.agent = Some(agent);
-                self.auto_scroll = true;
 
                 self.messages.push(ChatMessage::new(
                     "system",
@@ -685,11 +800,66 @@ impl App {
         });
     }
 
-    /// Switch to the selected model from the picker
+    /// Switch to the selected model from the picker.
+    /// For codex models, opens the reasoning effort picker first.
     async fn select_model(&mut self, idx: usize) {
         let picker = self.model_picker.as_ref().unwrap();
-        let entry = &picker.models[idx];
+        let entry = picker.models[idx].clone();
 
+        let Some((provider_str, _model_name)) = entry.split_once(':') else {
+            self.messages.push(ChatMessage::new(
+                "system",
+                format!("Invalid model format: {entry}"),
+            ));
+            return;
+        };
+
+        // For codex models, show reasoning effort picker first
+        if provider_str == "openai-codex" {
+            let current_effort = self.provider.reasoning_effort().unwrap_or("medium");
+            let default_idx = match current_effort {
+                "low" => 0,
+                "high" => 2,
+                "extra_high" => 3,
+                _ => 1, // medium
+            };
+            self.reasoning_picker = Some(ReasoningPicker {
+                model_entry: entry,
+                levels: vec![
+                    ("low", "Low", "Fast responses with lighter reasoning"),
+                    (
+                        "medium",
+                        "Medium (default)",
+                        "Balances speed and reasoning depth",
+                    ),
+                    (
+                        "high",
+                        "High",
+                        "Greater reasoning depth for complex problems",
+                    ),
+                    ("extra_high", "Extra high", "Maximum reasoning depth"),
+                ],
+                selected: default_idx,
+            });
+            self.model_picker = None;
+            return;
+        }
+
+        // Non-codex: switch immediately
+        self.apply_model_switch(&entry).await;
+    }
+
+    /// Apply the model switch after all selections are done.
+    async fn apply_model_switch(&mut self, entry: &str) {
+        self.apply_model_switch_with_effort(entry, None).await;
+    }
+
+    /// Apply the model switch, optionally setting reasoning effort.
+    async fn apply_model_switch_with_effort(
+        &mut self,
+        entry: &str,
+        reasoning_effort: Option<&str>,
+    ) {
         let Some((provider_str, model_name)) = entry.split_once(':') else {
             self.messages.push(ChatMessage::new(
                 "system",
@@ -728,13 +898,25 @@ impl App {
 
         match create_provider(&new_config) {
             Ok(new_provider) => {
+                if let Some(effort) = reasoning_effort {
+                    new_provider.set_reasoning_effort(effort);
+                }
                 self.provider = Arc::from(new_provider);
                 self.config = new_config;
-                // Reset agent so it picks up the new provider (new session)
                 self.agent = None;
                 self.session_id = None;
-                self.messages
-                    .push(ChatMessage::new("system", format!("Switched to {entry}")));
+                if let Some(banner) = self.messages.iter_mut().find(|m| m.role == "banner") {
+                    let new_banner =
+                        build_welcome_banner(self.provider.name(), &self.config.effective_model());
+                    banner.content = sanitize_for_display(&new_banner);
+                }
+                let effort_label = reasoning_effort
+                    .map(|e| format!(" (reasoning: {e})"))
+                    .unwrap_or_default();
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Switched to {entry}{effort_label}"),
+                ));
             }
             Err(e) => {
                 self.messages
@@ -747,13 +929,14 @@ impl App {
         match event {
             StreamEvent::MessageStart => {
                 self.streaming_text.clear();
+                self.streaming_thinking.clear();
                 self.active_tool = None;
             }
             StreamEvent::TextDelta { text } => {
                 self.streaming_text.push_str(&text);
             }
             StreamEvent::ThinkingDelta { text } => {
-                self.streaming_text.push_str(&text);
+                self.streaming_thinking.push_str(&text);
             }
             StreamEvent::ToolUseStart { name, .. } => {
                 // Flush current text as a message before tool call
@@ -763,30 +946,49 @@ impl App {
                     self.messages.push(ChatMessage::new("assistant", content));
                 }
             }
-            StreamEvent::ToolUseEnd { name, input, .. } => {
+            StreamEvent::ToolUseEnd { id, name, input } => {
                 // ● ToolName(input summary)
                 let summary = summarize_tool_input(&name, &input);
-                self.messages.push(ChatMessage::new(
-                    "tool_call",
-                    format!("● {name}({summary})"),
-                ));
+                let mut msg = ChatMessage::new("tool_call", format!("● {name}({summary})"));
+                msg.tool_id = Some(id);
+                self.messages.push(msg);
             }
-            StreamEvent::ToolProgress { name, content, .. } => {
+            StreamEvent::ToolProgress { id, name, content } => {
                 self.active_tool = Some(name);
-                self.messages
-                    .push(ChatMessage::new("tool_result", format!("  ⎿  {content}")));
+                let sanitized = sanitize_for_display(&content);
+                let insert_pos = self.tool_insert_position(&id);
+
+                // Try to consolidate with existing progress for this tool
+                if insert_pos > 0 {
+                    let prev = &self.messages[insert_pos - 1];
+                    if prev.role == "tool_result"
+                        && prev.tool_id.as_deref() == Some(&*id)
+                        && prev.diff.is_none()
+                    {
+                        let prev = &mut self.messages[insert_pos - 1];
+                        prev.content.push('\n');
+                        prev.content.push_str(&format!("     {sanitized}"));
+                        return;
+                    }
+                }
+
+                let mut msg = ChatMessage::new("tool_result", format!("  ⎿  {content}"));
+                msg.tool_id = Some(id);
+                self.messages.insert(insert_pos, msg);
             }
             StreamEvent::ToolResult {
+                id,
                 content,
                 is_error,
                 diff,
                 ..
             } => {
                 self.active_tool = None;
-                // Build summary line
                 let formatted = format_tool_result(&content, is_error.unwrap_or(false));
-                self.messages
-                    .push(ChatMessage::with_diff("tool_result", formatted, diff));
+                let insert_pos = self.tool_insert_position(&id);
+                let mut msg = ChatMessage::with_diff("tool_result", formatted, diff);
+                msg.tool_id = Some(id);
+                self.messages.insert(insert_pos, msg);
             }
             StreamEvent::Usage {
                 input_tokens,
@@ -812,6 +1014,82 @@ impl App {
             _ => {}
         }
     }
+
+    /// Find the insertion position for a tool result: right after the
+    /// tool_call with this ID and any existing results for it.
+    fn tool_insert_position(&self, tool_id: &str) -> usize {
+        // Find the tool_call with this ID
+        let call_idx = self.messages.iter().rposition(|m| {
+            m.role == "tool_call" && m.tool_id.as_deref() == Some(tool_id)
+        });
+        match call_idx {
+            Some(idx) => {
+                // Scan forward past any messages already belonging to this tool
+                let mut pos = idx + 1;
+                while pos < self.messages.len()
+                    && self.messages[pos].tool_id.as_deref() == Some(tool_id)
+                {
+                    pos += 1;
+                }
+                pos
+            }
+            None => self.messages.len(), // fallback: append
+        }
+    }
+}
+
+// ── Inline Viewport: commit overflow to scrollback ─────────────────────
+
+/// Push completed messages that no longer fit in the chat area into the
+/// terminal's native scrollback via `insert_before`. Only whole messages
+/// are committed — streaming text is never pushed.
+fn commit_overflow(
+    messages: &[ChatMessage],
+    committed_msg_idx: &mut usize,
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    chat_area_h: u16,
+    width: u16,
+) -> Result<()> {
+    if *committed_msg_idx >= messages.len() {
+        return Ok(());
+    }
+
+    let uncommitted = &messages[*committed_msg_idx..];
+    let all_lines = build_message_lines(uncommitted, "", "", false);
+    let total_rows = physical_row_count(&all_lines, width);
+
+    if total_rows <= chat_area_h {
+        return Ok(());
+    }
+
+    // Find how many messages to commit so the remainder fits
+    let rows_to_free = total_rows - chat_area_h;
+    let mut rows_acc: u16 = 0;
+    let mut msgs_to_commit = 0;
+
+    for msg in uncommitted {
+        if rows_acc >= rows_to_free {
+            break;
+        }
+        let msg_lines = build_message_lines(std::slice::from_ref(msg), "", "", false);
+        rows_acc += physical_row_count(&msg_lines, width);
+        msgs_to_commit += 1;
+    }
+
+    if msgs_to_commit > 0 && rows_acc > 0 {
+        let commit_msgs = &messages[*committed_msg_idx..*committed_msg_idx + msgs_to_commit];
+        let commit_lines = build_message_lines(commit_msgs, "", "", false);
+        let commit_rows = physical_row_count(&commit_lines, width);
+
+        use ratatui::widgets::{Paragraph, Widget, Wrap};
+        terminal.insert_before(commit_rows, |buf| {
+            let p = Paragraph::new(commit_lines).wrap(Wrap { trim: false });
+            p.render(buf.area, buf);
+        })?;
+
+        *committed_msg_idx += msgs_to_commit;
+    }
+    Ok(())
 }
 
 // ── Tool Input Summary ────────────────────────────────────────────────────
@@ -919,7 +1197,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
         .unwrap_or_else(|_| "?".to_string());
 
     format!(
-        "\
+        "
  ██╗     ██╗   ██╗██╗  ██╗ █████╗ ███╗   ██╗
  ██║     ██║   ██║██║ ██╔╝██╔══██╗████╗  ██║   AI Agent CLI
  ██║     ██║   ██║█████╔╝ ███████║██╔██╗ ██║   {provider} > {model}
@@ -931,32 +1209,186 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
     )
 }
 
-// ── Model Picker Widget ──────────────────────────────────────────────────
+// ── Command Palette ──────────────────────────────────────────────────────
+
+const COMMANDS: &[(&str, &str)] = &[
+    ("/model", "choose model to use"),
+    ("/chats", "load a saved session"),
+    ("/clear", "clear chat and start fresh"),
+];
+
+/// Filter available commands by the current input prefix.
+/// Returns empty if input doesn't start with `/` or contains a space.
+fn filtered_commands(input: &str) -> Vec<(&'static str, &'static str)> {
+    if !input.starts_with('/') || input.contains(' ') {
+        return vec![];
+    }
+    COMMANDS
+        .iter()
+        .filter(|(cmd, _)| cmd.starts_with(input))
+        .copied()
+        .collect()
+}
+
+struct CommandPaletteWidget<'a> {
+    commands: &'a [(&'static str, &'static str)],
+    selected: usize,
+}
+
+impl<'a> CommandPaletteWidget<'a> {
+    fn new(commands: &'a [(&'static str, &'static str)], selected: usize) -> Self {
+        Self { commands, selected }
+    }
+}
+
+impl Widget for CommandPaletteWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        Clear.render(area, buf);
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        // Blank separator line at top
+        lines.push(Line::from(""));
+
+        for (i, (cmd, desc)) in self.commands.iter().enumerate() {
+            let is_selected = i == self.selected;
+            let pointer = if is_selected { "▸ " } else { "  " };
+
+            // Pad command name to align descriptions
+            let padded_cmd = format!("{cmd:<14}");
+
+            if is_selected {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        pointer,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        padded_cmd,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled((*desc).to_string(), Style::default().fg(Color::White)),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(pointer, Style::default().fg(Color::DarkGray)),
+                    Span::styled(padded_cmd, Style::default().fg(Color::Gray)),
+                    Span::styled((*desc).to_string(), Style::default().fg(Color::DarkGray)),
+                ]));
+            }
+        }
+
+        let paragraph = Paragraph::new(lines);
+        paragraph.render(area, buf);
+    }
+}
+
+// ── Reasoning Palette Widget ─────────────────────────────────────────────
+
+struct ReasoningPaletteWidget<'a> {
+    picker: &'a ReasoningPicker,
+}
+
+impl<'a> ReasoningPaletteWidget<'a> {
+    fn new(picker: &'a ReasoningPicker) -> Self {
+        Self { picker }
+    }
+}
+
+impl Widget for ReasoningPaletteWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        Clear.render(area, buf);
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        // Header with model name
+        let model_name = self
+            .picker
+            .model_entry
+            .split_once(':')
+            .map(|(_, m)| m)
+            .unwrap_or(&self.picker.model_entry);
+        lines.push(Line::from(Span::styled(
+            format!("  Select Reasoning Level for {model_name}"),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        for (i, (_value, label, desc)) in self.picker.levels.iter().enumerate() {
+            let is_selected = i == self.picker.selected;
+            let pointer = if is_selected { "▸ " } else { "  " };
+            let num = format!("{}. ", i + 1);
+            let padded_label = format!("{label:<20}");
+
+            if is_selected {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        pointer,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        num,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        padded_label,
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled((*desc).to_string(), Style::default().fg(Color::Gray)),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(pointer, Style::default().fg(Color::DarkGray)),
+                    Span::styled(num, Style::default().fg(Color::DarkGray)),
+                    Span::styled(padded_label, Style::default().fg(Color::Gray)),
+                    Span::styled((*desc).to_string(), Style::default().fg(Color::DarkGray)),
+                ]));
+            }
+        }
+
+        let paragraph = Paragraph::new(lines);
+        paragraph.render(area, buf);
+    }
+}
+
+// ── Model Palette Widget ─────────────────────────────────────────────────
 
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+    widgets::{Clear, Paragraph, Widget, Wrap},
 };
 
-struct ModelPickerWidget<'a> {
+struct ModelPaletteWidget<'a> {
     picker: &'a ModelPicker,
 }
 
-impl<'a> ModelPickerWidget<'a> {
+impl<'a> ModelPaletteWidget<'a> {
     fn new(picker: &'a ModelPicker) -> Self {
         Self { picker }
     }
 }
 
-impl Widget for ModelPickerWidget<'_> {
+impl Widget for ModelPaletteWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        Clear.render(area, buf);
         let mut lines: Vec<Line<'_>> = Vec::new();
 
+        // Header
         lines.push(Line::from(Span::styled(
-            " Select Model",
+            "  Select Model",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -968,58 +1400,43 @@ impl Widget for ModelPickerWidget<'_> {
             let is_current = *entry == self.picker.current;
 
             let pointer = if is_selected { "▸ " } else { "  " };
+            let num = format!("{}. ", i + 1);
 
-            // Split provider:model
-            let (provider, model) = entry.split_once(':').unwrap_or(("?", entry.as_str()));
+            let suffix = if is_current { " (current)" } else { "" };
 
-            let mut spans = vec![
-                Span::styled(
-                    pointer,
-                    if is_selected {
+            if is_selected {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        pointer,
                         Style::default()
                             .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        num,
                         Style::default()
-                    },
-                ),
-                Span::styled(
-                    provider,
-                    if is_selected {
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::Yellow)
-                    },
-                ),
-                Span::styled(":", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    model,
-                    if is_selected {
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        entry.clone(),
                         Style::default()
                             .fg(Color::White)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::Gray)
-                    },
-                ),
-            ];
-
-            if is_current {
-                spans.push(Span::styled(
-                    " (current)",
-                    Style::default().fg(Color::Green),
-                ));
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(suffix, Style::default().fg(Color::Green)),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(pointer, Style::default().fg(Color::DarkGray)),
+                    Span::styled(num, Style::default().fg(Color::DarkGray)),
+                    Span::styled(entry.clone(), Style::default().fg(Color::Gray)),
+                    Span::styled(suffix, Style::default().fg(Color::Green)),
+                ]));
             }
-
-            lines.push(Line::from(spans));
         }
 
-        let block = Block::default().borders(Borders::NONE);
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
     }
 }
@@ -1038,6 +1455,7 @@ impl<'a> SessionPickerWidget<'a> {
 
 impl Widget for SessionPickerWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        Clear.render(area, buf);
         let mut lines: Vec<Line<'_>> = Vec::new();
 
         lines.push(Line::from(Span::styled(
@@ -1115,10 +1533,7 @@ impl Widget for SessionPickerWidget<'_> {
             lines.push(Line::from(spans));
         }
 
-        let block = Block::default().borders(Borders::NONE);
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
         paragraph.render(area, buf);
     }
 }

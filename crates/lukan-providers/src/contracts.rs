@@ -36,6 +36,15 @@ pub trait Provider: Send + Sync {
         false
     }
 
+    /// Set the reasoning effort level (only relevant for reasoning models).
+    /// Valid values: "low", "medium", "high", "extra_high".
+    fn set_reasoning_effort(&self, _effort: &str) {}
+
+    /// Get the current reasoning effort level, if the provider supports it.
+    fn reasoning_effort(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Stream a response from the LLM, sending events through the channel
     async fn stream(
         &self,

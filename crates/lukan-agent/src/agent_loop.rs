@@ -181,6 +181,36 @@ impl AgentLoop {
         &self.session.checkpoints
     }
 
+    /// Get messages as serializable JSON values (for web UI)
+    pub fn messages_json(&self) -> Vec<Message> {
+        self.history.messages().to_vec()
+    }
+
+    /// Last context size (input tokens from most recent LLM call)
+    pub fn last_context_size(&self) -> u64 {
+        self.last_context_size
+    }
+
+    /// Access the underlying session
+    pub fn session(&self) -> &ChatSession {
+        &self.session
+    }
+
+    /// Save session to disk (public wrapper)
+    pub async fn save_session_public(&mut self) -> Result<()> {
+        self.save_session().await
+    }
+
+    /// Get a reference to the provider name stored in the session
+    pub fn provider_name(&self) -> Option<&str> {
+        self.session.provider.as_deref()
+    }
+
+    /// Get a reference to the model name stored in the session
+    pub fn model_name(&self) -> Option<&str> {
+        self.session.model.as_deref()
+    }
+
     /// Restore to a checkpoint, truncating history and optionally reverting files.
     ///
     /// Returns `true` if the checkpoint was found and the restore succeeded.

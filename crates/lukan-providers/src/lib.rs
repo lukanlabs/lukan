@@ -78,7 +78,7 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
             )))
         }
         ProviderName::OpenaiCompatible => {
-            let base_url = config
+            let raw_base_url = config
                 .config
                 .openai_compatible_base_url
                 .as_ref()
@@ -90,6 +90,8 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
                 })?
                 .trim()
                 .to_string();
+
+            let base_url = openai_compat::normalize_base_url(&raw_base_url);
 
             let api_key = CredentialsManager::get_api_key(
                 &config.credentials,

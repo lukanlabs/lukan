@@ -1,4 +1,6 @@
 pub mod bg_processes;
+pub mod google_auth;
+pub mod google_workspace;
 mod bash;
 mod edit_file;
 mod glob_tool;
@@ -104,6 +106,14 @@ impl Default for ToolRegistry {
     }
 }
 
+impl ToolRegistry {
+    /// Retain only tools whose names are in the allowed list
+    pub fn retain(&mut self, allowed: &[&str]) {
+        self.tools
+            .retain(|name, _| allowed.contains(&name.as_str()));
+    }
+}
+
 /// Format diff stats like "Added 5 lines, removed 2 lines"
 pub(crate) fn format_stats(added: usize, removed: usize) -> String {
     match (added, removed) {
@@ -124,5 +134,17 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(Box::new(grep::GrepTool));
     registry.register(Box::new(glob_tool::GlobTool));
     registry.register(Box::new(web_fetch::WebFetchTool));
+    // Google Workspace tools
+    registry.register(Box::new(google_workspace::SheetsReadTool));
+    registry.register(Box::new(google_workspace::SheetsWriteTool));
+    registry.register(Box::new(google_workspace::SheetsCreateTool));
+    registry.register(Box::new(google_workspace::CalendarListTool));
+    registry.register(Box::new(google_workspace::CalendarCreateTool));
+    registry.register(Box::new(google_workspace::CalendarUpdateTool));
+    registry.register(Box::new(google_workspace::DocsReadTool));
+    registry.register(Box::new(google_workspace::DocsCreateTool));
+    registry.register(Box::new(google_workspace::DocsUpdateTool));
+    registry.register(Box::new(google_workspace::DriveListTool));
+    registry.register(Box::new(google_workspace::DriveDownloadTool));
     registry
 }

@@ -27,6 +27,11 @@ pub async fn run_setup() -> Result<()> {
 
     let config = setup_provider(config)?;
     let config = setup_model(config)?;
+    let config = if config.provider == ProviderName::OpenaiCompatible {
+        setup_openai_compatible_url(config)?
+    } else {
+        config
+    };
     let creds = setup_credentials(&config.provider, creds)?;
 
     // Save
@@ -48,6 +53,11 @@ pub async fn run_setup() -> Result<()> {
     if api_key.is_some() {
         println!(
             "{GREEN}✓{RESET} API key configured for {BOLD}{}{RESET}",
+            config.provider
+        );
+    } else if config.provider == ProviderName::OpenaiCompatible {
+        println!(
+            "{GREEN}✓{RESET} No API key for {BOLD}{}{RESET} {DIM}(optional){RESET}",
             config.provider
         );
     } else {
@@ -144,6 +154,36 @@ fn setup_model(mut config: AppConfig) -> Result<AppConfig> {
         println!("  {GREEN}✓{RESET} Model set to {BOLD}{model}{RESET}");
     } else {
         println!("  {DIM}Keeping {current}{RESET}");
+    }
+
+    println!();
+    Ok(config)
+}
+
+fn setup_openai_compatible_url(mut config: AppConfig) -> Result<AppConfig> {
+    println!("{BOLD}Base URL{RESET}");
+    println!();
+
+    let current = config
+        .openai_compatible_base_url
+        .as_deref()
+        .unwrap_or("");
+    let hint = if current.is_empty() {
+        "e.g. http://localhost:11434/v1"
+    } else {
+        current
+    };
+
+    let input = prompt(&format!(
+        "  OpenAI-compatible base URL {DIM}({hint}){RESET}: "
+    ))?;
+
+    if !input.is_empty() {
+        let normalized = lukan_providers::openai_compat::normalize_base_url(&input);
+        config.openai_compatible_base_url = Some(normalized.clone());
+        println!("    {GREEN}✓{RESET} Base URL set to {BOLD}{normalized}{RESET}");
+    } else if !current.is_empty() {
+        println!("    {DIM}Keeping {current}{RESET}");
     }
 
     println!();
@@ -392,6 +432,11 @@ pub async fn run_doctor() -> Result<()> {
     println!("  Provider:  {BOLD}{}{RESET}", config.provider);
     println!("  Model:     {BOLD}{model}{RESET}");
     println!("  MaxTokens: {}", config.max_tokens);
+    if config.provider == ProviderName::OpenaiCompatible
+        && let Some(ref url) = config.openai_compatible_base_url
+    {
+        println!("  Base URL:  {BOLD}{url}{RESET}");
+    }
     if let Some(ref tz) = config.timezone {
         println!("  Timezone:  {tz}");
     }
@@ -441,6 +486,12 @@ pub async fn run_doctor() -> Result<()> {
     if active_key.is_some() {
         println!(
             "  {GREEN}✓{RESET} API key present for active provider ({BOLD}{}{RESET})",
+            config.provider
+        );
+    } else if config.provider == ProviderName::OpenaiCompatible {
+        // API key is optional for openai-compatible (Ollama, vLLM, LM Studio, etc.)
+        println!(
+            "  {GREEN}✓{RESET} No API key for {BOLD}{}{RESET} {DIM}(optional for local endpoints){RESET}",
             config.provider
         );
     } else {

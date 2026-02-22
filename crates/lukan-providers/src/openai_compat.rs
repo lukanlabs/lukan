@@ -34,6 +34,48 @@ const STRIP_KEYWORDS: &[&str] = &[
     "format",
 ];
 
+/// Normalize an OpenAI-compatible base URL by stripping endpoint path suffixes.
+///
+/// Users often paste full endpoint URLs like `http://localhost:8080/v1/chat/completions`
+/// when only the base `http://localhost:8080/v1` is needed. This function strips the
+/// endpoint portion while preserving the `/v1` prefix that most servers require.
+///
+/// Examples:
+/// - `http://host:8080/v1/chat/completions` → `http://host:8080/v1`
+/// - `http://host:8080/chat/completions`     → `http://host:8080`
+/// - `http://host:8080/v1`                   → `http://host:8080/v1` (unchanged)
+pub fn normalize_base_url(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+
+    // Endpoint-only suffixes (no /v1 prefix) — strip entirely
+    const ENDPOINT_SUFFIXES: &[&str] = &[
+        "/chat/completions",
+        "/completions",
+        "/responses",
+        "/messages",
+    ];
+
+    // /v1/* suffixes — strip the endpoint part but keep /v1
+    for suffix in ENDPOINT_SUFFIXES {
+        let v1_suffix = format!("/v1{suffix}");
+        if trimmed.ends_with(&v1_suffix) {
+            return format!("{}/v1", &trimmed[..trimmed.len() - v1_suffix.len()]);
+        }
+    }
+
+    // Bare endpoint suffixes (servers without /v1 prefix)
+    for suffix in ENDPOINT_SUFFIXES {
+        if let Some(base) = trimmed.strip_suffix(suffix) {
+            return base.to_string();
+        }
+    }
+
+    trimmed.to_string()
+}
+
 /// Configuration for an OpenAI-compatible provider.
 pub struct OpenAiCompatConfig {
     pub base_url: String,

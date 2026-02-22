@@ -2,6 +2,7 @@ use anyhow::Result;
 use console::Style;
 use dialoguer::MultiSelect;
 use dialoguer::theme::ColorfulTheme;
+use regex::Regex;
 
 use lukan_core::config::{ConfigManager, CredentialsManager};
 
@@ -367,6 +368,23 @@ async fn select_fireworks() -> Result<()> {
     Ok(())
 }
 
+// ── Vision detection ────────────────────────────────────────────────────────
+
+/// Detect vision-capable models by ID using the same patterns as the Node.js provider.
+fn is_vision_model(model_id: &str) -> bool {
+    let patterns = [
+        r"(?i)\bvl\b",
+        r"(?i)vision",
+        r"(?i)-v\d*$",
+        r"(?i)multimodal",
+        r"(?i)qwen2\.5-vl",
+        r"(?i)llava",
+    ];
+    patterns
+        .iter()
+        .any(|p| Regex::new(p).unwrap().is_match(model_id))
+}
+
 // ── OpenAI-compatible (API fetch) ──────────────────────────────────────────
 
 async fn select_openai_compatible() -> Result<()> {
@@ -387,11 +405,12 @@ async fn select_openai_compatible() -> Result<()> {
     let creds = CredentialsManager::load().await?;
     let api_key = creds.openai_compatible_api_key.as_deref().unwrap_or("");
 
-    println!("{DIM}Fetching models from {base_url}...{RESET}");
+    let normalized = lukan_providers::openai_compat::normalize_base_url(base_url);
+
+    println!("{DIM}Fetching models from {normalized}...{RESET}");
 
     let client = reqwest::Client::new();
-    let normalized = base_url.trim_end_matches('/');
-    let url = format!("{normalized}/models");
+    let url = format!("{}/models", normalized.trim_end_matches('/'));
 
     let mut req = client.get(&url).header("accept", "application/json");
     if !api_key.is_empty() {
@@ -424,22 +443,57 @@ async fn select_openai_compatible() -> Result<()> {
     let existing = get_existing_model_ids("openai-compatible").await;
     let checked = defaults_for(&model_ids, &existing);
 
+    let vision_flags: Vec<bool> = model_ids.iter().map(|id| is_vision_model(id)).collect();
+
+    let items: Vec<String> = model_ids
+        .iter()
+        .zip(vision_flags.iter())
+        .map(|(id, &is_vision)| {
+            if is_vision {
+                format!("{id} [vision]")
+            } else {
+                id.clone()
+            }
+        })
+        .collect();
+
     let selected = MultiSelect::with_theme(&picker_theme())
         .with_prompt("Select models (space to toggle, enter to confirm)")
-        .items(&model_ids)
+        .items(&items)
         .defaults(&checked)
         .interact()?;
 
-    let entries: Vec<String> = selected.iter().map(|&i| format!("openai-compatible:{}", model_ids[i])).collect();
+    let entries: Vec<String> = selected
+        .iter()
+        .map(|&i| format!("openai-compatible:{}", model_ids[i]))
+        .collect();
 
-    ConfigManager::set_provider_models("openai-compatible", &entries, &[]).await?;
+    let vision_ids: Vec<String> = selected
+        .iter()
+        .filter(|&&i| vision_flags[i])
+        .map(|&i| model_ids[i].clone())
+        .collect();
+
+    ConfigManager::set_provider_models("openai-compatible", &entries, &vision_ids).await?;
 
     if selected.is_empty() {
         println!("{GREEN}✓{RESET} Cleared all openai-compatible models.");
     } else {
-        println!("\n{GREEN}✓{RESET} Set {} model(s) for openai-compatible:", selected.len());
+        let vision_count = vision_ids.len();
+        println!(
+            "\n{GREEN}✓{RESET} Set {} model(s) for openai-compatible:",
+            selected.len()
+        );
         for &idx in &selected {
-            println!("  - openai-compatible:{}", model_ids[idx]);
+            let badge = if vision_flags[idx] {
+                format!(" {MAGENTA}(vision){RESET}")
+            } else {
+                String::new()
+            };
+            println!("  - openai-compatible:{}{badge}", model_ids[idx]);
+        }
+        if vision_count > 0 {
+            println!("\n{MAGENTA}✓{RESET} Auto-tagged {vision_count} vision-capable model(s).");
         }
     }
     println!("\nUse /model in chat to switch between models.");

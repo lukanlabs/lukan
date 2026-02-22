@@ -75,6 +75,12 @@ pub struct AppConfig {
     pub openai_compatible_provider_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openai_compatible_provider_options: Option<HashMap<String, serde_json::Value>>,
+    /// Password for web UI authentication (None = no auth required)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_password: Option<String>,
+    /// Web auth token TTL in hours (default: 24)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_token_ttl: Option<u64>,
 }
 
 fn default_max_tokens() -> u32 {
@@ -98,6 +104,8 @@ impl Default for AppConfig {
             openai_compatible_base_url: None,
             openai_compatible_provider_name: None,
             openai_compatible_provider_options: None,
+            web_password: None,
+            web_token_ttl: None,
         }
     }
 }
@@ -134,6 +142,16 @@ pub struct Credentials {
     pub zai_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openai_compatible_api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google_client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google_client_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google_access_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google_refresh_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google_token_expiry: Option<u64>,
 }
 
 /// Config + credentials resolved together
@@ -153,8 +171,22 @@ impl ResolvedConfig {
     }
 }
 
+/// Default tools enabled for WhatsApp channel
+pub const WA_DEFAULT_TOOLS: &[&str] = &["Grep", "Glob", "ReadFile", "WebFetch"];
+
+/// All tools available for WhatsApp channel
+pub const WA_ALL_TOOLS: &[&str] = &[
+    "Grep",
+    "Glob",
+    "ReadFile",
+    "WebFetch",
+    "Bash",
+    "WriteFile",
+    "EditFile",
+];
+
 /// WhatsApp channel configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WhatsAppConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -177,6 +209,10 @@ pub struct WhatsAppConfig {
     pub provider: Option<ProviderName>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reminder_advance: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reminder_chat: Option<String>,
 }
 
 /// Email channel configuration

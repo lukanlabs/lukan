@@ -28,7 +28,7 @@ pub enum ContentBlock {
         #[serde(rename = "toolUseId")]
         tool_use_id: String,
         content: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "isError", alias = "is_error", skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         diff: Option<String>,
@@ -38,7 +38,7 @@ pub enum ContentBlock {
     Image {
         source: ImageSource,
         data: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "mediaType", alias = "media_type", skip_serializing_if = "Option::is_none")]
         media_type: Option<String>,
     },
 }

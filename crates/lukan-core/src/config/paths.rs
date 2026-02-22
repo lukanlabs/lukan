@@ -61,6 +61,29 @@ impl LukanPaths {
         Self::project_memory_dir().join(".active")
     }
 
+    /// WhatsApp auth directory: ~/.local/share/lukan/whatsapp-auth/
+    pub fn whatsapp_auth_dir() -> PathBuf {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("~/.local/share"))
+            .join("lukan")
+            .join("whatsapp-auth")
+    }
+
+    /// WhatsApp daemon PID file: ~/.config/lukan/whatsapp.pid
+    pub fn whatsapp_pid_file() -> PathBuf {
+        Self::config_dir().join("whatsapp.pid")
+    }
+
+    /// WhatsApp connector PID file: ~/.config/lukan/whatsapp-connector.pid
+    pub fn whatsapp_connector_pid_file() -> PathBuf {
+        Self::config_dir().join("whatsapp-connector.pid")
+    }
+
+    /// WhatsApp log file: ~/.config/lukan/whatsapp.log
+    pub fn whatsapp_log_file() -> PathBuf {
+        Self::config_dir().join("whatsapp.log")
+    }
+
     /// Ensure all required directories exist
     pub async fn ensure_dirs() -> std::io::Result<()> {
         tokio::fs::create_dir_all(Self::config_dir()).await?;

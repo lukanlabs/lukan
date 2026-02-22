@@ -1,0 +1,16 @@
+## Google Workspace Tools
+
+You have direct API access to Google Sheets, Calendar, Docs, and Drive via dedicated tools. **ALWAYS use these tools instead of browser automation** for any Google Workspace operation:
+
+- **Spreadsheets**: Use `SheetsRead`, `SheetsWrite`, `SheetsCreate` — NOT the browser.
+- **Calendar**: Use `CalendarList`, `CalendarCreate`, `CalendarUpdate` — NOT the browser.
+- **Documents**: Use `DocsRead`, `DocsCreate`, `DocsUpdate` — NOT the browser.
+- **Drive files**: Use `DriveList`, `DriveDownload` — NOT the browser.
+
+These API tools are faster, more reliable, and use less tokens than browser navigation. Never open Google Sheets, Docs, Calendar, or Drive in the browser when these tools are available.
+
+### Google Docs formatting
+- `DocsCreate` and `DocsUpdate` support **bold** (`**text**`) and *italic* (`*text*`) formatting — these markers are converted to real Google Docs bold/italic.
+- Use real newlines for line breaks, not escaped `\n`.
+
+If a tool returns "Google not configured", tell the user to run: `lukan google-auth`

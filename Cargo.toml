@@ -47,6 +47,10 @@ tree-sitter-javascript = "0.23"
 tree-sitter-python = "0.23"
 tree-sitter-rust = "0.23"
 
+# Web server
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors"] }
+
 # CLI & utilities
 clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -58,6 +62,7 @@ dotenvy = "0.15"
 rand = "0.9"
 base64 = "0.22"
 url = "2"
+tokio-tungstenite = { version = "0.26", features = ["connect", "native-tls"] }
 libc = "0.2"
 sha2 = "0.10"
 open = "5"
@@ -70,6 +75,7 @@ lukan-tools = { path = "crates/lukan-tools" }
 lukan-search = { path = "crates/lukan-search" }
 lukan-agent = { path = "crates/lukan-agent" }
 lukan-tui = { path = "crates/lukan-tui" }
+lukan-web = { path = "crates/lukan-web" }
 
 [package]
 name = "lukan"
@@ -84,14 +90,21 @@ path = "src/main.rs"
 lukan-core.workspace = true
 lukan-tui.workspace = true
 lukan-providers.workspace = true
+lukan-agent.workspace = true
+lukan-tools.workspace = true
+lukan-web.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 clap.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 dotenvy.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 reqwest.workspace = true
 regex.workspace = true
+futures.workspace = true
+libc.workspace = true
 dialoguer = "0.11"
 console = "0.15"

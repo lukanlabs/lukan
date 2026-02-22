@@ -1,0 +1,5 @@
+## Formatting — WhatsApp
+- Never use tables or code blocks — they don't render in WhatsApp.
+- Use bullet points (- or •) to list information.
+- Use *bold* and _italic_ for emphasis.
+- Keep responses short and readable on a phone screen.

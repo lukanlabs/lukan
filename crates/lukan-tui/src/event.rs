@@ -7,6 +7,8 @@ use tokio::sync::mpsc;
 pub enum AppEvent {
     /// A key was pressed
     Key(KeyEvent),
+    /// Text pasted via bracketed paste
+    Paste(String),
     /// Terminal was resized
     Resize(u16, u16),
     /// Tick for UI updates
@@ -21,6 +23,11 @@ pub fn spawn_event_reader(tx: mpsc::UnboundedSender<AppEvent>) {
                 match event::read() {
                     Ok(CrosstermEvent::Key(key)) => {
                         if tx.send(AppEvent::Key(key)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(CrosstermEvent::Paste(text)) => {
+                        if tx.send(AppEvent::Paste(text)).is_err() {
                             break;
                         }
                     }

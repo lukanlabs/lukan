@@ -1,0 +1,107 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use lukan_agent::AgentLoop;
+use lukan_core::config::ResolvedConfig;
+use tokio::sync::Mutex;
+
+/// Shared application state for the web server
+pub struct AppState {
+    /// The agent loop instance (None until first message or session load)
+    pub agent: Mutex<Option<AgentLoop>>,
+    /// Resolved configuration (provider + credentials)
+    pub config: Mutex<ResolvedConfig>,
+    /// Which connection ID currently holds the processing lock (0 = none)
+    pub processing_owner: Mutex<Option<usize>>,
+    /// HMAC secret for token signing (random, generated at startup)
+    pub auth_secret: String,
+    /// Optional web password (None = no auth required)
+    pub web_password: Option<String>,
+    /// Token TTL in milliseconds
+    pub token_ttl_ms: u64,
+    /// Current provider name
+    pub provider_name: Mutex<String>,
+    /// Current model name
+    pub model_name: Mutex<String>,
+    /// Connection ID counter
+    connection_counter: AtomicUsize,
+}
+
+impl AppState {
+    pub fn new(resolved: ResolvedConfig) -> Self {
+        // Generate random auth secret
+        let secret_bytes: [u8; 32] = rand::random();
+        let auth_secret = secret_bytes
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+
+        let web_password = resolved.config.web_password.clone();
+        let token_ttl_ms = resolved
+            .config
+            .web_token_ttl
+            .unwrap_or(24)
+            .max(1)
+            * 60
+            * 60
+            * 1000;
+
+        let provider_name = resolved.config.provider.to_string();
+        let model_name = resolved.effective_model();
+
+        Self {
+            agent: Mutex::new(None),
+            config: Mutex::new(resolved),
+            processing_owner: Mutex::new(None),
+            auth_secret,
+            web_password,
+            token_ttl_ms,
+            provider_name: Mutex::new(provider_name),
+            model_name: Mutex::new(model_name),
+            connection_counter: AtomicUsize::new(1),
+        }
+    }
+
+    /// Get the next unique connection ID
+    pub fn next_connection_id(&self) -> usize {
+        self.connection_counter.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Check if authentication is required
+    pub fn auth_required(&self) -> bool {
+        self.web_password.is_some()
+    }
+
+    /// Validate a password and return a token if correct
+    pub fn validate_password(&self, password: &str) -> Option<String> {
+        if let Some(ref expected) = self.web_password {
+            if password == expected {
+                Some(crate::auth::create_auth_token(
+                    &self.auth_secret,
+                    self.token_ttl_ms,
+                ))
+            } else {
+                None
+            }
+        } else {
+            // No password required, always return a token
+            Some(crate::auth::create_auth_token(
+                &self.auth_secret,
+                self.token_ttl_ms,
+            ))
+        }
+    }
+
+    /// Verify an auth token
+    pub fn verify_token(&self, token: &str) -> bool {
+        crate::auth::verify_auth_token(token, &self.auth_secret)
+    }
+}
+
+// Need Arc wrapper for axum state
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("auth_required", &self.auth_required())
+            .finish()
+    }
+}

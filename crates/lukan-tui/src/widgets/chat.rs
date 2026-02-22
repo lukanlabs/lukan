@@ -170,16 +170,15 @@ pub fn build_message_lines(
                 }
             }
             "tool_result" => {
-                if msg.diff.is_some() {
-                    // File change: show brief summary line, then parsed diff
-                    let first_line = msg.content.lines().next().unwrap_or("  ⎿  (done)");
-                    lines.push(Line::from(Span::styled(
-                        first_line.to_string(),
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                    if let Some(ref diff) = msg.diff {
-                        lines.extend(render_diff_lines(diff, 25));
+                if let Some(ref diff) = msg.diff {
+                    // File change: show stats line + diff
+                    if let Some(stats_line) = msg.content.lines().find(|l| l.contains('⎿')) {
+                        lines.push(Line::from(Span::styled(
+                            stats_line.to_string(),
+                            Style::default().fg(Color::DarkGray),
+                        )));
                     }
+                    lines.extend(render_diff_lines(diff, 25));
                 } else {
                     // No diff — show content truncated to keep output clean
                     let content_lines: Vec<&str> = msg.content.lines().collect();
@@ -339,18 +338,16 @@ fn line_prefix(num: u32, sign: char, bg: Option<Color>) -> Span<'static> {
 /// `is_add`: true for the added version, false for the removed version.
 /// Characters that were inserted (for add) or deleted (for del) get the
 /// brighter highlight background so they visually pop.
-fn inline_changed_spans(code: &str, counterpart: &str, is_add: bool, bg: Color, hl: Color) -> Vec<Span<'static>> {
+fn inline_changed_spans(code: &str, counterpart: &str, bg: Color, hl: Color) -> Vec<Span<'static>> {
     let diff = TextDiff::from_chars(counterpart, code);
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut buf = String::new();
     let mut in_highlight = false;
 
     for change in diff.iter_all_changes() {
-        let relevant = if is_add {
-            change.tag() == ChangeTag::Insert || change.tag() == ChangeTag::Equal
-        } else {
-            change.tag() == ChangeTag::Delete || change.tag() == ChangeTag::Equal
-        };
+        // `code` is the "new" in from_chars(counterpart, code),
+        // so its chars are Insert (unique to code) + Equal (shared).
+        let relevant = change.tag() == ChangeTag::Insert || change.tag() == ChangeTag::Equal;
         if !relevant {
             continue;
         }
@@ -388,7 +385,7 @@ fn flush_blocks(
         let prefix = line_prefix(*num, '-', Some(DEL_BG));
         let mut spans = vec![prefix];
         if paired {
-            spans.extend(inline_changed_spans(code, &add_buf[i].0, false, DEL_BG, DEL_HL));
+            spans.extend(inline_changed_spans(code, &add_buf[i].0, DEL_BG, DEL_HL));
         } else {
             spans.push(Span::styled(
                 code.clone(),
@@ -403,7 +400,7 @@ fn flush_blocks(
         let prefix = line_prefix(*num, '+', Some(ADD_BG));
         let mut spans = vec![prefix];
         if paired {
-            spans.extend(inline_changed_spans(code, &del_buf[i].0, true, ADD_BG, ADD_HL));
+            spans.extend(inline_changed_spans(code, &del_buf[i].0, ADD_BG, ADD_HL));
         } else {
             spans.push(Span::styled(
                 code.clone(),
@@ -446,6 +443,7 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
     let mut changes_shown: usize = 0;
     let mut consecutive_blank_ctx: usize = 0;
+    let mut hunk_count: usize = 0;
 
     // Line number tracking
     let mut old_line: u32 = 1;
@@ -480,10 +478,14 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
                 old_line = old_start;
                 new_line = new_start;
             }
-            out.push(Line::from(Span::styled(
-                format!("       {raw_line}"),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
-            )));
+            // Render a subtle separator between hunks (not before the first)
+            if hunk_count > 0 {
+                out.push(Line::from(Span::styled(
+                    "        ⋯",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            hunk_count += 1;
             continue;
         }
 

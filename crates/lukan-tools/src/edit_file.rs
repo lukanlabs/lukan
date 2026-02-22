@@ -10,6 +10,36 @@ use crate::{Tool, ToolContext, format_stats};
 
 pub struct EditFileTool;
 
+struct SingleEdit<'a> {
+    old_text: &'a str,
+    new_text: &'a str,
+    replace_all: bool,
+}
+
+/// Apply a single edit to `content` in-memory. Returns the new content or an error string.
+fn apply_edit(content: &str, edit: &SingleEdit<'_>, file_path_str: &str) -> Result<String, String> {
+    let count = content.matches(edit.old_text).count();
+
+    if count == 0 {
+        return Err(format!(
+            "old_text not found in {file_path_str}. Make sure it matches exactly (including whitespace).\nold_text: {:?}",
+            edit.old_text
+        ));
+    }
+
+    if !edit.replace_all && count > 1 {
+        return Err(format!(
+            "old_text found {count} times in {file_path_str}. Use replace_all: true or provide more context to make it unique."
+        ));
+    }
+
+    if edit.replace_all {
+        Ok(content.replace(edit.old_text, edit.new_text))
+    } else {
+        Ok(content.replacen(edit.old_text, edit.new_text, 1))
+    }
+}
+
 #[async_trait]
 impl Tool for EditFileTool {
     fn name(&self) -> &str {
@@ -17,7 +47,10 @@ impl Tool for EditFileTool {
     }
 
     fn description(&self) -> &str {
-        "Perform exact string replacements in files. The old_text must be unique unless replace_all is true."
+        "Perform exact string replacements in files. Supports a single edit (old_text/new_text) or \
+        multiple atomic edits via the `edits` array. All edits in `edits` are validated before \
+        writing — if any fails, the file is not modified. The old_text must be unique unless \
+        replace_all is true."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -30,19 +63,42 @@ impl Tool for EditFileTool {
                 },
                 "old_text": {
                     "type": "string",
-                    "description": "The exact text to find and replace"
+                    "description": "The exact text to find and replace (single-edit mode)"
                 },
                 "new_text": {
                     "type": "string",
-                    "description": "The replacement text"
+                    "description": "The replacement text (single-edit mode)"
                 },
                 "replace_all": {
                     "type": "boolean",
-                    "description": "Replace all occurrences (default: false)",
+                    "description": "Replace all occurrences (default: false, single-edit mode)",
                     "default": false
+                },
+                "edits": {
+                    "type": "array",
+                    "description": "Multiple edits applied atomically in order. If any edit fails, no changes are written.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_text": {
+                                "type": "string",
+                                "description": "The exact text to find and replace"
+                            },
+                            "new_text": {
+                                "type": "string",
+                                "description": "The replacement text"
+                            },
+                            "replace_all": {
+                                "type": "boolean",
+                                "description": "Replace all occurrences (default: false)",
+                                "default": false
+                            }
+                        },
+                        "required": ["old_text", "new_text"]
+                    }
                 }
             },
-            "required": ["file_path", "old_text", "new_text"]
+            "required": ["file_path"]
         })
     }
 
@@ -55,21 +111,6 @@ impl Tool for EditFileTool {
             .get("file_path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing required field: file_path"))?;
-
-        let old_text = input
-            .get("old_text")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing required field: old_text"))?;
-
-        let new_text = input
-            .get("new_text")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing required field: new_text"))?;
-
-        let replace_all = input
-            .get("replace_all")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
 
         let path = PathBuf::from(file_path_str);
         let path = if path.is_absolute() {
@@ -90,25 +131,57 @@ impl Tool for EditFileTool {
             Err(e) => return Ok(ToolResult::error(format!("Failed to read file: {e}"))),
         };
 
-        // Count occurrences
-        let count = content.matches(old_text).count();
+        // Build the list of edits — either from `edits` array or single old_text/new_text
+        let edits_value = input.get("edits");
+        let new_content = if let Some(arr) = edits_value.and_then(|v| v.as_array()) {
+            // Multi-edit mode: validate and apply all edits atomically
+            let mut edits: Vec<SingleEdit<'_>> = Vec::with_capacity(arr.len());
+            for (i, item) in arr.iter().enumerate() {
+                let old_text = item
+                    .get("old_text")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("edits[{i}] missing old_text"))?;
+                let new_text = item
+                    .get("new_text")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("edits[{i}] missing new_text"))?;
+                let replace_all = item
+                    .get("replace_all")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                edits.push(SingleEdit { old_text, new_text, replace_all });
+            }
 
-        if count == 0 {
-            return Ok(ToolResult::error(format!(
-                "old_text not found in {file_path_str}. Make sure it matches exactly (including whitespace)."
-            )));
-        }
-
-        if !replace_all && count > 1 {
-            return Ok(ToolResult::error(format!(
-                "old_text found {count} times in {file_path_str}. Use replace_all: true or provide more context to make it unique."
-            )));
-        }
-
-        let new_content = if replace_all {
-            content.replace(old_text, new_text)
+            // Apply sequentially to an in-memory copy — atomic: all-or-nothing
+            let mut working = content.clone();
+            for (i, edit) in edits.iter().enumerate() {
+                match apply_edit(&working, edit, file_path_str) {
+                    Ok(result) => working = result,
+                    Err(msg) => {
+                        return Ok(ToolResult::error(format!("edits[{i}] failed: {msg}")));
+                    }
+                }
+            }
+            working
         } else {
-            content.replacen(old_text, new_text, 1)
+            // Single-edit mode: old_text and new_text required at top level
+            let old_text = input
+                .get("old_text")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing required field: old_text (or provide edits array)"))?;
+            let new_text = input
+                .get("new_text")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing required field: new_text (or provide edits array)"))?;
+            let replace_all = input
+                .get("replace_all")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            match apply_edit(&content, &SingleEdit { old_text, new_text, replace_all }, file_path_str) {
+                Ok(result) => result,
+                Err(msg) => return Ok(ToolResult::error(msg)),
+            }
         };
 
         // Write the file
@@ -138,7 +211,7 @@ impl Tool for EditFileTool {
         }
 
         let stats = format_stats(added, removed);
-        let msg = format!("● Update({file_path_str})\n  ⎿  {stats}");
+        let msg = stats;
 
         let snapshot = FileSnapshot {
             path: file_path_str.to_string(),

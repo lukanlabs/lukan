@@ -111,13 +111,8 @@ impl Tool for WriteFileTool {
         } else {
             FileOperation::Created
         };
-        let action = if operation == FileOperation::Modified {
-            "Update"
-        } else {
-            "Create"
-        };
         let stats = format_stats(added, removed);
-        let msg = format!("● {action}({file_path_str})\n  ⎿  {stats}");
+        let msg = stats;
 
         let snapshot = FileSnapshot {
             path: file_path_str.to_string(),

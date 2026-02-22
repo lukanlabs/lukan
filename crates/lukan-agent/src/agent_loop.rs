@@ -183,6 +183,11 @@ impl AgentLoop {
         self.system_prompt = new_prompt;
     }
 
+    /// Swap the LLM provider (e.g. after model switch) without losing history
+    pub fn swap_provider(&mut self, provider: Arc<dyn Provider>) {
+        self.provider = provider;
+    }
+
     /// Run a single user turn: sends the message and loops until no more tool calls
     pub async fn run_turn(
         &mut self,

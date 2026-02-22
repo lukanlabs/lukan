@@ -44,6 +44,9 @@ pub struct SessionSummary {
     pub updated_at: DateTime<Utc>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    /// Last user message (truncated) for display in session picker
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<String>,
 }
 
 impl ChatSession {
@@ -68,6 +71,24 @@ impl ChatSession {
     }
 
     pub fn summary(&self) -> SessionSummary {
+        use super::messages::Role;
+        // Find last user message for preview
+        let last_message = self
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .map(|m| {
+                let text = m.content.to_text();
+                let first_line = text.lines().next().unwrap_or("");
+                if first_line.len() > 60 {
+                    format!("{}…", &first_line[..57])
+                } else {
+                    first_line.to_string()
+                }
+            })
+            .filter(|s| !s.is_empty());
+
         SessionSummary {
             id: self.id.clone(),
             name: self.name.clone(),
@@ -76,6 +97,7 @@ impl ChatSession {
             updated_at: self.updated_at,
             provider: self.provider.clone(),
             model: self.model.clone(),
+            last_message,
         }
     }
 }

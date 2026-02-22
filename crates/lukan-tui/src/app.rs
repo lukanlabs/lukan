@@ -64,6 +64,8 @@ pub struct App {
     cmd_palette_idx: usize,
     /// Reasoning effort picker state (shown after selecting a codex model)
     reasoning_picker: Option<ReasoningPicker>,
+    /// Force full terminal redraw on next frame (e.g. after closing overlay)
+    force_redraw: bool,
 }
 
 /// Interactive model picker state
@@ -112,6 +114,7 @@ impl App {
             committed_msg_idx: 0,
             cmd_palette_idx: 0,
             reasoning_picker: None,
+            force_redraw: false,
         }
     }
 
@@ -180,15 +183,19 @@ impl App {
 
         loop {
             // Push overflow messages into the terminal scrollback
+            // (skip when session picker is open — insert_before shifts the
+            // viewport and leaves visual artifacts over the picker overlay)
             let term_size = terminal.size()?;
             let chat_area_h = term_size.height.saturating_sub(4);
-            commit_overflow(
-                &self.messages,
-                &mut self.committed_msg_idx,
-                &mut terminal,
-                chat_area_h,
-                term_size.width,
-            )?;
+            if self.session_picker.is_none() {
+                commit_overflow(
+                    &self.messages,
+                    &mut self.committed_msg_idx,
+                    &mut terminal,
+                    chat_area_h,
+                    term_size.width,
+                )?;
+            }
 
             // Pre-compute palette state for this frame
             let filtered_cmds = filtered_commands(&self.input);
@@ -213,6 +220,12 @@ impl App {
             let palette_idx = self
                 .cmd_palette_idx
                 .min(filtered_cmds.len().saturating_sub(1));
+
+            // Force full redraw if needed (clears ratatui's diff buffer)
+            if self.force_redraw {
+                terminal.clear()?;
+                self.force_redraw = false;
+            }
 
             // Draw UI
             terminal.draw(|frame| {
@@ -333,9 +346,11 @@ impl App {
                                             Some(effort),
                                         )
                                         .await;
+                                        self.force_redraw = true;
                                     }
                                     KeyCode::Esc => {
                                         self.reasoning_picker = None;
+                                        self.force_redraw = true;
                                     }
                                     _ => {}
                                 }
@@ -362,9 +377,11 @@ impl App {
                                             self.session_picker.as_ref().unwrap().selected;
                                         self.load_selected_session(idx).await;
                                         self.session_picker = None;
+                                        self.force_redraw = true;
                                     }
                                     KeyCode::Esc => {
                                         self.session_picker = None;
+                                        self.force_redraw = true;
                                     }
                                     _ => {}
                                 }
@@ -389,9 +406,11 @@ impl App {
                                         let idx = self.model_picker.as_ref().unwrap().selected;
                                         self.select_model(idx).await;
                                         self.model_picker = None;
+                                        self.force_redraw = true;
                                     }
                                     KeyCode::Esc => {
                                         self.model_picker = None;
+                                        self.force_redraw = true;
                                     }
                                     _ => {}
                                 }
@@ -508,8 +527,8 @@ impl App {
             return;
         }
 
-        // Handle /chats command
-        if text == "/chats" {
+        // Handle /resume command
+        if text == "/resume" {
             self.open_session_picker().await;
             return;
         }
@@ -1095,8 +1114,11 @@ impl App {
                 }
                 self.provider = Arc::from(new_provider);
                 self.config = new_config;
-                self.agent = None;
-                self.session_id = None;
+                // Swap provider in existing agent to preserve history,
+                // or reset if no agent exists yet.
+                if let Some(agent) = self.agent.as_mut() {
+                    agent.swap_provider(Arc::clone(&self.provider));
+                }
                 if let Some(banner) = self.messages.iter_mut().find(|m| m.role == "banner") {
                     let new_banner =
                         build_welcome_banner(self.provider.name(), &self.config.effective_model());
@@ -1397,7 +1419,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
  ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
- /model  Switch model    /chats  Sessions    /clear  Clear chat    /compact  Compact    Ctrl+C  Quit"
+ /model  Switch model    /resume  Sessions    /clear  Clear chat    /compact  Compact    Ctrl+C  Quit"
     )
 }
 
@@ -1405,7 +1427,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
 
 const COMMANDS: &[(&str, &str)] = &[
     ("/model", "choose model to use"),
-    ("/chats", "load a saved session"),
+    ("/resume", "resume a saved session"),
     ("/clear", "clear chat and start fresh"),
     ("/compact", "compact conversation history"),
     ("/memories", "manage project memory (activate | deactivate | add <text>)"),
@@ -1581,7 +1603,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph, Widget, Wrap},
+    widgets::{Clear, Paragraph, Widget},
 };
 
 struct ModelPaletteWidget<'a> {
@@ -1672,15 +1694,30 @@ impl Widget for SessionPickerWidget<'_> {
         let mut lines: Vec<Line<'_>> = Vec::new();
 
         lines.push(Line::from(Span::styled(
-            " Select Session",
+            " Resume Session",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(""));
 
-        for (i, session) in self.picker.sessions.iter().enumerate() {
-            let is_selected = i == self.picker.selected;
+        // Each session takes 1 line
+        let available_rows = area.height.saturating_sub(3) as usize; // minus header + blank + scroll indicator
+        let visible_items = available_rows.max(1);
+        let total = self.picker.sessions.len();
+        let selected = self.picker.selected;
+
+        // Scroll offset: keep selected item visible
+        let scroll_offset = if selected >= visible_items {
+            selected - visible_items + 1
+        } else {
+            0
+        };
+        let end = (scroll_offset + visible_items).min(total);
+
+        for i in scroll_offset..end {
+            let session = &self.picker.sessions[i];
+            let is_selected = i == selected;
             let is_current = self
                 .picker
                 .current_id
@@ -1688,12 +1725,6 @@ impl Widget for SessionPickerWidget<'_> {
                 .is_some_and(|id| *id == session.id);
 
             let pointer = if is_selected { "▸ " } else { "  " };
-
-            let provider_model = match (&session.provider, &session.model) {
-                (Some(p), Some(m)) => format!("{p}:{m}"),
-                (Some(p), None) => p.clone(),
-                _ => "unknown".to_string(),
-            };
 
             let time_ago = format_time_ago(session.updated_at);
             let msg_count = session.message_count;
@@ -1719,17 +1750,6 @@ impl Widget for SessionPickerWidget<'_> {
                         Style::default().fg(Color::Yellow)
                     },
                 ),
-                Span::styled(" ", Style::default()),
-                Span::styled(
-                    provider_model,
-                    if is_selected {
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::Gray)
-                    },
-                ),
                 Span::styled(
                     format!(" · {msg_count} msgs · {time_ago}"),
                     Style::default().fg(Color::DarkGray),
@@ -1743,10 +1763,26 @@ impl Widget for SessionPickerWidget<'_> {
                 ));
             }
 
+            // Last message preview on the right, dimmed
+            if let Some(ref preview) = session.last_message {
+                spans.push(Span::styled(
+                    format!(" · {preview}"),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+
             lines.push(Line::from(spans));
         }
 
-        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        // Scroll indicator
+        if total > visible_items {
+            lines.push(Line::from(Span::styled(
+                format!("  ({}/{total})", selected + 1),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
     }
 }

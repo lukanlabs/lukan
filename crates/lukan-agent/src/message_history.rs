@@ -71,6 +71,11 @@ impl MessageHistory {
         self.messages.clear();
     }
 
+    /// Truncate messages to keep only the first `len` entries
+    pub fn truncate(&mut self, len: usize) {
+        self.messages.truncate(len);
+    }
+
     /// Clone messages for serialization
     pub fn to_json(&self) -> Vec<Message> {
         self.messages.clone()

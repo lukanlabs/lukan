@@ -181,6 +181,76 @@ impl AgentLoop {
         &self.session.checkpoints
     }
 
+    /// Restore to a checkpoint, truncating history and optionally reverting files.
+    ///
+    /// Returns `true` if the checkpoint was found and the restore succeeded.
+    /// When `restore_code` is true, files are reverted to their state *before*
+    /// the checkpoint's turn using the `before` snapshots.
+    pub async fn restore_checkpoint(
+        &mut self,
+        checkpoint_id: &str,
+        restore_code: bool,
+    ) -> Result<bool> {
+        // Find the target checkpoint index
+        let Some(target_idx) = self
+            .session
+            .checkpoints
+            .iter()
+            .position(|c| c.id == checkpoint_id)
+        else {
+            return Ok(false);
+        };
+
+        let target = &self.session.checkpoints[target_idx];
+        let message_index = target.message_index;
+
+        // If restoring code, revert files from all checkpoints at and after target
+        // (including target, since we're rewinding to *before* that turn).
+        if restore_code {
+            // Process in reverse order so earlier snapshots win on conflicts
+            for cp in self.session.checkpoints[target_idx..].iter().rev() {
+                for snap in &cp.snapshots {
+                    let path = std::path::Path::new(&snap.path);
+                    match snap.operation {
+                        lukan_core::models::checkpoints::FileOperation::Created => {
+                            // File was created during this turn → delete it
+                            let _ = tokio::fs::remove_file(path).await;
+                        }
+                        lukan_core::models::checkpoints::FileOperation::Modified
+                        | lukan_core::models::checkpoints::FileOperation::Deleted => {
+                            // Restore the "before" content
+                            if let Some(ref before) = snap.before {
+                                if let Some(parent) = path.parent() {
+                                    let _ = tokio::fs::create_dir_all(parent).await;
+                                }
+                                let _ = tokio::fs::write(path, before).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Truncate history to the point before the target checkpoint's turn
+        self.history.truncate(message_index);
+
+        // Remove checkpoints at and after the target
+        self.session.checkpoints.truncate(target_idx);
+
+        // Clear read_files cache since the file state has changed
+        self.read_files.lock().await.clear();
+
+        // Save session
+        self.save_session().await?;
+
+        info!(
+            checkpoint_id,
+            message_index, restore_code, "Restored checkpoint"
+        );
+
+        Ok(true)
+    }
+
     /// Manually trigger conversation compaction
     pub async fn compact(&mut self, event_tx: mpsc::Sender<StreamEvent>) -> Result<()> {
         self.compact_history(&event_tx).await
@@ -207,6 +277,10 @@ impl AgentLoop {
         user_message: &str,
         event_tx: mpsc::Sender<StreamEvent>,
     ) -> Result<()> {
+        // Capture message index *before* adding the user message.
+        // This is the truncation point used by restore_checkpoint().
+        let message_index_before = self.history.messages().len();
+
         // Add user message to history
         self.history.add_user_message(user_message);
 
@@ -374,6 +448,7 @@ impl AgentLoop {
                 message: user_message.to_string(),
                 snapshots: turn_snapshots,
                 created_at: Utc::now(),
+                message_index: message_index_before,
             };
             self.session.checkpoints.push(checkpoint);
         }

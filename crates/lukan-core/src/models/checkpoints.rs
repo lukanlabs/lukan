@@ -9,6 +9,10 @@ pub struct Checkpoint {
     pub message: String,
     pub snapshots: Vec<FileSnapshot>,
     pub created_at: DateTime<Utc>,
+    /// Index into the message history *before* this turn's user message was added.
+    /// Used by the rewind system to truncate history back to this point.
+    #[serde(default)]
+    pub message_index: usize,
 }
 
 /// Snapshot of a single file change

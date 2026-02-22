@@ -26,6 +26,7 @@ use chrono::Utc;
 
 use crate::event::{AppEvent, is_quit, spawn_event_reader};
 use crate::widgets::bg_picker::{BgEntry, BgPicker, BgPickerView, BgPickerWidget};
+use crate::widgets::rewind_picker::{RewindEntry, RewindPicker, RewindPickerWidget, RewindView};
 use crate::widgets::chat::{
     ChatMessage, ChatWidget, build_message_lines, physical_row_count, sanitize_for_display,
 };
@@ -73,6 +74,8 @@ pub struct App {
     paste_info: Option<(usize, usize, String)>,
     /// Background process picker state
     bg_picker: Option<BgPicker>,
+    /// Rewind (checkpoint restore) picker state
+    rewind_picker: Option<RewindPicker>,
     /// Memory viewer overlay content (shown via Alt+M)
     memory_viewer: Option<String>,
     /// Sender to signal Alt+B (send running Bash to background)
@@ -132,6 +135,7 @@ impl App {
             esc_pending: false,
             paste_info: None,
             bg_picker: None,
+            rewind_picker: None,
             memory_viewer: None,
             bg_signal_tx,
             bg_signal_rx,
@@ -243,7 +247,7 @@ impl App {
             let display_input = self.display_input();
             let cur_input_h = input_height(&display_input, term_size.width, 8);
             let chat_area_h = term_size.height.saturating_sub(cur_input_h + 1);
-            if self.session_picker.is_none() && self.bg_picker.is_none() && self.memory_viewer.is_none() {
+            if self.session_picker.is_none() && self.bg_picker.is_none() && self.rewind_picker.is_none() && self.memory_viewer.is_none() {
                 commit_overflow(
                     &self.messages,
                     &mut self.committed_msg_idx,
@@ -256,12 +260,14 @@ impl App {
             // Pre-compute palette state for this frame
             let filtered_cmds = filtered_commands(&self.input);
             let bg_picker_active = self.bg_picker.is_some();
+            let rewind_picker_active = self.rewind_picker.is_some();
             let cmd_palette_active = !filtered_cmds.is_empty()
                 && !self.is_streaming
                 && self.session_picker.is_none()
                 && self.model_picker.is_none()
                 && self.reasoning_picker.is_none()
-                && !bg_picker_active;
+                && !bg_picker_active
+                && !rewind_picker_active;
             let model_picker_active = self.model_picker.is_some() && self.session_picker.is_none();
             let reasoning_picker_active = self.reasoning_picker.is_some();
             let palette_visible =
@@ -327,6 +333,9 @@ impl App {
                         .wrap(Wrap { trim: false })
                         .style(Style::default().fg(Color::White));
                     frame.render_widget(paragraph, chat_area);
+                } else if let Some(ref picker) = self.rewind_picker {
+                    let widget = RewindPickerWidget::new(picker);
+                    frame.render_widget(widget, chat_area);
                 } else if let Some(ref picker) = self.bg_picker {
                     let widget = BgPickerWidget::new(picker);
                     frame.render_widget(widget, chat_area);
@@ -362,6 +371,13 @@ impl App {
                 let dc = self.display_cursor();
                 let input_widget = if self.memory_viewer.is_some() {
                     InputWidget::new("ESC close", 0, false)
+                } else if self.rewind_picker.is_some() {
+                    let hint = match self.rewind_picker.as_ref().map(|p| p.view) {
+                        Some(RewindView::List) => "↑↓ navigate · Enter restore · ESC close",
+                        Some(RewindView::Options) => "↑↓ navigate · Enter confirm · ESC back",
+                        None => "",
+                    };
+                    InputWidget::new(hint, 0, false)
                 } else if self.bg_picker.is_some() {
                     let hint = match self.bg_picker.as_ref().map(|p| p.view) {
                         Some(BgPickerView::List) => "↑↓ navigate · l=logs · k=kill · ESC close",
@@ -412,6 +428,7 @@ impl App {
 
                 // Set cursor position only when not in picker and not streaming
                 if self.memory_viewer.is_none()
+                    && self.rewind_picker.is_none()
                     && self.bg_picker.is_none()
                     && self.session_picker.is_none()
                     && self.model_picker.is_none()
@@ -432,6 +449,66 @@ impl App {
                                 if key.code == KeyCode::Esc {
                                     self.memory_viewer = None;
                                     self.force_redraw = true;
+                                }
+                            } else if self.rewind_picker.is_some() {
+                                // Rewind picker overlay
+                                match key.code {
+                                    KeyCode::Up => {
+                                        if let Some(ref mut picker) = self.rewind_picker {
+                                            if picker.view == RewindView::List && picker.selected > 0 {
+                                                picker.selected -= 1;
+                                            } else if picker.view == RewindView::Options && picker.option_idx > 0 {
+                                                picker.option_idx -= 1;
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if let Some(ref mut picker) = self.rewind_picker {
+                                            if picker.view == RewindView::List
+                                                && picker.selected + 1 < picker.entries.len()
+                                            {
+                                                picker.selected += 1;
+                                            } else if picker.view == RewindView::Options
+                                                && picker.option_idx < 1
+                                            {
+                                                picker.option_idx += 1;
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        if let Some(ref mut picker) = self.rewind_picker {
+                                            if picker.view == RewindView::List {
+                                                // Can't restore "(current)" — it has no checkpoint_id
+                                                if picker.selected_checkpoint_id().is_some() {
+                                                    picker.view = RewindView::Options;
+                                                    picker.option_idx = 0;
+                                                }
+                                            } else {
+                                                // Options view — perform the restore
+                                                let restore_code = picker.option_idx == 1;
+                                                let checkpoint_id = picker
+                                                    .selected_checkpoint_id()
+                                                    .map(|s| s.to_string());
+
+                                                if let Some(id) = checkpoint_id {
+                                                    self.restore_to_checkpoint(&id, restore_code).await;
+                                                }
+                                                self.rewind_picker = None;
+                                                self.force_redraw = true;
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Esc => {
+                                        if let Some(ref mut picker) = self.rewind_picker {
+                                            if picker.view == RewindView::Options {
+                                                picker.view = RewindView::List;
+                                            } else {
+                                                self.rewind_picker = None;
+                                                self.force_redraw = true;
+                                            }
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             } else if self.bg_picker.is_some() {
                                 // Background process picker mode
@@ -1092,7 +1169,7 @@ impl App {
             return;
         }
 
-        // Handle /checkpoints
+        // Handle /checkpoints — open rewind picker
         if text == "/checkpoints" {
             let checkpoints = self
                 .agent
@@ -1105,18 +1182,29 @@ impl App {
                     "No checkpoints in this session.",
                 ));
             } else {
-                let list = checkpoints
+                let mut entries: Vec<RewindEntry> = checkpoints
                     .iter()
                     .map(|c| {
-                        let files = c.snapshots.len();
-                        format!("  {} — {} ({files} file{})", c.id, c.message, if files == 1 { "" } else { "s" })
+                        let additions: u32 = c.snapshots.iter().map(|s| s.additions).sum();
+                        let deletions: u32 = c.snapshots.iter().map(|s| s.deletions).sum();
+                        RewindEntry {
+                            checkpoint_id: Some(c.id.clone()),
+                            message: c.message.clone(),
+                            files_changed: c.snapshots.len(),
+                            additions,
+                            deletions,
+                        }
                     })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                self.messages.push(ChatMessage::new(
-                    "system",
-                    format!("Checkpoints ({}):\n{list}", checkpoints.len()),
-                ));
+                    .collect();
+                // Append "(current)" sentinel
+                entries.push(RewindEntry {
+                    checkpoint_id: None,
+                    message: String::new(),
+                    files_changed: 0,
+                    additions: 0,
+                    deletions: 0,
+                });
+                self.rewind_picker = Some(RewindPicker::new(entries));
             }
             return;
         }
@@ -1427,6 +1515,60 @@ impl App {
                 self.messages.push(ChatMessage::new(
                     "system",
                     format!("Failed to load session: {e}"),
+                ));
+            }
+        }
+    }
+
+    /// Restore to a checkpoint, truncating agent history and optionally reverting files
+    async fn restore_to_checkpoint(&mut self, checkpoint_id: &str, restore_code: bool) {
+        let agent = match self.agent.as_mut() {
+            Some(a) => a,
+            None => {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "No active session to restore.",
+                ));
+                return;
+            }
+        };
+
+        match agent.restore_checkpoint(checkpoint_id, restore_code).await {
+            Ok(true) => {
+                let mode = if restore_code {
+                    "chat + code"
+                } else {
+                    "chat only"
+                };
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Restored to checkpoint {checkpoint_id} ({mode})"),
+                ));
+
+                // Clear all UI messages (including banner) and show only
+                // the restore notification so the user gets a clean slate.
+                let msg_count = agent.message_count();
+                let restore_msg = self.messages.pop();
+                self.messages.clear();
+                self.committed_msg_idx = 0;
+                if let Some(msg) = restore_msg {
+                    self.messages.push(msg);
+                }
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Session history: {msg_count} messages remaining"),
+                ));
+            }
+            Ok(false) => {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Checkpoint {checkpoint_id} not found."),
+                ));
+            }
+            Err(e) => {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Restore failed: {e}"),
                 ));
             }
         }
@@ -1942,7 +2084,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/compact", "compact conversation history"),
     ("/memories", "manage project memory (activate | deactivate | show | add <text>)"),
     ("/gmemory", "global memory (show | add <text> | clear)"),
-    ("/checkpoints", "list session checkpoints"),
+    ("/checkpoints", "rewind to a checkpoint"),
     ("/exit", "quit lukan"),
 ];
 

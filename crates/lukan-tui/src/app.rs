@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use tracing::error;
 
 use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
-use lukan_core::config::{ConfigManager, CredentialsManager, ProviderName, ResolvedConfig};
+use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig};
 use lukan_core::models::events::StreamEvent;
 use lukan_core::models::sessions::SessionSummary;
 use lukan_providers::{Provider, SystemPrompt, create_provider};
@@ -503,6 +503,12 @@ impl App {
         self.input.clear();
         self.cursor_pos = 0;
 
+        // Handle /exit
+        if text == "/exit" {
+            self.should_quit = true;
+            return;
+        }
+
         // Handle /chats command
         if text == "/chats" {
             self.open_session_picker().await;
@@ -524,6 +530,177 @@ impl App {
             // Reset agent — a new session will be created on next message
             self.agent = None;
             self.session_id = None;
+            return;
+        }
+
+        // Handle /compact
+        if text == "/compact" {
+            if self.is_streaming {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "Cannot compact while a response is streaming.",
+                ));
+                return;
+            }
+            let agent = match self.agent.take() {
+                Some(a) => a,
+                None => {
+                    self.messages
+                        .push(ChatMessage::new("system", "No active session to compact."));
+                    return;
+                }
+            };
+            self.is_streaming = true;
+            let msg_before = agent.message_count();
+            let (return_tx, return_rx) = tokio::sync::oneshot::channel::<AgentLoop>();
+            self.agent_return_rx = Some(return_rx);
+            let tx = agent_tx.clone();
+            let mut agent = agent;
+            tokio::spawn(async move {
+                if let Err(e) = agent.compact(tx.clone()).await {
+                    let _ = tx
+                        .send(StreamEvent::Error {
+                            error: e.to_string(),
+                        })
+                        .await;
+                } else {
+                    let msg_after = agent.message_count();
+                    let summary = format!(
+                        "Compacted: {} messages → {} messages.",
+                        msg_before, msg_after
+                    );
+                    // TextDelta must come before MessageEnd so it gets flushed
+                    // into messages when MessageEnd sets is_streaming = false.
+                    let _ = tx.send(StreamEvent::TextDelta { text: summary }).await;
+                    let _ = tx
+                        .send(StreamEvent::MessageEnd {
+                            stop_reason: lukan_core::models::events::StopReason::EndTurn,
+                        })
+                        .await;
+                }
+                let _ = return_tx.send(agent);
+            });
+            return;
+        }
+
+        // Handle /memories [activate | deactivate | add <text>]
+        if text == "/memories" || text.starts_with("/memories ") {
+            let sub = text.strip_prefix("/memories").unwrap_or("").trim().to_string();
+            let memory_path = LukanPaths::global_memory_file();
+            if sub == "activate" {
+                if !memory_path.exists() {
+                    if let Some(parent) = memory_path.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    let _ = tokio::fs::write(&memory_path, "# Project Memory\n\n").await;
+                }
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Memory activated: {}", memory_path.display()),
+                ));
+            } else if sub == "deactivate" {
+                let _ = tokio::fs::remove_file(&memory_path).await;
+                self.messages
+                    .push(ChatMessage::new("system", "Memory deactivated. File removed."));
+            } else if sub.starts_with("add") {
+                let entry = sub.strip_prefix("add").unwrap_or("").trim().to_string();
+                if entry.is_empty() {
+                    self.messages.push(ChatMessage::new(
+                        "system",
+                        "Usage: /memories add <text>",
+                    ));
+                } else {
+                    let current = tokio::fs::read_to_string(&memory_path)
+                        .await
+                        .unwrap_or_else(|_| "# Project Memory\n\n".to_string());
+                    let updated = format!("{current}\n- {entry}\n");
+                    let _ = tokio::fs::write(&memory_path, &updated).await;
+                    self.messages.push(ChatMessage::new(
+                        "system",
+                        format!("Memory updated: \"{entry}\""),
+                    ));
+                }
+            } else {
+                let active = memory_path.exists();
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!(
+                        "Memory: {}. Usage: /memories activate | deactivate | add <text>",
+                        if active { "active" } else { "inactive" }
+                    ),
+                ));
+            }
+            return;
+        }
+
+        // Handle /gmemory [show | add <text> | clear]
+        if text == "/gmemory" || text.starts_with("/gmemory ") {
+            let sub = text.strip_prefix("/gmemory").unwrap_or("").trim().to_string();
+            let memory_path = LukanPaths::global_memory_file();
+            if sub == "show" {
+                let content = tokio::fs::read_to_string(&memory_path)
+                    .await
+                    .unwrap_or_else(|_| "(empty)".to_string());
+                self.messages
+                    .push(ChatMessage::new("system", format!("Memory:\n{content}")));
+            } else if sub.starts_with("add ") {
+                let entry = sub.strip_prefix("add ").unwrap_or("").trim().to_string();
+                if entry.is_empty() {
+                    self.messages
+                        .push(ChatMessage::new("system", "Usage: /gmemory add <text>"));
+                } else {
+                    let current = tokio::fs::read_to_string(&memory_path)
+                        .await
+                        .unwrap_or_else(|_| "# Project Memory\n\n".to_string());
+                    let updated = format!("{current}\n- {entry}\n");
+                    let _ = tokio::fs::write(&memory_path, &updated).await;
+                    self.messages.push(ChatMessage::new(
+                        "system",
+                        format!("Memory updated: \"{entry}\""),
+                    ));
+                }
+            } else if sub == "clear" {
+                let _ = tokio::fs::write(&memory_path, "# Project Memory\n\n").await;
+                self.messages
+                    .push(ChatMessage::new("system", "Memory cleared."));
+            } else {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!(
+                        "Global memory: {}\nUsage: /gmemory show | add <text> | clear",
+                        memory_path.display()
+                    ),
+                ));
+            }
+            return;
+        }
+
+        // Handle /checkpoints
+        if text == "/checkpoints" {
+            let checkpoints = self
+                .agent
+                .as_ref()
+                .map(|a| a.checkpoints().to_vec())
+                .unwrap_or_default();
+            if checkpoints.is_empty() {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "No checkpoints in this session.",
+                ));
+            } else {
+                let list = checkpoints
+                    .iter()
+                    .map(|c| {
+                        let files = c.snapshots.len();
+                        format!("  {} — {} ({files} file{})", c.id, c.message, if files == 1 { "" } else { "s" })
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Checkpoints ({}):\n{list}", checkpoints.len()),
+                ));
+            }
             return;
         }
 
@@ -1205,7 +1382,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
  ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
- /model  Switch model    /chats  Load session    /clear  Clear chat    Ctrl+C  Quit"
+ /model  Switch model    /chats  Sessions    /clear  Clear chat    /compact  Compact    Ctrl+C  Quit"
     )
 }
 
@@ -1215,6 +1392,11 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/model", "choose model to use"),
     ("/chats", "load a saved session"),
     ("/clear", "clear chat and start fresh"),
+    ("/compact", "compact conversation history"),
+    ("/memories", "manage project memory (activate | deactivate | add <text>)"),
+    ("/gmemory", "global memory (show | add <text> | clear)"),
+    ("/checkpoints", "list session checkpoints"),
+    ("/exit", "quit lukan"),
 ];
 
 /// Filter available commands by the current input prefix.

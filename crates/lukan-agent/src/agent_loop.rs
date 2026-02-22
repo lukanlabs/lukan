@@ -7,6 +7,7 @@ use chrono::Utc;
 use lukan_core::config::LukanPaths;
 use lukan_core::models::events::{StopReason, StreamEvent};
 use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
+use lukan_core::models::checkpoints::Checkpoint;
 use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
@@ -159,6 +160,21 @@ impl AgentLoop {
     /// Total output tokens used across all turns
     pub fn output_tokens(&self) -> u64 {
         self.output_tokens
+    }
+
+    /// Number of messages in the current history
+    pub fn message_count(&self) -> usize {
+        self.history.messages().len()
+    }
+
+    /// Checkpoints recorded in this session
+    pub fn checkpoints(&self) -> &[Checkpoint] {
+        &self.session.checkpoints
+    }
+
+    /// Manually trigger conversation compaction
+    pub async fn compact(&mut self, event_tx: mpsc::Sender<StreamEvent>) -> Result<()> {
+        self.compact_history(&event_tx).await
     }
 
     /// Run a single user turn: sends the message and loops until no more tool calls

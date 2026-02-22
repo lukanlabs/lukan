@@ -408,6 +408,13 @@ impl App {
                                         self.model_picker = None;
                                         self.force_redraw = true;
                                     }
+                                    KeyCode::Char('d') => {
+                                        // Set selected model as default and switch to it
+                                        let idx = self.model_picker.as_ref().unwrap().selected;
+                                        self.set_default_model(idx).await;
+                                        self.model_picker = None;
+                                        self.force_redraw = true;
+                                    }
                                     KeyCode::Esc => {
                                         self.model_picker = None;
                                         self.force_redraw = true;
@@ -1060,6 +1067,51 @@ impl App {
         self.apply_model_switch(&entry).await;
     }
 
+    /// Set the selected model as the default (persisted to config.json) and switch to it.
+    async fn set_default_model(&mut self, idx: usize) {
+        let picker = self.model_picker.as_ref().unwrap();
+        let entry = picker.models[idx].clone();
+
+        let Some((provider_str, model_name)) = entry.split_once(':') else {
+            self.messages.push(ChatMessage::new(
+                "system",
+                format!("Invalid model format: {entry}"),
+            ));
+            return;
+        };
+
+        // Update config and persist
+        let provider_name: ProviderName =
+            match serde_json::from_value(serde_json::Value::String(provider_str.to_string())) {
+                Ok(p) => p,
+                Err(_) => {
+                    self.messages.push(ChatMessage::new(
+                        "system",
+                        format!("Unknown provider: {provider_str}"),
+                    ));
+                    return;
+                }
+            };
+
+        self.config.config.provider = provider_name;
+        self.config.config.model = Some(model_name.to_string());
+
+        if let Err(e) = ConfigManager::save(&self.config.config).await {
+            self.messages.push(ChatMessage::new(
+                "system",
+                format!("Failed to save config: {e}"),
+            ));
+            return;
+        }
+
+        // Switch to the model
+        self.apply_model_switch(&entry).await;
+        self.messages.push(ChatMessage::new(
+            "system",
+            format!("Default model set to {entry}"),
+        ));
+    }
+
     /// Apply the model switch after all selections are done.
     async fn apply_model_switch(&mut self, entry: &str) {
         self.apply_model_switch_with_effort(entry, None).await;
@@ -1622,12 +1674,18 @@ impl Widget for ModelPaletteWidget<'_> {
         let mut lines: Vec<Line<'_>> = Vec::new();
 
         // Header
-        lines.push(Line::from(Span::styled(
-            "  Select Model",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  Select Model",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "  (d = set as default)",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
         lines.push(Line::from(""));
 
         for (i, entry) in self.picker.models.iter().enumerate() {

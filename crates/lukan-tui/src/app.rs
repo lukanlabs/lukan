@@ -66,6 +66,8 @@ pub struct App {
     reasoning_picker: Option<ReasoningPicker>,
     /// Force full terminal redraw on next frame (e.g. after closing overlay)
     force_redraw: bool,
+    /// Timestamp of last ESC press (for double-ESC to clear input)
+    last_esc: Option<std::time::Instant>,
 }
 
 /// Interactive model picker state
@@ -115,6 +117,7 @@ impl App {
             cmd_palette_idx: 0,
             reasoning_picker: None,
             force_redraw: false,
+            last_esc: None,
         }
     }
 
@@ -442,10 +445,24 @@ impl App {
                                         self.cmd_palette_idx =
                                             (self.cmd_palette_idx + 1) % cmds.len().max(1);
                                     }
-                                    KeyCode::Esc if has_palette => {
-                                        self.input.clear();
-                                        self.cursor_pos = 0;
-                                        self.cmd_palette_idx = 0;
+                                    KeyCode::Esc => {
+                                        let now = std::time::Instant::now();
+                                        let is_double = self
+                                            .last_esc
+                                            .is_some_and(|t| now.duration_since(t).as_millis() < 500);
+                                        self.last_esc = Some(now);
+
+                                        if has_palette && !is_double {
+                                            // First ESC: close palette
+                                            self.input.clear();
+                                            self.cursor_pos = 0;
+                                            self.cmd_palette_idx = 0;
+                                        } else if !self.input.is_empty() {
+                                            // Double ESC or no palette: clear input
+                                            self.input.clear();
+                                            self.cursor_pos = 0;
+                                            self.cmd_palette_idx = 0;
+                                        }
                                     }
                                     KeyCode::Enter => {
                                         if has_palette {

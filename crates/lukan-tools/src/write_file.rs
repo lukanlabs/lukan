@@ -84,7 +84,7 @@ impl Tool for WriteFileTool {
         // Generate diff
         let old = old_content.as_deref().unwrap_or("");
         let diff = TextDiff::from_lines(old, content);
-        let mut diff_str = String::new();
+        let mut diff_str = format!("--- {file_path_str}\n");
         let mut added = 0usize;
         let mut removed = 0usize;
         for change in diff.iter_all_changes() {

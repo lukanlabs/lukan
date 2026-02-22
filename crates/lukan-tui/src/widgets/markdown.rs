@@ -16,11 +16,11 @@ use syntect::{
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 static THEME: OnceLock<Theme> = OnceLock::new();
 
-fn syntax_set() -> &'static SyntaxSet {
+pub(crate) fn syntax_set() -> &'static SyntaxSet {
     SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
-fn theme() -> &'static Theme {
+pub(crate) fn theme() -> &'static Theme {
     THEME.get_or_init(|| {
         let ts = ThemeSet::load_defaults();
         ts.themes["base16-ocean.dark"].clone()

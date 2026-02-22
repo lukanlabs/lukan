@@ -6,7 +6,9 @@ use ratatui::{
     widgets::{Clear, Paragraph, Widget, Wrap},
 };
 
-use super::markdown::render_markdown;
+use syntect::easy::HighlightLines;
+
+use super::markdown::{render_markdown, syntax_set, theme};
 use super::shimmer::shimmer_spans;
 
 /// Sanitize text for terminal display.
@@ -298,14 +300,41 @@ impl Widget for ChatWidget<'_> {
 
 // ── Diff Rendering ─────────────────────────────────────────────────────
 
-/// Parse and render a unified diff with proper coloring.
-/// Skips metadata headers (---, +++, index, diff --git) and
-/// shows hunk headers as dim cyan separators.
+/// Parse and render a unified diff with syntax highlighting.
+///
+/// The diff string may begin with `--- path/to/file.ext` (produced by
+/// EditFile/WriteFile) to enable language-aware syntax highlighting.
+/// Token colours are mapped to ANSI-16 so they are always visible
+/// regardless of the terminal's background colour.
+///
+/// Added lines get a dark-green background, removed lines dark-red.
+/// Context lines have no background but still receive syntax colours.
 fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut changes_shown: usize = 0;
     let mut consecutive_blank_ctx: usize = 0;
 
+    // ── Syntax highlighting setup ────────────────────────────────────
+    let ss = syntax_set();
+    let ext = diff
+        .lines()
+        .find(|l| l.starts_with("--- "))
+        .and_then(|l| l.strip_prefix("--- "))
+        .and_then(|path| path.rsplit('.').next());
+    let syntax = ext.and_then(|e| {
+        ss.find_syntax_by_extension(e)
+            .or_else(|| ss.find_syntax_by_token(e))
+    });
+    // Separate highlighter per stream so syntect parser state stays valid.
+    let mut hl_add = syntax.map(|s| HighlightLines::new(s, theme()));
+    let mut hl_del = syntax.map(|s| HighlightLines::new(s, theme()));
+    let mut hl_ctx = syntax.map(|s| HighlightLines::new(s, theme()));
+
+    // ── Background tints ─────────────────────────────────────────────
+    let add_bg = Color::Rgb(20, 40, 20);
+    let del_bg = Color::Rgb(50, 20, 20);
+
+    // ── Change count (for truncation message) ────────────────────────
     let total_changes = diff
         .lines()
         .filter(|l| {
@@ -318,7 +347,7 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
         // Skip diff metadata headers
         if raw_line.starts_with("diff --git")
             || raw_line.starts_with("index ")
-            || raw_line.starts_with("---")
+            || raw_line.starts_with("--- ")
             || raw_line.starts_with("+++")
             || raw_line.starts_with("new file")
             || raw_line.starts_with("deleted file")
@@ -351,16 +380,14 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
             continue;
         }
 
-        if is_remove {
-            lines.push(Line::from(Span::styled(
-                format!("     {raw_line}"),
-                Style::default().fg(Color::Red),
-            )));
-        } else if is_add {
-            lines.push(Line::from(Span::styled(
-                format!("     {raw_line}"),
-                Style::default().fg(Color::Green),
-            )));
+        if is_add {
+            let code = &raw_line[1..];
+            let line = diff_line(code, &mut hl_add, ss, "     +", Color::LightGreen, Some(add_bg));
+            lines.push(line);
+        } else if is_remove {
+            let code = &raw_line[1..];
+            let line = diff_line(code, &mut hl_del, ss, "     -", Color::LightRed, Some(del_bg));
+            lines.push(line);
         } else {
             // Context line — collapse consecutive blank lines to max 1
             let content = raw_line.strip_prefix(' ').unwrap_or(raw_line);
@@ -372,10 +399,8 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
             } else {
                 consecutive_blank_ctx = 0;
             }
-            lines.push(Line::from(Span::styled(
-                format!("     {raw_line}"),
-                Style::default().fg(Color::DarkGray),
-            )));
+            let line = diff_line(content, &mut hl_ctx, ss, "      ", Color::DarkGray, None);
+            lines.push(line);
         }
     }
 
@@ -390,4 +415,111 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
     }
 
     lines
+}
+
+/// Map a syntect RGB colour to an ANSI-16 colour by analysing the hue.
+///
+/// ANSI-16 colours are defined by the terminal's colour scheme, so they
+/// are always legible regardless of the terminal background — unlike the
+/// muted pastels that syntect themes produce for dark backgrounds.
+fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> Color {
+    let max = r.max(g).max(b) as i16;
+    let min = r.min(g).min(b) as i16;
+    let chroma = max - min;
+
+    // Very dark → comments / preprocessor directives
+    if max < 90 {
+        return Color::DarkGray;
+    }
+    // Near-grey (low saturation) → default text
+    if chroma < 30 {
+        return Color::Reset; // terminal default fg
+    }
+
+    let (r, g, b) = (r as i16, g as i16, b as i16);
+
+    // Dominant hue → ANSI colour
+    if r >= g && r >= b {
+        if g >= b {
+            Color::LightYellow // orange / yellow  (numbers, constants)
+        } else {
+            Color::LightMagenta // pink / magenta   (keywords)
+        }
+    } else if g >= r && g >= b {
+        if r >= b {
+            Color::LightYellow // yellow-green       (operators)
+        } else {
+            Color::LightGreen // green               (strings)
+        }
+    } else {
+        // blue is dominant
+        if g >= r {
+            Color::LightCyan // cyan                 (builtins / types)
+        } else {
+            Color::LightBlue // blue / purple        (variables / names)
+        }
+    }
+}
+
+/// Render one diff line with syntax highlighting.
+///
+/// `prefix`       — the `"     +"` / `"     -"` / `"      "` leader.
+/// `prefix_color` — colour for the prefix glyph.
+/// `bg`           — optional background tint for the whole line.
+fn diff_line(
+    code: &str,
+    highlighter: &mut Option<HighlightLines<'_>>,
+    ss: &syntect::parsing::SyntaxSet,
+    prefix: &str,
+    prefix_color: Color,
+    bg: Option<Color>,
+) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Prefix glyph  (e.g. "     +" in bright green)
+    let prefix_style = match bg {
+        Some(b) => Style::default().fg(prefix_color).bg(b),
+        None => Style::default().fg(prefix_color),
+    };
+    spans.push(Span::styled(prefix.to_string(), prefix_style));
+
+    // Syntax-highlighted tokens
+    // `highlight_line` expects a newline-terminated string for correct
+    // multi-line parser state; we append one here.
+    let line_with_nl = format!("{code}\n");
+    let ranges = highlighter
+        .as_mut()
+        .and_then(|h| h.highlight_line(&line_with_nl, ss).ok());
+
+    match ranges {
+        Some(tokens) => {
+            for (style, text) in tokens {
+                let text = text.trim_end_matches('\n');
+                if text.is_empty() {
+                    continue;
+                }
+                let fg = rgb_to_ansi16(style.foreground.r, style.foreground.g, style.foreground.b);
+                let s = match bg {
+                    Some(b) => Style::default().fg(fg).bg(b),
+                    None => Style::default().fg(fg),
+                };
+                spans.push(Span::styled(text.to_string(), s));
+            }
+        }
+        None => {
+            // No syntax info — plain coloured text
+            let s = match bg {
+                Some(b) => Style::default().fg(Color::White).bg(b),
+                None => Style::default().fg(Color::White),
+            };
+            spans.push(Span::styled(code.to_string(), s));
+        }
+    }
+
+    // Line-level bg fills the remainder of the terminal width
+    let line_style = match bg {
+        Some(b) => Style::default().bg(b),
+        None => Style::default(),
+    };
+    Line::from(spans).style(line_style)
 }

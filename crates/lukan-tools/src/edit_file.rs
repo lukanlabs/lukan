@@ -115,7 +115,7 @@ impl Tool for EditFileTool {
 
         // Generate diff
         let diff = TextDiff::from_lines(&content, &new_content);
-        let mut diff_str = String::new();
+        let mut diff_str = format!("--- {file_path_str}\n");
         let mut added = 0usize;
         let mut removed = 0usize;
         for change in diff.iter_all_changes() {

@@ -3,10 +3,11 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
+use unicode_width::UnicodeWidthStr;
 
-/// Text input widget with cursor
+/// Text input widget with cursor and line wrapping
 pub struct InputWidget<'a> {
     text: &'a str,
     cursor_pos: usize,
@@ -23,18 +24,50 @@ impl<'a> InputWidget<'a> {
     }
 }
 
+/// Calculate how many rows the input text needs (including border).
+/// Returns at least 3 (1 line + 2 border rows), capped at `max_lines` content lines.
+pub fn input_height(text: &str, area_width: u16, max_lines: u16) -> u16 {
+    let inner = area_width.saturating_sub(2).max(1) as usize;
+    if text.is_empty() {
+        return 3;
+    }
+    let display_w = UnicodeWidthStr::width(text);
+    let lines = display_w.div_ceil(inner);
+    let lines = (lines as u16).clamp(1, max_lines);
+    lines + 2
+}
+
+/// Calculate the (x, y) cursor position inside the input area, accounting for wrapping.
+/// `text` is the full input, `byte_pos` is the byte offset of the cursor.
+/// Returns (cursor_x, cursor_y) in absolute terminal coordinates.
+pub fn cursor_position(text: &str, byte_pos: usize, area: Rect) -> (u16, u16) {
+    let inner_w = area.width.saturating_sub(2).max(1) as usize;
+    // Display width of text before cursor
+    let before = &text[..byte_pos.min(text.len())];
+    let col_total = UnicodeWidthStr::width(before);
+    let row = col_total / inner_w;
+    let col = col_total % inner_w;
+    (area.x + 1 + col as u16, area.y + 1 + row as u16)
+}
+
 impl Widget for InputWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let border_style = if self.is_focused {
-            Style::default().fg(Color::Cyan)
+        let is_shell = self.text.starts_with('!');
+
+        let border_color = if is_shell {
+            Color::Red
+        } else if self.is_focused {
+            Color::Cyan
         } else {
-            Style::default().fg(Color::DarkGray)
+            Color::DarkGray
         };
+
+        let title = if is_shell { " $ " } else { " > " };
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(border_style)
-            .title(" > ");
+            .border_style(Style::default().fg(border_color))
+            .title(title);
 
         let display_text = if self.text.is_empty() {
             Line::from(Span::styled(
@@ -45,7 +78,9 @@ impl Widget for InputWidget<'_> {
             Line::from(self.text)
         };
 
-        let paragraph = Paragraph::new(display_text).block(block);
+        let paragraph = Paragraph::new(display_text)
+            .block(block)
+            .wrap(Wrap { trim: false });
         paragraph.render(area, buf);
     }
 }

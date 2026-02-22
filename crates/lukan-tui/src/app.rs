@@ -1053,6 +1053,81 @@ impl App {
             return;
         }
 
+        // Handle !command — execute shell command and add output to context
+        if let Some(shell_cmd) = text.strip_prefix('!') {
+            let cmd = shell_cmd.trim();
+            if cmd.is_empty() {
+                return;
+            }
+            self.messages.push(ChatMessage::new(
+                "system",
+                format!("$ {cmd}"),
+            ));
+
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let result = tokio::process::Command::new("bash")
+                .arg("-c")
+                .arg(cmd)
+                .current_dir(&cwd)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .output()
+                .await;
+
+            match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let combined = format!("{}{}", stdout, stderr).trim().to_string();
+                    let exit_code = output.status.code().unwrap_or(-1);
+
+                    // Truncate if too large
+                    let truncated = if combined.len() > 30000 {
+                        format!(
+                            "{}\n\n... (truncated) ...\n\n{}",
+                            &combined[..15000],
+                            &combined[combined.len() - 15000..]
+                        )
+                    } else {
+                        combined
+                    };
+
+                    let context_msg = if exit_code != 0 {
+                        format!("$ {cmd}\n{truncated}\n[exit code: {exit_code}]")
+                    } else {
+                        format!("$ {cmd}\n{truncated}")
+                    };
+
+                    // Show output in chat
+                    let display_output = if truncated.is_empty() {
+                        format!("(exit code: {exit_code})")
+                    } else if exit_code != 0 {
+                        format!("{truncated}\n[exit code: {exit_code}]")
+                    } else {
+                        truncated.clone()
+                    };
+                    self.messages.push(ChatMessage::new("system", display_output));
+
+                    // Add to agent context
+                    let agent = match self.agent.take() {
+                        Some(a) => a,
+                        None => self.create_agent().await,
+                    };
+                    let mut agent = agent;
+                    agent.add_user_context(&context_msg);
+                    self.session_id = Some(agent.session_id().to_string());
+                    self.agent = Some(agent);
+                }
+                Err(e) => {
+                    self.messages.push(ChatMessage::new(
+                        "system",
+                        format!("Failed to execute command: {e}"),
+                    ));
+                }
+            }
+            return;
+        }
+
         // Regular message — show truncated preview in chat, send full text to agent
         self.messages.push(ChatMessage::new("user", display));
 

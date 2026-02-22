@@ -196,6 +196,11 @@ impl AgentLoop {
         self.provider = provider;
     }
 
+    /// Add user context (e.g. shell command output) without triggering a turn
+    pub fn add_user_context(&mut self, content: &str) {
+        self.history.add_user_message(content);
+    }
+
     /// Run a single user turn: sends the message and loops until no more tool calls
     pub async fn run_turn(
         &mut self,

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use lukan_core::models::checkpoints::{FileOperation, FileSnapshot};
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 use similar::{ChangeTag, TextDiff};
@@ -136,6 +137,18 @@ impl Tool for EditFileTool {
         let stats = format_stats(added, removed);
         let msg = format!("● Update({file_path_str})\n  ⎿  {stats}");
 
-        Ok(ToolResult::success(msg).with_diff(diff_str))
+        let snapshot = FileSnapshot {
+            path: file_path_str.to_string(),
+            operation: FileOperation::Modified,
+            before: Some(content.clone()),
+            after: Some(new_content),
+            diff: Some(diff_str.clone()),
+            additions: added as u32,
+            deletions: removed as u32,
+        };
+
+        Ok(ToolResult::success(msg)
+            .with_diff(diff_str)
+            .with_snapshot(snapshot))
     }
 }

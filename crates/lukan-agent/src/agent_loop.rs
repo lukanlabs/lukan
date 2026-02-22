@@ -7,10 +7,11 @@ use chrono::Utc;
 use lukan_core::config::LukanPaths;
 use lukan_core::models::events::{StopReason, StreamEvent};
 use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
-use lukan_core::models::checkpoints::Checkpoint;
+use lukan_core::models::checkpoints::{Checkpoint, FileSnapshot};
 use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
+use rand::Rng;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, warn};
 
@@ -177,6 +178,11 @@ impl AgentLoop {
         self.compact_history(&event_tx).await
     }
 
+    /// Replace the system prompt (e.g. after memory changes)
+    pub fn reload_system_prompt(&mut self, new_prompt: lukan_providers::SystemPrompt) {
+        self.system_prompt = new_prompt;
+    }
+
     /// Run a single user turn: sends the message and loops until no more tool calls
     pub async fn run_turn(
         &mut self,
@@ -185,6 +191,9 @@ impl AgentLoop {
     ) -> Result<()> {
         // Add user message to history
         self.history.add_user_message(user_message);
+
+        // Accumulate file snapshots across all tool rounds in this turn
+        let mut turn_snapshots: Vec<FileSnapshot> = Vec::new();
 
         // Inner loop: call LLM → execute tools → repeat until done
         loop {
@@ -319,6 +328,11 @@ impl AgentLoop {
                         image: result.image.clone(),
                     })
                     .await;
+
+                // Collect file snapshots for checkpoint
+                if let Some(snapshot) = result.snapshot.clone() {
+                    turn_snapshots.push(snapshot);
+                }
             }
 
             self.history.add(Message {
@@ -329,6 +343,21 @@ impl AgentLoop {
             });
 
             // Loop continues — LLM will see the tool results and decide next action
+        }
+
+        // Create checkpoint if any files were modified during this turn
+        if !turn_snapshots.is_empty() {
+            let id = {
+                let bytes: [u8; 3] = rand::rng().random();
+                bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+            };
+            let checkpoint = Checkpoint {
+                id,
+                message: user_message.to_string(),
+                snapshots: turn_snapshots,
+                created_at: Utc::now(),
+            };
+            self.session.checkpoints.push(checkpoint);
         }
 
         // Auto-save session after each turn

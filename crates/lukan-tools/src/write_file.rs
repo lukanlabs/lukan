@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use lukan_core::models::checkpoints::{FileOperation, FileSnapshot};
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 use similar::{ChangeTag, TextDiff};
@@ -102,7 +103,12 @@ impl Tool for WriteFileTool {
             diff_str.push_str(&format!("{sign}{change}"));
         }
 
-        let action = if old_content.is_some() {
+        let operation = if old_content.is_some() {
+            FileOperation::Modified
+        } else {
+            FileOperation::Created
+        };
+        let action = if operation == FileOperation::Modified {
             "Update"
         } else {
             "Create"
@@ -110,6 +116,18 @@ impl Tool for WriteFileTool {
         let stats = format_stats(added, removed);
         let msg = format!("● {action}({file_path_str})\n  ⎿  {stats}");
 
-        Ok(ToolResult::success(msg).with_diff(diff_str))
+        let snapshot = FileSnapshot {
+            path: file_path_str.to_string(),
+            operation,
+            before: old_content,
+            after: Some(content.to_string()),
+            diff: Some(diff_str.clone()),
+            additions: added as u32,
+            deletions: removed as u32,
+        };
+
+        Ok(ToolResult::success(msg)
+            .with_diff(diff_str)
+            .with_snapshot(snapshot))
     }
 }

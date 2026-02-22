@@ -128,8 +128,7 @@ impl App {
 
     /// Create a new AgentLoop with a fresh session
     async fn create_agent(&self) -> AgentLoop {
-        let system_prompt =
-            SystemPrompt::Text(include_str!("../../../prompts/base.txt").to_string());
+        let system_prompt = build_system_prompt().await;
 
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
 
@@ -587,6 +586,7 @@ impl App {
         if text == "/memories" || text.starts_with("/memories ") {
             let sub = text.strip_prefix("/memories").unwrap_or("").trim().to_string();
             let memory_path = LukanPaths::global_memory_file();
+            let mut did_change = false;
             if sub == "activate" {
                 if !memory_path.exists() {
                     if let Some(parent) = memory_path.parent() {
@@ -598,10 +598,12 @@ impl App {
                     "system",
                     format!("Memory activated: {}", memory_path.display()),
                 ));
+                did_change = true;
             } else if sub == "deactivate" {
                 let _ = tokio::fs::remove_file(&memory_path).await;
                 self.messages
                     .push(ChatMessage::new("system", "Memory deactivated. File removed."));
+                did_change = true;
             } else if sub.starts_with("add") {
                 let entry = sub.strip_prefix("add").unwrap_or("").trim().to_string();
                 if entry.is_empty() {
@@ -619,6 +621,7 @@ impl App {
                         "system",
                         format!("Memory updated: \"{entry}\""),
                     ));
+                    did_change = true;
                 }
             } else {
                 let active = memory_path.exists();
@@ -630,6 +633,11 @@ impl App {
                     ),
                 ));
             }
+            if did_change
+                && let Some(agent) = self.agent.as_mut()
+            {
+                agent.reload_system_prompt(build_system_prompt().await);
+            }
             return;
         }
 
@@ -637,6 +645,7 @@ impl App {
         if text == "/gmemory" || text.starts_with("/gmemory ") {
             let sub = text.strip_prefix("/gmemory").unwrap_or("").trim().to_string();
             let memory_path = LukanPaths::global_memory_file();
+            let mut did_change = false;
             if sub == "show" {
                 let content = tokio::fs::read_to_string(&memory_path)
                     .await
@@ -658,11 +667,13 @@ impl App {
                         "system",
                         format!("Memory updated: \"{entry}\""),
                     ));
+                    did_change = true;
                 }
             } else if sub == "clear" {
                 let _ = tokio::fs::write(&memory_path, "# Project Memory\n\n").await;
                 self.messages
                     .push(ChatMessage::new("system", "Memory cleared."));
+                did_change = true;
             } else {
                 self.messages.push(ChatMessage::new(
                     "system",
@@ -671,6 +682,11 @@ impl App {
                         memory_path.display()
                     ),
                 ));
+            }
+            if did_change
+                && let Some(agent) = self.agent.as_mut()
+            {
+                agent.reload_system_prompt(build_system_prompt().await);
             }
             return;
         }
@@ -789,8 +805,7 @@ impl App {
             return;
         }
 
-        let system_prompt =
-            SystemPrompt::Text(include_str!("../../../prompts/base.txt").to_string());
+        let system_prompt = build_system_prompt().await;
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
 
         let config = AgentConfig {
@@ -1398,6 +1413,22 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/checkpoints", "list session checkpoints"),
     ("/exit", "quit lukan"),
 ];
+
+// ── System Prompt Builder ─────────────────────────────────────────────────
+
+/// Build the system prompt, appending MEMORY.md content if it exists.
+async fn build_system_prompt() -> SystemPrompt {
+    const BASE: &str = include_str!("../../../prompts/base.txt");
+    let memory_path = LukanPaths::global_memory_file();
+    if let Ok(memory) = tokio::fs::read_to_string(&memory_path).await {
+        let trimmed = memory.trim();
+        if !trimmed.is_empty() {
+            let combined = format!("{BASE}\n\n## Project Memory\n\n{trimmed}");
+            return SystemPrompt::Text(combined);
+        }
+    }
+    SystemPrompt::Text(BASE.to_string())
+}
 
 /// Filter available commands by the current input prefix.
 /// Returns empty if input doesn't start with `/` or contains a space.

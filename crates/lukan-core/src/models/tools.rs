@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::checkpoints::FileSnapshot;
+
 /// Definition of a tool that the LLM can call
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +18,8 @@ pub struct ToolResult {
     pub is_error: bool,
     pub diff: Option<String>,
     pub image: Option<String>,
+    /// File snapshot for checkpoint tracking (WriteFile / EditFile)
+    pub snapshot: Option<FileSnapshot>,
 }
 
 impl ToolResult {
@@ -25,6 +29,7 @@ impl ToolResult {
             is_error: false,
             diff: None,
             image: None,
+            snapshot: None,
         }
     }
 
@@ -34,11 +39,17 @@ impl ToolResult {
             is_error: true,
             diff: None,
             image: None,
+            snapshot: None,
         }
     }
 
     pub fn with_diff(mut self, diff: String) -> Self {
         self.diff = Some(diff);
+        self
+    }
+
+    pub fn with_snapshot(mut self, snapshot: FileSnapshot) -> Self {
+        self.snapshot = Some(snapshot);
         self
     }
 }

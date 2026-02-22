@@ -59,14 +59,33 @@ async fn main() -> Result<()> {
     // Load .env if present
     dotenvy::dotenv().ok();
 
-    // Initialize tracing (to stderr, not stdout — TUI owns stdout)
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "lukan=info".parse().unwrap()),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    // Initialize tracing to a log file (not stderr — TUI uses inline viewport,
+    // so any stderr output corrupts the display)
+    let log_dir = LukanPaths::config_dir();
+    std::fs::create_dir_all(&log_dir).ok();
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "lukan=info".parse().unwrap());
+
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(log_dir.join("lukan.log"))
+        .ok();
+
+    if let Some(file) = log_file {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(std::sync::Mutex::new(file))
+            .with_ansi(false)
+            .init();
+    } else {
+        // Fallback: sink to avoid TUI corruption if log file can't be created
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(std::io::sink)
+            .init();
+    }
 
     let cli = Cli::parse();
 

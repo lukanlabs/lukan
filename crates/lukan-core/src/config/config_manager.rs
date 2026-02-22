@@ -100,6 +100,53 @@ impl ConfigManager {
         Self::save(&config).await
     }
 
+    /// Replace all models for a given provider prefix.
+    ///
+    /// Removes existing entries that start with `"provider_prefix:"` and
+    /// appends the new entries. Also updates the vision_models list:
+    /// removes vision models whose IDs belonged to removed entries,
+    /// then adds the new vision model IDs.
+    pub async fn set_provider_models(
+        provider_prefix: &str,
+        new_entries: &[String],
+        new_vision_ids: &[String],
+    ) -> Result<()> {
+        let mut config = Self::load().await?;
+        let prefix = format!("{provider_prefix}:");
+
+        // Collect model IDs being removed (for vision cleanup)
+        let removed_ids: Vec<String> = config
+            .models
+            .as_ref()
+            .map(|m| {
+                m.iter()
+                    .filter(|e| e.starts_with(&prefix))
+                    .filter_map(|e| e.strip_prefix(&prefix).map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Remove old models for this provider, add new ones
+        let models = config.models.get_or_insert_with(Vec::new);
+        models.retain(|e| !e.starts_with(&prefix));
+        for entry in new_entries {
+            if !models.contains(entry) {
+                models.push(entry.clone());
+            }
+        }
+
+        // Update vision models: remove old, add new
+        let vision = config.vision_models.get_or_insert_with(Vec::new);
+        vision.retain(|v| !removed_ids.contains(v));
+        for id in new_vision_ids {
+            if !vision.contains(id) {
+                vision.push(id.clone());
+            }
+        }
+
+        Self::save(&config).await
+    }
+
     /// Add a model ID to the vision models list if not already present.
     pub async fn add_vision_model(model_id: &str) -> Result<()> {
         let mut config = Self::load().await?;

@@ -1,5 +1,7 @@
 use anyhow::Result;
-use std::io::{self, Write};
+use console::Style;
+use dialoguer::MultiSelect;
+use dialoguer::theme::ColorfulTheme;
 
 use lukan_core::config::{ConfigManager, CredentialsManager};
 
@@ -66,6 +68,41 @@ const ZAI_MODELS: &[StaticModel] = &[
     StaticModel { id: "glm-4.1v", name: "GLM-4.1V (vision)" },
     StaticModel { id: "glm-4", name: "GLM-4" },
 ];
+
+// ── Theme ──────────────────────────────────────────────────────────────────
+
+fn picker_theme() -> ColorfulTheme {
+    ColorfulTheme {
+        active_item_style: Style::new().cyan().bold(),
+        active_item_prefix: console::style("❯ ".to_string()).cyan().bold(),
+        inactive_item_prefix: console::style("  ".to_string()),
+        checked_item_prefix: console::style("◉ ".to_string()).green(),
+        unchecked_item_prefix: console::style("◯ ".to_string()).dim(),
+        prompt_prefix: console::style("? ".to_string()).cyan().bold(),
+        ..ColorfulTheme::default()
+    }
+}
+
+/// Get currently configured model IDs for a provider prefix.
+async fn get_existing_model_ids(provider_prefix: &str) -> Vec<String> {
+    let prefix = format!("{provider_prefix}:");
+    ConfigManager::load()
+        .await
+        .ok()
+        .and_then(|c| c.models)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| e.strip_prefix(&prefix).map(|s| s.to_string()))
+        .collect()
+}
+
+/// Compute which items should be pre-checked based on existing config.
+fn defaults_for(model_ids: &[String], existing: &[String]) -> Vec<bool> {
+    model_ids
+        .iter()
+        .map(|id| existing.contains(id))
+        .collect()
+}
 
 // ── Main entry point ───────────────────────────────────────────────────────
 
@@ -159,38 +196,36 @@ async fn select_anthropic() -> Result<()> {
         return Ok(());
     }
 
-    // Display numbered list
-    println!();
-    for (i, m) in models.iter().enumerate() {
-        println!(
-            "  {DIM}{:>3}.{RESET} {:<30} {DIM}{}{RESET}",
-            i + 1,
-            m.display_name,
-            m.id
-        );
-    }
+    let existing = get_existing_model_ids("anthropic").await;
+    let model_ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
+    let checked = defaults_for(&model_ids, &existing);
 
-    // Prompt selection
-    let selected = prompt_selection(models.len())?;
+    let items: Vec<String> = models
+        .iter()
+        .map(|m| format!("{:<30} {}", m.display_name, m.id))
+        .collect();
+
+    let selected = MultiSelect::with_theme(&picker_theme())
+        .with_prompt("Select models (space to toggle, enter to confirm)")
+        .items(&items)
+        .defaults(&checked)
+        .interact()?;
+
+    let entries: Vec<String> = selected.iter().map(|&i| format!("anthropic:{}", models[i].id)).collect();
+    let vision_ids: Vec<String> = selected.iter().map(|&i| models[i].id.clone()).collect();
+
+    ConfigManager::set_provider_models("anthropic", &entries, &vision_ids).await?;
 
     if selected.is_empty() {
-        println!("No models selected.");
-        return Ok(());
-    }
-
-    for &idx in &selected {
-        let m = &models[idx];
-        let entry = format!("anthropic:{}", m.id);
-        ConfigManager::add_model(&entry).await?;
-        ConfigManager::add_vision_model(&m.id).await?; // All Anthropic models support vision
-    }
-
-    println!(
-        "\n{GREEN}✓{RESET} Added {} model(s) {MAGENTA}(all vision-capable){RESET}:",
-        selected.len()
-    );
-    for &idx in &selected {
-        println!("  - anthropic:{}", models[idx].id);
+        println!("{GREEN}✓{RESET} Cleared all anthropic models.");
+    } else {
+        println!(
+            "\n{GREEN}✓{RESET} Set {} model(s) for anthropic {MAGENTA}(all vision-capable){RESET}:",
+            selected.len()
+        );
+        for &idx in &selected {
+            println!("  - anthropic:{}", models[idx].id);
+        }
     }
     println!("\nUse /model in chat to switch between models.");
     Ok(())
@@ -215,48 +250,50 @@ async fn select_nebius() -> Result<()> {
         return Ok(());
     }
 
-    println!();
-    for (i, m) in models.iter().enumerate() {
-        let vision = if m.supports_image_input { " [vision]" } else { "" };
-        println!(
-            "  {DIM}{:>3}.{RESET} {}{MAGENTA}{vision}{RESET}",
-            i + 1,
-            m.id,
-        );
-    }
+    let existing = get_existing_model_ids("nebius").await;
+    let model_ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
+    let checked = defaults_for(&model_ids, &existing);
 
-    let selected = prompt_selection(models.len())?;
+    let items: Vec<String> = models
+        .iter()
+        .map(|m| {
+            let vision = if m.supports_image_input { " [vision]" } else { "" };
+            format!("{}{vision}", m.id)
+        })
+        .collect();
+
+    let selected = MultiSelect::with_theme(&picker_theme())
+        .with_prompt("Select models (space to toggle, enter to confirm)")
+        .items(&items)
+        .defaults(&checked)
+        .interact()?;
+
+    let entries: Vec<String> = selected.iter().map(|&i| format!("nebius:{}", models[i].id)).collect();
+    let vision_ids: Vec<String> = selected
+        .iter()
+        .filter(|&&i| models[i].supports_image_input)
+        .map(|&i| models[i].id.clone())
+        .collect();
+
+    ConfigManager::set_provider_models("nebius", &entries, &vision_ids).await?;
 
     if selected.is_empty() {
-        println!("No models selected.");
-        return Ok(());
-    }
-
-    let mut vision_count = 0;
-    for &idx in &selected {
-        let m = &models[idx];
-        let entry = format!("nebius:{}", m.id);
-        ConfigManager::add_model(&entry).await?;
-        if m.supports_image_input {
-            ConfigManager::add_vision_model(&m.id).await?;
-            vision_count += 1;
+        println!("{GREEN}✓{RESET} Cleared all nebius models.");
+    } else {
+        let vision_count = vision_ids.len();
+        println!("\n{GREEN}✓{RESET} Set {} model(s) for nebius:", selected.len());
+        for &idx in &selected {
+            let m = &models[idx];
+            let badge = if m.supports_image_input {
+                format!(" {MAGENTA}(vision){RESET}")
+            } else {
+                String::new()
+            };
+            println!("  - nebius:{}{badge}", m.id);
         }
-    }
-
-    println!("\n{GREEN}✓{RESET} Added {} model(s):", selected.len());
-    for &idx in &selected {
-        let m = &models[idx];
-        let badge = if m.supports_image_input {
-            format!(" {MAGENTA}(vision){RESET}")
-        } else {
-            String::new()
-        };
-        println!("  - nebius:{}{badge}", m.id);
-    }
-    if vision_count > 0 {
-        println!(
-            "\n{MAGENTA}✓{RESET} Auto-tagged {vision_count} vision-capable model(s)."
-        );
+        if vision_count > 0 {
+            println!("\n{MAGENTA}✓{RESET} Auto-tagged {vision_count} vision-capable model(s).");
+        }
     }
     println!("\nUse /model in chat to switch between models.");
     Ok(())
@@ -281,49 +318,50 @@ async fn select_fireworks() -> Result<()> {
         return Ok(());
     }
 
-    println!();
-    for (i, m) in models.iter().enumerate() {
-        let vision = if m.supports_image_input { " [vision]" } else { "" };
-        println!(
-            "  {DIM}{:>3}.{RESET} {:<35} {DIM}{}{RESET}{MAGENTA}{vision}{RESET}",
-            i + 1,
-            m.display_name,
-            m.id,
-        );
-    }
+    let existing = get_existing_model_ids("fireworks").await;
+    let model_ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
+    let checked = defaults_for(&model_ids, &existing);
 
-    let selected = prompt_selection(models.len())?;
+    let items: Vec<String> = models
+        .iter()
+        .map(|m| {
+            let vision = if m.supports_image_input { " [vision]" } else { "" };
+            format!("{:<35} {}{vision}", m.display_name, m.id)
+        })
+        .collect();
+
+    let selected = MultiSelect::with_theme(&picker_theme())
+        .with_prompt("Select models (space to toggle, enter to confirm)")
+        .items(&items)
+        .defaults(&checked)
+        .interact()?;
+
+    let entries: Vec<String> = selected.iter().map(|&i| format!("fireworks:{}", models[i].id)).collect();
+    let vision_ids: Vec<String> = selected
+        .iter()
+        .filter(|&&i| models[i].supports_image_input)
+        .map(|&i| models[i].id.clone())
+        .collect();
+
+    ConfigManager::set_provider_models("fireworks", &entries, &vision_ids).await?;
 
     if selected.is_empty() {
-        println!("No models selected.");
-        return Ok(());
-    }
-
-    let mut vision_count = 0;
-    for &idx in &selected {
-        let m = &models[idx];
-        let entry = format!("fireworks:{}", m.id);
-        ConfigManager::add_model(&entry).await?;
-        if m.supports_image_input {
-            ConfigManager::add_vision_model(&m.id).await?;
-            vision_count += 1;
+        println!("{GREEN}✓{RESET} Cleared all fireworks models.");
+    } else {
+        let vision_count = vision_ids.len();
+        println!("\n{GREEN}✓{RESET} Set {} model(s) for fireworks:", selected.len());
+        for &idx in &selected {
+            let m = &models[idx];
+            let badge = if m.supports_image_input {
+                format!(" {MAGENTA}(vision){RESET}")
+            } else {
+                String::new()
+            };
+            println!("  - fireworks:{}{badge}", m.id);
         }
-    }
-
-    println!("\n{GREEN}✓{RESET} Added {} model(s):", selected.len());
-    for &idx in &selected {
-        let m = &models[idx];
-        let badge = if m.supports_image_input {
-            format!(" {MAGENTA}(vision){RESET}")
-        } else {
-            String::new()
-        };
-        println!("  - fireworks:{}{badge}", m.id);
-    }
-    if vision_count > 0 {
-        println!(
-            "\n{MAGENTA}✓{RESET} Auto-tagged {vision_count} vision-capable model(s)."
-        );
+        if vision_count > 0 {
+            println!("\n{MAGENTA}✓{RESET} Auto-tagged {vision_count} vision-capable model(s).");
+        }
     }
     println!("\nUse /model in chat to switch between models.");
     Ok(())
@@ -383,26 +421,26 @@ async fn select_openai_compatible() -> Result<()> {
         return Ok(());
     }
 
-    println!();
-    for (i, id) in model_ids.iter().enumerate() {
-        println!("  {DIM}{:>3}.{RESET} {id}", i + 1);
-    }
+    let existing = get_existing_model_ids("openai-compatible").await;
+    let checked = defaults_for(&model_ids, &existing);
 
-    let selected = prompt_selection(model_ids.len())?;
+    let selected = MultiSelect::with_theme(&picker_theme())
+        .with_prompt("Select models (space to toggle, enter to confirm)")
+        .items(&model_ids)
+        .defaults(&checked)
+        .interact()?;
+
+    let entries: Vec<String> = selected.iter().map(|&i| format!("openai-compatible:{}", model_ids[i])).collect();
+
+    ConfigManager::set_provider_models("openai-compatible", &entries, &[]).await?;
 
     if selected.is_empty() {
-        println!("No models selected.");
-        return Ok(());
-    }
-
-    for &idx in &selected {
-        let entry = format!("openai-compatible:{}", model_ids[idx]);
-        ConfigManager::add_model(&entry).await?;
-    }
-
-    println!("\n{GREEN}✓{RESET} Added {} model(s):", selected.len());
-    for &idx in &selected {
-        println!("  - openai-compatible:{}", model_ids[idx]);
+        println!("{GREEN}✓{RESET} Cleared all openai-compatible models.");
+    } else {
+        println!("\n{GREEN}✓{RESET} Set {} model(s) for openai-compatible:", selected.len());
+        for &idx in &selected {
+            println!("  - openai-compatible:{}", model_ids[idx]);
+        }
     }
     println!("\nUse /model in chat to switch between models.");
     Ok(())
@@ -415,96 +453,52 @@ async fn select_static(
     models: &[StaticModel],
     all_vision: bool,
 ) -> Result<()> {
-    println!();
-    for (i, m) in models.iter().enumerate() {
-        println!(
-            "  {DIM}{:>3}.{RESET} {:<25} {DIM}{}{RESET}",
-            i + 1,
-            m.name,
-            m.id,
-        );
-    }
+    let existing = get_existing_model_ids(provider_name).await;
+    let model_ids: Vec<String> = models.iter().map(|m| m.id.to_string()).collect();
+    let checked = defaults_for(&model_ids, &existing);
 
-    let selected = prompt_selection(models.len())?;
+    let items: Vec<String> = models
+        .iter()
+        .map(|m| format!("{:<25} {}", m.name, m.id))
+        .collect();
+
+    let selected = MultiSelect::with_theme(&picker_theme())
+        .with_prompt("Select models (space to toggle, enter to confirm)")
+        .items(&items)
+        .defaults(&checked)
+        .interact()?;
+
+    let entries: Vec<String> = selected
+        .iter()
+        .map(|&i| format!("{provider_name}:{}", models[i].id))
+        .collect();
+
+    let vision_ids: Vec<String> = selected
+        .iter()
+        .filter(|&&i| {
+            all_vision || models[i].name.contains("vision") || models[i].name.contains("Vision")
+        })
+        .map(|&i| models[i].id.to_string())
+        .collect();
+
+    ConfigManager::set_provider_models(provider_name, &entries, &vision_ids).await?;
 
     if selected.is_empty() {
-        println!("No models selected.");
-        return Ok(());
-    }
-
-    for &idx in &selected {
-        let m = &models[idx];
-        let entry = format!("{provider_name}:{}", m.id);
-        ConfigManager::add_model(&entry).await?;
-        if all_vision || m.name.contains("vision") || m.name.contains("Vision") {
-            ConfigManager::add_vision_model(m.id).await?;
-        }
-    }
-
-    let vision_label = if all_vision {
-        format!(" {MAGENTA}(all vision-capable){RESET}")
+        println!("{GREEN}✓{RESET} Cleared all {provider_name} models.");
     } else {
-        String::new()
-    };
-    println!(
-        "\n{GREEN}✓{RESET} Added {} model(s){vision_label}:",
-        selected.len()
-    );
-    for &idx in &selected {
-        println!("  - {provider_name}:{}", models[idx].id);
+        let vision_label = if all_vision {
+            format!(" {MAGENTA}(all vision-capable){RESET}")
+        } else {
+            String::new()
+        };
+        println!(
+            "\n{GREEN}✓{RESET} Set {} model(s) for {provider_name}{vision_label}:",
+            selected.len()
+        );
+        for &idx in &selected {
+            println!("  - {provider_name}:{}", models[idx].id);
+        }
     }
     println!("\nUse /model in chat to switch between models.");
     Ok(())
-}
-
-// ── Selection prompt ───────────────────────────────────────────────────────
-
-/// Prompt the user to enter model numbers (comma/space separated, or ranges).
-/// Returns 0-indexed indices of selected models.
-fn prompt_selection(total: usize) -> Result<Vec<usize>> {
-    println!();
-    print!(
-        "{BOLD}Select models{RESET} {DIM}(e.g. 1,3,5 or 1-5 or 'all'){RESET}: "
-    );
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let input = input.trim();
-
-    if input.is_empty() {
-        return Ok(vec![]);
-    }
-
-    if input == "all" {
-        return Ok((0..total).collect());
-    }
-
-    let mut indices = Vec::new();
-
-    for part in input.split([',', ' ']) {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-
-        if let Some((start, end)) = part.split_once('-') {
-            let start: usize = start.trim().parse().unwrap_or(0);
-            let end: usize = end.trim().parse().unwrap_or(0);
-            if start >= 1 && end >= start && end <= total {
-                for i in start..=end {
-                    indices.push(i - 1);
-                }
-            }
-        } else if let Ok(n) = part.parse::<usize>()
-            && n >= 1
-            && n <= total
-        {
-            indices.push(n - 1);
-        }
-    }
-
-    indices.sort();
-    indices.dedup();
-    Ok(indices)
 }

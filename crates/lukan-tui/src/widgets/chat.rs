@@ -6,6 +6,7 @@ use ratatui::{
     widgets::{Clear, Paragraph, Widget, Wrap},
 };
 
+use similar::{ChangeTag, TextDiff};
 use syntect::easy::HighlightLines;
 
 use super::markdown::{render_markdown, syntax_set, theme};
@@ -300,21 +301,128 @@ impl Widget for ChatWidget<'_> {
 
 // ── Diff Rendering ─────────────────────────────────────────────────────
 
-/// Parse and render a unified diff with syntax highlighting.
-///
-/// The diff string may begin with `--- path/to/file.ext` (produced by
-/// EditFile/WriteFile) to enable language-aware syntax highlighting.
-/// Token colours are mapped to ANSI-16 so they are always visible
-/// regardless of the terminal's background colour.
-///
-/// Added lines get a dark-green background, removed lines dark-red.
-/// Context lines have no background but still receive syntax colours.
-fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    let mut changes_shown: usize = 0;
-    let mut consecutive_blank_ctx: usize = 0;
+// Colour palette
+const ADD_BG: Color = Color::Rgb(20, 60, 20); // vivid green background for added lines
+const DEL_BG: Color = Color::Rgb(70, 20, 20); // vivid red background for removed lines
+const ADD_HL: Color = Color::Rgb(60, 130, 60); // brighter highlight for the changed chars (add)
+const DEL_HL: Color = Color::Rgb(130, 45, 45); // brighter highlight for the changed chars (del)
 
-    // ── Syntax highlighting setup ────────────────────────────────────
+/// Parse `@@ -old_start[,count] +new_start[,count] @@` hunk headers.
+/// Returns `(old_start, new_start)` as 1-based line numbers.
+fn parse_hunk_header(line: &str) -> Option<(u32, u32)> {
+    // Format: @@ -L[,N] +L[,N] @@
+    let inner = line.strip_prefix("@@ ")?.split(" @@").next()?;
+    let mut parts = inner.split_whitespace();
+    let old_part = parts.next()?.strip_prefix('-')?;
+    let new_part = parts.next()?.strip_prefix('+')?;
+    let old_start: u32 = old_part.split(',').next()?.parse().ok()?;
+    let new_start: u32 = new_part.split(',').next()?.parse().ok()?;
+    Some((old_start, new_start))
+}
+
+/// Build the `"   NNN {sign}"` prefix for a diff line.
+fn line_prefix(num: u32, sign: char, bg: Option<Color>) -> Span<'static> {
+    let text = format!("  {:>4} {sign}", num);
+    let style = match (sign, bg) {
+        ('+', Some(b)) => Style::default().fg(Color::LightGreen).bg(b),
+        ('-', Some(b)) => Style::default().fg(Color::LightRed).bg(b),
+        (_, Some(b)) => Style::default().fg(Color::DarkGray).bg(b),
+        ('+', None) => Style::default().fg(Color::LightGreen),
+        ('-', None) => Style::default().fg(Color::LightRed),
+        _ => Style::default().fg(Color::DarkGray),
+    };
+    Span::styled(text, style)
+}
+
+/// Build spans for a changed line with inline char-level diff highlighting.
+///
+/// `is_add`: true for the added version, false for the removed version.
+/// Characters that were inserted (for add) or deleted (for del) get the
+/// brighter highlight background so they visually pop.
+fn inline_changed_spans(code: &str, counterpart: &str, is_add: bool, bg: Color, hl: Color) -> Vec<Span<'static>> {
+    let diff = TextDiff::from_chars(counterpart, code);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut buf = String::new();
+    let mut in_highlight = false;
+
+    for change in diff.iter_all_changes() {
+        let relevant = if is_add {
+            change.tag() == ChangeTag::Insert || change.tag() == ChangeTag::Equal
+        } else {
+            change.tag() == ChangeTag::Delete || change.tag() == ChangeTag::Equal
+        };
+        if !relevant {
+            continue;
+        }
+        let is_changed = change.tag() != ChangeTag::Equal;
+
+        if is_changed != in_highlight && !buf.is_empty() {
+            let b = if in_highlight { hl } else { bg };
+            spans.push(Span::styled(buf.clone(), Style::default().fg(Color::White).bg(b)));
+            buf.clear();
+        }
+        in_highlight = is_changed;
+        buf.push_str(change.value());
+    }
+    if !buf.is_empty() {
+        let b = if in_highlight { hl } else { bg };
+        spans.push(Span::styled(buf, Style::default().fg(Color::White).bg(b)));
+    }
+    spans
+}
+
+/// Flush buffered del/add blocks into rendered lines with optional inline diff.
+///
+/// When `del_buf` and `add_buf` have the same length, each pair of lines
+/// gets character-level inline diff highlighting. Otherwise they are rendered
+/// with solid colours.
+fn flush_blocks(
+    del_buf: &[(String, u32)],
+    add_buf: &[(String, u32)],
+    out: &mut Vec<Line<'static>>,
+) {
+    let paired = del_buf.len() == add_buf.len() && !del_buf.is_empty();
+
+    // Emit del lines
+    for (i, (code, num)) in del_buf.iter().enumerate() {
+        let prefix = line_prefix(*num, '-', Some(DEL_BG));
+        let mut spans = vec![prefix];
+        if paired {
+            spans.extend(inline_changed_spans(code, &add_buf[i].0, false, DEL_BG, DEL_HL));
+        } else {
+            spans.push(Span::styled(
+                code.clone(),
+                Style::default().fg(Color::White).bg(DEL_BG),
+            ));
+        }
+        out.push(Line::from(spans).style(Style::default().bg(DEL_BG)));
+    }
+
+    // Emit add lines
+    for (i, (code, num)) in add_buf.iter().enumerate() {
+        let prefix = line_prefix(*num, '+', Some(ADD_BG));
+        let mut spans = vec![prefix];
+        if paired {
+            spans.extend(inline_changed_spans(code, &del_buf[i].0, true, ADD_BG, ADD_HL));
+        } else {
+            spans.push(Span::styled(
+                code.clone(),
+                Style::default().fg(Color::White).bg(ADD_BG),
+            ));
+        }
+        out.push(Line::from(spans).style(Style::default().bg(ADD_BG)));
+    }
+}
+
+/// Parse and render a unified diff.
+///
+/// Features:
+/// - Line numbers from hunk headers
+/// - Vivid green/red backgrounds for add/del lines
+/// - Inline char-level diff highlight for paired add/del lines
+/// - Syntax colours (ANSI-16) for context lines
+fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
+    // ── Syntax highlighting for context lines ────────────────────────
     let ss = syntax_set();
     let ext = diff
         .lines()
@@ -325,16 +433,8 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
         ss.find_syntax_by_extension(e)
             .or_else(|| ss.find_syntax_by_token(e))
     });
-    // Separate highlighter per stream so syntect parser state stays valid.
-    let mut hl_add = syntax.map(|s| HighlightLines::new(s, theme()));
-    let mut hl_del = syntax.map(|s| HighlightLines::new(s, theme()));
     let mut hl_ctx = syntax.map(|s| HighlightLines::new(s, theme()));
 
-    // ── Background tints ─────────────────────────────────────────────
-    let add_bg = Color::Rgb(20, 40, 20);
-    let del_bg = Color::Rgb(50, 20, 20);
-
-    // ── Change count (for truncation message) ────────────────────────
     let total_changes = diff
         .lines()
         .filter(|l| {
@@ -343,8 +443,21 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
         })
         .count();
 
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let mut changes_shown: usize = 0;
+    let mut consecutive_blank_ctx: usize = 0;
+
+    // Line number tracking
+    let mut old_line: u32 = 1;
+    let mut new_line: u32 = 1;
+    let mut have_hunk = false;
+
+    // Buffers for del/add blocks (for inline diff pairing)
+    let mut del_buf: Vec<(String, u32)> = Vec::new();
+    let mut add_buf: Vec<(String, u32)> = Vec::new();
+
     for raw_line in diff.lines() {
-        // Skip diff metadata headers
+        // Skip metadata headers
         if raw_line.starts_with("diff --git")
             || raw_line.starts_with("index ")
             || raw_line.starts_with("--- ")
@@ -357,11 +470,20 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
             continue;
         }
 
-        // Hunk header → dim cyan separator
+        // Hunk header — flush buffers, reset line counters
         if raw_line.starts_with("@@") {
+            flush_blocks(&del_buf, &add_buf, &mut out);
+            del_buf.clear();
+            add_buf.clear();
             consecutive_blank_ctx = 0;
-            lines.push(Line::from(Span::styled(
-                format!("     {raw_line}"),
+
+            if let Some((old_start, new_start)) = parse_hunk_header(raw_line) {
+                old_line = old_start;
+                new_line = new_start;
+                have_hunk = true;
+            }
+            out.push(Line::from(Span::styled(
+                format!("       {raw_line}"),
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
             )));
             continue;
@@ -374,38 +496,67 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
             consecutive_blank_ctx = 0;
             changes_shown += 1;
             if changes_shown > max_changes {
+                if is_add {
+                    new_line += 1;
+                } else {
+                    old_line += 1;
+                }
                 continue;
             }
         } else if changes_shown > max_changes {
+            new_line += 1;
+            old_line += 1;
             continue;
         }
 
-        if is_add {
-            let code = &raw_line[1..];
-            let line = diff_line(code, &mut hl_add, ss, "     +", Color::LightGreen, Some(add_bg));
-            lines.push(line);
-        } else if is_remove {
-            let code = &raw_line[1..];
-            let line = diff_line(code, &mut hl_del, ss, "     -", Color::LightRed, Some(del_bg));
-            lines.push(line);
+        if is_remove {
+            // If we were accumulating adds, flush before starting dels
+            if !add_buf.is_empty() {
+                flush_blocks(&del_buf, &add_buf, &mut out);
+                del_buf.clear();
+                add_buf.clear();
+            }
+            let code = raw_line[1..].to_string();
+            del_buf.push((code, old_line));
+            old_line += 1;
+        } else if is_add {
+            let code = raw_line[1..].to_string();
+            add_buf.push((code, new_line));
+            new_line += 1;
         } else {
-            // Context line — collapse consecutive blank lines to max 1
+            // Context line — flush del/add buffers first
+            flush_blocks(&del_buf, &add_buf, &mut out);
+            del_buf.clear();
+            add_buf.clear();
+
             let content = raw_line.strip_prefix(' ').unwrap_or(raw_line);
             if content.trim().is_empty() {
                 consecutive_blank_ctx += 1;
                 if consecutive_blank_ctx > 1 {
+                    new_line += 1;
+                    old_line += 1;
                     continue;
                 }
             } else {
                 consecutive_blank_ctx = 0;
             }
-            let line = diff_line(content, &mut hl_ctx, ss, "      ", Color::DarkGray, None);
-            lines.push(line);
+
+            let num = if have_hunk { new_line } else { 0 };
+            let prefix = line_prefix(num, ' ', None);
+            let code_line = ctx_line(content, &mut hl_ctx, ss);
+            let mut spans = vec![prefix];
+            spans.extend(code_line);
+            out.push(Line::from(spans));
+            new_line += 1;
+            old_line += 1;
         }
     }
 
+    // Flush any remaining del/add buffers
+    flush_blocks(&del_buf, &add_buf, &mut out);
+
     if total_changes > max_changes {
-        lines.push(Line::from(Span::styled(
+        out.push(Line::from(Span::styled(
             format!(
                 "     ... ({} more changes not shown)",
                 total_changes - max_changes
@@ -414,78 +565,15 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
         )));
     }
 
-    lines
+    out
 }
 
-/// Map a syntect RGB colour to an ANSI-16 colour by analysing the hue.
-///
-/// ANSI-16 colours are defined by the terminal's colour scheme, so they
-/// are always legible regardless of the terminal background — unlike the
-/// muted pastels that syntect themes produce for dark backgrounds.
-fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> Color {
-    let max = r.max(g).max(b) as i16;
-    let min = r.min(g).min(b) as i16;
-    let chroma = max - min;
-
-    // Very dark → comments / preprocessor directives
-    if max < 90 {
-        return Color::DarkGray;
-    }
-    // Near-grey (low saturation) → default text
-    if chroma < 30 {
-        return Color::Reset; // terminal default fg
-    }
-
-    let (r, g, b) = (r as i16, g as i16, b as i16);
-
-    // Dominant hue → ANSI colour
-    if r >= g && r >= b {
-        if g >= b {
-            Color::LightYellow // orange / yellow  (numbers, constants)
-        } else {
-            Color::LightMagenta // pink / magenta   (keywords)
-        }
-    } else if g >= r && g >= b {
-        if r >= b {
-            Color::LightYellow // yellow-green       (operators)
-        } else {
-            Color::LightGreen // green               (strings)
-        }
-    } else {
-        // blue is dominant
-        if g >= r {
-            Color::LightCyan // cyan                 (builtins / types)
-        } else {
-            Color::LightBlue // blue / purple        (variables / names)
-        }
-    }
-}
-
-/// Render one diff line with syntax highlighting.
-///
-/// `prefix`       — the `"     +"` / `"     -"` / `"      "` leader.
-/// `prefix_color` — colour for the prefix glyph.
-/// `bg`           — optional background tint for the whole line.
-fn diff_line(
+/// Render a context line with ANSI-16 syntax colours (no background).
+fn ctx_line(
     code: &str,
     highlighter: &mut Option<HighlightLines<'_>>,
     ss: &syntect::parsing::SyntaxSet,
-    prefix: &str,
-    prefix_color: Color,
-    bg: Option<Color>,
-) -> Line<'static> {
-    let mut spans: Vec<Span<'static>> = Vec::new();
-
-    // Prefix glyph  (e.g. "     +" in bright green)
-    let prefix_style = match bg {
-        Some(b) => Style::default().fg(prefix_color).bg(b),
-        None => Style::default().fg(prefix_color),
-    };
-    spans.push(Span::styled(prefix.to_string(), prefix_style));
-
-    // Syntax-highlighted tokens
-    // `highlight_line` expects a newline-terminated string for correct
-    // multi-line parser state; we append one here.
+) -> Vec<Span<'static>> {
     let line_with_nl = format!("{code}\n");
     let ranges = highlighter
         .as_mut()
@@ -493,33 +581,46 @@ fn diff_line(
 
     match ranges {
         Some(tokens) => {
+            let mut spans = Vec::new();
             for (style, text) in tokens {
                 let text = text.trim_end_matches('\n');
                 if text.is_empty() {
                     continue;
                 }
                 let fg = rgb_to_ansi16(style.foreground.r, style.foreground.g, style.foreground.b);
-                let s = match bg {
-                    Some(b) => Style::default().fg(fg).bg(b),
-                    None => Style::default().fg(fg),
-                };
-                spans.push(Span::styled(text.to_string(), s));
+                spans.push(Span::styled(text.to_string(), Style::default().fg(fg)));
             }
+            spans
         }
-        None => {
-            // No syntax info — plain coloured text
-            let s = match bg {
-                Some(b) => Style::default().fg(Color::White).bg(b),
-                None => Style::default().fg(Color::White),
-            };
-            spans.push(Span::styled(code.to_string(), s));
-        }
+        None => vec![Span::styled(
+            code.to_string(),
+            Style::default().fg(Color::Gray),
+        )],
+    }
+}
+
+/// Map a syntect RGB colour to an ANSI-16 colour by analysing the hue.
+fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> Color {
+    let max = r.max(g).max(b) as i16;
+    let min = r.min(g).min(b) as i16;
+    let chroma = max - min;
+
+    if max < 90 {
+        return Color::DarkGray;
+    }
+    if chroma < 30 {
+        return Color::Reset;
     }
 
-    // Line-level bg fills the remainder of the terminal width
-    let line_style = match bg {
-        Some(b) => Style::default().bg(b),
-        None => Style::default(),
-    };
-    Line::from(spans).style(line_style)
+    let (r, g, b) = (r as i16, g as i16, b as i16);
+
+    if r >= g && r >= b {
+        if g >= b { Color::LightYellow } else { Color::LightMagenta }
+    } else if g >= r && g >= b {
+        if r >= b { Color::LightYellow } else { Color::LightGreen }
+    } else if g >= r {
+        Color::LightCyan
+    } else {
+        Color::LightBlue
+    }
 }

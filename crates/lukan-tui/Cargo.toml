@@ -18,3 +18,4 @@ chrono.workspace = true
 unicode-width = "0.2"
 pulldown-cmark.workspace = true
 syntect.workspace = true
+similar.workspace = true

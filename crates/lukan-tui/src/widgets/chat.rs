@@ -450,7 +450,6 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
     // Line number tracking
     let mut old_line: u32 = 1;
     let mut new_line: u32 = 1;
-    let mut have_hunk = false;
 
     // Buffers for del/add blocks (for inline diff pairing)
     let mut del_buf: Vec<(String, u32)> = Vec::new();
@@ -480,7 +479,6 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
             if let Some((old_start, new_start)) = parse_hunk_header(raw_line) {
                 old_line = old_start;
                 new_line = new_start;
-                have_hunk = true;
             }
             out.push(Line::from(Span::styled(
                 format!("       {raw_line}"),
@@ -541,8 +539,7 @@ fn render_diff_lines(diff: &str, max_changes: usize) -> Vec<Line<'static>> {
                 consecutive_blank_ctx = 0;
             }
 
-            let num = if have_hunk { new_line } else { 0 };
-            let prefix = line_prefix(num, ' ', None);
+            let prefix = line_prefix(new_line, ' ', None);
             let code_line = ctx_line(content, &mut hl_ctx, ss);
             let mut spans = vec![prefix];
             spans.extend(code_line);

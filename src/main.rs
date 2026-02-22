@@ -7,6 +7,8 @@ use lukan_providers::create_provider;
 use lukan_tui::app::App;
 
 mod models;
+mod plugin;
+mod sandbox_cmd;
 mod setup;
 mod whatsapp;
 
@@ -72,10 +74,20 @@ enum Commands {
         #[arg(long)]
         no_connector: bool,
     },
-    /// WhatsApp configuration subcommands
+    /// WhatsApp plugin management
     Wa {
         #[command(subcommand)]
         command: whatsapp::WaCommands,
+    },
+    /// Plugin management commands
+    Plugin {
+        #[command(subcommand)]
+        command: plugin::PluginCommands,
+    },
+    /// OS-level sandbox management (bwrap)
+    Sandbox {
+        #[command(subcommand)]
+        command: sandbox_cmd::SandboxCommands,
     },
 }
 
@@ -148,6 +160,14 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Wa { command }) => {
             whatsapp::handle_wa_command(command).await?;
+            return Ok(());
+        }
+        Some(Commands::Plugin { command }) => {
+            plugin::handle_plugin_command(command).await?;
+            return Ok(());
+        }
+        Some(Commands::Sandbox { command }) => {
+            sandbox_cmd::handle_sandbox_command(command).await?;
             return Ok(());
         }
         Some(Commands::Whatsapp {

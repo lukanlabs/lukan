@@ -31,6 +31,7 @@ pub async fn configure(
     cwd: std::path::PathBuf,
     provider_name: String,
     model_name: String,
+    sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
 ) {
     let mut mgr = MANAGER.write().await;
     mgr.provider = Some(provider);
@@ -38,6 +39,7 @@ pub async fn configure(
     mgr.cwd = Some(cwd);
     mgr.provider_name = Some(provider_name);
     mgr.model_name = Some(model_name);
+    mgr.sandbox = sandbox;
 }
 
 // ── Manager ───────────────────────────────────────────────────────────────
@@ -49,6 +51,7 @@ struct SubAgentManager {
     cwd: Option<std::path::PathBuf>,
     provider_name: Option<String>,
     model_name: Option<String>,
+    sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
 }
 
 impl SubAgentManager {
@@ -60,6 +63,7 @@ impl SubAgentManager {
             cwd: None,
             provider_name: None,
             model_name: None,
+            sandbox: None,
         }
     }
 }
@@ -113,7 +117,7 @@ async fn spawn_sub_agent(
         hex::encode(&buf)
     };
 
-    let (provider, system_prompt, cwd, _provider_name, _model_name) = {
+    let (provider, system_prompt, cwd, _provider_name, _model_name, sandbox) = {
         let mgr = MANAGER.read().await;
         let provider = mgr
             .provider
@@ -126,7 +130,8 @@ async fn spawn_sub_agent(
         let cwd = mgr.cwd.clone().unwrap_or_else(|| "/tmp".into());
         let pn = mgr.provider_name.clone().unwrap_or_default();
         let mn = mgr.model_name.clone().unwrap_or_default();
-        (provider, sp, cwd, pn, mn)
+        let sandbox = mgr.sandbox.clone();
+        (provider, sp, cwd, pn, mn, sandbox)
     };
 
     let entry = SubAgentEntry {
@@ -158,6 +163,7 @@ async fn spawn_sub_agent(
             provider,
             system_prompt,
             cwd,
+            sandbox,
         )
         .await;
     });
@@ -165,6 +171,7 @@ async fn spawn_sub_agent(
     Ok(id)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_sub_agent(
     id: String,
     task: String,
@@ -173,6 +180,7 @@ async fn run_sub_agent(
     provider: Arc<dyn Provider>,
     system_prompt: SystemPrompt,
     cwd: std::path::PathBuf,
+    sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
 ) {
     let mut history = MessageHistory::new();
     history.add_user_message(&task);
@@ -312,12 +320,14 @@ async fn run_sub_agent(
             let n = name.clone();
             let inp = input.clone();
 
+            let sandbox_cfg = sandbox.clone();
             handles.push(tokio::spawn(async move {
                 let ctx = ToolContext {
                     progress_tx: None,
                     read_files: rf,
                     cwd: c,
                     bg_signal: None,
+                    sandbox: sandbox_cfg,
                 };
                 match reg.execute(&n, inp, &ctx).await {
                     Ok(r) => r,

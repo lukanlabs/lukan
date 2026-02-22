@@ -1,6 +1,7 @@
 pub mod bg_processes;
 pub mod google_auth;
 pub mod google_workspace;
+pub mod sandbox;
 mod bash;
 mod edit_file;
 mod glob_tool;
@@ -27,6 +28,8 @@ pub struct ToolContext {
     pub cwd: PathBuf,
     /// Signal to send a running Bash command to background (Alt+B)
     pub bg_signal: Option<watch::Receiver<()>>,
+    /// OS-level sandbox configuration (bwrap)
+    pub sandbox: Option<sandbox::SandboxConfig>,
 }
 
 /// Trait that all tools must implement
@@ -52,12 +55,21 @@ pub trait Tool: Send + Sync {
 /// Registry that holds all available tools
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool>>,
+    /// Whether the OS-level sandbox (bwrap) is enabled
+    sandbox_enabled: bool,
+    /// Directories allowed to be writable inside the sandbox
+    allowed_dirs: Vec<String>,
+    /// File patterns to block inside the sandbox
+    sensitive_patterns: Vec<String>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            sandbox_enabled: false,
+            allowed_dirs: Vec::new(),
+            sensitive_patterns: Vec::new(),
         }
     }
 
@@ -111,6 +123,33 @@ impl ToolRegistry {
     pub fn retain(&mut self, allowed: &[&str]) {
         self.tools
             .retain(|name, _| allowed.contains(&name.as_str()));
+    }
+
+    /// Configure the OS-level sandbox (bwrap) settings
+    pub fn set_sandbox(
+        &mut self,
+        enabled: bool,
+        allowed_dirs: Vec<String>,
+        sensitive_patterns: Vec<String>,
+    ) {
+        self.sandbox_enabled = enabled;
+        self.allowed_dirs = allowed_dirs;
+        self.sensitive_patterns = sensitive_patterns;
+    }
+
+    /// Check if the OS-level sandbox is enabled
+    pub fn is_sandbox_enabled(&self) -> bool {
+        self.sandbox_enabled
+    }
+
+    /// Get the allowed writable directories for the sandbox
+    pub fn allowed_dirs(&self) -> &[String] {
+        &self.allowed_dirs
+    }
+
+    /// Get the sensitive file patterns for the sandbox
+    pub fn sensitive_patterns(&self) -> &[String] {
+        &self.sensitive_patterns
     }
 }
 

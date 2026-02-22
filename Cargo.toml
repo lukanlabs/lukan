@@ -67,6 +67,7 @@ libc = "0.2"
 sha2 = "0.10"
 open = "5"
 urlencoding = "2"
+toml = "0.8"
 
 # Workspace crates
 lukan-core = { path = "crates/lukan-core" }
@@ -76,6 +77,7 @@ lukan-search = { path = "crates/lukan-search" }
 lukan-agent = { path = "crates/lukan-agent" }
 lukan-tui = { path = "crates/lukan-tui" }
 lukan-web = { path = "crates/lukan-web" }
+lukan-plugins = { path = "crates/lukan-plugins" }
 
 [package]
 name = "lukan"
@@ -93,6 +95,7 @@ lukan-providers.workspace = true
 lukan-agent.workspace = true
 lukan-tools.workspace = true
 lukan-web.workspace = true
+lukan-plugins.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 clap.workspace = true

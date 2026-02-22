@@ -81,6 +81,9 @@ pub struct AppConfig {
     /// Web auth token TTL in hours (default: 24)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_token_ttl: Option<u64>,
+    /// Plugin system configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugins: Option<PluginsConfig>,
 }
 
 fn default_max_tokens() -> u32 {
@@ -106,6 +109,7 @@ impl Default for AppConfig {
             openai_compatible_provider_options: None,
             web_password: None,
             web_token_ttl: None,
+            plugins: None,
         }
     }
 }
@@ -269,7 +273,7 @@ pub enum PermissionMode {
 }
 
 /// Permission rules configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionsConfig {
     #[serde(default)]
     pub deny: Vec<String>,
@@ -277,4 +281,65 @@ pub struct PermissionsConfig {
     pub ask: Vec<String>,
     #[serde(default)]
     pub allow: Vec<String>,
+    /// Enable OS-level sandbox (bwrap) -- default true
+    #[serde(default = "default_true")]
+    pub os_sandbox: bool,
+    /// File patterns to block inside sandbox
+    #[serde(default = "default_sensitive_patterns")]
+    pub sensitive_patterns: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_sensitive_patterns() -> Vec<String> {
+    vec![
+        ".env*".into(),
+        "credentials.json".into(),
+        "*.pem".into(),
+        "*.key".into(),
+        "*.p12".into(),
+        ".npmrc".into(),
+    ]
+}
+
+impl Default for PermissionsConfig {
+    fn default() -> Self {
+        Self {
+            deny: Vec::new(),
+            ask: Vec::new(),
+            allow: Vec::new(),
+            os_sandbox: default_true(),
+            sensitive_patterns: default_sensitive_patterns(),
+        }
+    }
+}
+
+/// Plugin system configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsConfig {
+    /// List of plugin names to auto-start
+    #[serde(default)]
+    pub enabled: Vec<String>,
+    /// Per-plugin overrides
+    #[serde(default)]
+    pub overrides: HashMap<String, PluginOverrides>,
+}
+
+/// Per-plugin configuration overrides
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ProviderName>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_response_len: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_restart: Option<bool>,
 }

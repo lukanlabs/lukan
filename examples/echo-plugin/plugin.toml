@@ -1,0 +1,10 @@
+[plugin]
+name = "echo"
+version = "0.1.0"
+description = "Echo plugin for testing the plugin system"
+plugin_type = "channel"
+protocol_version = 1
+
+[run]
+command = "bash"
+args = ["echo-bridge.sh"]

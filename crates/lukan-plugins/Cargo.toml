@@ -1,0 +1,16 @@
+[package]
+name = "lukan-plugins"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lukan-core.workspace = true
+lukan-agent.workspace = true
+lukan-providers.workspace = true
+lukan-tools.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
+use serde::{Deserialize, Serialize};
 
 use lukan_core::config::{
-    ConfigManager, LukanPaths, ProviderName, ResolvedConfig, WA_ALL_TOOLS, WA_DEFAULT_TOOLS,
-    WhatsAppConfig,
+    ConfigManager, LukanPaths, PluginOverrides, PluginsConfig, ProviderName, ResolvedConfig,
+    WA_ALL_TOOLS, WA_DEFAULT_TOOLS, WhatsAppConfig,
 };
 use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::create_default_registry;
@@ -27,6 +28,104 @@ const WA_FORMAT_PROMPT: &str = include_str!("../prompts/whatsapp-format.txt");
 const WA_DIR_NONE_PROMPT: &str = include_str!("../prompts/whatsapp-dir-none.txt");
 const WA_DIR_ALLOWED_PROMPT: &str = include_str!("../prompts/whatsapp-dir-allowed.txt");
 const BASE_PROMPT: &str = include_str!("../prompts/base.txt");
+
+// ── WhatsApp Plugin Config (lives in ~/.config/lukan/plugins/whatsapp/config.json) ──
+
+/// Plugin-specific configuration for WhatsApp.
+/// Lives in ~/.config/lukan/plugins/whatsapp/config.json.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WhatsAppPluginConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bridge_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub whitelist: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_groups: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_dirs: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_dir_restrictions: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reminder_advance: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reminder_chat: Option<String>,
+}
+
+const WA_PLUGIN_NAME: &str = "whatsapp";
+
+/// Load the WhatsApp plugin's config.json
+async fn load_wa_plugin_config() -> Result<WhatsAppPluginConfig> {
+    let config_path = LukanPaths::plugin_config(WA_PLUGIN_NAME);
+    if !config_path.exists() {
+        return Ok(WhatsAppPluginConfig::default());
+    }
+    let content = tokio::fs::read_to_string(&config_path)
+        .await
+        .context("Failed to read WhatsApp plugin config")?;
+    let config: WhatsAppPluginConfig =
+        serde_json::from_str(&content).context("Failed to parse WhatsApp plugin config")?;
+    Ok(config)
+}
+
+/// Save the WhatsApp plugin's config.json
+async fn save_wa_plugin_config(config: &WhatsAppPluginConfig) -> Result<()> {
+    let plugin_dir = LukanPaths::plugin_dir(WA_PLUGIN_NAME);
+    tokio::fs::create_dir_all(&plugin_dir).await?;
+    let config_path = LukanPaths::plugin_config(WA_PLUGIN_NAME);
+    let content = serde_json::to_string_pretty(config)?;
+    tokio::fs::write(&config_path, content)
+        .await
+        .context("Failed to write WhatsApp plugin config")?;
+    Ok(())
+}
+
+/// Check that the WhatsApp plugin is installed (has plugin.toml).
+/// Returns Ok if installed, Err with user-friendly message if not.
+fn ensure_wa_plugin_installed() -> Result<()> {
+    let manifest_path = LukanPaths::plugin_manifest(WA_PLUGIN_NAME);
+    if !manifest_path.exists() {
+        anyhow::bail!(
+            "WhatsApp plugin not installed.\n\
+             Install it with: lukan plugin install <path-to-whatsapp-plugin>"
+        );
+    }
+    Ok(())
+}
+
+/// Convert WhatsAppPluginConfig to the legacy WhatsAppConfig (for system prompt builder etc.)
+fn plugin_config_to_wa_config(
+    pc: &WhatsAppPluginConfig,
+    overrides: Option<&PluginOverrides>,
+) -> WhatsAppConfig {
+    WhatsAppConfig {
+        enabled: pc.enabled,
+        bridge_url: pc.bridge_url.clone(),
+        whitelist: pc.whitelist.clone(),
+        allowed_groups: pc.allowed_groups.clone(),
+        prefix: pc.prefix.clone(),
+        tools: pc.tools.clone(),
+        allowed_dirs: pc.allowed_dirs.clone(),
+        skip_dir_restrictions: pc.skip_dir_restrictions,
+        provider: overrides.and_then(|o| o.provider.clone()),
+        model: overrides.and_then(|o| o.model.clone()),
+        reminder_advance: pc.reminder_advance,
+        reminder_chat: pc.reminder_chat.clone(),
+    }
+}
+
+/// Load WhatsApp plugin config and build a WhatsAppConfig suitable for system prompt building.
+/// Called by plugin.rs when starting the "whatsapp" plugin.
+pub async fn load_wa_config_for_plugin(overrides: Option<&PluginOverrides>) -> Result<WhatsAppConfig> {
+    let pc = load_wa_plugin_config().await?;
+    Ok(plugin_config_to_wa_config(&pc, overrides))
+}
 
 // ── WaCommands enum ───────────────────────────────────────────────────────
 
@@ -82,7 +181,7 @@ pub enum WaCommands {
     Auth,
     /// Delete WhatsApp session (requires QR scan on next start)
     Logout,
-    /// Start WhatsApp channel as a background daemon
+    /// Start WhatsApp plugin as a background process
     Start {
         /// Override provider
         #[arg(long, short)]
@@ -91,11 +190,11 @@ pub enum WaCommands {
         #[arg(long, short)]
         model: Option<String>,
     },
-    /// Stop the WhatsApp background daemon
+    /// Stop the WhatsApp plugin
     Stop,
-    /// Restart the WhatsApp background daemon
+    /// Restart the WhatsApp plugin
     Restart,
-    /// View WhatsApp daemon logs
+    /// View WhatsApp plugin logs
     Logs {
         /// Follow log output
         #[arg(long, short)]
@@ -124,11 +223,25 @@ pub async fn run_whatsapp(
     no_connector: bool,
     resolved: &ResolvedConfig,
 ) -> Result<()> {
-    let wa_config = resolved
-        .config
-        .whatsapp
-        .clone()
-        .unwrap_or_default();
+    // Load from plugin config (with fallback to legacy global config for backward compat)
+    let pc = if LukanPaths::plugin_manifest(WA_PLUGIN_NAME).exists() {
+        load_wa_plugin_config().await?
+    } else {
+        // Backward compat: use legacy global config
+        let wa = resolved.config.whatsapp.clone().unwrap_or_default();
+        WhatsAppPluginConfig {
+            enabled: wa.enabled,
+            bridge_url: wa.bridge_url,
+            whitelist: wa.whitelist,
+            allowed_groups: wa.allowed_groups,
+            prefix: wa.prefix,
+            tools: wa.tools,
+            allowed_dirs: wa.allowed_dirs,
+            skip_dir_restrictions: wa.skip_dir_restrictions,
+            reminder_advance: wa.reminder_advance,
+            reminder_chat: wa.reminder_chat,
+        }
+    };
 
     // Check auth
     let auth_dir = LukanPaths::whatsapp_auth_dir();
@@ -140,7 +253,7 @@ pub async fn run_whatsapp(
         return Ok(());
     }
 
-    let connector_url = wa_config
+    let connector_url = pc
         .bridge_url
         .clone()
         .unwrap_or_else(|| "ws://localhost:3001".to_string());
@@ -153,13 +266,22 @@ pub async fn run_whatsapp(
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     }
 
-    // Determine provider/model (channel-specific overrides)
+    // Read overrides from global config
+    let wa_overrides = resolved
+        .config
+        .plugins
+        .as_ref()
+        .and_then(|p| p.overrides.get(WA_PLUGIN_NAME))
+        .cloned()
+        .unwrap_or_default();
+
+    // Determine provider/model (CLI > plugin overrides > global)
     let mut config = resolved.config.clone();
-    if let Some(p) = provider_override.or(wa_config.provider.as_ref().map(|p| p.to_string())) {
+    if let Some(p) = provider_override.or(wa_overrides.provider.as_ref().map(|p| p.to_string())) {
         config.provider = serde_json::from_value(serde_json::Value::String(p))
             .context("Invalid provider name")?;
     }
-    if let Some(m) = model_override.or(wa_config.model.clone()) {
+    if let Some(m) = model_override.or(wa_overrides.model.clone()) {
         config.model = Some(m);
     }
 
@@ -171,7 +293,7 @@ pub async fn run_whatsapp(
     let provider = create_provider(&wa_resolved)?;
 
     // Build filtered tool registry
-    let tool_names: Vec<String> = wa_config
+    let tool_names: Vec<String> = pc
         .tools
         .clone()
         .unwrap_or_else(|| WA_DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect());
@@ -179,7 +301,8 @@ pub async fn run_whatsapp(
     let mut registry = create_default_registry();
     registry.retain(&tool_refs);
 
-    // Build system prompt
+    // Build system prompt (convert to legacy WhatsAppConfig for the prompt builder)
+    let wa_config = plugin_config_to_wa_config(&pc, Some(&wa_overrides));
     let system_prompt = build_whatsapp_system_prompt(&wa_config);
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -238,29 +361,23 @@ pub async fn handle_wa_command(command: WaCommands) -> Result<()> {
 // ── Individual command handlers ──────────────────────────────────────────
 
 async fn wa_on() -> Result<()> {
-    let mut config = ConfigManager::load().await?;
-    let mut wa = config.whatsapp.take().unwrap_or_default();
-    wa.enabled = Some(true);
-    config.whatsapp = Some(wa);
-    ConfigManager::save(&config).await?;
+    ensure_wa_plugin_installed()?;
+    let mut pc = load_wa_plugin_config().await?;
+    pc.enabled = Some(true);
+    save_wa_plugin_config(&pc).await?;
     println!("{GREEN}✓{RESET} WhatsApp channel enabled.");
     Ok(())
 }
 
 async fn wa_off() -> Result<()> {
-    let mut config = ConfigManager::load().await?;
-    let mut wa = config.whatsapp.take().unwrap_or_default();
-    wa.enabled = Some(false);
-    config.whatsapp = Some(wa);
-    ConfigManager::save(&config).await?;
+    ensure_wa_plugin_installed()?;
+    let mut pc = load_wa_plugin_config().await?;
+    pc.enabled = Some(false);
+    save_wa_plugin_config(&pc).await?;
 
-    // Stop daemon if running
-    if kill_daemon().await {
-        println!("{GREEN}✓{RESET} Daemon stopped.");
-    }
-    // Stop connector if running
-    if kill_connector().await {
-        println!("{GREEN}✓{RESET} Connector stopped.");
+    // Stop plugin if running
+    if kill_plugin().await {
+        println!("{GREEN}✓{RESET} Plugin stopped.");
     }
 
     println!("{GREEN}✓{RESET} WhatsApp channel disabled. Configuration preserved.");
@@ -268,34 +385,32 @@ async fn wa_off() -> Result<()> {
 }
 
 async fn wa_allow(number: &str) -> Result<()> {
-    let mut config = ConfigManager::load().await?;
-    let mut wa = config.whatsapp.take().unwrap_or_default();
-    let mut whitelist = wa.whitelist.take().unwrap_or_default();
+    ensure_wa_plugin_installed()?;
+    let mut pc = load_wa_plugin_config().await?;
+    let mut whitelist = pc.whitelist.take().unwrap_or_default();
 
     let clean: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
     if whitelist.contains(&clean) {
         println!("{YELLOW}{clean} already in whitelist.{RESET}");
     } else {
         whitelist.push(clean.clone());
-        wa.whitelist = Some(whitelist);
-        config.whatsapp = Some(wa);
-        ConfigManager::save(&config).await?;
+        pc.whitelist = Some(whitelist);
+        save_wa_plugin_config(&pc).await?;
         println!("{GREEN}✓{RESET} Added {clean} to whitelist.");
     }
     Ok(())
 }
 
 async fn wa_deny(number: &str) -> Result<()> {
-    let mut config = ConfigManager::load().await?;
-    let mut wa = config.whatsapp.take().unwrap_or_default();
-    let mut whitelist = wa.whitelist.take().unwrap_or_default();
+    ensure_wa_plugin_installed()?;
+    let mut pc = load_wa_plugin_config().await?;
+    let mut whitelist = pc.whitelist.take().unwrap_or_default();
 
     let clean: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
     if let Some(idx) = whitelist.iter().position(|w| w == &clean) {
         whitelist.remove(idx);
-        wa.whitelist = Some(whitelist);
-        config.whatsapp = Some(wa);
-        ConfigManager::save(&config).await?;
+        pc.whitelist = Some(whitelist);
+        save_wa_plugin_config(&pc).await?;
         println!("{GREEN}✓{RESET} Removed {clean} from whitelist.");
     } else {
         println!("{YELLOW}{clean} not in whitelist.{RESET}");
@@ -304,9 +419,9 @@ async fn wa_deny(number: &str) -> Result<()> {
 }
 
 async fn wa_group(action: &str, group_id: Option<&str>) -> Result<()> {
-    let mut config = ConfigManager::load().await?;
-    let mut wa = config.whatsapp.take().unwrap_or_default();
-    let mut groups = wa.allowed_groups.take().unwrap_or_default();
+    ensure_wa_plugin_installed()?;
+    let mut pc = load_wa_plugin_config().await?;
+    let mut groups = pc.allowed_groups.take().unwrap_or_default();
 
     match action {
         "list" => {
@@ -327,9 +442,8 @@ async fn wa_group(action: &str, group_id: Option<&str>) -> Result<()> {
                 println!("{YELLOW}{gid} already allowed.{RESET}");
             } else {
                 groups.push(gid.to_string());
-                wa.allowed_groups = Some(groups);
-                config.whatsapp = Some(wa);
-                ConfigManager::save(&config).await?;
+                pc.allowed_groups = Some(groups);
+                save_wa_plugin_config(&pc).await?;
                 println!("{GREEN}✓{RESET} Added group {gid}.");
             }
         }
@@ -339,9 +453,8 @@ async fn wa_group(action: &str, group_id: Option<&str>) -> Result<()> {
             })?;
             if let Some(idx) = groups.iter().position(|g| g == gid) {
                 groups.remove(idx);
-                wa.allowed_groups = Some(groups);
-                config.whatsapp = Some(wa);
-                ConfigManager::save(&config).await?;
+                pc.allowed_groups = Some(groups);
+                save_wa_plugin_config(&pc).await?;
                 println!("{GREEN}✓{RESET} Removed group {gid}.");
             } else {
                 println!("{YELLOW}{gid} not in allowed groups.{RESET}");
@@ -355,26 +468,24 @@ async fn wa_group(action: &str, group_id: Option<&str>) -> Result<()> {
 }
 
 async fn wa_prefix(value: Option<&str>) -> Result<()> {
-    let mut config = ConfigManager::load().await?;
-    let mut wa = config.whatsapp.take().unwrap_or_default();
+    ensure_wa_plugin_installed()?;
+    let mut pc = load_wa_plugin_config().await?;
 
     match value {
         None => {
-            let pfx = wa.prefix.as_deref().unwrap_or("(none)");
+            let pfx = pc.prefix.as_deref().unwrap_or("(none)");
             println!("Prefix: {pfx}");
         }
         Some("none") | Some("") => {
-            wa.prefix = None;
-            config.whatsapp = Some(wa);
-            ConfigManager::save(&config).await?;
+            pc.prefix = None;
+            save_wa_plugin_config(&pc).await?;
             println!(
                 "{GREEN}✓{RESET} Prefix removed. All messages from whitelisted users will be processed."
             );
         }
         Some(v) => {
-            wa.prefix = Some(v.to_string());
-            config.whatsapp = Some(wa);
-            ConfigManager::save(&config).await?;
+            pc.prefix = Some(v.to_string());
+            save_wa_plugin_config(&pc).await?;
             println!("{GREEN}✓{RESET} Prefix set to \"{v}\".");
         }
     }
@@ -382,17 +493,26 @@ async fn wa_prefix(value: Option<&str>) -> Result<()> {
 }
 
 async fn wa_status() -> Result<()> {
+    // Check if plugin is installed
+    let installed = LukanPaths::plugin_manifest(WA_PLUGIN_NAME).exists();
+    if !installed {
+        println!("{RED}WhatsApp plugin not installed.{RESET}");
+        println!("{DIM}Install it with: lukan plugin install <path-to-whatsapp-plugin>{RESET}");
+        return Ok(());
+    }
+
+    let pc = load_wa_plugin_config().await?;
     let config = ConfigManager::load().await?;
-    let wa = config.whatsapp.clone().unwrap_or_default();
-    let whitelist = wa.whitelist.clone().unwrap_or_default();
-    let groups = wa.allowed_groups.clone().unwrap_or_default();
-    let tools: Vec<String> = wa
+
+    let whitelist = pc.whitelist.clone().unwrap_or_default();
+    let groups = pc.allowed_groups.clone().unwrap_or_default();
+    let tools: Vec<String> = pc
         .tools
         .clone()
         .unwrap_or_else(|| WA_DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect());
 
-    // Daemon status
-    let daemon_status = match read_pid_and_check(&LukanPaths::whatsapp_pid_file()).await {
+    // Plugin process status (check plugin PID file)
+    let plugin_status = match read_pid_and_check(&LukanPaths::plugin_pid(WA_PLUGIN_NAME)).await {
         Some(pid) => format!("{GREEN}running{RESET} (PID {pid})"),
         None => format!("{RED}stopped{RESET}"),
     };
@@ -402,10 +522,10 @@ async fn wa_status() -> Result<()> {
     let authed = auth_dir.join("creds.json").exists();
 
     // Connector status
-    let connector_url = wa.bridge_url.as_deref().unwrap_or("ws://localhost:3001");
+    let connector_url = pc.bridge_url.as_deref().unwrap_or("ws://localhost:3001");
     let connector_up = check_connector_running(connector_url).await;
 
-    let enabled = wa.enabled.unwrap_or(true);
+    let enabled = pc.enabled.unwrap_or(true);
     println!("{BOLD}WhatsApp Status:{RESET}");
     println!(
         "  Channel:     {}",
@@ -415,7 +535,7 @@ async fn wa_status() -> Result<()> {
             format!("{RED}disabled{RESET}")
         }
     );
-    println!("  Daemon:      {daemon_status}");
+    println!("  Plugin:      {plugin_status}");
     println!(
         "  Connector:   {} ({connector_url})",
         if connector_up {
@@ -433,17 +553,25 @@ async fn wa_status() -> Result<()> {
         }
     );
 
-    let wa_provider = wa
+    // Read provider/model from global plugin overrides
+    let wa_overrides = config
+        .plugins
+        .as_ref()
+        .and_then(|p| p.overrides.get(WA_PLUGIN_NAME))
+        .cloned()
+        .unwrap_or_default();
+
+    let wa_provider = wa_overrides
         .provider
         .as_ref()
         .unwrap_or(&config.provider);
-    let wa_model = wa.model.as_deref().unwrap_or(
+    let wa_model = wa_overrides.model.as_deref().unwrap_or(
         config
             .model
             .as_deref()
             .unwrap_or(config.provider.default_model()),
     );
-    let is_channel_specific = wa.provider.is_some() || wa.model.is_some();
+    let is_channel_specific = wa_overrides.provider.is_some() || wa_overrides.model.is_some();
     let suffix = if is_channel_specific {
         ""
     } else {
@@ -453,7 +581,7 @@ async fn wa_status() -> Result<()> {
     println!("  Model:       {wa_model}{suffix}");
     println!(
         "  Prefix:      {}",
-        wa.prefix.as_deref().unwrap_or("(none)")
+        pc.prefix.as_deref().unwrap_or("(none)")
     );
     println!(
         "  Whitelist:   {}",
@@ -476,8 +604,8 @@ async fn wa_status() -> Result<()> {
     let has_dangerous = tools
         .iter()
         .any(|t| t == "Bash" || t == "WriteFile" || t == "EditFile");
-    let dirs = wa.allowed_dirs.clone().unwrap_or_default();
-    if wa.skip_dir_restrictions.unwrap_or(false) {
+    let dirs = pc.allowed_dirs.clone().unwrap_or_default();
+    if pc.skip_dir_restrictions.unwrap_or(false) {
         println!("  Allowed dirs: {YELLOW}skipped (unrestricted){RESET}");
     } else if has_dangerous {
         if dirs.is_empty() {
@@ -490,17 +618,17 @@ async fn wa_status() -> Result<()> {
     }
     println!(
         "  Reminders:   {}min advance → {}",
-        wa.reminder_advance.unwrap_or(15),
-        wa.reminder_chat.as_deref().unwrap_or("(auto)")
+        pc.reminder_advance.unwrap_or(15),
+        pc.reminder_chat.as_deref().unwrap_or("(auto)")
     );
 
     Ok(())
 }
 
 async fn wa_tools(action: Option<&str>, tool_name: Option<&str>) -> Result<()> {
-    let mut config = ConfigManager::load().await?;
-    let mut wa = config.whatsapp.take().unwrap_or_default();
-    let mut current: Vec<String> = wa
+    ensure_wa_plugin_installed()?;
+    let mut pc = load_wa_plugin_config().await?;
+    let mut current: Vec<String> = pc
         .tools
         .take()
         .unwrap_or_else(|| WA_DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect());
@@ -525,9 +653,8 @@ async fn wa_tools(action: Option<&str>, tool_name: Option<&str>) -> Result<()> {
             println!("\n{DIM}Usage: wa tools add|remove <name> | wa tools reset{RESET}");
         }
         "reset" => {
-            wa.tools = None;
-            config.whatsapp = Some(wa);
-            ConfigManager::save(&config).await?;
+            pc.tools = None;
+            save_wa_plugin_config(&pc).await?;
             let defaults: Vec<&str> = WA_DEFAULT_TOOLS.to_vec();
             println!("{GREEN}✓{RESET} Reset to defaults: {}", defaults.join(", "));
         }
@@ -546,9 +673,8 @@ async fn wa_tools(action: Option<&str>, tool_name: Option<&str>) -> Result<()> {
                 println!("{YELLOW}{name} already enabled.{RESET}");
             } else {
                 current.push(name.to_string());
-                wa.tools = Some(current.clone());
-                config.whatsapp = Some(wa);
-                ConfigManager::save(&config).await?;
+                pc.tools = Some(current.clone());
+                save_wa_plugin_config(&pc).await?;
                 let joined: Vec<&str> = current.iter().map(|s| s.as_str()).collect();
                 println!("{GREEN}✓{RESET} Enabled {name}. Active tools: {}", joined.join(", "));
             }
@@ -558,9 +684,8 @@ async fn wa_tools(action: Option<&str>, tool_name: Option<&str>) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("Usage: wa tools remove <name>"))?;
             if let Some(idx) = current.iter().position(|c| c == name) {
                 current.remove(idx);
-                wa.tools = Some(current.clone());
-                config.whatsapp = Some(wa);
-                ConfigManager::save(&config).await?;
+                pc.tools = Some(current.clone());
+                save_wa_plugin_config(&pc).await?;
                 let joined: Vec<&str> = current.iter().map(|s| s.as_str()).collect();
                 println!(
                     "{GREEN}✓{RESET} Disabled {name}. Active tools: {}",
@@ -578,13 +703,13 @@ async fn wa_tools(action: Option<&str>, tool_name: Option<&str>) -> Result<()> {
 }
 
 async fn wa_dir(action: Option<&str>, dir_path: Option<&str>) -> Result<()> {
-    let mut config = ConfigManager::load().await?;
-    let mut wa = config.whatsapp.take().unwrap_or_default();
-    let mut current = wa.allowed_dirs.take().unwrap_or_default();
+    ensure_wa_plugin_installed()?;
+    let mut pc = load_wa_plugin_config().await?;
+    let mut current = pc.allowed_dirs.take().unwrap_or_default();
 
     match action.unwrap_or("list") {
         "list" => {
-            if wa.skip_dir_restrictions.unwrap_or(false) {
+            if pc.skip_dir_restrictions.unwrap_or(false) {
                 println!("{YELLOW}Directory restrictions are OFF (unrestricted file access).{RESET}");
                 println!("{DIM}Use: wa dir on — to re-enable restrictions{RESET}");
             } else if current.is_empty() {
@@ -599,37 +724,28 @@ async fn wa_dir(action: Option<&str>, dir_path: Option<&str>) -> Result<()> {
                     println!("  {CYAN}{d}{RESET}");
                 }
             }
-            // Restore wa state
-            wa.allowed_dirs = if current.is_empty() {
-                None
-            } else {
-                Some(current)
-            };
-            config.whatsapp = Some(wa);
             println!("\n{DIM}Usage: wa dir add|remove <path> | wa dir clear | wa dir off|on{RESET}");
         }
         "off" => {
-            wa.skip_dir_restrictions = Some(true);
-            wa.allowed_dirs = if current.is_empty() {
+            pc.skip_dir_restrictions = Some(true);
+            pc.allowed_dirs = if current.is_empty() {
                 None
             } else {
                 Some(current)
             };
-            config.whatsapp = Some(wa);
-            ConfigManager::save(&config).await?;
+            save_wa_plugin_config(&pc).await?;
             println!(
                 "{GREEN}✓{RESET} Directory restrictions disabled. Full file access granted."
             );
         }
         "on" => {
-            wa.skip_dir_restrictions = None;
-            wa.allowed_dirs = if current.is_empty() {
+            pc.skip_dir_restrictions = None;
+            pc.allowed_dirs = if current.is_empty() {
                 None
             } else {
                 Some(current.clone())
             };
-            config.whatsapp = Some(wa);
-            ConfigManager::save(&config).await?;
+            save_wa_plugin_config(&pc).await?;
             if !current.is_empty() {
                 println!(
                     "{GREEN}✓{RESET} Directory restrictions enabled. Allowed: {}",
@@ -640,9 +756,8 @@ async fn wa_dir(action: Option<&str>, dir_path: Option<&str>) -> Result<()> {
             }
         }
         "clear" => {
-            wa.allowed_dirs = None;
-            config.whatsapp = Some(wa);
-            ConfigManager::save(&config).await?;
+            pc.allowed_dirs = None;
+            save_wa_plugin_config(&pc).await?;
             println!(
                 "{GREEN}✓{RESET} Allowed directories cleared. All file access is now blocked."
             );
@@ -664,9 +779,8 @@ async fn wa_dir(action: Option<&str>, dir_path: Option<&str>) -> Result<()> {
                 println!("{YELLOW}{resolved_str} already in allowed dirs.{RESET}");
             } else {
                 current.push(resolved_str.clone());
-                wa.allowed_dirs = Some(current.clone());
-                config.whatsapp = Some(wa);
-                ConfigManager::save(&config).await?;
+                pc.allowed_dirs = Some(current.clone());
+                save_wa_plugin_config(&pc).await?;
                 println!(
                     "{GREEN}✓{RESET} Added {resolved_str}. Allowed dirs: {}",
                     current.join(", ")
@@ -682,13 +796,12 @@ async fn wa_dir(action: Option<&str>, dir_path: Option<&str>) -> Result<()> {
 
             if let Some(idx) = current.iter().position(|d| d == &resolved_str) {
                 current.remove(idx);
-                wa.allowed_dirs = if current.is_empty() {
+                pc.allowed_dirs = if current.is_empty() {
                     None
                 } else {
                     Some(current.clone())
                 };
-                config.whatsapp = Some(wa);
-                ConfigManager::save(&config).await?;
+                save_wa_plugin_config(&pc).await?;
                 if !current.is_empty() {
                     println!(
                         "{GREEN}✓{RESET} Removed {resolved_str}. Allowed dirs: {}",
@@ -709,13 +822,13 @@ async fn wa_dir(action: Option<&str>, dir_path: Option<&str>) -> Result<()> {
 }
 
 async fn wa_groups() -> Result<()> {
-    let config = ConfigManager::load().await?;
-    let wa = config.whatsapp.clone().unwrap_or_default();
-    let connector_url = wa
+    ensure_wa_plugin_installed()?;
+    let pc = load_wa_plugin_config().await?;
+    let connector_url = pc
         .bridge_url
         .as_deref()
         .unwrap_or("ws://localhost:3001");
-    let allowed = wa.allowed_groups.clone().unwrap_or_default();
+    let allowed = pc.allowed_groups.clone().unwrap_or_default();
 
     println!("Connecting to connector at {connector_url}...");
 
@@ -796,10 +909,18 @@ async fn wa_groups() -> Result<()> {
 }
 
 async fn wa_model() -> Result<()> {
+    ensure_wa_plugin_installed()?;
     let config = ConfigManager::load().await?;
-    let wa = config.whatsapp.clone().unwrap_or_default();
 
-    let current_entry = match (&wa.provider, &wa.model) {
+    // Read current overrides from global config
+    let wa_overrides = config
+        .plugins
+        .as_ref()
+        .and_then(|p| p.overrides.get(WA_PLUGIN_NAME))
+        .cloned()
+        .unwrap_or_default();
+
+    let current_entry = match (&wa_overrides.provider, &wa_overrides.model) {
         (Some(p), Some(m)) => Some(format!("{p}:{m}")),
         _ => None,
     };
@@ -842,13 +963,14 @@ async fn wa_model() -> Result<()> {
     }
 
     let mut config = config;
-    let mut wa = wa;
 
     if idx == choices.len() {
-        // Global default selected
-        wa.provider = None;
-        wa.model = None;
-        config.whatsapp = Some(wa);
+        // Global default selected — remove whatsapp overrides for provider/model
+        let plugins = config.plugins.get_or_insert_with(PluginsConfig::default);
+        if let Some(ovr) = plugins.overrides.get_mut(WA_PLUGIN_NAME) {
+            ovr.provider = None;
+            ovr.model = None;
+        }
         ConfigManager::save(&config).await?;
         println!(
             "{GREEN}✓{RESET} WhatsApp model reset to global default ({CYAN}{global_default}{RESET})"
@@ -861,9 +983,13 @@ async fn wa_model() -> Result<()> {
             let provider: ProviderName =
                 serde_json::from_value(serde_json::Value::String(provider_str.to_string()))
                     .context("Invalid provider in model entry")?;
-            wa.provider = Some(provider);
-            wa.model = Some(model.to_string());
-            config.whatsapp = Some(wa);
+            let plugins = config.plugins.get_or_insert_with(PluginsConfig::default);
+            let ovr = plugins
+                .overrides
+                .entry(WA_PLUGIN_NAME.to_string())
+                .or_default();
+            ovr.provider = Some(provider);
+            ovr.model = Some(model.to_string());
             ConfigManager::save(&config).await?;
             println!("{GREEN}✓{RESET} WhatsApp model set to {CYAN}{entry}{RESET}");
         } else {
@@ -871,21 +997,22 @@ async fn wa_model() -> Result<()> {
         }
     }
 
-    // Signal running daemon to hot-reload
-    if let Some(pid) = read_pid_file(&LukanPaths::whatsapp_pid_file()).await {
+    // Signal running plugin to hot-reload
+    if let Some(pid) = read_pid_file(&LukanPaths::plugin_pid(WA_PLUGIN_NAME)).await {
         #[cfg(unix)]
         {
             unsafe { libc::kill(pid as i32, libc::SIGUSR1) };
-            println!("{GREEN}✓{RESET} Daemon notified — model switched live (PID {pid})");
+            println!("{GREEN}✓{RESET} Plugin notified — model switched live (PID {pid})");
         }
     } else {
-        println!("{DIM}No daemon running. Changes will apply on next start.{RESET}");
+        println!("{DIM}No plugin running. Changes will apply on next start.{RESET}");
     }
 
     Ok(())
 }
 
 async fn wa_auth() -> Result<()> {
+    ensure_wa_plugin_installed()?;
     let auth_dir = LukanPaths::whatsapp_auth_dir();
     let creds_file = auth_dir.join("creds.json");
 
@@ -934,13 +1061,9 @@ async fn wa_auth() -> Result<()> {
 }
 
 async fn wa_logout() -> Result<()> {
-    // Stop daemon if running
-    if kill_daemon().await {
-        println!("{DIM}Stopped daemon.{RESET}");
-    }
-    // Stop connector
-    if kill_connector().await {
-        println!("{DIM}Stopped connector.{RESET}");
+    // Stop plugin if running
+    if kill_plugin().await {
+        println!("{DIM}Stopped plugin.{RESET}");
     }
 
     let auth_dir = LukanPaths::whatsapp_auth_dir();
@@ -961,6 +1084,8 @@ async fn wa_logout() -> Result<()> {
 }
 
 async fn wa_start(provider: Option<String>, model: Option<String>) -> Result<()> {
+    ensure_wa_plugin_installed()?;
+
     // Check auth
     let auth_dir = LukanPaths::whatsapp_auth_dir();
     if !auth_dir.join("creds.json").exists() {
@@ -971,39 +1096,24 @@ async fn wa_start(provider: Option<String>, model: Option<String>) -> Result<()>
     }
 
     // Check if already running
-    if let Some(pid) = read_pid_and_check(&LukanPaths::whatsapp_pid_file()).await {
-        println!("{YELLOW}WhatsApp daemon already running (PID {pid}).{RESET}");
+    if let Some(pid) = read_pid_and_check(&LukanPaths::plugin_pid(WA_PLUGIN_NAME)).await {
+        println!("{YELLOW}WhatsApp plugin already running (PID {pid}).{RESET}");
         println!("{DIM}Use: lukan wa stop{RESET}");
         return Ok(());
     }
 
-    let config_dir = LukanPaths::config_dir();
-    tokio::fs::create_dir_all(&config_dir).await?;
-
-    // Check if connector is running, start if needed
-    let config = ConfigManager::load().await?;
-    let wa = config.whatsapp.clone().unwrap_or_default();
-    let connector_url = wa
-        .bridge_url
-        .as_deref()
-        .unwrap_or("ws://localhost:3001");
-
-    if !check_connector_running(connector_url).await {
-        start_connector_daemon().await?;
-        println!("{DIM}Connector started.{RESET}");
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    } else {
-        println!("{GREEN}✓{RESET} Connector already running at {connector_url}");
-    }
-
-    // Start lukan whatsapp as a daemon
+    // Delegate to plugin start — spawns lukan as a daemon running "plugin start whatsapp"
     let exe = std::env::current_exe().context("Failed to get current exe")?;
-    let log_file = LukanPaths::whatsapp_log_file();
-    let pid_file = LukanPaths::whatsapp_pid_file();
+    let log_file = LukanPaths::plugin_log(WA_PLUGIN_NAME);
+    let pid_file = LukanPaths::plugin_pid(WA_PLUGIN_NAME);
+
+    let plugin_dir = LukanPaths::plugin_dir(WA_PLUGIN_NAME);
+    tokio::fs::create_dir_all(&plugin_dir).await?;
 
     let mut args = vec![
-        "whatsapp".to_string(),
-        "--no-connector".to_string(),
+        "plugin".to_string(),
+        "start".to_string(),
+        WA_PLUGIN_NAME.to_string(),
     ];
     if let Some(p) = provider {
         args.push("-p".to_string());
@@ -1027,12 +1137,12 @@ async fn wa_start(provider: Option<String>, model: Option<String>) -> Result<()>
         .stderr(log_fd2)
         .stdin(std::process::Stdio::null())
         .spawn()
-        .context("Failed to start daemon")?;
+        .context("Failed to start WhatsApp plugin daemon")?;
 
     let pid = child.id();
     tokio::fs::write(&pid_file, pid.to_string()).await?;
 
-    println!("{GREEN}✓{RESET} WhatsApp daemon started (PID {pid})");
+    println!("{GREEN}✓{RESET} WhatsApp plugin started (PID {pid})");
     println!("{DIM}Logs: {}{RESET}", log_file.display());
     println!("{DIM}Stop: lukan wa stop{RESET}");
 
@@ -1040,34 +1150,31 @@ async fn wa_start(provider: Option<String>, model: Option<String>) -> Result<()>
 }
 
 async fn wa_stop() -> Result<()> {
-    let pid_file = LukanPaths::whatsapp_pid_file();
+    ensure_wa_plugin_installed()?;
+    let pid_file = LukanPaths::plugin_pid(WA_PLUGIN_NAME);
 
     match read_pid_file(&pid_file).await {
         Some(pid) => {
             kill_process(pid);
             let _ = tokio::fs::remove_file(&pid_file).await;
-            println!("{GREEN}✓{RESET} WhatsApp daemon stopped (PID {pid}).");
+            println!("{GREEN}✓{RESET} WhatsApp plugin stopped (PID {pid}).");
         }
         None => {
-            println!("{YELLOW}No daemon running (no PID file).{RESET}");
+            println!("{YELLOW}No plugin running (no PID file).{RESET}");
         }
-    }
-
-    // Also kill connector
-    if kill_connector().await {
-        println!("{GREEN}✓{RESET} Connector stopped.");
     }
 
     Ok(())
 }
 
 async fn wa_restart() -> Result<()> {
+    ensure_wa_plugin_installed()?;
     // Stop existing
-    let pid_file = LukanPaths::whatsapp_pid_file();
+    let pid_file = LukanPaths::plugin_pid(WA_PLUGIN_NAME);
     if let Some(pid) = read_pid_file(&pid_file).await {
         kill_process(pid);
         let _ = tokio::fs::remove_file(&pid_file).await;
-        println!("{DIM}Stopped daemon (PID {pid}){RESET}");
+        println!("{DIM}Stopped plugin (PID {pid}){RESET}");
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -1076,9 +1183,9 @@ async fn wa_restart() -> Result<()> {
 }
 
 async fn wa_logs(follow: bool, lines: &str) -> Result<()> {
-    let log_file = LukanPaths::whatsapp_log_file();
+    let log_file = LukanPaths::plugin_log(WA_PLUGIN_NAME);
     if !log_file.exists() {
-        println!("{YELLOW}No log file found at {}{RESET}", log_file.display());
+        println!("{YELLOW}No log file found for WhatsApp plugin.{RESET}");
         return Ok(());
     }
 
@@ -1101,14 +1208,14 @@ async fn wa_logs(follow: bool, lines: &str) -> Result<()> {
 }
 
 async fn wa_reminder_advance(minutes: Option<&str>) -> Result<()> {
-    let mut config = ConfigManager::load().await?;
-    let mut wa = config.whatsapp.take().unwrap_or_default();
+    ensure_wa_plugin_installed()?;
+    let mut pc = load_wa_plugin_config().await?;
 
     match minutes {
         None => {
             println!(
                 "Reminder advance: {} minutes",
-                wa.reminder_advance.unwrap_or(15)
+                pc.reminder_advance.unwrap_or(15)
             );
         }
         Some(m) => {
@@ -1119,9 +1226,8 @@ async fn wa_reminder_advance(minutes: Option<&str>) -> Result<()> {
                 .ok_or_else(|| {
                     anyhow::anyhow!("Invalid value. Use a positive number of minutes.")
                 })?;
-            wa.reminder_advance = Some(n);
-            config.whatsapp = Some(wa);
-            ConfigManager::save(&config).await?;
+            pc.reminder_advance = Some(n);
+            save_wa_plugin_config(&pc).await?;
             println!("{GREEN}✓{RESET} Reminder advance set to {n} minutes.");
         }
     }
@@ -1129,22 +1235,21 @@ async fn wa_reminder_advance(minutes: Option<&str>) -> Result<()> {
 }
 
 async fn wa_reminder_chat(chat_id: Option<&str>) -> Result<()> {
-    let mut config = ConfigManager::load().await?;
-    let mut wa = config.whatsapp.take().unwrap_or_default();
+    ensure_wa_plugin_installed()?;
+    let mut pc = load_wa_plugin_config().await?;
 
     match chat_id {
         None => {
             println!(
                 "Reminder chat: {}",
-                wa.reminder_chat
+                pc.reminder_chat
                     .as_deref()
                     .unwrap_or("(auto — first allowed group or whitelist)")
             );
         }
         Some(id) => {
-            wa.reminder_chat = Some(id.to_string());
-            config.whatsapp = Some(wa);
-            ConfigManager::save(&config).await?;
+            pc.reminder_chat = Some(id.to_string());
+            save_wa_plugin_config(&pc).await?;
             println!("{GREEN}✓{RESET} Reminder notifications will be sent to {id}");
         }
     }
@@ -1153,7 +1258,7 @@ async fn wa_reminder_chat(chat_id: Option<&str>) -> Result<()> {
 
 // ── System prompt builder ───────────────────────────────────────────────
 
-fn build_whatsapp_system_prompt(wa_config: &WhatsAppConfig) -> SystemPrompt {
+pub fn build_whatsapp_system_prompt(wa_config: &WhatsAppConfig) -> SystemPrompt {
     let mut prompt = String::new();
     prompt.push_str(BASE_PROMPT);
     prompt.push_str("\n\n");
@@ -1192,14 +1297,20 @@ fn build_whatsapp_system_prompt(wa_config: &WhatsAppConfig) -> SystemPrompt {
 
 /// Get the command to start the whatsapp-connector.
 fn get_connector_command() -> (String, Vec<String>, std::path::PathBuf) {
-    // Look for the connector relative to the lukan binary
     let exe = std::env::current_exe().unwrap_or_default();
     let exe_dir = exe.parent().unwrap_or(Path::new("."));
 
-    // Check common locations
+    // Check locations — plugin dir first, then relative to binary, then CWD
+    let plugin_dir = LukanPaths::plugin_dir(WA_PLUGIN_NAME);
     let connector_locations = [
+        // Inside the plugin directory (e.g. connector bundled with plugin)
+        plugin_dir.join("whatsapp-connector"),
+        // Sibling of the plugin directory
+        LukanPaths::plugins_dir().join("whatsapp-connector"),
+        // Relative to the lukan binary
         exe_dir.join("../whatsapp-connector"),
         exe_dir.join("../../whatsapp-connector"),
+        // CWD
         std::path::PathBuf::from("whatsapp-connector"),
     ];
 
@@ -1256,49 +1367,9 @@ async fn start_connector_process() -> Result<()> {
     Ok(())
 }
 
-/// Start the connector as a detached daemon.
-async fn start_connector_daemon() -> Result<()> {
-    let (cmd, args, cwd) = get_connector_command();
-    let log_file = LukanPaths::whatsapp_log_file();
-
-    let log_fd = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file)
-        .context("Failed to open log file for connector")?;
-    let log_fd2 = log_fd.try_clone()?;
-
-    let child = std::process::Command::new(&cmd)
-        .args(&args)
-        .current_dir(&cwd)
-        .stdout(log_fd)
-        .stderr(log_fd2)
-        .stdin(std::process::Stdio::null())
-        .spawn()
-        .context("Failed to start whatsapp-connector daemon")?;
-
-    let pid = child.id();
-    let pid_file = LukanPaths::whatsapp_connector_pid_file();
-    tokio::fs::write(&pid_file, pid.to_string()).await?;
-
-    Ok(())
-}
-
-/// Kill the connector process using its PID file.
-async fn kill_connector() -> bool {
-    let pid_file = LukanPaths::whatsapp_connector_pid_file();
-    if let Some(pid) = read_pid_file(&pid_file).await {
-        kill_process(pid);
-        let _ = tokio::fs::remove_file(&pid_file).await;
-        true
-    } else {
-        false
-    }
-}
-
-/// Kill the daemon process using its PID file.
-async fn kill_daemon() -> bool {
-    let pid_file = LukanPaths::whatsapp_pid_file();
+/// Kill the WhatsApp plugin process using its PID file.
+async fn kill_plugin() -> bool {
+    let pid_file = LukanPaths::plugin_pid(WA_PLUGIN_NAME);
     if let Some(pid) = read_pid_file(&pid_file).await {
         kill_process(pid);
         let _ = tokio::fs::remove_file(&pid_file).await;

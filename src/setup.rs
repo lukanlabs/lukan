@@ -511,6 +511,24 @@ pub async fn run_doctor() -> Result<()> {
     }
     println!();
 
+    // ── Sandbox (bwrap) ──
+    println!("{BOLD}Sandbox{RESET}");
+    let bwrap_available = lukan_tools::sandbox::is_bwrap_available();
+    if bwrap_available {
+        println!("  {GREEN}✓{RESET} OS sandbox (bwrap): {GREEN}available{RESET}");
+    } else {
+        println!("  {YELLOW}!{RESET} OS sandbox (bwrap): {YELLOW}not available{RESET}");
+        let diagnosis = lukan_tools::sandbox::diagnose_bwrap();
+        println!("  {DIM}Diagnosis: {diagnosis}{RESET}");
+    }
+    let has_profile = lukan_tools::sandbox::has_apparmor_profile();
+    if has_profile {
+        println!("  {GREEN}✓{RESET} AppArmor profile:   {GREEN}installed{RESET}");
+    } else {
+        println!("  {DIM}✗ AppArmor profile:   not installed{RESET}");
+    }
+    println!();
+
     Ok(())
 }
 

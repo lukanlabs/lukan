@@ -1,0 +1,6 @@
+{
+  "bridgeUrl": "ws://localhost:3001",
+  "whitelist": [],
+  "allowedGroups": [],
+  "prefix": null
+}

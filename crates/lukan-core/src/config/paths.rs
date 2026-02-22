@@ -84,10 +84,41 @@ impl LukanPaths {
         Self::config_dir().join("whatsapp.log")
     }
 
+    /// Plugins directory: ~/.config/lukan/plugins/
+    pub fn plugins_dir() -> PathBuf {
+        Self::config_dir().join("plugins")
+    }
+
+    /// Plugin directory: ~/.config/lukan/plugins/<name>/
+    pub fn plugin_dir(name: &str) -> PathBuf {
+        Self::plugins_dir().join(name)
+    }
+
+    /// Plugin manifest: ~/.config/lukan/plugins/<name>/plugin.toml
+    pub fn plugin_manifest(name: &str) -> PathBuf {
+        Self::plugin_dir(name).join("plugin.toml")
+    }
+
+    /// Plugin config: ~/.config/lukan/plugins/<name>/config.json
+    pub fn plugin_config(name: &str) -> PathBuf {
+        Self::plugin_dir(name).join("config.json")
+    }
+
+    /// Plugin log file: ~/.config/lukan/plugins/<name>/plugin.log
+    pub fn plugin_log(name: &str) -> PathBuf {
+        Self::plugin_dir(name).join("plugin.log")
+    }
+
+    /// Plugin PID file: ~/.config/lukan/plugins/<name>/plugin.pid
+    pub fn plugin_pid(name: &str) -> PathBuf {
+        Self::plugin_dir(name).join("plugin.pid")
+    }
+
     /// Ensure all required directories exist
     pub async fn ensure_dirs() -> std::io::Result<()> {
         tokio::fs::create_dir_all(Self::config_dir()).await?;
         tokio::fs::create_dir_all(Self::sessions_dir()).await?;
+        tokio::fs::create_dir_all(Self::plugins_dir()).await?;
         Ok(())
     }
 }

@@ -1,0 +1,10 @@
+[plugin]
+name = "whatsapp"
+version = "0.1.0"
+description = "WhatsApp channel via baileys connector"
+plugin_type = "channel"
+protocol_version = 1
+
+[run]
+command = "node"
+args = ["bridge.js"]

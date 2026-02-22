@@ -85,6 +85,17 @@ impl AgentLoop {
             .tools
             .register(Box::new(crate::sub_agent::SubAgentResultTool));
 
+        // Build sandbox config for sub-agents from registry settings
+        let sub_agent_sandbox = if config.tools.is_sandbox_enabled() {
+            Some(lukan_tools::sandbox::SandboxConfig {
+                enabled: true,
+                allowed_dirs: config.tools.allowed_dirs().to_vec(),
+                sensitive_patterns: config.tools.sensitive_patterns().to_vec(),
+            })
+        } else {
+            None
+        };
+
         // Configure the global sub-agent manager
         crate::sub_agent::configure(
             Arc::clone(&config.provider),
@@ -92,6 +103,7 @@ impl AgentLoop {
             config.cwd.clone(),
             config.provider_name.clone(),
             config.model_name.clone(),
+            sub_agent_sandbox,
         )
         .await;
 
@@ -123,12 +135,24 @@ impl AgentLoop {
             .tools
             .register(Box::new(crate::sub_agent::SubAgentResultTool));
 
+        // Build sandbox config for sub-agents from registry settings
+        let sub_agent_sandbox = if config.tools.is_sandbox_enabled() {
+            Some(lukan_tools::sandbox::SandboxConfig {
+                enabled: true,
+                allowed_dirs: config.tools.allowed_dirs().to_vec(),
+                sensitive_patterns: config.tools.sensitive_patterns().to_vec(),
+            })
+        } else {
+            None
+        };
+
         crate::sub_agent::configure(
             Arc::clone(&config.provider),
             config.system_prompt.clone(),
             config.cwd.clone(),
             config.provider_name.clone(),
             config.model_name.clone(),
+            sub_agent_sandbox,
         )
         .await;
 
@@ -716,6 +740,17 @@ impl AgentLoop {
     ) -> Vec<lukan_core::models::tools::ToolResult> {
         let mut handles = Vec::new();
 
+        // Build sandbox config from registry settings
+        let sandbox_cfg = if self.tools.is_sandbox_enabled() {
+            Some(lukan_tools::sandbox::SandboxConfig {
+                enabled: true,
+                allowed_dirs: self.tools.allowed_dirs().to_vec(),
+                sensitive_patterns: self.tools.sensitive_patterns().to_vec(),
+            })
+        } else {
+            None
+        };
+
         for tool_call in tools {
             let registry = Arc::clone(&self.tools);
             let read_files = Arc::clone(&self.read_files);
@@ -725,6 +760,7 @@ impl AgentLoop {
             let input = tool_call.input.clone();
             let tx = event_tx.clone();
             let bg_signal = self.bg_signal.clone();
+            let sandbox_cfg = sandbox_cfg.clone();
 
             handles.push(tokio::spawn(async move {
                 // Send progress start
@@ -741,6 +777,7 @@ impl AgentLoop {
                     read_files,
                     cwd,
                     bg_signal,
+                    sandbox: sandbox_cfg.clone(),
                 };
 
                 match registry.execute(&name, input, &ctx).await {

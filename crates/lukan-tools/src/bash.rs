@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
@@ -9,6 +10,16 @@ use tracing::debug;
 
 use crate::bg_processes;
 use crate::{Tool, ToolContext};
+
+/// Cached result of setsid availability check.
+static SETSID_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+/// Check if `setsid` is available on this system.
+/// Used as a fallback when bwrap is not available, to detach the child process
+/// from the controlling terminal (prevents SSH/git from stealing tty input).
+fn is_setsid_available() -> bool {
+    *SETSID_AVAILABLE.get_or_init(|| Path::new("/usr/bin/setsid").exists())
+}
 
 const MAX_OUTPUT_BYTES: usize = 30_000;
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
@@ -114,14 +125,56 @@ impl Tool for BashTool {
 
         debug!(command, timeout_ms, "Executing bash command");
 
+        // Determine if we should use bwrap sandbox
+        let use_bwrap = ctx
+            .sandbox
+            .as_ref()
+            .map(|s| s.enabled && crate::sandbox::is_bwrap_available())
+            .unwrap_or(false);
+
         // Foreground mode: spawn with piped stdout/stderr
-        let mut child = Command::new("bash")
-            .arg("-c")
-            .arg(command)
-            .current_dir(&ctx.cwd)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
+        let mut child = if use_bwrap {
+            let sandbox = ctx.sandbox.as_ref().unwrap();
+            let bwrap_args = crate::sandbox::build_bwrap_args(&crate::sandbox::BwrapConfig {
+                allowed_dirs: sandbox.allowed_dirs.clone(),
+                sensitive_patterns: sandbox.sensitive_patterns.clone(),
+                cwd: ctx.cwd.to_string_lossy().to_string(),
+            });
+            // bwrap_args[0] is "bwrap", rest are args, then append "-- bash -c <command>"
+            Command::new(&bwrap_args[0])
+                .args(&bwrap_args[1..])
+                .arg("--")
+                .arg("bash")
+                .arg("-c")
+                .arg(command)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .current_dir(&ctx.cwd)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?
+        } else if is_setsid_available() {
+            // Use setsid to create a new session -- detaches child from our
+            // controlling terminal so SSH/git can't open /dev/tty to steal input.
+            Command::new("setsid")
+                .arg("--wait")
+                .arg("bash")
+                .arg("-c")
+                .arg(command)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .current_dir(&ctx.cwd)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?
+        } else {
+            Command::new("bash")
+                .arg("-c")
+                .arg(command)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .current_dir(&ctx.cwd)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?
+        };
 
         let child_pid = child.id().unwrap_or(0);
 
@@ -252,13 +305,52 @@ impl BashTool {
     ) -> anyhow::Result<ToolResult> {
         debug!(command, "Spawning background command");
 
-        let mut child = Command::new("bash")
-            .arg("-c")
-            .arg(command)
-            .current_dir(&ctx.cwd)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
+        // Determine if we should use bwrap sandbox
+        let use_bwrap = ctx
+            .sandbox
+            .as_ref()
+            .map(|s| s.enabled && crate::sandbox::is_bwrap_available())
+            .unwrap_or(false);
+
+        let mut child = if use_bwrap {
+            let sandbox = ctx.sandbox.as_ref().unwrap();
+            let bwrap_args = crate::sandbox::build_bwrap_args(&crate::sandbox::BwrapConfig {
+                allowed_dirs: sandbox.allowed_dirs.clone(),
+                sensitive_patterns: sandbox.sensitive_patterns.clone(),
+                cwd: ctx.cwd.to_string_lossy().to_string(),
+            });
+            Command::new(&bwrap_args[0])
+                .args(&bwrap_args[1..])
+                .arg("--")
+                .arg("bash")
+                .arg("-c")
+                .arg(command)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .current_dir(&ctx.cwd)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?
+        } else if is_setsid_available() {
+            Command::new("setsid")
+                .arg("--wait")
+                .arg("bash")
+                .arg("-c")
+                .arg(command)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .current_dir(&ctx.cwd)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?
+        } else {
+            Command::new("bash")
+                .arg("-c")
+                .arg(command)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .current_dir(&ctx.cwd)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?
+        };
 
         let pid = match child.id() {
             Some(pid) => pid,

@@ -35,7 +35,7 @@ pub(crate) fn theme() -> &'static Theme {
 /// blocks with syntax highlighting (via syntect), blockquotes, ordered and
 /// unordered lists, task list markers, links, and horizontal rules.
 pub fn render_markdown(input: &str) -> Vec<Line<'static>> {
-    let opts = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let opts = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_TABLES;
     let parser = Parser::new_ext(input, opts);
 
     let mut renderer = MdRenderer::new();
@@ -68,6 +68,12 @@ struct MdRenderer {
     code_block_lang: String,
     code_block_buf: String,
     link_url: Option<String>,
+    // Table support: buffer cells, then render on TagEnd::Table
+    in_table: bool,
+    table_rows: Vec<Vec<String>>,
+    table_current_row: Vec<String>,
+    table_cell_buf: String,
+    table_is_header: bool,
 }
 
 impl MdRenderer {
@@ -82,6 +88,11 @@ impl MdRenderer {
             code_block_lang: String::new(),
             code_block_buf: String::new(),
             link_url: None,
+            in_table: false,
+            table_rows: Vec::new(),
+            table_current_row: Vec::new(),
+            table_cell_buf: String::new(),
+            table_is_header: false,
         }
     }
 
@@ -188,6 +199,22 @@ impl MdRenderer {
                 };
                 self.code_block_buf.clear();
             }
+            Tag::Table(_alignments) => {
+                self.flush_line();
+                self.in_table = true;
+                self.table_rows.clear();
+            }
+            Tag::TableHead => {
+                self.table_is_header = true;
+                self.table_current_row.clear();
+            }
+            Tag::TableRow => {
+                self.table_is_header = false;
+                self.table_current_row.clear();
+            }
+            Tag::TableCell => {
+                self.table_cell_buf.clear();
+            }
             Tag::Link { dest_url, .. } => {
                 self.link_url = Some(dest_url.to_string());
                 self.style_stack.push(
@@ -234,6 +261,18 @@ impl MdRenderer {
                 self.code_block_buf.clear();
                 self.code_block_lang.clear();
             }
+            TagEnd::Table => {
+                self.in_table = false;
+                self.render_table();
+            }
+            TagEnd::TableHead | TagEnd::TableRow => {
+                let row = std::mem::take(&mut self.table_current_row);
+                self.table_rows.push(row);
+            }
+            TagEnd::TableCell => {
+                let cell = std::mem::take(&mut self.table_cell_buf);
+                self.table_current_row.push(cell.trim().to_string());
+            }
             TagEnd::Link => {
                 if let Some(url) = self.link_url.take() {
                     self.current_spans.push(Span::styled(
@@ -263,6 +302,10 @@ impl MdRenderer {
             self.code_block_buf.push_str(text);
             return;
         }
+        if self.in_table {
+            self.table_cell_buf.push_str(text);
+            return;
+        }
         let style = self.current_style();
         for (i, segment) in text.split('\n').enumerate() {
             if i > 0 {
@@ -276,6 +319,10 @@ impl MdRenderer {
     }
 
     fn push_inline_code(&mut self, code: &str) {
+        if self.in_table {
+            self.table_cell_buf.push_str(code);
+            return;
+        }
         self.current_spans.push(Span::styled(
             code.to_string(),
             Style::default().fg(Color::Cyan),
@@ -283,12 +330,20 @@ impl MdRenderer {
     }
 
     fn soft_break(&mut self) {
+        if self.in_table {
+            self.table_cell_buf.push(' ');
+            return;
+        }
         let style = self.current_style();
         self.current_spans
             .push(Span::styled(" ".to_string(), style));
     }
 
     fn hard_break(&mut self) {
+        if self.in_table {
+            self.table_cell_buf.push(' ');
+            return;
+        }
         self.flush_line();
     }
 
@@ -311,6 +366,69 @@ impl MdRenderer {
             let prefix = &m[..pos];
             *m = format!("{prefix}{marker}");
         }
+    }
+
+    // ── Table rendering ──────────────────────────────────────────────────
+
+    /// Render buffered table rows with aligned columns.
+    fn render_table(&mut self) {
+        if self.table_rows.is_empty() {
+            return;
+        }
+
+        // Calculate column widths
+        let num_cols = self.table_rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        let mut col_widths = vec![0usize; num_cols];
+        for row in &self.table_rows {
+            for (i, cell) in row.iter().enumerate() {
+                col_widths[i] = col_widths[i].max(cell.len());
+            }
+        }
+
+        // Render each row
+        for (row_idx, row) in self.table_rows.iter().enumerate() {
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            spans.push(Span::styled("  ", Style::default()));
+
+            for (i, cell) in row.iter().enumerate() {
+                let width = col_widths.get(i).copied().unwrap_or(0);
+                let padded = format!("{:<width$}", cell, width = width);
+
+                let style = if row_idx == 0 {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+
+                if i > 0 {
+                    spans.push(Span::styled(
+                        " │ ",
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+                spans.push(Span::styled(padded, style));
+            }
+
+            self.lines.push(Line::from(spans));
+
+            // Add separator after header row
+            if row_idx == 0 {
+                let sep: String = col_widths
+                    .iter()
+                    .map(|w| "─".repeat(*w))
+                    .collect::<Vec<_>>()
+                    .join("─┼─");
+                self.lines.push(Line::from(Span::styled(
+                    format!("  {sep}"),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+
+        self.lines.push(Line::from(""));
+        self.table_rows.clear();
     }
 
     // ── Line management ─────────────────────────────────────────────────

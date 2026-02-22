@@ -6,6 +6,7 @@ use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, Resolved
 use lukan_providers::create_provider;
 use lukan_tui::app::App;
 
+mod models;
 mod setup;
 
 #[derive(Parser)]
@@ -44,6 +45,13 @@ enum Commands {
         #[arg(long)]
         device: bool,
     },
+    /// List and select models for a provider
+    Models {
+        /// Provider name (anthropic, nebius, fireworks, github-copilot, openai-codex, zai, openai-compatible) or "add"
+        provider: Option<String>,
+        /// Model entry for "add" subcommand (format: provider:model-id)
+        model_entry: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -76,6 +84,13 @@ async fn main() -> Result<()> {
         }
         Some(Commands::CodexAuth { device }) => {
             setup::run_codex_auth(*device).await?;
+            return Ok(());
+        }
+        Some(Commands::Models {
+            provider,
+            model_entry,
+        }) => {
+            models::run_models(provider.as_deref(), model_entry.as_deref()).await?;
             return Ok(());
         }
         _ => {}

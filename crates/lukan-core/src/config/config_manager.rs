@@ -90,6 +90,26 @@ impl ConfigManager {
         Ok(models)
     }
 
+    /// Add a model entry ("provider:model") to the models list if not already present.
+    pub async fn add_model(entry: &str) -> Result<()> {
+        let mut config = Self::load().await?;
+        let models = config.models.get_or_insert_with(Vec::new);
+        if !models.contains(&entry.to_string()) {
+            models.push(entry.to_string());
+        }
+        Self::save(&config).await
+    }
+
+    /// Add a model ID to the vision models list if not already present.
+    pub async fn add_vision_model(model_id: &str) -> Result<()> {
+        let mut config = Self::load().await?;
+        let vision = config.vision_models.get_or_insert_with(Vec::new);
+        if !vision.contains(&model_id.to_string()) {
+            vision.push(model_id.to_string());
+        }
+        Self::save(&config).await
+    }
+
     /// Set a config value by dot-separated key path
     pub async fn set_value(key: &str, value: serde_json::Value) -> Result<()> {
         let config = Self::load().await?;

@@ -66,8 +66,8 @@ pub struct App {
     reasoning_picker: Option<ReasoningPicker>,
     /// Force full terminal redraw on next frame (e.g. after closing overlay)
     force_redraw: bool,
-    /// Timestamp of last ESC press (for double-ESC to clear input)
-    last_esc: Option<std::time::Instant>,
+    /// First ESC was pressed — show hint and clear on second ESC
+    esc_pending: bool,
 }
 
 /// Interactive model picker state
@@ -117,7 +117,7 @@ impl App {
             cmd_palette_idx: 0,
             reasoning_picker: None,
             force_redraw: false,
-            last_esc: None,
+            esc_pending: false,
         }
     }
 
@@ -297,6 +297,23 @@ impl App {
                 };
                 frame.render_widget(input_widget, input_area);
 
+                // ESC hint (rendered inside the input border, right-aligned)
+                if self.esc_pending {
+                    let hint = " ESC to clear ";
+                    let hint_len = hint.len() as u16;
+                    if input_area.width > hint_len + 4 {
+                        let x = input_area.x + input_area.width - hint_len - 1;
+                        let y = input_area.y + 1; // inside the border
+                        let buf = frame.buffer_mut();
+                        buf.set_string(
+                            x,
+                            y,
+                            hint,
+                            Style::default().fg(Color::Yellow),
+                        );
+                    }
+                }
+
                 // Status bar
                 let effective_model = self.config.effective_model();
                 let status = StatusBarWidget::new(
@@ -446,22 +463,20 @@ impl App {
                                             (self.cmd_palette_idx + 1) % cmds.len().max(1);
                                     }
                                     KeyCode::Esc => {
-                                        let now = std::time::Instant::now();
-                                        let is_double = self
-                                            .last_esc
-                                            .is_some_and(|t| now.duration_since(t).as_millis() < 500);
-                                        self.last_esc = Some(now);
-
-                                        if has_palette && !is_double {
-                                            // First ESC: close palette
+                                        if has_palette && !self.esc_pending {
+                                            // Close palette first
                                             self.input.clear();
                                             self.cursor_pos = 0;
                                             self.cmd_palette_idx = 0;
+                                        } else if self.esc_pending {
+                                            // Second ESC: clear input
+                                            self.input.clear();
+                                            self.cursor_pos = 0;
+                                            self.cmd_palette_idx = 0;
+                                            self.esc_pending = false;
                                         } else if !self.input.is_empty() {
-                                            // Double ESC or no palette: clear input
-                                            self.input.clear();
-                                            self.cursor_pos = 0;
-                                            self.cmd_palette_idx = 0;
+                                            // First ESC with text: show hint
+                                            self.esc_pending = true;
                                         }
                                     }
                                     KeyCode::Enter => {
@@ -480,12 +495,14 @@ impl App {
                                         self.input.insert(self.cursor_pos, c);
                                         self.cursor_pos += 1;
                                         self.cmd_palette_idx = 0;
+                                        self.esc_pending = false;
                                     }
                                     KeyCode::Backspace => {
                                         if self.cursor_pos > 0 {
                                             self.cursor_pos -= 1;
                                             self.input.remove(self.cursor_pos);
                                             self.cmd_palette_idx = 0;
+                                            self.esc_pending = false;
                                         }
                                     }
                                     KeyCode::Left => {

@@ -82,25 +82,28 @@ impl Tool for WriteFileTool {
         // Track as read for future edits
         ctx.read_files.lock().await.insert(path);
 
-        // Generate diff
+        // Generate diff — 3 lines of context around each change (like git)
         let old = old_content.as_deref().unwrap_or("");
         let diff = TextDiff::from_lines(old, content);
         let mut diff_str = format!("--- {file_path_str}\n");
         let mut added = 0usize;
         let mut removed = 0usize;
-        for change in diff.iter_all_changes() {
-            let sign = match change.tag() {
-                ChangeTag::Delete => {
-                    removed += 1;
-                    "-"
-                }
-                ChangeTag::Insert => {
-                    added += 1;
-                    "+"
-                }
-                ChangeTag::Equal => " ",
-            };
-            diff_str.push_str(&format!("{sign}{change}"));
+        for hunk in diff.unified_diff().context_radius(3).iter_hunks() {
+            diff_str.push_str(&format!("{}\n", hunk.header()));
+            for change in hunk.iter_changes() {
+                let sign = match change.tag() {
+                    ChangeTag::Delete => {
+                        removed += 1;
+                        "-"
+                    }
+                    ChangeTag::Insert => {
+                        added += 1;
+                        "+"
+                    }
+                    ChangeTag::Equal => " ",
+                };
+                diff_str.push_str(&format!("{sign}{}", change.value()));
+            }
         }
 
         let operation = if old_content.is_some() {

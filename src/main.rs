@@ -45,6 +45,8 @@ enum Commands {
         #[arg(long)]
         device: bool,
     },
+    /// Authenticate with GitHub Copilot (OAuth Device Flow)
+    CopilotAuth,
     /// List and select models for a provider
     Models {
         /// Provider name (anthropic, nebius, fireworks, github-copilot, openai-codex, zai, openai-compatible) or "add"
@@ -103,6 +105,10 @@ async fn main() -> Result<()> {
         }
         Some(Commands::CodexAuth { device }) => {
             setup::run_codex_auth(*device).await?;
+            return Ok(());
+        }
+        Some(Commands::CopilotAuth) => {
+            setup::run_copilot_auth().await?;
             return Ok(());
         }
         Some(Commands::Models {

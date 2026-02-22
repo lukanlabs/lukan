@@ -3,6 +3,7 @@
 pub mod anthropic;
 pub mod codex_auth;
 pub mod contracts;
+pub mod copilot_auth;
 pub mod fireworks;
 pub mod github_copilot;
 pub mod nebius;

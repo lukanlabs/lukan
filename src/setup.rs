@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use lukan_core::config::{
     AppConfig, ConfigManager, Credentials, CredentialsManager, LukanPaths, ProviderName,
 };
-use lukan_providers::codex_auth;
+use lukan_providers::{codex_auth, copilot_auth};
 
 // ── Colors ─────────────────────────────────────────────────────────────────
 
@@ -181,12 +181,23 @@ fn setup_credentials(provider: &ProviderName, mut creds: Credentials) -> Result<
             .or(creds.fireworks_api_key);
         }
         ProviderName::GithubCopilot => {
+            creds.copilot_client_id = prompt_credential(
+                "Copilot OAuth Client ID",
+                "GITHUB_COPILOT_CLIENT_ID",
+                creds.copilot_client_id.as_deref(),
+            )?
+            .or(creds.copilot_client_id);
+
             creds.github_token = prompt_credential(
-                "GitHub token",
+                "GitHub token (manual fallback)",
                 "GITHUB_TOKEN",
                 creds.github_token.as_deref(),
             )?
             .or(creds.github_token);
+
+            println!(
+                "\n  {DIM}Tip: Run {CYAN}lukan copilot-auth{RESET}{DIM} for automatic OAuth authentication{RESET}"
+            );
         }
         ProviderName::OpenaiCodex => {
             creds.codex_access_token = prompt_credential(
@@ -299,6 +310,50 @@ pub async fn run_codex_auth(device: bool) -> Result<()> {
     Ok(())
 }
 
+// ── Copilot Auth ──────────────────────────────────────────────────────────
+
+pub async fn run_copilot_auth() -> Result<()> {
+    println!("\n{BOLD}{CYAN}  lukan copilot-auth{RESET}");
+    println!("{DIM}  GitHub Copilot authentication (OAuth Device Flow){RESET}\n");
+
+    let creds = CredentialsManager::load().await?;
+
+    let client_id = creds
+        .copilot_client_id
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| std::env::var("GITHUB_COPILOT_CLIENT_ID").ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "GitHub Copilot Client ID not configured.\n\
+                 Set it via: lukan setup  or  export GITHUB_COPILOT_CLIENT_ID=...\n\
+                 Create an OAuth App at https://github.com/settings/developers"
+            )
+        })?;
+
+    let client = reqwest::Client::new();
+    let token = copilot_auth::auth_copilot_device_flow(&client, &client_id).await?;
+
+    // Save token
+    let mut creds = CredentialsManager::load().await?;
+    creds.copilot_token = Some(token);
+    CredentialsManager::save(&creds).await?;
+
+    // Set provider to github-copilot
+    let mut config = ConfigManager::load().await?;
+    config.provider = ProviderName::GithubCopilot;
+    ConfigManager::save(&config).await?;
+
+    println!("{GREEN}✓{RESET} Copilot authentication successful!");
+    println!(
+        "{GREEN}✓{RESET} Credentials saved to {DIM}{}{RESET}",
+        LukanPaths::credentials_file().display()
+    );
+    println!("{GREEN}✓{RESET} Provider set to {BOLD}github-copilot{RESET}");
+    println!("\n{DIM}Run 'lukan chat' to start chatting.{RESET}\n");
+
+    Ok(())
+}
+
 // ── Doctor command ─────────────────────────────────────────────────────────
 
 pub async fn run_doctor() -> Result<()> {
@@ -355,7 +410,12 @@ pub async fn run_doctor() -> Result<()> {
         creds.fireworks_api_key.as_deref(),
         "FIREWORKS_API_KEY",
     );
-    print_key_status("GitHub", creds.github_token.as_deref(), "GITHUB_TOKEN");
+    print_key_status(
+        "Copilot",
+        creds.copilot_token.as_deref(),
+        "lukan copilot-auth",
+    );
+    print_key_status("GitHub token", creds.github_token.as_deref(), "GITHUB_TOKEN");
     print_key_status(
         "Codex",
         creds.codex_access_token.as_deref(),

@@ -57,9 +57,13 @@ impl ThinkTagParser {
                     outputs.push(ThinkTagOutput::Text(text));
                 }
             } else {
-                // Check if we might have a partial <think> at the end
-                let safe_len = self.buffer.len().saturating_sub(6);
-                if safe_len > 0 && !self.buffer[..safe_len].is_empty() {
+                // Check if we might have a partial <think> at the end.
+                // We hold back up to 6 bytes ("<think" minus one char) so we
+                // don't emit a partial tag.  The split point must land on a
+                // UTF-8 char boundary — walk backwards to the nearest one.
+                let target = self.buffer.len().saturating_sub(6);
+                let safe_len = self.buffer.floor_char_boundary(target);
+                if safe_len > 0 {
                     let text = self.buffer[..safe_len].to_string();
                     self.buffer = self.buffer[safe_len..].to_string();
                     outputs.push(ThinkTagOutput::Text(text));
@@ -126,5 +130,36 @@ mod tests {
         assert!(has_text_before);
         assert!(has_thinking);
         assert!(has_text_after);
+    }
+
+    #[test]
+    fn test_multibyte_no_panic() {
+        // "¡Hola!" is 8 bytes (¡=2, H=1, o=1, l=1, a=1, !=1) — safe_len
+        // would land inside the multi-byte ¡ if we don't respect char boundaries.
+        let mut parser = ThinkTagParser::new();
+        let outputs = parser.feed("¡Hola!");
+        let flushed = parser.flush();
+        let all_text: String = outputs
+            .iter()
+            .chain(flushed.iter())
+            .filter_map(|o| match o {
+                ThinkTagOutput::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(all_text, "¡Hola!");
+    }
+
+    #[test]
+    fn test_multibyte_with_think_tags() {
+        let mut parser = ThinkTagParser::new();
+        let outputs = parser.feed("Héllo<think>résumé</think>café");
+        let flushed = parser.flush();
+        let all: Vec<_> = outputs.into_iter().chain(flushed).collect();
+
+        let has_thinking = all
+            .iter()
+            .any(|o| matches!(o, ThinkTagOutput::Thinking(t) if t == "résumé"));
+        assert!(has_thinking);
     }
 }

@@ -14,6 +14,7 @@ pub struct StatusBarWidget<'a> {
     output_tokens: u64,
     is_streaming: bool,
     active_tool: Option<&'a str>,
+    memory_active: bool,
 }
 
 impl<'a> StatusBarWidget<'a> {
@@ -24,6 +25,7 @@ impl<'a> StatusBarWidget<'a> {
         output_tokens: u64,
         is_streaming: bool,
         active_tool: Option<&'a str>,
+        memory_active: bool,
     ) -> Self {
         Self {
             provider,
@@ -32,6 +34,7 @@ impl<'a> StatusBarWidget<'a> {
             output_tokens,
             is_streaming,
             active_tool,
+            memory_active,
         }
     }
 }
@@ -59,6 +62,12 @@ impl Widget for StatusBarWidget<'_> {
             Style::default().fg(Color::DarkGray),
         );
 
+        let memory_indicator = if self.memory_active {
+            Span::styled(" [memory] ", Style::default().fg(Color::Magenta))
+        } else {
+            Span::raw("")
+        };
+
         // Show Alt+B hint when Bash tool is actively running
         let bash_hint = if self.active_tool == Some("Bash") {
             Span::styled(
@@ -75,6 +84,7 @@ impl Widget for StatusBarWidget<'_> {
             status_indicator,
             provider_info,
             tokens,
+            memory_indicator,
             bash_hint,
             quit_hint,
         ]);

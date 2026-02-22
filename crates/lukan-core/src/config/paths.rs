@@ -46,6 +46,21 @@ impl LukanPaths {
         Self::config_dir().join("MEMORY.md")
     }
 
+    /// Project memory directory: .lukan/memories/
+    pub fn project_memory_dir() -> PathBuf {
+        PathBuf::from(".lukan/memories")
+    }
+
+    /// Project memory file: .lukan/memories/MEMORY.md
+    pub fn project_memory_file() -> PathBuf {
+        Self::project_memory_dir().join("MEMORY.md")
+    }
+
+    /// Project memory active marker: .lukan/memories/.active
+    pub fn project_memory_active_file() -> PathBuf {
+        Self::project_memory_dir().join(".active")
+    }
+
     /// Ensure all required directories exist
     pub async fn ensure_dirs() -> std::io::Result<()> {
         tokio::fs::create_dir_all(Self::config_dir()).await?;

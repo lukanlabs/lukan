@@ -73,6 +73,8 @@ pub struct App {
     paste_info: Option<(usize, usize, String)>,
     /// Background process picker state
     bg_picker: Option<BgPicker>,
+    /// Memory viewer overlay content (shown via Alt+M)
+    memory_viewer: Option<String>,
     /// Sender to signal Alt+B (send running Bash to background)
     bg_signal_tx: watch::Sender<()>,
     /// Receiver half (cloned into AgentConfig)
@@ -130,6 +132,7 @@ impl App {
             esc_pending: false,
             paste_info: None,
             bg_picker: None,
+            memory_viewer: None,
             bg_signal_tx,
             bg_signal_rx,
         }
@@ -240,7 +243,7 @@ impl App {
             let display_input = self.display_input();
             let cur_input_h = input_height(&display_input, term_size.width, 8);
             let chat_area_h = term_size.height.saturating_sub(cur_input_h + 1);
-            if self.session_picker.is_none() && self.bg_picker.is_none() {
+            if self.session_picker.is_none() && self.bg_picker.is_none() && self.memory_viewer.is_none() {
                 commit_overflow(
                     &self.messages,
                     &mut self.committed_msg_idx,
@@ -313,7 +316,18 @@ impl App {
                 };
 
                 // Chat (or overlay pickers)
-                if let Some(ref picker) = self.bg_picker {
+                if let Some(ref content) = self.memory_viewer {
+                    use ratatui::widgets::{Block, Borders, Wrap};
+                    let block = Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Memory (ESC to close) ")
+                        .border_style(Style::default().fg(Color::Cyan));
+                    let paragraph = ratatui::widgets::Paragraph::new(content.as_str())
+                        .block(block)
+                        .wrap(Wrap { trim: false })
+                        .style(Style::default().fg(Color::White));
+                    frame.render_widget(paragraph, chat_area);
+                } else if let Some(ref picker) = self.bg_picker {
                     let widget = BgPickerWidget::new(picker);
                     frame.render_widget(widget, chat_area);
                 } else if let Some(ref picker) = self.session_picker {
@@ -346,7 +360,9 @@ impl App {
                 // Input — show paste preview + typed-after text when available
                 let di = self.display_input();
                 let dc = self.display_cursor();
-                let input_widget = if self.bg_picker.is_some() {
+                let input_widget = if self.memory_viewer.is_some() {
+                    InputWidget::new("ESC close", 0, false)
+                } else if self.bg_picker.is_some() {
                     let hint = match self.bg_picker.as_ref().map(|p| p.view) {
                         Some(BgPickerView::List) => "↑↓ navigate · l=logs · k=kill · ESC close",
                         Some(BgPickerView::Log) => "ESC=back · k=kill",
@@ -382,6 +398,7 @@ impl App {
 
                 // Status bar
                 let effective_model = self.config.effective_model();
+                let memory_active = LukanPaths::project_memory_active_file().exists();
                 let status = StatusBarWidget::new(
                     self.provider.name(),
                     &effective_model,
@@ -389,11 +406,13 @@ impl App {
                     self.output_tokens,
                     self.is_streaming,
                     self.active_tool.as_deref(),
+                    memory_active,
                 );
                 frame.render_widget(status, status_area);
 
                 // Set cursor position only when not in picker and not streaming
-                if self.bg_picker.is_none()
+                if self.memory_viewer.is_none()
+                    && self.bg_picker.is_none()
                     && self.session_picker.is_none()
                     && self.model_picker.is_none()
                     && !self.is_streaming
@@ -408,7 +427,13 @@ impl App {
                 Some(event) = event_rx.recv() => {
                     match event {
                         AppEvent::Key(key) => {
-                            if self.bg_picker.is_some() {
+                            if self.memory_viewer.is_some() {
+                                // Memory viewer overlay — ESC closes
+                                if key.code == KeyCode::Esc {
+                                    self.memory_viewer = None;
+                                    self.force_redraw = true;
+                                }
+                            } else if self.bg_picker.is_some() {
                                 // Background process picker mode
                                 match key.code {
                                     KeyCode::Up => {
@@ -610,6 +635,37 @@ impl App {
                                     "system",
                                     "Sending current command to background...",
                                 ));
+                            } else if key.code == KeyCode::Char('m')
+                                && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
+                            {
+                                // Alt+M: show memory viewer
+                                let mut content = String::new();
+                                let global_path = LukanPaths::global_memory_file();
+                                if let Ok(mem) = tokio::fs::read_to_string(&global_path).await {
+                                    let trimmed = mem.trim();
+                                    if !trimmed.is_empty() {
+                                        content.push_str("── Global Memory ──\n\n");
+                                        content.push_str(trimmed);
+                                    }
+                                }
+                                let active_path = LukanPaths::project_memory_active_file();
+                                if tokio::fs::metadata(&active_path).await.is_ok() {
+                                    let project_path = LukanPaths::project_memory_file();
+                                    if let Ok(mem) = tokio::fs::read_to_string(&project_path).await {
+                                        let trimmed = mem.trim();
+                                        if !trimmed.is_empty() {
+                                            if !content.is_empty() {
+                                                content.push_str("\n\n");
+                                            }
+                                            content.push_str("── Project Memory ──\n\n");
+                                            content.push_str(trimmed);
+                                        }
+                                    }
+                                }
+                                if content.is_empty() {
+                                    content = "No memory files found.\n\nUse /memories activate to enable project memory.".to_string();
+                                }
+                                self.memory_viewer = Some(content);
                             } else if !self.is_streaming {
                                 let cmds = filtered_commands(&self.input);
                                 let has_palette = !cmds.is_empty()
@@ -892,28 +948,35 @@ impl App {
             return;
         }
 
-        // Handle /memories [activate | deactivate | add <text>]
+        // Handle /memories [activate | deactivate | add <text> | show]
         if text == "/memories" || text.starts_with("/memories ") {
             let sub = text.strip_prefix("/memories").unwrap_or("").trim().to_string();
-            let memory_path = LukanPaths::global_memory_file();
+            let memory_dir = LukanPaths::project_memory_dir();
+            let memory_path = LukanPaths::project_memory_file();
+            let active_path = LukanPaths::project_memory_active_file();
             let mut did_change = false;
             if sub == "activate" {
+                let _ = tokio::fs::create_dir_all(&memory_dir).await;
                 if !memory_path.exists() {
-                    if let Some(parent) = memory_path.parent() {
-                        let _ = tokio::fs::create_dir_all(parent).await;
-                    }
                     let _ = tokio::fs::write(&memory_path, "# Project Memory\n\n").await;
                 }
+                let _ = tokio::fs::write(&active_path, "").await;
                 self.messages.push(ChatMessage::new(
                     "system",
-                    format!("Memory activated: {}", memory_path.display()),
+                    format!("Project memory activated: {}", memory_path.display()),
                 ));
                 did_change = true;
             } else if sub == "deactivate" {
-                let _ = tokio::fs::remove_file(&memory_path).await;
+                let _ = tokio::fs::remove_file(&active_path).await;
                 self.messages
-                    .push(ChatMessage::new("system", "Memory deactivated. File removed."));
+                    .push(ChatMessage::new("system", "Project memory deactivated (file preserved)."));
                 did_change = true;
+            } else if sub == "show" {
+                let content = tokio::fs::read_to_string(&memory_path)
+                    .await
+                    .unwrap_or_else(|_| "(empty)".to_string());
+                self.messages
+                    .push(ChatMessage::new("system", format!("Project Memory:\n{content}")));
             } else if sub.starts_with("add") {
                 let entry = sub.strip_prefix("add").unwrap_or("").trim().to_string();
                 if entry.is_empty() {
@@ -922,6 +985,11 @@ impl App {
                         "Usage: /memories add <text>",
                     ));
                 } else {
+                    // Auto-activate if needed
+                    let _ = tokio::fs::create_dir_all(&memory_dir).await;
+                    if !active_path.exists() {
+                        let _ = tokio::fs::write(&active_path, "").await;
+                    }
                     let current = tokio::fs::read_to_string(&memory_path)
                         .await
                         .unwrap_or_else(|_| "# Project Memory\n\n".to_string());
@@ -929,16 +997,16 @@ impl App {
                     let _ = tokio::fs::write(&memory_path, &updated).await;
                     self.messages.push(ChatMessage::new(
                         "system",
-                        format!("Memory updated: \"{entry}\""),
+                        format!("Project memory updated: \"{entry}\""),
                     ));
                     did_change = true;
                 }
             } else {
-                let active = memory_path.exists();
+                let active = active_path.exists();
                 self.messages.push(ChatMessage::new(
                     "system",
                     format!(
-                        "Memory: {}. Usage: /memories activate | deactivate | add <text>",
+                        "Project memory: {}. Usage: /memories activate | deactivate | show | add <text>",
                         if active { "active" } else { "inactive" }
                     ),
                 ));
@@ -961,7 +1029,7 @@ impl App {
                     .await
                     .unwrap_or_else(|_| "(empty)".to_string());
                 self.messages
-                    .push(ChatMessage::new("system", format!("Memory:\n{content}")));
+                    .push(ChatMessage::new("system", format!("Global Memory:\n{content}")));
             } else if sub.starts_with("add ") {
                 let entry = sub.strip_prefix("add ").unwrap_or("").trim().to_string();
                 if entry.is_empty() {
@@ -970,19 +1038,19 @@ impl App {
                 } else {
                     let current = tokio::fs::read_to_string(&memory_path)
                         .await
-                        .unwrap_or_else(|_| "# Project Memory\n\n".to_string());
+                        .unwrap_or_else(|_| "# Global Memory\n\n".to_string());
                     let updated = format!("{current}\n- {entry}\n");
                     let _ = tokio::fs::write(&memory_path, &updated).await;
                     self.messages.push(ChatMessage::new(
                         "system",
-                        format!("Memory updated: \"{entry}\""),
+                        format!("Global memory updated: \"{entry}\""),
                     ));
                     did_change = true;
                 }
             } else if sub == "clear" {
-                let _ = tokio::fs::write(&memory_path, "# Project Memory\n\n").await;
+                let _ = tokio::fs::write(&memory_path, "# Global Memory\n\n").await;
                 self.messages
-                    .push(ChatMessage::new("system", "Memory cleared."));
+                    .push(ChatMessage::new("system", "Global memory cleared."));
                 did_change = true;
             } else {
                 self.messages.push(ChatMessage::new(
@@ -1860,7 +1928,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
  ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
- /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Ctrl+C  Quit"
+ /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+M  Memory    Ctrl+C  Quit"
     )
 }
 
@@ -1872,7 +1940,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/bg", "view and manage background processes"),
     ("/clear", "clear chat and start fresh"),
     ("/compact", "compact conversation history"),
-    ("/memories", "manage project memory (activate | deactivate | add <text>)"),
+    ("/memories", "manage project memory (activate | deactivate | show | add <text>)"),
     ("/gmemory", "global memory (show | add <text> | clear)"),
     ("/checkpoints", "list session checkpoints"),
     ("/exit", "quit lukan"),
@@ -1880,18 +1948,35 @@ const COMMANDS: &[(&str, &str)] = &[
 
 // ── System Prompt Builder ─────────────────────────────────────────────────
 
-/// Build the system prompt, appending MEMORY.md content if it exists.
+/// Build the system prompt, appending global and project memory if available.
 async fn build_system_prompt() -> SystemPrompt {
     const BASE: &str = include_str!("../../../prompts/base.txt");
-    let memory_path = LukanPaths::global_memory_file();
-    if let Ok(memory) = tokio::fs::read_to_string(&memory_path).await {
+    let mut combined = BASE.to_string();
+
+    // Always load global memory if it exists
+    let global_path = LukanPaths::global_memory_file();
+    if let Ok(memory) = tokio::fs::read_to_string(&global_path).await {
         let trimmed = memory.trim();
         if !trimmed.is_empty() {
-            let combined = format!("{BASE}\n\n## Project Memory\n\n{trimmed}");
-            return SystemPrompt::Text(combined);
+            combined.push_str("\n\n## Global Memory\n\n");
+            combined.push_str(trimmed);
         }
     }
-    SystemPrompt::Text(BASE.to_string())
+
+    // Load project memory only if .active marker exists
+    let active_path = LukanPaths::project_memory_active_file();
+    if tokio::fs::metadata(&active_path).await.is_ok() {
+        let project_path = LukanPaths::project_memory_file();
+        if let Ok(memory) = tokio::fs::read_to_string(&project_path).await {
+            let trimmed = memory.trim();
+            if !trimmed.is_empty() {
+                combined.push_str("\n\n## Project Memory\n\n");
+                combined.push_str(trimmed);
+            }
+        }
+    }
+
+    SystemPrompt::Text(combined)
 }
 
 /// Filter available commands by the current input prefix.

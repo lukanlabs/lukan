@@ -454,16 +454,15 @@ impl AgentLoop {
              --- RECENT MESSAGES (still in context, shown for reference) ---\n{recent_context}"
         );
 
-        // Check if MEMORY.md exists
-        let memory_path = LukanPaths::global_memory_file();
-        let memory_active = tokio::fs::metadata(&memory_path).await.is_ok();
+        // Check if an active memory file exists (project or global)
+        let memory_path = active_memory_path();
 
         let summary;
 
-        if memory_active {
-            let current_memory = tokio::fs::read_to_string(&memory_path)
+        if let Some(ref mem_path) = memory_path {
+            let current_memory = tokio::fs::read_to_string(mem_path)
                 .await
-                .unwrap_or_else(|_| "# Project Memory\n\n".to_string());
+                .unwrap_or_else(|_| "# Memory\n\n".to_string());
 
             let user_prompt = format!(
                 "Current MEMORY.md:\n```\n{current_memory}\n```\n\nConversation to summarize:\n{full_context}"
@@ -481,7 +480,7 @@ impl AgentLoop {
                 .unwrap_or_else(|| "Previous conversation context was compacted.".to_string());
 
             if let Some(updated_memory) = memory_match {
-                write_memory_file(&updated_memory).await;
+                write_memory_file_to(mem_path, &updated_memory).await;
             }
         } else {
             summary = self
@@ -536,13 +535,21 @@ impl AgentLoop {
 
     /// Update MEMORY.md with insights from the conversation
     async fn update_memory(&mut self) -> Result<()> {
+        let mem_path = match active_memory_path() {
+            Some(p) => p,
+            None => {
+                // No active memory file, nothing to update
+                self.last_memory_update_tokens = self.input_tokens + self.output_tokens;
+                return Ok(());
+            }
+        };
+
         let messages = self.history.messages();
         let context = format_messages_for_context(messages);
 
-        let memory_path = LukanPaths::global_memory_file();
-        let current_memory = tokio::fs::read_to_string(&memory_path)
+        let current_memory = tokio::fs::read_to_string(&mem_path)
             .await
-            .unwrap_or_else(|_| "# Project Memory\n\n".to_string());
+            .unwrap_or_else(|_| "# Memory\n\n".to_string());
 
         let user_prompt = format!(
             "Current MEMORY.md:\n```\n{current_memory}\n```\n\n\
@@ -558,7 +565,7 @@ impl AgentLoop {
             .await?;
 
         if !updated.is_empty() {
-            write_memory_file(&updated).await;
+            write_memory_file_to(&mem_path, &updated).await;
         }
 
         self.last_memory_update_tokens = self.input_tokens + self.output_tokens;
@@ -739,13 +746,26 @@ fn extract_section(text: &str, start_marker: &str, end_marker: &str) -> Option<S
     }
 }
 
-/// Write MEMORY.md to disk
-async fn write_memory_file(content: &str) {
-    let path = LukanPaths::global_memory_file();
+/// Resolve the active memory path: project memory if `.active` marker exists,
+/// otherwise global memory if it exists, otherwise None.
+fn active_memory_path() -> Option<PathBuf> {
+    let active_marker = LukanPaths::project_memory_active_file();
+    if active_marker.exists() {
+        return Some(LukanPaths::project_memory_file());
+    }
+    let global = LukanPaths::global_memory_file();
+    if global.exists() {
+        return Some(global);
+    }
+    None
+}
+
+/// Write memory content to a specific path
+async fn write_memory_file_to(path: &std::path::Path, content: &str) {
     if let Some(parent) = path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    if let Err(e) = tokio::fs::write(&path, content).await {
+    if let Err(e) = tokio::fs::write(path, content).await {
         error!("Failed to write MEMORY.md: {e}");
     }
 }

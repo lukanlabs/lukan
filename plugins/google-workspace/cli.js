@@ -96,11 +96,6 @@ async function authenticate() {
 
   // Wait for callback
   const code = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      server.close();
-      reject(new Error("Authentication timed out (5 minutes)"));
-    }, 5 * 60 * 1000);
-
     const server = http.createServer((req, res) => {
       const url = new URL(req.url, `http://localhost:${REDIRECT_PORT}`);
 
@@ -140,6 +135,26 @@ async function authenticate() {
       server.close();
       resolve(receivedCode);
     });
+
+    server.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        reject(
+          new Error(
+            `Port ${REDIRECT_PORT} is already in use.\n` +
+              `A previous auth session may still be running. Try:\n` +
+              `  lsof -ti :${REDIRECT_PORT} | xargs kill\n` +
+              `Then run the auth command again.`
+          )
+        );
+      } else {
+        reject(new Error(`Server error: ${err.message}`));
+      }
+    });
+
+    const timeout = setTimeout(() => {
+      server.close();
+      reject(new Error("Authentication timed out (5 minutes)"));
+    }, 5 * 60 * 1000);
 
     server.listen(REDIRECT_PORT, "127.0.0.1");
   });

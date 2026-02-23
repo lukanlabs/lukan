@@ -73,8 +73,9 @@ impl PluginManager {
         let content = tokio::fs::read_to_string(&manifest_path)
             .await
             .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
-        let manifest: PluginManifest = toml::from_str(&content)
+        let mut manifest: PluginManifest = toml::from_str(&content)
             .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
+        manifest.inject_security_config();
         Ok(manifest)
     }
 

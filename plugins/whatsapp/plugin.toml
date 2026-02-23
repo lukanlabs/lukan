@@ -37,14 +37,6 @@ valid_values = [
   "DriveList", "DriveDownload",
 ]
 
-[config.allowed_dirs]
-type = "string[]"
-description = "Allowed directories for file access"
-
-[config.skip_dir_restrictions]
-type = "bool"
-description = "Disable directory restrictions"
-
 [config.bridge_url]
 type = "string"
 description = "Connector WebSocket URL"

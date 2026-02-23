@@ -182,6 +182,69 @@ impl ToolRegistry {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn make_ctx(allowed: Option<Vec<&str>>) -> ToolContext {
+        ToolContext {
+            progress_tx: None,
+            read_files: Arc::new(Mutex::new(HashSet::new())),
+            cwd: PathBuf::from("/tmp"),
+            bg_signal: None,
+            sandbox: None,
+            allowed_paths: allowed.map(|v| v.into_iter().map(PathBuf::from).collect()),
+        }
+    }
+
+    #[test]
+    fn no_restrictions_allows_everything() {
+        let ctx = make_ctx(None);
+        assert!(ctx.check_path_allowed("/etc/passwd".as_ref()).is_ok());
+        assert!(
+            ctx.check_path_allowed("/home/user/file.txt".as_ref())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn empty_vec_allows_everything() {
+        // None and Some([]) both mean "no restrictions"
+        let ctx = make_ctx(Some(vec![]));
+        assert!(ctx.check_path_allowed("/etc/passwd".as_ref()).is_ok());
+    }
+
+    #[test]
+    fn allowed_dir_permits_children() {
+        let ctx = make_ctx(Some(vec!["/tmp"]));
+        assert!(ctx.check_path_allowed("/tmp/foo.txt".as_ref()).is_ok());
+        assert!(
+            ctx.check_path_allowed("/tmp/sub/dir/file.rs".as_ref())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn blocks_outside_allowed_dirs() {
+        let ctx = make_ctx(Some(vec!["/tmp"]));
+        let result = ctx.check_path_allowed("/etc/passwd".as_ref());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("outside allowed directories"));
+    }
+
+    #[test]
+    fn multiple_allowed_dirs() {
+        let ctx = make_ctx(Some(vec!["/tmp", "/home/enzo/projects"]));
+        assert!(ctx.check_path_allowed("/tmp/file".as_ref()).is_ok());
+        assert!(
+            ctx.check_path_allowed("/home/enzo/projects/foo.rs".as_ref())
+                .is_ok()
+        );
+        assert!(ctx.check_path_allowed("/etc/secret".as_ref()).is_err());
+    }
+}
+
 /// Format diff stats like "Added 5 lines, removed 2 lines"
 pub(crate) fn format_stats(added: usize, removed: usize) -> String {
     match (added, removed) {

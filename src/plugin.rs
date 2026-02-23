@@ -544,9 +544,16 @@ async fn plugin_start_foreground(
         .timezone
         .clone()
         .unwrap_or_else(|| "UTC".to_string());
-    let system_prompt =
-        build_plugin_system_prompt(name, security, &active_tool_names, &allowed_dirs, &tz_name)
-            .await;
+    let alias = manifest.plugin.alias.as_deref().unwrap_or(name);
+    let system_prompt = build_plugin_system_prompt(
+        name,
+        alias,
+        security,
+        &active_tool_names,
+        &allowed_dirs,
+        &tz_name,
+    )
+    .await;
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
@@ -593,9 +600,20 @@ async fn plugin_start_foreground(
     Ok(())
 }
 
+/// Apply common template variables to a prompt string.
+/// Supported: `{{PLUGIN_NAME}}`, `{{PLUGIN_ALIAS}}`, `{{ALLOWED_DIRS}}`
+fn apply_template_vars(text: &str, vars: &[(&str, &str)]) -> String {
+    let mut result = text.to_string();
+    for (key, value) in vars {
+        result = result.replace(key, value);
+    }
+    result
+}
+
 /// Build the system prompt for any plugin, driven by its `[security]` manifest.
 async fn build_plugin_system_prompt(
     name: &str,
+    alias: &str,
     security: &lukan_core::models::plugin::PluginSecurity,
     active_tools: &[String],
     allowed_dirs: &[String],
@@ -646,22 +664,28 @@ async fn build_plugin_system_prompt(
 
         if has_dangerous {
             let plugin_dir = LukanPaths::plugins_dir().join(name);
+            let dir_list = allowed_dirs
+                .iter()
+                .map(|d| format!("- `{d}`"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let vars: Vec<(&str, &str)> = vec![
+                ("{{PLUGIN_NAME}}", name),
+                ("{{PLUGIN_ALIAS}}", alias),
+                ("{{ALLOWED_DIRS}}", &dir_list),
+            ];
+
             if allowed_dirs.is_empty() {
                 if let Some(ref tpl) = security.prompts.dir_none {
                     let path = plugin_dir.join(tpl);
                     if let Ok(text) = tokio::fs::read_to_string(&path).await {
-                        cached.push(text);
+                        cached.push(apply_template_vars(&text, &vars));
                     }
                 }
             } else if let Some(ref tpl) = security.prompts.dir_allowed {
-                let dir_list = allowed_dirs
-                    .iter()
-                    .map(|d| format!("- `{d}`"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
                 let path = plugin_dir.join(tpl);
                 if let Ok(text) = tokio::fs::read_to_string(&path).await {
-                    cached.push(text.replace("{{ALLOWED_DIRS}}", &dir_list));
+                    cached.push(apply_template_vars(&text, &vars));
                 }
             }
         }

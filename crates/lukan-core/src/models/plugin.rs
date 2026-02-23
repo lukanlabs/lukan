@@ -186,6 +186,38 @@ pub struct SecurityPrompts {
     pub dir_allowed: Option<String>,
 }
 
+impl PluginManifest {
+    /// Inject config keys implied by `[security]` so they are editable via CLI.
+    /// Call this after deserializing the manifest.
+    pub fn inject_security_config(&mut self) {
+        if self.security.dir_restrictions {
+            self.config
+                .entry("allowed_dirs".to_string())
+                .or_insert(ConfigFieldSchema {
+                    field_type: ConfigFieldType::StringArray,
+                    description: "Allowed directories for file access".to_string(),
+                    valid_values: Vec::new(),
+                });
+            self.config
+                .entry("skip_dir_restrictions".to_string())
+                .or_insert(ConfigFieldSchema {
+                    field_type: ConfigFieldType::Bool,
+                    description: "Disable directory restrictions".to_string(),
+                    valid_values: Vec::new(),
+                });
+        }
+        if !self.security.default_tools.is_empty() {
+            self.config
+                .entry("tools".to_string())
+                .or_insert(ConfigFieldSchema {
+                    field_type: ConfigFieldType::StringArray,
+                    description: "Agent tools".to_string(),
+                    valid_values: Vec::new(),
+                });
+        }
+    }
+}
+
 /// Metadata about the plugin
 #[derive(Debug, Clone, Deserialize)]
 pub struct PluginMeta {

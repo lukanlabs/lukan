@@ -1,4 +1,4 @@
 ## Directory Access Restrictions
 **No directories are allowed.** All file path operations (ReadFile, WriteFile, EditFile, Grep, Glob) will be blocked.
-If the user asks you to access files, tell them they need to allow a directory first: `lukan wa dir add <path>`
-Alternatively, they can disable restrictions entirely: `lukan wa dir off`
+If the user asks you to access files, tell them they need to allow a directory first: `lukan {{PLUGIN_ALIAS}} allowed_dirs add <path>`
+Alternatively, they can disable restrictions entirely: `lukan {{PLUGIN_ALIAS}} skip_dir_restrictions on`

@@ -448,51 +448,113 @@ async fn plugin_status(name: &str) -> Result<()> {
 
     let manifest = PluginManager::load_manifest(name).await?;
 
-    // Check running status via PID
+    // Check daemon status via PID
     let pid_path = LukanPaths::plugin_pid(name);
-    let running = if let Ok(pid_str) = tokio::fs::read_to_string(&pid_path).await {
+    let (daemon_running, daemon_pid) = if let Ok(pid_str) = tokio::fs::read_to_string(&pid_path).await {
         if let Ok(pid) = pid_str.trim().parse::<i32>() {
             #[cfg(unix)]
-            {
-                unsafe { libc::kill(pid, 0) == 0 }
-            }
+            let alive = unsafe { libc::kill(pid, 0) == 0 };
             #[cfg(not(unix))]
-            {
-                let _ = pid;
-                false
-            }
+            let alive = false;
+            (alive, Some(pid))
         } else {
-            false
+            (false, None)
         }
     } else {
-        false
+        (false, None)
     };
 
-    let status = if running {
-        format!("{GREEN}running{RESET}")
+    // Load plugin config values
+    let config = plugin_config::load_plugin_config(name).await.unwrap_or_default();
+    let config_obj = config.as_object();
+
+    // Load global config for provider/model info
+    let global_config = ConfigManager::load().await.ok();
+    let plugin_overrides = global_config
+        .as_ref()
+        .and_then(|c| c.plugins.as_ref())
+        .and_then(|p| p.overrides.get(name))
+        .cloned();
+
+    // Header
+    println!("\n{BOLD}{CYAN}  {}{RESET}", manifest.plugin.name);
+    println!("{DIM}  {}{RESET}\n", manifest.plugin.description);
+
+    // Daemon status
+    let daemon_str = if daemon_running {
+        let pid = daemon_pid.unwrap_or(0);
+        format!("{GREEN}running{RESET} {DIM}(PID {pid}){RESET}")
     } else {
         format!("{DIM}stopped{RESET}")
     };
+    println!("  Daemon:      {daemon_str}");
 
-    println!("{BOLD}Plugin: {CYAN}{}{RESET}", manifest.plugin.name);
-    if let Some(ref alias) = manifest.plugin.alias {
-        println!("  Alias:       {alias}");
-    }
-    println!("  Version:     {}", manifest.plugin.version);
-    println!("  Type:        {}", manifest.plugin.plugin_type);
-    println!("  Description: {}", manifest.plugin.description);
-    println!("  Status:      {status}");
-    if let Some(ref run) = manifest.run {
-        println!("  Command:     {} {}", run.command, run.args.join(" "));
-    }
-    println!("  Directory:   {}", dir.display());
-
-    // Show config if present
-    let config_path = LukanPaths::plugin_config(name);
-    if config_path.exists() {
-        println!("  Config:      {}", config_path.display());
+    // Provider/model (plugin override > global)
+    if let Some(ref gc) = global_config {
+        let provider = plugin_overrides
+            .as_ref()
+            .and_then(|o| o.provider.as_ref())
+            .map(|p| format!("{p}"))
+            .unwrap_or_else(|| format!("{} {DIM}(global){RESET}", gc.provider));
+        let model = plugin_overrides
+            .as_ref()
+            .and_then(|o| o.model.as_ref())
+            .map(|m| m.to_string())
+            .or_else(|| gc.model.clone())
+            .unwrap_or_else(|| "(default)".to_string());
+        println!("  Provider:    {provider}");
+        println!("  Model:       {model}");
     }
 
+    // Show config values driven by manifest schema
+    if !manifest.config.is_empty() {
+        let mut keys: Vec<&String> = manifest.config.keys().collect();
+        keys.sort();
+
+        for key in keys {
+            let schema = &manifest.config[key];
+            let camel = plugin_config::snake_to_camel(key);
+            let current = config_obj.and_then(|obj| obj.get(&camel));
+
+            let val_str = match current {
+                Some(v) => plugin_config::format_value(v),
+                None => match &schema.field_type {
+                    lukan_core::models::plugin::ConfigFieldType::StringArray => format!("{DIM}(empty){RESET}"),
+                    lukan_core::models::plugin::ConfigFieldType::Bool => format!("{DIM}off{RESET}"),
+                    _ => format!("{DIM}(not set){RESET}"),
+                },
+            };
+
+            // Capitalize first letter of key for display
+            let label = {
+                let mut chars = key.chars();
+                match chars.next() {
+                    Some(c) => {
+                        let display = key.replace('_', " ");
+                        let mut chars2 = display.chars();
+                        let first = chars2.next().unwrap_or(c);
+                        format!("{}{}", first.to_uppercase(), chars2.collect::<String>())
+                    }
+                    None => key.clone(),
+                }
+            };
+
+            // Pad label to align values
+            println!("  {label:<14} {val_str}");
+        }
+    }
+
+    // Custom commands
+    if !manifest.commands.is_empty() {
+        let cmds: Vec<&String> = manifest.commands.keys().collect();
+        let alias = manifest.plugin.alias.as_deref().unwrap_or(name);
+        println!(
+            "\n{DIM}  Commands: {}{RESET}",
+            cmds.iter().map(|c| format!("lukan {alias} {c}")).collect::<Vec<_>>().join(", ")
+        );
+    }
+
+    println!();
     Ok(())
 }
 

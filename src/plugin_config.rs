@@ -13,7 +13,7 @@ const CYAN: &str = "\x1b[36m";
 const RED: &str = "\x1b[31m";
 
 /// Convert a snake_case key to camelCase (for JSON config files).
-fn snake_to_camel(s: &str) -> String {
+pub fn snake_to_camel(s: &str) -> String {
     let mut result = String::new();
     let mut capitalize_next = false;
     for ch in s.chars() {
@@ -30,7 +30,7 @@ fn snake_to_camel(s: &str) -> String {
 }
 
 /// Load a plugin's config.json as a serde_json::Value.
-async fn load_plugin_config(name: &str) -> Result<serde_json::Value> {
+pub async fn load_plugin_config(name: &str) -> Result<serde_json::Value> {
     let config_path = LukanPaths::plugin_config(name);
     if !config_path.exists() {
         return Ok(serde_json::json!({}));
@@ -280,7 +280,7 @@ fn validate_value(
     Ok(())
 }
 
-fn format_value(v: &serde_json::Value) -> String {
+pub fn format_value(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => format!("\"{s}\""),
         serde_json::Value::Bool(b) => {

@@ -14,6 +14,7 @@ mod plugin_exec;
 mod sandbox_cmd;
 mod setup;
 mod whatsapp_compat;
+mod update;
 mod worker;
 
 #[derive(Parser)]
@@ -74,6 +75,8 @@ enum Commands {
         #[command(subcommand)]
         command: sandbox_cmd::SandboxCommands,
     },
+    /// Self-update to the latest version
+    Update,
     /// Manage scheduled workers
     Worker {
         #[command(subcommand)]
@@ -144,6 +147,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Plugin { command }) => {
             plugin::handle_plugin_command(command).await?;
+        }
+        Some(Commands::Update) => {
+            update::run_update().await?;
         }
         Some(Commands::Sandbox { command }) => {
             sandbox_cmd::handle_sandbox_command(command).await?;

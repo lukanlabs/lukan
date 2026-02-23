@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -304,7 +304,9 @@ async fn run_worker(
             run.error = Some(format!("Failed to create provider: {e}"));
             run.completed_at = Some(chrono::Utc::now().to_rfc3339());
             WorkerManager::save_run(&run).await.ok();
-            WorkerManager::update_last_run(worker_id, "error").await.ok();
+            WorkerManager::update_last_run(worker_id, "error")
+                .await
+                .ok();
             running_workers.lock().await.remove(worker_id);
             return;
         }
@@ -404,7 +406,9 @@ async fn run_worker(
     WorkerManager::update_last_run(worker_id, &run.status)
         .await
         .ok();
-    WorkerManager::prune_runs(worker_id, MAX_RUNS_KEPT).await.ok();
+    WorkerManager::prune_runs(worker_id, MAX_RUNS_KEPT)
+        .await
+        .ok();
 
     // Emit notification
     let summary = if run.status == "success" {
@@ -415,7 +419,9 @@ async fn run_worker(
             preview
         }
     } else {
-        run.error.clone().unwrap_or_else(|| "Unknown error".to_string())
+        run.error
+            .clone()
+            .unwrap_or_else(|| "Unknown error".to_string())
     };
 
     let notification = WorkerNotification {

@@ -170,13 +170,42 @@ pub const WA_DEFAULT_TOOLS: &[&str] = &["Grep", "Glob", "ReadFile", "WebFetch"];
 
 /// All tools available for WhatsApp channel
 pub const WA_ALL_TOOLS: &[&str] = &[
-    "Grep",
-    "Glob",
     "ReadFile",
-    "WebFetch",
-    "Bash",
     "WriteFile",
     "EditFile",
+    "Grep",
+    "Glob",
+    "Bash",
+    "WebFetch",
+    "SheetsRead",
+    "SheetsWrite",
+    "SheetsCreate",
+    "CalendarList",
+    "CalendarCreate",
+    "CalendarUpdate",
+    "DocsRead",
+    "DocsCreate",
+    "DocsUpdate",
+    "DriveList",
+    "DriveDownload",
+];
+
+/// Tool groups for categorized display
+pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
+    ("File ops", &["ReadFile", "WriteFile", "EditFile"]),
+    ("Search", &["Grep", "Glob"]),
+    ("Execution", &["Bash"]),
+    ("Web", &["WebFetch"]),
+    (
+        "Google Sheets",
+        &["SheetsRead", "SheetsWrite", "SheetsCreate"],
+    ),
+    (
+        "Google Calendar",
+        &["CalendarList", "CalendarCreate", "CalendarUpdate"],
+    ),
+    ("Google Docs", &["DocsRead", "DocsCreate", "DocsUpdate"]),
+    ("Google Drive", &["DriveList", "DriveDownload"]),
 ];
 
 /// WhatsApp channel configuration

@@ -3,58 +3,118 @@ use serde::{Deserialize, Serialize};
 use lukan_core::models::checkpoints::Checkpoint;
 use lukan_core::models::messages::Message;
 use lukan_core::models::sessions::SessionSummary;
-use lukan_core::workers::{WorkerCreateInput, WorkerDetail, WorkerRun, WorkerSummary, WorkerUpdateInput};
+use lukan_core::workers::{
+    WorkerCreateInput, WorkerDetail, WorkerRun, WorkerSummary, WorkerUpdateInput,
+};
 
 /// Messages sent from the client (browser) to the server
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 #[allow(dead_code)] // Stub variants have unread fields
 pub enum ClientMessage {
     // Chat
-    SendMessage { content: String },
-    Approve { approved_ids: Vec<String> },
+    SendMessage {
+        content: String,
+    },
+    Approve {
+        approved_ids: Vec<String>,
+    },
     DenyAll,
-    AnswerQuestion { answer: String },
+    AnswerQuestion {
+        answer: String,
+    },
     Abort,
 
     // Sessions
-    LoadSession { session_id: String },
-    NewSession { name: Option<String> },
+    LoadSession {
+        session_id: String,
+    },
+    NewSession {
+        name: Option<String>,
+    },
     ListSessions,
-    DeleteSession { session_id: String },
+    DeleteSession {
+        session_id: String,
+    },
 
     // Model
     ListModels,
-    SetModel { model: String },
+    SetModel {
+        model: String,
+    },
 
     // Config
     GetConfig,
-    SetConfig { config: serde_json::Value },
-    SetPermissionMode { mode: String },
+    SetConfig {
+        config: serde_json::Value,
+    },
+    SetPermissionMode {
+        mode: String,
+    },
 
     // Auth
-    Auth { token: String },
-    AuthLogin { password: String },
+    Auth {
+        token: String,
+    },
+    AuthLogin {
+        password: String,
+    },
 
     // Stubs (not implemented yet)
-    GetSubAgentDetail { id: String },
-    AbortSubAgent { id: String },
-    SetScreenshots { enabled: bool },
+    GetSubAgentDetail {
+        id: String,
+    },
+    AbortSubAgent {
+        id: String,
+    },
+    SetScreenshots {
+        enabled: bool,
+    },
     ListWorkers,
-    CreateWorker { worker: WorkerCreateInput },
-    UpdateWorker { id: String, patch: WorkerUpdateInput },
-    DeleteWorker { id: String },
-    ToggleWorker { id: String, enabled: bool },
-    GetWorkerDetail { id: String },
-    GetWorkerRunDetail { worker_id: String, run_id: String },
-    PlanAccept { tasks: Option<serde_json::Value> },
-    PlanReject { feedback: String },
-    PlanTaskFeedback { task_index: u32, feedback: String },
+    CreateWorker {
+        worker: WorkerCreateInput,
+    },
+    UpdateWorker {
+        id: String,
+        patch: WorkerUpdateInput,
+    },
+    DeleteWorker {
+        id: String,
+    },
+    ToggleWorker {
+        id: String,
+        enabled: bool,
+    },
+    GetWorkerDetail {
+        id: String,
+    },
+    GetWorkerRunDetail {
+        worker_id: String,
+        run_id: String,
+    },
+    PlanAccept {
+        tasks: Option<serde_json::Value>,
+    },
+    PlanReject {
+        feedback: String,
+    },
+    PlanTaskFeedback {
+        task_index: u32,
+        feedback: String,
+    },
 }
 
 /// Messages sent from the server to the client (browser)
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 #[allow(dead_code)]
 pub enum ServerMessage {
     Init {
@@ -169,21 +229,45 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         // Variant tag should be snake_case
-        assert!(json.contains(r#""type":"init""#), "tag should be snake_case: {json}");
+        assert!(
+            json.contains(r#""type":"init""#),
+            "tag should be snake_case: {json}"
+        );
         // Fields should be camelCase
         assert!(json.contains(r#""sessionId""#), "sessionId field: {json}");
         assert!(json.contains(r#""tokenUsage""#), "tokenUsage field: {json}");
-        assert!(json.contains(r#""contextSize""#), "contextSize field: {json}");
-        assert!(json.contains(r#""permissionMode""#), "permissionMode field: {json}");
-        assert!(json.contains(r#""providerName""#), "providerName field: {json}");
+        assert!(
+            json.contains(r#""contextSize""#),
+            "contextSize field: {json}"
+        );
+        assert!(
+            json.contains(r#""permissionMode""#),
+            "permissionMode field: {json}"
+        );
+        assert!(
+            json.contains(r#""providerName""#),
+            "providerName field: {json}"
+        );
         assert!(json.contains(r#""modelName""#), "modelName field: {json}");
-        assert!(json.contains(r#""browserScreenshots""#), "browserScreenshots field: {json}");
+        assert!(
+            json.contains(r#""browserScreenshots""#),
+            "browserScreenshots field: {json}"
+        );
         // TokenUsage inner fields should also be camelCase
         assert!(json.contains(r#""cacheRead""#), "cacheRead field: {json}");
         // Should NOT contain snake_case field names
-        assert!(!json.contains("session_id"), "should not have snake_case session_id: {json}");
-        assert!(!json.contains("token_usage"), "should not have snake_case token_usage: {json}");
-        assert!(!json.contains("context_size"), "should not have snake_case context_size: {json}");
+        assert!(
+            !json.contains("session_id"),
+            "should not have snake_case session_id: {json}"
+        );
+        assert!(
+            !json.contains("token_usage"),
+            "should not have snake_case token_usage: {json}"
+        );
+        assert!(
+            !json.contains("context_size"),
+            "should not have snake_case context_size: {json}"
+        );
     }
 
     #[test]
@@ -210,8 +294,14 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""inputTokens""#), "inputTokens: {json}");
         assert!(json.contains(r#""outputTokens""#), "outputTokens: {json}");
-        assert!(json.contains(r#""cacheReadTokens""#), "cacheReadTokens: {json}");
-        assert!(!json.contains("input_tokens"), "should not have snake_case: {json}");
+        assert!(
+            json.contains(r#""cacheReadTokens""#),
+            "cacheReadTokens: {json}"
+        );
+        assert!(
+            !json.contains("input_tokens"),
+            "should not have snake_case: {json}"
+        );
 
         let event2 = StreamEvent::MessageEnd {
             stop_reason: lukan_core::models::events::StopReason::EndTurn,
@@ -233,6 +323,9 @@ mod tests {
         let json = serde_json::to_string(&block).unwrap();
         assert!(json.contains(r#""toolUseId""#), "toolUseId: {json}");
         assert!(json.contains(r#""isError""#), "isError: {json}");
-        assert!(!json.contains("is_error"), "should not have snake_case is_error: {json}");
+        assert!(
+            !json.contains("is_error"),
+            "should not have snake_case is_error: {json}"
+        );
     }
 }

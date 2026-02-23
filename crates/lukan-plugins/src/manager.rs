@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use lukan_core::config::LukanPaths;
-use lukan_core::models::plugin::{HostMessage, PluginManifest, PluginMessage, PROTOCOL_VERSION};
+use lukan_core::models::plugin::{HostMessage, PROTOCOL_VERSION, PluginManifest, PluginMessage};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
@@ -123,7 +123,11 @@ impl PluginManager {
         // Wait for Ready (with timeout)
         let ready = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             while let Some(msg) = plugin_rx.recv().await {
-                if let PluginMessage::Ready { version, capabilities } = &msg {
+                if let PluginMessage::Ready {
+                    version,
+                    capabilities,
+                } = &msg
+                {
                     info!(
                         plugin = %name,
                         version = %version,
@@ -136,7 +140,11 @@ impl PluginManager {
                 if let PluginMessage::Log { level: _, message } = &msg {
                     info!(plugin = %name, "Plugin (pre-ready): {message}");
                 }
-                if let PluginMessage::Error { message, recoverable } = &msg {
+                if let PluginMessage::Error {
+                    message,
+                    recoverable,
+                } = &msg
+                {
                     error!(plugin = %name, "Plugin error during init: {message}");
                     if !recoverable {
                         anyhow::bail!("Plugin '{}' non-recoverable error: {}", name, message);
@@ -212,8 +220,15 @@ impl PluginManager {
 
     /// Reserved command names that cannot be used as plugin aliases.
     pub const RESERVED_COMMANDS: &[&str] = &[
-        "chat", "setup", "doctor", "codex-auth", "copilot-auth", "google-auth",
-        "models", "plugin", "sandbox",
+        "chat",
+        "setup",
+        "doctor",
+        "codex-auth",
+        "copilot-auth",
+        "google-auth",
+        "models",
+        "plugin",
+        "sandbox",
     ];
 
     /// Install a plugin from a local directory (copies files to plugins dir).
@@ -245,8 +260,8 @@ impl PluginManager {
 
         // Parse manifest to get the plugin name
         let content = tokio::fs::read_to_string(&manifest_path).await?;
-        let manifest: PluginManifest = toml::from_str(&content)
-            .context("Failed to parse plugin.toml")?;
+        let manifest: PluginManifest =
+            toml::from_str(&content).context("Failed to parse plugin.toml")?;
 
         let plugin_name = name.unwrap_or(&manifest.plugin.name);
 
@@ -313,10 +328,8 @@ impl PluginManager {
                 toml_content = new_content;
             } else {
                 // Add alias after the [plugin] section header
-                toml_content = toml_content.replace(
-                    "[plugin]\n",
-                    &format!("[plugin]\nalias = \"{alias}\"\n"),
-                );
+                toml_content =
+                    toml_content.replace("[plugin]\n", &format!("[plugin]\nalias = \"{alias}\"\n"));
             }
 
             tokio::fs::write(&installed_manifest_path, toml_content).await?;
@@ -504,7 +517,10 @@ fn verify_runtime_deps(manifest: &PluginManifest) -> Result<()> {
 
     if !which_exists(cmd) {
         let hint = install_hint(cmd);
-        let mut msg = format!("Plugin '{}' requires '{cmd}' but it was not found in PATH.", manifest.plugin.name);
+        let mut msg = format!(
+            "Plugin '{}' requires '{cmd}' but it was not found in PATH.",
+            manifest.plugin.name
+        );
         if let Some(h) = hint {
             msg.push_str(&format!("\nInstall it: {h}"));
         }
@@ -517,7 +533,9 @@ fn verify_runtime_deps(manifest: &PluginManifest) -> Result<()> {
 /// Suggest how to install a missing dependency.
 fn install_hint(cmd: &str) -> Option<&'static str> {
     match cmd {
-        "node" => Some("https://nodejs.org or `curl -fsSL https://fnm.vercel.app/install | bash && fnm install --lts`"),
+        "node" => Some(
+            "https://nodejs.org or `curl -fsSL https://fnm.vercel.app/install | bash && fnm install --lts`",
+        ),
         "python3" | "python" => Some("https://python.org or `sudo apt install python3`"),
         "bun" => Some("https://bun.sh or `curl -fsSL https://bun.sh/install | bash`"),
         "deno" => Some("https://deno.land or `curl -fsSL https://deno.land/install.sh | sh`"),

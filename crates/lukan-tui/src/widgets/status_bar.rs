@@ -70,10 +70,7 @@ impl Widget for StatusBarWidget<'_> {
 
         // Show Alt+B hint when Bash tool is actively running
         let bash_hint = if self.active_tool == Some("Bash") {
-            Span::styled(
-                " Alt+B background ",
-                Style::default().fg(Color::Yellow),
-            )
+            Span::styled(" Alt+B background ", Style::default().fg(Color::Yellow))
         } else {
             Span::raw("")
         };

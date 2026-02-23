@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
-    extract::{State, WebSocketUpgrade},
     extract::ws::{Message, WebSocket},
+    extract::{State, WebSocketUpgrade},
     response::IntoResponse,
 };
 use tokio::sync::mpsc;
@@ -60,9 +60,12 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>) {
             Ok(m) => m,
             Err(e) => {
                 warn!(conn_id, error = %e, "Invalid client message");
-                send_json(&mut ws_tx, &ServerMessage::Error {
-                    error: format!("Invalid message: {e}"),
-                })
+                send_json(
+                    &mut ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Invalid message: {e}"),
+                    },
+                )
                 .await;
                 continue;
             }
@@ -73,16 +76,17 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>) {
             ClientMessage::Auth { token } => {
                 if state.verify_token(token) {
                     authenticated = true;
-                    let new_token = crate::auth::create_auth_token(
-                        &state.auth_secret,
-                        state.token_ttl_ms,
-                    );
+                    let new_token =
+                        crate::auth::create_auth_token(&state.auth_secret, state.token_ttl_ms);
                     send_json(&mut ws_tx, &ServerMessage::AuthOk { token: new_token }).await;
                     send_init(&state, &mut ws_tx).await;
                 } else {
-                    send_json(&mut ws_tx, &ServerMessage::AuthError {
-                        error: "Invalid or expired token".to_string(),
-                    })
+                    send_json(
+                        &mut ws_tx,
+                        &ServerMessage::AuthError {
+                            error: "Invalid or expired token".to_string(),
+                        },
+                    )
                     .await;
                 }
                 continue;
@@ -95,9 +99,12 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>) {
                         send_init(&state, &mut ws_tx).await;
                     }
                     None => {
-                        send_json(&mut ws_tx, &ServerMessage::AuthError {
-                            error: "Invalid password".to_string(),
-                        })
+                        send_json(
+                            &mut ws_tx,
+                            &ServerMessage::AuthError {
+                                error: "Invalid password".to_string(),
+                            },
+                        )
                         .await;
                     }
                 }
@@ -169,19 +176,20 @@ async fn dispatch_message(
             handle_new_session(state, ws_tx).await;
         }
 
-        ClientMessage::ListSessions => {
-            match SessionManager::list().await {
-                Ok(sessions) => {
-                    send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
-                }
-                Err(e) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Failed to list sessions: {e}"),
-                    })
-                    .await;
-                }
+        ClientMessage::ListSessions => match SessionManager::list().await {
+            Ok(sessions) => {
+                send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
             }
-        }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to list sessions: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
 
         ClientMessage::DeleteSession { session_id } => {
             match SessionManager::delete(&session_id).await {
@@ -192,9 +200,12 @@ async fn dispatch_message(
                     }
                 }
                 Err(e) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Failed to delete session: {e}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to delete session: {e}"),
+                        },
+                    )
                     .await;
                 }
             }
@@ -202,11 +213,7 @@ async fn dispatch_message(
 
         ClientMessage::ListModels => {
             let config = state.config.lock().await;
-            let models = config
-                .config
-                .models
-                .clone()
-                .unwrap_or_default();
+            let models = config.config.models.clone().unwrap_or_default();
             let provider_name = state.provider_name.lock().await.clone();
             let model_name = state.model_name.lock().await.clone();
             let current = format!("{provider_name}:{model_name}");
@@ -245,9 +252,12 @@ async fn dispatch_message(
         }
 
         ClientMessage::AnswerQuestion { .. } => {
-            send_json(ws_tx, &ServerMessage::Error {
-                error: "Question answering not yet implemented".to_string(),
-            })
+            send_json(
+                ws_tx,
+                &ServerMessage::Error {
+                    error: "Question answering not yet implemented".to_string(),
+                },
+            )
             .await;
         }
 
@@ -257,25 +267,23 @@ async fn dispatch_message(
         }
 
         ClientMessage::GetSubAgentDetail { .. } | ClientMessage::AbortSubAgent { .. } => {
-            send_json(ws_tx, &ServerMessage::SubAgentsUpdate {
-                agents: vec![],
-            })
-            .await;
+            send_json(ws_tx, &ServerMessage::SubAgentsUpdate { agents: vec![] }).await;
         }
 
-        ClientMessage::ListWorkers => {
-            match state.worker_scheduler.list_workers().await {
-                Ok(workers) => {
-                    send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
-                }
-                Err(e) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Failed to list workers: {e}"),
-                    })
-                    .await;
-                }
+        ClientMessage::ListWorkers => match state.worker_scheduler.list_workers().await {
+            Ok(workers) => {
+                send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
             }
-        }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to list workers: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
 
         ClientMessage::CreateWorker { worker } => {
             match state.worker_scheduler.create_worker(worker).await {
@@ -285,9 +293,12 @@ async fn dispatch_message(
                     }
                 }
                 Err(e) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Failed to create worker: {e}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to create worker: {e}"),
+                        },
+                    )
                     .await;
                 }
             }
@@ -301,15 +312,21 @@ async fn dispatch_message(
                     }
                 }
                 Ok(None) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Worker not found: {id}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Worker not found: {id}"),
+                        },
+                    )
                     .await;
                 }
                 Err(e) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Failed to update worker: {e}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to update worker: {e}"),
+                        },
+                    )
                     .await;
                 }
             }
@@ -323,15 +340,21 @@ async fn dispatch_message(
                     }
                 }
                 Ok(false) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Worker not found: {id}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Worker not found: {id}"),
+                        },
+                    )
                     .await;
                 }
                 Err(e) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Failed to delete worker: {e}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to delete worker: {e}"),
+                        },
+                    )
                     .await;
                 }
             }
@@ -345,15 +368,21 @@ async fn dispatch_message(
                     }
                 }
                 Ok(None) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Worker not found: {id}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Worker not found: {id}"),
+                        },
+                    )
                     .await;
                 }
                 Err(e) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Failed to toggle worker: {e}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to toggle worker: {e}"),
+                        },
+                    )
                     .await;
                 }
             }
@@ -365,35 +394,51 @@ async fn dispatch_message(
                     send_json(ws_tx, &ServerMessage::WorkerDetailMsg { worker: detail }).await;
                 }
                 Ok(None) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Worker not found: {id}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Worker not found: {id}"),
+                        },
+                    )
                     .await;
                 }
                 Err(e) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Failed to get worker detail: {e}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to get worker detail: {e}"),
+                        },
+                    )
                     .await;
                 }
             }
         }
 
         ClientMessage::GetWorkerRunDetail { worker_id, run_id } => {
-            match state.worker_scheduler.get_worker_run_detail(&worker_id, &run_id).await {
+            match state
+                .worker_scheduler
+                .get_worker_run_detail(&worker_id, &run_id)
+                .await
+            {
                 Ok(Some(run)) => {
                     send_json(ws_tx, &ServerMessage::WorkerRunDetailMsg { run }).await;
                 }
                 Ok(None) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Worker run not found: {worker_id}/{run_id}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Worker run not found: {worker_id}/{run_id}"),
+                        },
+                    )
                     .await;
                 }
                 Err(e) => {
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Failed to get worker run: {e}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to get worker run: {e}"),
+                        },
+                    )
                     .await;
                 }
             }
@@ -402,9 +447,12 @@ async fn dispatch_message(
         ClientMessage::PlanAccept { .. }
         | ClientMessage::PlanReject { .. }
         | ClientMessage::PlanTaskFeedback { .. } => {
-            send_json(ws_tx, &ServerMessage::Error {
-                error: "Plan review not yet implemented".to_string(),
-            })
+            send_json(
+                ws_tx,
+                &ServerMessage::Error {
+                    error: "Plan review not yet implemented".to_string(),
+                },
+            )
             .await;
         }
 
@@ -426,9 +474,12 @@ async fn handle_send_message(
     {
         let mut owner = state.processing_owner.lock().await;
         if owner.is_some() {
-            send_json(ws_tx, &ServerMessage::Error {
-                error: "Another client is currently processing. Please wait.".to_string(),
-            })
+            send_json(
+                ws_tx,
+                &ServerMessage::Error {
+                    error: "Another client is currently processing. Please wait.".to_string(),
+                },
+            )
             .await;
             return;
         }
@@ -446,9 +497,12 @@ async fn handle_send_message(
                 Err(e) => {
                     let mut owner = state.processing_owner.lock().await;
                     *owner = None;
-                    send_json(ws_tx, &ServerMessage::Error {
-                        error: format!("Failed to create agent: {e}"),
-                    })
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to create agent: {e}"),
+                        },
+                    )
                     .await;
                     return;
                 }
@@ -488,9 +542,12 @@ async fn handle_send_message(
         Ok((returned_agent, result)) => {
             if let Err(e) = result {
                 error!(conn_id, error = %e, "Agent turn error");
-                send_json(ws_tx, &ServerMessage::Error {
-                    error: format!("Agent error: {e}"),
-                })
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Agent error: {e}"),
+                    },
+                )
                 .await;
             }
 
@@ -499,11 +556,14 @@ async fn handle_send_message(
             let checkpoints = returned_agent.checkpoints().to_vec();
             let context_size = returned_agent.last_context_size();
 
-            send_json(ws_tx, &ServerMessage::ProcessingComplete {
-                messages,
-                checkpoints,
-                context_size: Some(context_size),
-            })
+            send_json(
+                ws_tx,
+                &ServerMessage::ProcessingComplete {
+                    messages,
+                    checkpoints,
+                    context_size: Some(context_size),
+                },
+            )
             .await;
 
             // Put agent back
@@ -512,9 +572,12 @@ async fn handle_send_message(
         }
         Err(e) => {
             error!(conn_id, error = %e, "Agent task panicked");
-            send_json(ws_tx, &ServerMessage::Error {
-                error: format!("Agent task failed: {e}"),
-            })
+            send_json(
+                ws_tx,
+                &ServerMessage::Error {
+                    error: format!("Agent task failed: {e}"),
+                },
+            )
             .await;
         }
     }
@@ -553,24 +616,30 @@ async fn handle_load_session(
             let mut agent_lock = state.agent.lock().await;
             *agent_lock = Some(agent);
 
-            send_json(ws_tx, &ServerMessage::SessionLoaded {
-                session_id: sid,
-                messages,
-                checkpoints,
-                token_usage: TokenUsage {
-                    input: input_tokens,
-                    output: output_tokens,
-                    cache_creation: None,
-                    cache_read: None,
+            send_json(
+                ws_tx,
+                &ServerMessage::SessionLoaded {
+                    session_id: sid,
+                    messages,
+                    checkpoints,
+                    token_usage: TokenUsage {
+                        input: input_tokens,
+                        output: output_tokens,
+                        cache_creation: None,
+                        cache_read: None,
+                    },
+                    context_size,
                 },
-                context_size,
-            })
+            )
             .await;
         }
         Err(e) => {
-            send_json(ws_tx, &ServerMessage::Error {
-                error: format!("Failed to load session: {e}"),
-            })
+            send_json(
+                ws_tx,
+                &ServerMessage::Error {
+                    error: format!("Failed to load session: {e}"),
+                },
+            )
             .await;
         }
     }
@@ -596,9 +665,12 @@ async fn handle_new_session(
             *agent_lock = Some(agent);
         }
         Err(e) => {
-            send_json(ws_tx, &ServerMessage::Error {
-                error: format!("Failed to create session: {e}"),
-            })
+            send_json(
+                ws_tx,
+                &ServerMessage::Error {
+                    error: format!("Failed to create session: {e}"),
+                },
+            )
             .await;
             return;
         }
@@ -626,26 +698,31 @@ async fn handle_set_model(
     // Update config and create new provider
     let new_provider = {
         let mut config = state.config.lock().await;
-        config.config.provider = match serde_json::from_value(serde_json::Value::String(
-            provider_str.to_string(),
-        )) {
-            Ok(p) => p,
-            Err(e) => {
-                send_json(ws_tx, &ServerMessage::Error {
-                    error: format!("Invalid provider: {e}"),
-                })
-                .await;
-                return;
-            }
-        };
+        config.config.provider =
+            match serde_json::from_value(serde_json::Value::String(provider_str.to_string())) {
+                Ok(p) => p,
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Invalid provider: {e}"),
+                        },
+                    )
+                    .await;
+                    return;
+                }
+            };
         config.config.model = Some(model_str.to_string());
 
         match create_provider(&config) {
             Ok(p) => p,
             Err(e) => {
-                send_json(ws_tx, &ServerMessage::Error {
-                    error: format!("Failed to create provider: {e}"),
-                })
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to create provider: {e}"),
+                    },
+                )
                 .await;
                 return;
             }
@@ -666,10 +743,13 @@ async fn handle_set_model(
         *state.model_name.lock().await = model_str.to_string();
     }
 
-    send_json(ws_tx, &ServerMessage::ModelChanged {
-        provider_name: provider_str.to_string(),
-        model_name: model_str.to_string(),
-    })
+    send_json(
+        ws_tx,
+        &ServerMessage::ModelChanged {
+            provider_name: provider_str.to_string(),
+            model_name: model_str.to_string(),
+        },
+    )
     .await;
 }
 
@@ -763,17 +843,20 @@ async fn send_init(
             )
         };
 
-    send_json(ws_tx, &ServerMessage::Init {
-        session_id,
-        messages,
-        checkpoints,
-        token_usage,
-        context_size,
-        permission_mode: "skip".to_string(),
-        provider_name,
-        model_name,
-        browser_screenshots: false,
-    })
+    send_json(
+        ws_tx,
+        &ServerMessage::Init {
+            session_id,
+            messages,
+            checkpoints,
+            token_usage,
+            context_size,
+            permission_mode: "skip".to_string(),
+            provider_name,
+            model_name,
+            browser_screenshots: false,
+        },
+    )
     .await;
 }
 

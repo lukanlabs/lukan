@@ -73,7 +73,15 @@ pub fn is_bwrap_available() -> bool {
 fn run_bwrap_test_with_timeout(timeout: std::time::Duration) -> bool {
     let mut child = match std::process::Command::new("bwrap")
         .args([
-            "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--", "true",
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--",
+            "true",
         ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -245,7 +253,15 @@ pub fn diagnose_bwrap() -> String {
     // Try running bwrap and capture stderr
     let result = std::process::Command::new("bwrap")
         .args([
-            "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--", "true",
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--",
+            "true",
         ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())

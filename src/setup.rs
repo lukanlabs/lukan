@@ -164,10 +164,7 @@ fn setup_openai_compatible_url(mut config: AppConfig) -> Result<AppConfig> {
     println!("{BOLD}Base URL{RESET}");
     println!();
 
-    let current = config
-        .openai_compatible_base_url
-        .as_deref()
-        .unwrap_or("");
+    let current = config.openai_compatible_base_url.as_deref().unwrap_or("");
     let hint = if current.is_empty() {
         "e.g. http://localhost:11434/v1"
     } else {
@@ -460,7 +457,11 @@ pub async fn run_doctor() -> Result<()> {
         creds.copilot_token.as_deref(),
         "lukan copilot-auth",
     );
-    print_key_status("GitHub token", creds.github_token.as_deref(), "GITHUB_TOKEN");
+    print_key_status(
+        "GitHub token",
+        creds.github_token.as_deref(),
+        "GITHUB_TOKEN",
+    );
     print_key_status(
         "Codex",
         creds.codex_access_token.as_deref(),

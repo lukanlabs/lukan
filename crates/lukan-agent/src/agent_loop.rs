@@ -5,9 +5,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
 use lukan_core::config::LukanPaths;
+use lukan_core::models::checkpoints::{Checkpoint, FileSnapshot};
 use lukan_core::models::events::{StopReason, StreamEvent};
 use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
-use lukan_core::models::checkpoints::{Checkpoint, FileSnapshot};
 use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
@@ -318,6 +318,11 @@ impl AgentLoop {
     /// Swap the LLM provider (e.g. after model switch) without losing history
     pub fn swap_provider(&mut self, provider: Arc<dyn Provider>) {
         self.provider = provider;
+    }
+
+    /// Swap the tool registry (e.g. after config change) without losing history
+    pub fn reload_tools(&mut self, new_registry: ToolRegistry) {
+        self.tools = Arc::new(new_registry);
     }
 
     /// Add user context (e.g. shell command output) without triggering a turn

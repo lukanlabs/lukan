@@ -189,7 +189,11 @@ impl WorkerManager {
             let path = LukanPaths::worker_run_file(worker_id, &run.id);
             tokio::fs::remove_file(&path).await.ok();
         }
-        debug!(worker_id, pruned = runs.len() - keep, "Pruned old worker runs");
+        debug!(
+            worker_id,
+            pruned = runs.len() - keep,
+            "Pruned old worker runs"
+        );
         Ok(())
     }
 

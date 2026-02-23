@@ -16,7 +16,9 @@ use tokio::sync::{mpsc, watch};
 use tracing::error;
 
 use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
-use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig};
+use lukan_core::config::{
+    ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig,
+};
 use lukan_core::models::events::{StopReason, StreamEvent};
 use lukan_core::models::sessions::SessionSummary;
 use lukan_providers::{Provider, SystemPrompt, create_provider};
@@ -26,11 +28,11 @@ use chrono::Utc;
 
 use crate::event::{AppEvent, is_quit, spawn_event_reader};
 use crate::widgets::bg_picker::{BgEntry, BgPicker, BgPickerView, BgPickerWidget};
-use crate::widgets::rewind_picker::{RewindEntry, RewindPicker, RewindPickerWidget, RewindView};
 use crate::widgets::chat::{
     ChatMessage, ChatWidget, build_message_lines, physical_row_count, sanitize_for_display,
 };
 use crate::widgets::input::{InputWidget, cursor_position, input_height};
+use crate::widgets::rewind_picker::{RewindEntry, RewindPicker, RewindPickerWidget, RewindView};
 use crate::widgets::status_bar::StatusBarWidget;
 
 /// Application state
@@ -247,7 +249,11 @@ impl App {
             let display_input = self.display_input();
             let cur_input_h = input_height(&display_input, term_size.width, 8);
             let chat_area_h = term_size.height.saturating_sub(cur_input_h + 1);
-            if self.session_picker.is_none() && self.bg_picker.is_none() && self.rewind_picker.is_none() && self.memory_viewer.is_none() {
+            if self.session_picker.is_none()
+                && self.bg_picker.is_none()
+                && self.rewind_picker.is_none()
+                && self.memory_viewer.is_none()
+            {
                 commit_overflow(
                     &self.messages,
                     &mut self.committed_msg_idx,
@@ -301,30 +307,31 @@ impl App {
                 let shimmer_h: u16 = if self.is_streaming { 1 } else { 0 };
 
                 // Dynamic layout: palette below input, above status bar
-                let (chat_area, shimmer_area, input_area, palette_area, status_area) = if palette_visible {
-                    let chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Min(1),
-                            Constraint::Length(shimmer_h),
-                            Constraint::Length(input_h),
-                            Constraint::Length(palette_h),
-                            Constraint::Length(1),
-                        ])
-                        .split(area);
-                    (chunks[0], chunks[1], chunks[2], Some(chunks[3]), chunks[4])
-                } else {
-                    let chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Min(1),
-                            Constraint::Length(shimmer_h),
-                            Constraint::Length(input_h),
-                            Constraint::Length(1),
-                        ])
-                        .split(area);
-                    (chunks[0], chunks[1], chunks[2], None, chunks[3])
-                };
+                let (chat_area, shimmer_area, input_area, palette_area, status_area) =
+                    if palette_visible {
+                        let chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([
+                                Constraint::Min(1),
+                                Constraint::Length(shimmer_h),
+                                Constraint::Length(input_h),
+                                Constraint::Length(palette_h),
+                                Constraint::Length(1),
+                            ])
+                            .split(area);
+                        (chunks[0], chunks[1], chunks[2], Some(chunks[3]), chunks[4])
+                    } else {
+                        let chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([
+                                Constraint::Min(1),
+                                Constraint::Length(shimmer_h),
+                                Constraint::Length(input_h),
+                                Constraint::Length(1),
+                            ])
+                            .split(area);
+                        (chunks[0], chunks[1], chunks[2], None, chunks[3])
+                    };
 
                 // Chat (or overlay pickers)
                 if let Some(ref content) = self.memory_viewer {
@@ -372,9 +379,12 @@ impl App {
                 // Shimmer indicator — fixed above input
                 if self.is_streaming && shimmer_area.height > 0 {
                     use crate::widgets::shimmer::shimmer_spans;
-                    let label = if self.streaming_text.is_empty() && self.streaming_thinking.is_empty() {
+                    let label = if self.streaming_text.is_empty()
+                        && self.streaming_thinking.is_empty()
+                    {
                         "Working on it..."
-                    } else if !self.streaming_thinking.is_empty() && self.streaming_text.is_empty() {
+                    } else if !self.streaming_thinking.is_empty() && self.streaming_text.is_empty()
+                    {
                         "Thinking..."
                     } else {
                         "Writing..."
@@ -421,12 +431,7 @@ impl App {
                         let x = input_area.x + input_area.width - hint_len - 1;
                         let y = input_area.y + input_area.height.saturating_sub(2); // last content row
                         let buf = frame.buffer_mut();
-                        buf.set_string(
-                            x,
-                            y,
-                            hint,
-                            Style::default().fg(Color::DarkGray),
-                        );
+                        buf.set_string(x, y, hint, Style::default().fg(Color::DarkGray));
                     }
                 }
 
@@ -1045,7 +1050,11 @@ impl App {
 
         // Handle /memories [activate | deactivate | add <text> | show]
         if text == "/memories" || text.starts_with("/memories ") {
-            let sub = text.strip_prefix("/memories").unwrap_or("").trim().to_string();
+            let sub = text
+                .strip_prefix("/memories")
+                .unwrap_or("")
+                .trim()
+                .to_string();
             let memory_dir = LukanPaths::project_memory_dir();
             let memory_path = LukanPaths::project_memory_file();
             let active_path = LukanPaths::project_memory_active_file();
@@ -1063,22 +1072,24 @@ impl App {
                 did_change = true;
             } else if sub == "deactivate" {
                 let _ = tokio::fs::remove_file(&active_path).await;
-                self.messages
-                    .push(ChatMessage::new("system", "Project memory deactivated (file preserved)."));
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "Project memory deactivated (file preserved).",
+                ));
                 did_change = true;
             } else if sub == "show" {
                 let content = tokio::fs::read_to_string(&memory_path)
                     .await
                     .unwrap_or_else(|_| "(empty)".to_string());
-                self.messages
-                    .push(ChatMessage::new("system", format!("Project Memory:\n{content}")));
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Project Memory:\n{content}"),
+                ));
             } else if sub.starts_with("add") {
                 let entry = sub.strip_prefix("add").unwrap_or("").trim().to_string();
                 if entry.is_empty() {
-                    self.messages.push(ChatMessage::new(
-                        "system",
-                        "Usage: /memories add <text>",
-                    ));
+                    self.messages
+                        .push(ChatMessage::new("system", "Usage: /memories add <text>"));
                 } else {
                     // Auto-activate if needed
                     let _ = tokio::fs::create_dir_all(&memory_dir).await;
@@ -1106,9 +1117,7 @@ impl App {
                     ),
                 ));
             }
-            if did_change
-                && let Some(agent) = self.agent.as_mut()
-            {
+            if did_change && let Some(agent) = self.agent.as_mut() {
                 agent.reload_system_prompt(build_system_prompt().await);
             }
             return;
@@ -1116,15 +1125,21 @@ impl App {
 
         // Handle /gmemory [show | add <text> | clear]
         if text == "/gmemory" || text.starts_with("/gmemory ") {
-            let sub = text.strip_prefix("/gmemory").unwrap_or("").trim().to_string();
+            let sub = text
+                .strip_prefix("/gmemory")
+                .unwrap_or("")
+                .trim()
+                .to_string();
             let memory_path = LukanPaths::global_memory_file();
             let mut did_change = false;
             if sub == "show" {
                 let content = tokio::fs::read_to_string(&memory_path)
                     .await
                     .unwrap_or_else(|_| "(empty)".to_string());
-                self.messages
-                    .push(ChatMessage::new("system", format!("Global Memory:\n{content}")));
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Global Memory:\n{content}"),
+                ));
             } else if sub.starts_with("add ") {
                 let entry = sub.strip_prefix("add ").unwrap_or("").trim().to_string();
                 if entry.is_empty() {
@@ -1156,9 +1171,7 @@ impl App {
                     ),
                 ));
             }
-            if did_change
-                && let Some(agent) = self.agent.as_mut()
-            {
+            if did_change && let Some(agent) = self.agent.as_mut() {
                 agent.reload_system_prompt(build_system_prompt().await);
             }
             return;
@@ -1168,10 +1181,8 @@ impl App {
         if text == "/bg" {
             let processes = lukan_tools::bg_processes::get_bg_processes();
             if processes.is_empty() {
-                self.messages.push(ChatMessage::new(
-                    "system",
-                    "No background processes.",
-                ));
+                self.messages
+                    .push(ChatMessage::new("system", "No background processes."));
             } else {
                 let entries: Vec<BgEntry> = processes
                     .into_iter()
@@ -1233,10 +1244,8 @@ impl App {
             if cmd.is_empty() {
                 return;
             }
-            self.messages.push(ChatMessage::new(
-                "system",
-                format!("$ {cmd}"),
-            ));
+            self.messages
+                .push(ChatMessage::new("system", format!("$ {cmd}")));
 
             let cwd = std::env::current_dir().unwrap_or_default();
             let result = tokio::process::Command::new("bash")
@@ -1280,7 +1289,8 @@ impl App {
                     } else {
                         truncated.clone()
                     };
-                    self.messages.push(ChatMessage::new("system", display_output));
+                    self.messages
+                        .push(ChatMessage::new("system", display_output));
 
                     // Add to agent context
                     let agent = match self.agent.take() {
@@ -1543,10 +1553,8 @@ impl App {
         let agent = match self.agent.as_mut() {
             Some(a) => a,
             None => {
-                self.messages.push(ChatMessage::new(
-                    "system",
-                    "No active session to restore.",
-                ));
+                self.messages
+                    .push(ChatMessage::new("system", "No active session to restore."));
                 return;
             }
         };
@@ -1584,10 +1592,8 @@ impl App {
                 ));
             }
             Err(e) => {
-                self.messages.push(ChatMessage::new(
-                    "system",
-                    format!("Restore failed: {e}"),
-                ));
+                self.messages
+                    .push(ChatMessage::new("system", format!("Restore failed: {e}")));
             }
         }
     }
@@ -1902,9 +1908,10 @@ impl App {
     /// tool_call with this ID and any existing results for it.
     fn tool_insert_position(&self, tool_id: &str) -> usize {
         // Find the tool_call with this ID
-        let call_idx = self.messages.iter().rposition(|m| {
-            m.role == "tool_call" && m.tool_id.as_deref() == Some(tool_id)
-        });
+        let call_idx = self
+            .messages
+            .iter()
+            .rposition(|m| m.role == "tool_call" && m.tool_id.as_deref() == Some(tool_id));
         match call_idx {
             Some(idx) => {
                 // Scan forward past any messages already belonging to this tool
@@ -2100,7 +2107,10 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/bg", "view and manage background processes"),
     ("/clear", "clear chat and start fresh"),
     ("/compact", "compact conversation history"),
-    ("/memories", "manage project memory (activate | deactivate | show | add <text>)"),
+    (
+        "/memories",
+        "manage project memory (activate | deactivate | show | add <text>)",
+    ),
     ("/gmemory", "global memory (show | add <text> | clear)"),
     ("/checkpoints", "rewind to a checkpoint"),
     ("/exit", "quit lukan"),

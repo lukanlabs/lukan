@@ -227,10 +227,7 @@ fn render_options(picker: &RewindPicker, area: Rect, buf: &mut Buffer) {
 
     let options = [
         ("Chat only", "Rewind conversation history only"),
-        (
-            "Chat + Code",
-            "Rewind conversation and revert file changes",
-        ),
+        ("Chat + Code", "Rewind conversation and revert file changes"),
     ];
 
     for (i, (label, desc)) in options.iter().enumerate() {

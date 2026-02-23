@@ -35,10 +35,7 @@ pub async fn handle_worker_command(command: WorkerCommands) -> Result<()> {
             );
             println!("  {}", "-".repeat(72));
             for w in &workers {
-                let last_run = w
-                    .last_run_status
-                    .as_deref()
-                    .unwrap_or("never");
+                let last_run = w.last_run_status.as_deref().unwrap_or("never");
                 let enabled = if w.enabled { "yes" } else { "no" };
                 println!(
                     "  {:<8} {:<20} {:<12} {:<10} {:<20}",

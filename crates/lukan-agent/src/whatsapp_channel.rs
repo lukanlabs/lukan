@@ -173,8 +173,14 @@ async fn handle_connection(
                 content,
                 is_group,
             } => {
-                if !should_process(&sender, &chat_id, is_group, whitelist, allowed_groups, prefix)
-                {
+                if !should_process(
+                    &sender,
+                    &chat_id,
+                    is_group,
+                    whitelist,
+                    allowed_groups,
+                    prefix,
+                ) {
                     continue;
                 }
 
@@ -223,8 +229,14 @@ async fn handle_connection(
                 is_group,
                 ..
             } => {
-                if !should_process(&sender, &chat_id, is_group, whitelist, allowed_groups, prefix)
-                {
+                if !should_process(
+                    &sender,
+                    &chat_id,
+                    is_group,
+                    whitelist,
+                    allowed_groups,
+                    prefix,
+                ) {
                     continue;
                 }
 

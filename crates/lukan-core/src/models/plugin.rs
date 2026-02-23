@@ -103,15 +103,9 @@ pub enum PluginMessage {
     /// Plugin status update
     Status { status: PluginStatus },
     /// Log line from the plugin
-    Log {
-        level: LogLevel,
-        message: String,
-    },
+    Log { level: LogLevel, message: String },
     /// Error from the plugin
-    Error {
-        message: String,
-        recoverable: bool,
-    },
+    Error { message: String, recoverable: bool },
 }
 
 // ── Enums ───────────────────────────────────────────────────────────────

@@ -34,8 +34,8 @@ pub fn shimmer_spans(text: &str) -> Vec<Span<'static>> {
     let padding = 10usize;
     let period = chars.len() + padding * 2;
     let sweep_seconds = 2.0f32;
-    let pos_f = (elapsed_since_start().as_secs_f32() % sweep_seconds) / sweep_seconds
-        * (period as f32);
+    let pos_f =
+        (elapsed_since_start().as_secs_f32() % sweep_seconds) / sweep_seconds * (period as f32);
     let band_half_width = 5.0f32;
 
     // Base: gray text. Highlight: blend toward white for the "glow" effect.

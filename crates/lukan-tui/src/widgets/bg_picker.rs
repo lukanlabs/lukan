@@ -230,10 +230,7 @@ fn render_log(picker: &BgPicker, area: Rect, buf: &mut Buffer) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(status, Style::default().fg(status_color)),
-        Span::styled(
-            "  (ESC=back  k=kill)",
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled("  (ESC=back  k=kill)", Style::default().fg(Color::DarkGray)),
     ]));
     lines.push(Line::from(""));
 

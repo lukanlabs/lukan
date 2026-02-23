@@ -19,10 +19,7 @@ pub struct GitHubCopilotProvider {
 impl GitHubCopilotProvider {
     pub fn new(copilot_token: String, model: String, max_tokens: u32) -> Self {
         let mut extra_headers = HashMap::new();
-        extra_headers.insert(
-            "Editor-Version".to_string(),
-            "lukan/0.1.0".to_string(),
-        );
+        extra_headers.insert("Editor-Version".to_string(), "lukan/0.1.0".to_string());
         extra_headers.insert(
             "Editor-Plugin-Version".to_string(),
             "lukan/0.1.0".to_string(),
@@ -57,7 +54,11 @@ impl Provider for GitHubCopilotProvider {
         true
     }
 
-    async fn stream(&self, params: StreamParams, tx: mpsc::Sender<StreamEvent>) -> anyhow::Result<()> {
+    async fn stream(
+        &self,
+        params: StreamParams,
+        tx: mpsc::Sender<StreamEvent>,
+    ) -> anyhow::Result<()> {
         self.base.stream(params, tx).await
     }
 }

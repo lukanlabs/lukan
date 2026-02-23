@@ -24,50 +24,164 @@ struct StaticModel {
 }
 
 const GITHUB_COPILOT_MODELS: &[StaticModel] = &[
-    StaticModel { id: "claude-opus-4.6", name: "Claude Opus 4.6" },
-    StaticModel { id: "claude-opus-4.5", name: "Claude Opus 4.5" },
-    StaticModel { id: "claude-opus-4.1", name: "Claude Opus 4.1" },
-    StaticModel { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
-    StaticModel { id: "claude-sonnet-4", name: "Claude Sonnet 4" },
-    StaticModel { id: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
-    StaticModel { id: "gpt-5.2", name: "GPT-5.2" },
-    StaticModel { id: "gpt-5.1", name: "GPT-5.1" },
-    StaticModel { id: "gpt-5", name: "GPT-5" },
-    StaticModel { id: "gpt-5-mini", name: "GPT-5 mini" },
-    StaticModel { id: "gpt-4.1", name: "GPT-4.1" },
-    StaticModel { id: "gpt-4o", name: "GPT-4o" },
-    StaticModel { id: "gpt-4-turbo", name: "GPT-4 Turbo" },
-    StaticModel { id: "gpt-4", name: "GPT-4" },
-    StaticModel { id: "gemini-3-pro", name: "Gemini 3 Pro" },
-    StaticModel { id: "gemini-3-flash", name: "Gemini 3 Flash" },
-    StaticModel { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-    StaticModel { id: "grok-code-fast-1", name: "Grok Code Fast 1" },
-    StaticModel { id: "qwen2.5", name: "Qwen 2.5" },
-    StaticModel { id: "raptor-mini", name: "Raptor mini" },
+    StaticModel {
+        id: "claude-opus-4.6",
+        name: "Claude Opus 4.6",
+    },
+    StaticModel {
+        id: "claude-opus-4.5",
+        name: "Claude Opus 4.5",
+    },
+    StaticModel {
+        id: "claude-opus-4.1",
+        name: "Claude Opus 4.1",
+    },
+    StaticModel {
+        id: "claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5",
+    },
+    StaticModel {
+        id: "claude-sonnet-4",
+        name: "Claude Sonnet 4",
+    },
+    StaticModel {
+        id: "claude-haiku-4.5",
+        name: "Claude Haiku 4.5",
+    },
+    StaticModel {
+        id: "gpt-5.2",
+        name: "GPT-5.2",
+    },
+    StaticModel {
+        id: "gpt-5.1",
+        name: "GPT-5.1",
+    },
+    StaticModel {
+        id: "gpt-5",
+        name: "GPT-5",
+    },
+    StaticModel {
+        id: "gpt-5-mini",
+        name: "GPT-5 mini",
+    },
+    StaticModel {
+        id: "gpt-4.1",
+        name: "GPT-4.1",
+    },
+    StaticModel {
+        id: "gpt-4o",
+        name: "GPT-4o",
+    },
+    StaticModel {
+        id: "gpt-4-turbo",
+        name: "GPT-4 Turbo",
+    },
+    StaticModel {
+        id: "gpt-4",
+        name: "GPT-4",
+    },
+    StaticModel {
+        id: "gemini-3-pro",
+        name: "Gemini 3 Pro",
+    },
+    StaticModel {
+        id: "gemini-3-flash",
+        name: "Gemini 3 Flash",
+    },
+    StaticModel {
+        id: "gemini-2.5-pro",
+        name: "Gemini 2.5 Pro",
+    },
+    StaticModel {
+        id: "grok-code-fast-1",
+        name: "Grok Code Fast 1",
+    },
+    StaticModel {
+        id: "qwen2.5",
+        name: "Qwen 2.5",
+    },
+    StaticModel {
+        id: "raptor-mini",
+        name: "Raptor mini",
+    },
 ];
 
 const OPENAI_CODEX_MODELS: &[StaticModel] = &[
-    StaticModel { id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
-    StaticModel { id: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark" },
-    StaticModel { id: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
-    StaticModel { id: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max" },
-    StaticModel { id: "gpt-5.1-codex", name: "GPT-5.1 Codex" },
-    StaticModel { id: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini" },
-    StaticModel { id: "gpt-5.2", name: "GPT-5.2" },
-    StaticModel { id: "gpt-5.1", name: "GPT-5.1" },
-    StaticModel { id: "gpt-5-codex", name: "GPT-5 Codex" },
-    StaticModel { id: "gpt-5-codex-mini", name: "GPT-5 Codex Mini" },
-    StaticModel { id: "gpt-5", name: "GPT-5" },
+    StaticModel {
+        id: "gpt-5.3-codex",
+        name: "GPT-5.3 Codex",
+    },
+    StaticModel {
+        id: "gpt-5.3-codex-spark",
+        name: "GPT-5.3 Codex Spark",
+    },
+    StaticModel {
+        id: "gpt-5.2-codex",
+        name: "GPT-5.2 Codex",
+    },
+    StaticModel {
+        id: "gpt-5.1-codex-max",
+        name: "GPT-5.1 Codex Max",
+    },
+    StaticModel {
+        id: "gpt-5.1-codex",
+        name: "GPT-5.1 Codex",
+    },
+    StaticModel {
+        id: "gpt-5.1-codex-mini",
+        name: "GPT-5.1 Codex Mini",
+    },
+    StaticModel {
+        id: "gpt-5.2",
+        name: "GPT-5.2",
+    },
+    StaticModel {
+        id: "gpt-5.1",
+        name: "GPT-5.1",
+    },
+    StaticModel {
+        id: "gpt-5-codex",
+        name: "GPT-5 Codex",
+    },
+    StaticModel {
+        id: "gpt-5-codex-mini",
+        name: "GPT-5 Codex Mini",
+    },
+    StaticModel {
+        id: "gpt-5",
+        name: "GPT-5",
+    },
 ];
 
 const ZAI_MODELS: &[StaticModel] = &[
-    StaticModel { id: "glm-5", name: "GLM-5" },
-    StaticModel { id: "glm-4.7", name: "GLM-4.7" },
-    StaticModel { id: "glm-4.6", name: "GLM-4.6" },
-    StaticModel { id: "glm-4.5", name: "GLM-4.5" },
-    StaticModel { id: "glm-4.5v", name: "GLM-4.5V (vision)" },
-    StaticModel { id: "glm-4.1v", name: "GLM-4.1V (vision)" },
-    StaticModel { id: "glm-4", name: "GLM-4" },
+    StaticModel {
+        id: "glm-5",
+        name: "GLM-5",
+    },
+    StaticModel {
+        id: "glm-4.7",
+        name: "GLM-4.7",
+    },
+    StaticModel {
+        id: "glm-4.6",
+        name: "GLM-4.6",
+    },
+    StaticModel {
+        id: "glm-4.5",
+        name: "GLM-4.5",
+    },
+    StaticModel {
+        id: "glm-4.5v",
+        name: "GLM-4.5V (vision)",
+    },
+    StaticModel {
+        id: "glm-4.1v",
+        name: "GLM-4.1V (vision)",
+    },
+    StaticModel {
+        id: "glm-4",
+        name: "GLM-4",
+    },
 ];
 
 // ── Theme ──────────────────────────────────────────────────────────────────
@@ -99,10 +213,7 @@ async fn get_existing_model_ids(provider_prefix: &str) -> Vec<String> {
 
 /// Compute which items should be pre-checked based on existing config.
 fn defaults_for(model_ids: &[String], existing: &[String]) -> Vec<bool> {
-    model_ids
-        .iter()
-        .map(|id| existing.contains(id))
-        .collect()
+    model_ids.iter().map(|id| existing.contains(id)).collect()
 }
 
 // ── Main entry point ───────────────────────────────────────────────────────
@@ -123,7 +234,9 @@ pub async fn run_models(provider: Option<&str>, model_entry: Option<&str>) -> Re
         "anthropic" | "claude" => select_anthropic().await,
         "nebius" => select_nebius().await,
         "fireworks" => select_fireworks().await,
-        "github-copilot" | "copilot" => select_static("github-copilot", GITHUB_COPILOT_MODELS, true).await,
+        "github-copilot" | "copilot" => {
+            select_static("github-copilot", GITHUB_COPILOT_MODELS, true).await
+        }
         "openai-codex" | "codex" => select_static("openai-codex", OPENAI_CODEX_MODELS, true).await,
         "zai" | "z.ai" => select_static("zai", ZAI_MODELS, false).await,
         "openai-compatible" | "oai-compatible" => select_openai_compatible().await,
@@ -185,7 +298,9 @@ async fn select_anthropic() -> Result<()> {
     let api_key = creds.anthropic_api_key.as_deref().unwrap_or("");
 
     if api_key.is_empty() {
-        eprintln!("{RED}Error:{RESET} Anthropic API key not found. Set ANTHROPIC_API_KEY or run: lukan setup");
+        eprintln!(
+            "{RED}Error:{RESET} Anthropic API key not found. Set ANTHROPIC_API_KEY or run: lukan setup"
+        );
         return Ok(());
     }
 
@@ -212,7 +327,10 @@ async fn select_anthropic() -> Result<()> {
         .defaults(&checked)
         .interact()?;
 
-    let entries: Vec<String> = selected.iter().map(|&i| format!("anthropic:{}", models[i].id)).collect();
+    let entries: Vec<String> = selected
+        .iter()
+        .map(|&i| format!("anthropic:{}", models[i].id))
+        .collect();
     let vision_ids: Vec<String> = selected.iter().map(|&i| models[i].id.clone()).collect();
 
     ConfigManager::set_provider_models("anthropic", &entries, &vision_ids).await?;
@@ -239,7 +357,9 @@ async fn select_nebius() -> Result<()> {
     let api_key = creds.nebius_api_key.as_deref().unwrap_or("");
 
     if api_key.is_empty() {
-        eprintln!("{RED}Error:{RESET} Nebius API key not found. Set NEBIUS_API_KEY or run: lukan setup");
+        eprintln!(
+            "{RED}Error:{RESET} Nebius API key not found. Set NEBIUS_API_KEY or run: lukan setup"
+        );
         return Ok(());
     }
 
@@ -258,7 +378,11 @@ async fn select_nebius() -> Result<()> {
     let items: Vec<String> = models
         .iter()
         .map(|m| {
-            let vision = if m.supports_image_input { " [vision]" } else { "" };
+            let vision = if m.supports_image_input {
+                " [vision]"
+            } else {
+                ""
+            };
             format!("{}{vision}", m.id)
         })
         .collect();
@@ -269,7 +393,10 @@ async fn select_nebius() -> Result<()> {
         .defaults(&checked)
         .interact()?;
 
-    let entries: Vec<String> = selected.iter().map(|&i| format!("nebius:{}", models[i].id)).collect();
+    let entries: Vec<String> = selected
+        .iter()
+        .map(|&i| format!("nebius:{}", models[i].id))
+        .collect();
     let vision_ids: Vec<String> = selected
         .iter()
         .filter(|&&i| models[i].supports_image_input)
@@ -282,7 +409,10 @@ async fn select_nebius() -> Result<()> {
         println!("{GREEN}✓{RESET} Cleared all nebius models.");
     } else {
         let vision_count = vision_ids.len();
-        println!("\n{GREEN}✓{RESET} Set {} model(s) for nebius:", selected.len());
+        println!(
+            "\n{GREEN}✓{RESET} Set {} model(s) for nebius:",
+            selected.len()
+        );
         for &idx in &selected {
             let m = &models[idx];
             let badge = if m.supports_image_input {
@@ -307,7 +437,9 @@ async fn select_fireworks() -> Result<()> {
     let api_key = creds.fireworks_api_key.as_deref().unwrap_or("");
 
     if api_key.is_empty() {
-        eprintln!("{RED}Error:{RESET} Fireworks API key not found. Set FIREWORKS_API_KEY or run: lukan setup");
+        eprintln!(
+            "{RED}Error:{RESET} Fireworks API key not found. Set FIREWORKS_API_KEY or run: lukan setup"
+        );
         return Ok(());
     }
 
@@ -326,7 +458,11 @@ async fn select_fireworks() -> Result<()> {
     let items: Vec<String> = models
         .iter()
         .map(|m| {
-            let vision = if m.supports_image_input { " [vision]" } else { "" };
+            let vision = if m.supports_image_input {
+                " [vision]"
+            } else {
+                ""
+            };
             format!("{:<35} {}{vision}", m.display_name, m.id)
         })
         .collect();
@@ -337,7 +473,10 @@ async fn select_fireworks() -> Result<()> {
         .defaults(&checked)
         .interact()?;
 
-    let entries: Vec<String> = selected.iter().map(|&i| format!("fireworks:{}", models[i].id)).collect();
+    let entries: Vec<String> = selected
+        .iter()
+        .map(|&i| format!("fireworks:{}", models[i].id))
+        .collect();
     let vision_ids: Vec<String> = selected
         .iter()
         .filter(|&&i| models[i].supports_image_input)
@@ -350,7 +489,10 @@ async fn select_fireworks() -> Result<()> {
         println!("{GREEN}✓{RESET} Cleared all fireworks models.");
     } else {
         let vision_count = vision_ids.len();
-        println!("\n{GREEN}✓{RESET} Set {} model(s) for fireworks:", selected.len());
+        println!(
+            "\n{GREEN}✓{RESET} Set {} model(s) for fireworks:",
+            selected.len()
+        );
         for &idx in &selected {
             let m = &models[idx];
             let badge = if m.supports_image_input {

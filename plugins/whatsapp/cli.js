@@ -8,7 +8,7 @@
 
 import { join } from "path";
 import { homedir } from "os";
-import { existsSync, rmSync, readFileSync } from "fs";
+import { existsSync, rmSync, readFileSync, writeFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
@@ -190,6 +190,45 @@ async function cmdGroups() {
   });
 }
 
+// ── Groups JSON (for Rust picker) ────────────────────────────────────
+
+async function cmdGroupsJson() {
+  const config = loadConfig();
+  const bridgeUrl = config.bridgeUrl || "ws://localhost:3001";
+  const { WebSocket } = await import("ws");
+
+  return new Promise((resolvePromise) => {
+    const ws = new WebSocket(bridgeUrl);
+    const timeout = setTimeout(() => {
+      ws.close();
+      console.log("[]");
+      resolvePromise();
+    }, 5000);
+
+    ws.on("error", () => {
+      clearTimeout(timeout);
+      console.log("[]");
+      resolvePromise();
+    });
+
+    ws.on("open", () => {
+      ws.send(JSON.stringify({ type: "list_groups" }));
+    });
+
+    ws.on("message", (raw) => {
+      try {
+        const data = JSON.parse(raw.toString());
+        if (data.type === "groups") {
+          clearTimeout(timeout);
+          console.log(JSON.stringify(data.groups || []));
+          ws.close();
+          resolvePromise();
+        }
+      } catch {}
+    });
+  });
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 
 const command = process.argv[2];
@@ -207,6 +246,12 @@ switch (command) {
   case "groups":
     cmdGroups().catch((err) => {
       console.error(`${RED}Error: ${err.message}${RESET}`);
+      process.exit(1);
+    });
+    break;
+  case "groups-json":
+    cmdGroupsJson().catch((err) => {
+      console.log("[]");
       process.exit(1);
     });
     break;

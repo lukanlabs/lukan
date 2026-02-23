@@ -265,11 +265,7 @@ impl OpenAiCompatBase {
             }
         }
 
-        if has_non_tool {
-            parts
-        } else {
-            vec![]
-        }
+        if has_non_tool { parts } else { vec![] }
     }
 
     /// Convert tool definitions to OpenAI function calling format.
@@ -301,7 +297,10 @@ impl OpenAiCompatBase {
         let messages = self.convert_messages(&system_content, &params.messages);
         let tools = self.convert_tools(&params.tools);
 
-        let url = format!("{}/chat/completions", self.config.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/chat/completions",
+            self.config.base_url.trim_end_matches('/')
+        );
 
         let mut body = serde_json::json!({
             "model": self.config.model,
@@ -315,10 +314,7 @@ impl OpenAiCompatBase {
             body["tools"] = serde_json::json!(tools);
         }
 
-        debug!(
-            "Sending request to {} (model: {})",
-            url, self.config.model
-        );
+        debug!("Sending request to {} (model: {})", url, self.config.model);
 
         let mut req = self
             .client
@@ -400,9 +396,7 @@ impl OpenAiCompatBase {
                                 for output in tp.feed(content) {
                                     match output {
                                         ThinkTagOutput::Text(t) => {
-                                            tx.send(StreamEvent::TextDelta { text: t })
-                                                .await
-                                                .ok();
+                                            tx.send(StreamEvent::TextDelta { text: t }).await.ok();
                                         }
                                         ThinkTagOutput::Thinking(t) => {
                                             tx.send(StreamEvent::ThinkingDelta { text: t })
@@ -424,14 +418,13 @@ impl OpenAiCompatBase {
                         if let Some(ref tc_deltas) = delta.tool_calls {
                             for tc in tc_deltas {
                                 let idx = tc.index;
-                                let entry = tool_calls.entry(idx).or_insert_with(|| {
-                                    ToolCallAccum {
+                                let entry =
+                                    tool_calls.entry(idx).or_insert_with(|| ToolCallAccum {
                                         id: String::new(),
                                         name: String::new(),
                                         arguments: String::new(),
                                         started: false,
-                                    }
-                                });
+                                    });
 
                                 if let Some(ref id) = tc.id {
                                     entry.id = id.clone();
@@ -447,9 +440,7 @@ impl OpenAiCompatBase {
                                 }
 
                                 // Emit ToolUseStart once we have id + name
-                                if !entry.started
-                                    && !entry.id.is_empty()
-                                    && !entry.name.is_empty()
+                                if !entry.started && !entry.id.is_empty() && !entry.name.is_empty()
                                 {
                                     entry.started = true;
                                     tx.send(StreamEvent::ToolUseStart {
@@ -487,9 +478,7 @@ impl OpenAiCompatBase {
                     tx.send(StreamEvent::TextDelta { text: t }).await.ok();
                 }
                 ThinkTagOutput::Thinking(t) => {
-                    tx.send(StreamEvent::ThinkingDelta { text: t })
-                        .await
-                        .ok();
+                    tx.send(StreamEvent::ThinkingDelta { text: t }).await.ok();
                 }
             }
         }
@@ -526,9 +515,7 @@ impl OpenAiCompatBase {
             _ => StopReason::EndTurn,
         };
 
-        tx.send(StreamEvent::MessageEnd { stop_reason })
-            .await
-            .ok();
+        tx.send(StreamEvent::MessageEnd { stop_reason }).await.ok();
 
         Ok(())
     }

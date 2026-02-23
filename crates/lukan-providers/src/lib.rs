@@ -42,13 +42,15 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
             config.credentials.clone(),
         )?)),
         ProviderName::Nebius => {
-            let api_key =
-                CredentialsManager::get_api_key(&config.credentials, &ProviderName::Nebius)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                        "Missing Nebius API key. Set it via `lukan setup` or NEBIUS_API_KEY env var"
-                    )
-                    })?;
+            let api_key = CredentialsManager::get_api_key(
+                &config.credentials,
+                &ProviderName::Nebius,
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing Nebius API key. Set it via `lukan setup` or NEBIUS_API_KEY env var"
+                )
+            })?;
             Ok(Box::new(nebius::NebiusProvider::new(
                 api_key, model, max_tokens,
             )))
@@ -69,9 +71,7 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
             let token =
                 CredentialsManager::get_api_key(&config.credentials, &ProviderName::GithubCopilot)
                     .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Missing GitHub Copilot token. Run: lukan copilot-auth"
-                        )
+                        anyhow::anyhow!("Missing GitHub Copilot token. Run: lukan copilot-auth")
                     })?;
             Ok(Box::new(github_copilot::GitHubCopilotProvider::new(
                 token, model, max_tokens,

@@ -26,7 +26,16 @@ description = "Allowed group IDs"
 [config.tools]
 type = "string[]"
 description = "Agent tools"
-valid_values = ["Grep", "Glob", "ReadFile", "WebFetch", "Bash", "WriteFile", "EditFile"]
+valid_values = [
+  "Bash",
+  "ReadFile", "WriteFile", "EditFile",
+  "Grep", "Glob",
+  "WebFetch",
+  "SheetsRead", "SheetsWrite", "SheetsCreate",
+  "CalendarList", "CalendarCreate", "CalendarUpdate",
+  "DocsRead", "DocsCreate", "DocsUpdate",
+  "DriveList", "DriveDownload",
+]
 
 [config.allowed_dirs]
 type = "string[]"

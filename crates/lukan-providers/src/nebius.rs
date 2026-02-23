@@ -39,7 +39,11 @@ impl Provider for NebiusProvider {
         "nebius"
     }
 
-    async fn stream(&self, params: StreamParams, tx: mpsc::Sender<StreamEvent>) -> anyhow::Result<()> {
+    async fn stream(
+        &self,
+        params: StreamParams,
+        tx: mpsc::Sender<StreamEvent>,
+    ) -> anyhow::Result<()> {
         self.base.stream(params, tx).await
     }
 }

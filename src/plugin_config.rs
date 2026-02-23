@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
+use console::Style;
+use dialoguer::MultiSelect;
+use dialoguer::theme::ColorfulTheme;
 
-use lukan_core::config::LukanPaths;
+use lukan_core::config::{LukanPaths, TOOL_GROUPS, WA_DEFAULT_TOOLS};
 use lukan_core::models::plugin::ConfigFieldType;
 use lukan_plugins::PluginManager;
 
@@ -11,6 +14,18 @@ const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const RED: &str = "\x1b[31m";
+
+fn picker_theme() -> ColorfulTheme {
+    ColorfulTheme {
+        active_item_style: Style::new().cyan().bold(),
+        active_item_prefix: console::style("❯ ".to_string()).cyan().bold(),
+        inactive_item_prefix: console::style("  ".to_string()),
+        checked_item_prefix: console::style("◉ ".to_string()).green(),
+        unchecked_item_prefix: console::style("◯ ".to_string()).dim(),
+        prompt_prefix: console::style("? ".to_string()).cyan().bold(),
+        ..ColorfulTheme::default()
+    }
+}
 
 /// Convert a snake_case key to camelCase (for JSON config files).
 pub fn snake_to_camel(s: &str) -> String {
@@ -114,15 +129,191 @@ pub async fn handle_plugin_config(
                 let available: Vec<&String> = manifest.config.keys().collect();
                 anyhow::anyhow!(
                     "Unknown config key '{key}'.\nAvailable: {}",
-                    available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                    available
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )
             })?;
 
             let camel = snake_to_camel(key);
 
             match (&schema.field_type, action) {
-                // ── Show value ──
+                // ── Show value (or interactive picker for tools/groups) ──
                 (_, None) => {
+                    if key == "allowed_groups" {
+                        // Fetch groups from bridge via cli.js groups-json
+                        let plugin_dir = LukanPaths::plugin_dir(name);
+                        let cli_script = plugin_dir.join("cli.js");
+
+                        if !cli_script.exists() {
+                            println!(
+                                "{RED}Plugin '{name}' has no cli.js — cannot list groups.{RESET}"
+                            );
+                            println!(
+                                "{DIM}Make sure the WhatsApp bridge is running (lukan wa start).{RESET}"
+                            );
+                            return Ok(());
+                        }
+
+                        // Determine run command from manifest (default: "node")
+                        let run_command = manifest
+                            .run
+                            .as_ref()
+                            .map(|r| r.command.as_str())
+                            .unwrap_or("node");
+
+                        println!("{DIM}Fetching groups from bridge...{RESET}");
+
+                        let output = std::process::Command::new(run_command)
+                            .args([cli_script.to_string_lossy().as_ref(), "groups-json"])
+                            .current_dir(&plugin_dir)
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .output()
+                            .context("Failed to execute groups-json command")?;
+
+                        // Take only the first line (bridge may print duplicates)
+                        let raw = String::from_utf8_lossy(&output.stdout);
+                        let json_str = raw.lines().next().unwrap_or("[]").trim().to_string();
+
+                        #[derive(serde::Deserialize)]
+                        struct GroupInfo {
+                            id: String,
+                            subject: String,
+                            participants: Option<u64>,
+                        }
+
+                        let groups: Vec<GroupInfo> =
+                            serde_json::from_str(&json_str).unwrap_or_default();
+
+                        if groups.is_empty() {
+                            println!("{YELLOW}No groups found.{RESET}");
+                            println!(
+                                "{DIM}Make sure the WhatsApp bridge is running (lukan wa start).{RESET}"
+                            );
+                            return Ok(());
+                        }
+
+                        // Build display items
+                        let items: Vec<String> = groups
+                            .iter()
+                            .map(|g| {
+                                let members = g.participants.unwrap_or(0);
+                                format!("{:<40} {DIM}({members} members){RESET}", g.subject)
+                            })
+                            .collect();
+
+                        // Current allowed groups → pre-check
+                        let active: Vec<String> = obj
+                            .get(&camel)
+                            .and_then(|v| v.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        let defaults: Vec<bool> = groups
+                            .iter()
+                            .map(|g| active.iter().any(|a| a == &g.id))
+                            .collect();
+
+                        let selected = MultiSelect::with_theme(&picker_theme())
+                            .with_prompt("Toggle groups (space to select, enter to confirm)")
+                            .items(&items)
+                            .defaults(&defaults)
+                            .interact()?;
+
+                        let new_groups: Vec<serde_json::Value> = selected
+                            .iter()
+                            .map(|&i| serde_json::Value::String(groups[i].id.clone()))
+                            .collect();
+
+                        obj.insert(camel, serde_json::Value::Array(new_groups));
+                        save_plugin_config(name, &config).await?;
+
+                        println!(
+                            "{GREEN}✓{RESET} Allowed groups updated ({} selected).",
+                            selected.len()
+                        );
+                        return Ok(());
+                    }
+
+                    if key == "tools" {
+                        // Discover ALL tools in the system (core + all plugins)
+                        let all_tools = lukan_tools::all_tool_names();
+
+                        // Build items grouped by TOOL_GROUPS
+                        let mut items: Vec<String> = Vec::new();
+                        let mut tool_names: Vec<String> = Vec::new();
+                        let mut seen = std::collections::HashSet::new();
+
+                        for (group, group_tools) in TOOL_GROUPS {
+                            if !group_tools
+                                .iter()
+                                .any(|t| all_tools.iter().any(|a| a == *t))
+                            {
+                                continue;
+                            }
+                            for tool in *group_tools {
+                                if all_tools.iter().any(|a| a == *tool) {
+                                    items.push(format!("{tool:<20} {DIM}({group}){RESET}"));
+                                    tool_names.push(tool.to_string());
+                                    seen.insert(tool.to_string());
+                                }
+                            }
+                        }
+                        // Tools not in any TOOL_GROUP (e.g. from new plugins)
+                        for tool in &all_tools {
+                            if !seen.contains(tool.as_str()) {
+                                items.push(format!("{tool:<20} {DIM}(plugin){RESET}"));
+                                tool_names.push(tool.clone());
+                            }
+                        }
+
+                        // Current active tools → pre-check defaults
+                        let active: Vec<String> = obj
+                            .get(&camel)
+                            .and_then(|v| v.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_else(|| {
+                                WA_DEFAULT_TOOLS
+                                    .iter()
+                                    .filter(|t| all_tools.iter().any(|a| a == **t))
+                                    .map(|s| s.to_string())
+                                    .collect()
+                            });
+
+                        let defaults: Vec<bool> = tool_names
+                            .iter()
+                            .map(|t| active.iter().any(|a| a == t))
+                            .collect();
+
+                        let selected = MultiSelect::with_theme(&picker_theme())
+                            .with_prompt("Toggle tools (space to select, enter to confirm)")
+                            .items(&items)
+                            .defaults(&defaults)
+                            .interact()?;
+
+                        let new_tools: Vec<serde_json::Value> = selected
+                            .iter()
+                            .map(|&i| serde_json::Value::String(tool_names[i].clone()))
+                            .collect();
+
+                        obj.insert(camel, serde_json::Value::Array(new_tools));
+                        save_plugin_config(name, &config).await?;
+
+                        println!("{GREEN}✓{RESET} Tools updated.");
+                        return Ok(());
+                    }
+
                     let current = obj.get(&camel);
                     match current {
                         Some(v) => println!("{key}: {}", format_value(v)),
@@ -169,9 +360,7 @@ pub async fn handle_plugin_config(
                 (ConfigFieldType::StringArray, Some("remove")) => {
                     let val =
                         value.ok_or_else(|| anyhow::anyhow!("Usage: {key} remove <value>"))?;
-                    let arr = obj
-                        .get_mut(&camel)
-                        .and_then(|v| v.as_array_mut());
+                    let arr = obj.get_mut(&camel).and_then(|v| v.as_array_mut());
                     match arr {
                         Some(arr) => {
                             let val_json = serde_json::Value::String(val.to_string());
@@ -190,6 +379,73 @@ pub async fn handle_plugin_config(
                     Ok(())
                 }
                 (ConfigFieldType::StringArray, Some("list")) => {
+                    if key == "tools" {
+                        let all_tools = lukan_tools::all_tool_names();
+                        let active_tools: Vec<String> = obj
+                            .get(&camel)
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
+                            .unwrap_or_else(|| {
+                                WA_DEFAULT_TOOLS
+                                    .iter()
+                                    .filter(|t| all_tools.iter().any(|a| a == **t))
+                                    .map(|s| s.to_string())
+                                    .collect()
+                            });
+
+                        println!("{BOLD}{key}:{RESET}\n");
+                        let mut seen = std::collections::HashSet::new();
+                        for (group_name, group_tools) in TOOL_GROUPS {
+                            if !group_tools
+                                .iter()
+                                .any(|t| all_tools.iter().any(|a| a == *t))
+                            {
+                                continue;
+                            }
+                            let tool_strs: Vec<String> = group_tools
+                                .iter()
+                                .filter(|t| all_tools.iter().any(|a| a == **t))
+                                .map(|t| {
+                                    seen.insert(t.to_string());
+                                    if active_tools.iter().any(|a| a == *t) {
+                                        format!("{GREEN}●{RESET} {t}")
+                                    } else {
+                                        format!("{DIM}○ {t}{RESET}")
+                                    }
+                                })
+                                .collect();
+                            println!("  {BOLD}{group_name}:{RESET}");
+                            for ts in &tool_strs {
+                                println!("    {ts}");
+                            }
+                            println!();
+                        }
+                        // Ungrouped (plugin-provided tools not in TOOL_GROUPS)
+                        let ungrouped: Vec<String> = all_tools
+                            .iter()
+                            .filter(|t| !seen.contains(t.as_str()))
+                            .map(|t| {
+                                if active_tools.iter().any(|a| a == t) {
+                                    format!("{GREEN}●{RESET} {t}")
+                                } else {
+                                    format!("{DIM}○ {t}{RESET}")
+                                }
+                            })
+                            .collect();
+                        if !ungrouped.is_empty() {
+                            println!("  {BOLD}Plugin:{RESET}");
+                            for ts in &ungrouped {
+                                println!("    {ts}");
+                            }
+                            println!();
+                        }
+                        return Ok(());
+                    }
+
                     let arr = obj.get(&camel).and_then(|v| v.as_array());
                     match arr {
                         Some(arr) if !arr.is_empty() => {
@@ -215,9 +471,9 @@ pub async fn handle_plugin_config(
                 // ── Number ──
                 (ConfigFieldType::Number, Some("set")) => {
                     let val = value.ok_or_else(|| anyhow::anyhow!("Usage: {key} set <number>"))?;
-                    let n: f64 = val.parse().map_err(|_| {
-                        anyhow::anyhow!("Invalid number: {val}")
-                    })?;
+                    let n: f64 = val
+                        .parse()
+                        .map_err(|_| anyhow::anyhow!("Invalid number: {val}"))?;
                     obj.insert(
                         camel,
                         serde_json::Value::Number(
@@ -267,10 +523,7 @@ pub async fn handle_plugin_config(
     }
 }
 
-fn validate_value(
-    schema: &lukan_core::models::plugin::ConfigFieldSchema,
-    val: &str,
-) -> Result<()> {
+fn validate_value(schema: &lukan_core::models::plugin::ConfigFieldSchema, val: &str) -> Result<()> {
     if !schema.valid_values.is_empty() && !schema.valid_values.iter().any(|v| v == val) {
         anyhow::bail!(
             "Invalid value '{val}'.\nAllowed: {}",

@@ -6,7 +6,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use lukan_core::config::{LukanPaths, PluginOverrides, WhatsAppConfig, WA_DEFAULT_TOOLS};
+use lukan_core::config::{LukanPaths, PluginOverrides, WA_DEFAULT_TOOLS, WhatsAppConfig};
 use lukan_providers::SystemPrompt;
 
 const WA_FORMAT_PROMPT: &str = include_str!("../prompts/whatsapp-format.txt");
@@ -84,13 +84,53 @@ pub async fn load_wa_config_for_plugin(
     Ok(plugin_config_to_wa_config(&pc, overrides))
 }
 
-/// Build the WhatsApp-specific system prompt with directory restrictions.
-pub fn build_whatsapp_system_prompt(wa_config: &WhatsAppConfig) -> SystemPrompt {
-    let mut prompt = String::new();
-    prompt.push_str(BASE_PROMPT);
-    prompt.push_str("\n\n");
-    prompt.push_str(WA_FORMAT_PROMPT);
+/// Build the WhatsApp system prompt — structured like the CLI prompt
+/// (base + memory + plugin prompts + WA-specific sections + dynamic date).
+pub async fn build_whatsapp_system_prompt(
+    wa_config: &WhatsAppConfig,
+    timezone: Option<&str>,
+) -> SystemPrompt {
+    let mut cached = vec![BASE_PROMPT.to_string()];
 
+    // Global memory
+    let global_path = LukanPaths::global_memory_file();
+    if let Ok(memory) = tokio::fs::read_to_string(&global_path).await {
+        let trimmed = memory.trim();
+        if !trimmed.is_empty() {
+            cached.push(format!("## Global Memory\n\n{trimmed}"));
+        }
+    }
+
+    // Project memory (if active)
+    let active_path = LukanPaths::project_memory_active_file();
+    if tokio::fs::metadata(&active_path).await.is_ok() {
+        let project_path = LukanPaths::project_memory_file();
+        if let Ok(memory) = tokio::fs::read_to_string(&project_path).await {
+            let trimmed = memory.trim();
+            if !trimmed.is_empty() {
+                cached.push(format!("## Project Memory\n\n{trimmed}"));
+            }
+        }
+    }
+
+    // Plugin prompts (prompt.txt from all installed plugins)
+    let plugins_dir = LukanPaths::plugins_dir();
+    if let Ok(mut entries) = tokio::fs::read_dir(&plugins_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let prompt_path = entry.path().join("prompt.txt");
+            if let Ok(plugin_prompt) = tokio::fs::read_to_string(&prompt_path).await {
+                let trimmed = plugin_prompt.trim();
+                if !trimmed.is_empty() {
+                    cached.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    // WhatsApp-specific: formatting guidelines
+    cached.push(WA_FORMAT_PROMPT.to_string());
+
+    // WhatsApp-specific: directory restrictions
     let tools: Vec<String> = wa_config
         .tools
         .clone()
@@ -103,18 +143,25 @@ pub fn build_whatsapp_system_prompt(wa_config: &WhatsAppConfig) -> SystemPrompt 
     if has_dangerous && !wa_config.skip_dir_restrictions.unwrap_or(false) {
         let dirs = wa_config.allowed_dirs.clone().unwrap_or_default();
         if dirs.is_empty() {
-            prompt.push_str("\n\n");
-            prompt.push_str(WA_DIR_NONE_PROMPT);
+            cached.push(WA_DIR_NONE_PROMPT.to_string());
         } else {
-            prompt.push_str("\n\n");
             let dir_list = dirs
                 .iter()
                 .map(|d| format!("- `{d}`"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            prompt.push_str(&WA_DIR_ALLOWED_PROMPT.replace("{{ALLOWED_DIRS}}", &dir_list));
+            cached.push(WA_DIR_ALLOWED_PROMPT.replace("{{ALLOWED_DIRS}}", &dir_list));
         }
     }
 
-    SystemPrompt::Text(prompt)
+    // Dynamic: current date/time
+    let now = chrono::Utc::now();
+    let tz_name = timezone.unwrap_or("UTC");
+    let dynamic = format!(
+        "Current date: {} ({}). Use this for any time-relative operations.",
+        now.format("%Y-%m-%d %H:%M UTC"),
+        tz_name
+    );
+
+    SystemPrompt::Structured { cached, dynamic }
 }

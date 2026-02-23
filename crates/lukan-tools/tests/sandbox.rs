@@ -1,8 +1,8 @@
 //! Integration tests for the bwrap sandbox module.
 
 use lukan_tools::sandbox::{
-    build_bwrap_args, diagnose_bwrap, has_apparmor_profile, is_bwrap_available,
-    resolve_sensitive_files, BwrapConfig,
+    BwrapConfig, build_bwrap_args, diagnose_bwrap, has_apparmor_profile, is_bwrap_available,
+    resolve_sensitive_files,
 };
 use std::fs;
 
@@ -87,10 +87,7 @@ fn test_build_bwrap_args_skips_nonexistent_dirs() {
 
     // Count --bind flags (should be 0 since the dir doesn't exist)
     let bind_count = args.iter().filter(|a| a.as_str() == "--bind").count();
-    assert_eq!(
-        bind_count, 0,
-        "Should not have --bind for nonexistent dirs"
-    );
+    assert_eq!(bind_count, 0, "Should not have --bind for nonexistent dirs");
 }
 
 #[test]
@@ -193,7 +190,10 @@ fn test_resolve_sensitive_files_deduplicates_dirs() {
 #[test]
 fn test_diagnose_bwrap_returns_nonempty_string() {
     let msg = diagnose_bwrap();
-    assert!(!msg.is_empty(), "Diagnosis should return a non-empty string");
+    assert!(
+        !msg.is_empty(),
+        "Diagnosis should return a non-empty string"
+    );
 }
 
 #[test]

@@ -6,11 +6,7 @@ const INSTALL_URL: &str = "https://get.lukan.ai/install.sh";
 pub async fn run_update() -> Result<()> {
     println!("\n  \x1b[36mChecking for updates...\x1b[0m\n");
 
-    let shell = if which_exists("bash") {
-        "bash"
-    } else {
-        "sh"
-    };
+    let shell = if which_exists("bash") { "bash" } else { "sh" };
 
     // Build the pipe command: curl -fsSL <url> | bash (or wget equivalent)
     let script = if which_exists("curl") {

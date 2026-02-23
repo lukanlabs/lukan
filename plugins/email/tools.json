@@ -1,0 +1,133 @@
+[
+  {
+    "name": "EmailList",
+    "description": "List emails from a mailbox folder. Returns sender, subject, date, and UID for each email. Use unseen=true to see only unread emails.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "folder": {
+          "type": "string",
+          "description": "Mailbox folder to list (default: INBOX)"
+        },
+        "unseen": {
+          "type": "boolean",
+          "description": "Only show unread emails (default: false)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum number of emails to return (default: 20)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "EmailRead",
+    "description": "Read the full content of an email by its UID. Returns headers and body text.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "number",
+          "description": "Email UID to read"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Mailbox folder (default: INBOX)"
+        }
+      },
+      "required": ["uid"]
+    }
+  },
+  {
+    "name": "EmailSend",
+    "description": "Send a new email via SMTP. Supports file attachments.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "string",
+          "description": "Recipient email address"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Email subject line"
+        },
+        "body": {
+          "type": "string",
+          "description": "Email body text"
+        },
+        "attachments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Absolute file paths to attach"
+        }
+      },
+      "required": ["to", "subject", "body"]
+    }
+  },
+  {
+    "name": "EmailReply",
+    "description": "Reply to an email by UID. Sends via SMTP with threading headers (In-Reply-To, References). Supports file attachments.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "number",
+          "description": "UID of the email to reply to"
+        },
+        "body": {
+          "type": "string",
+          "description": "Reply body text"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Mailbox folder of the original email (default: INBOX)"
+        },
+        "attachments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Absolute file paths to attach"
+        }
+      },
+      "required": ["uid", "body"]
+    }
+  },
+  {
+    "name": "EmailFolders",
+    "description": "List available IMAP mailbox folders. Use this to discover folder names (e.g. '[Gmail]/Sent Mail') before listing emails in a non-INBOX folder.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "EmailConfirm",
+    "description": "Confirm and send a pending email draft by its ID. Use after the user approves an email preview from EmailSend or EmailReply.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number",
+          "description": "Pending email draft ID"
+        }
+      },
+      "required": ["id"]
+    }
+  },
+  {
+    "name": "EmailCancel",
+    "description": "Cancel and discard a pending email draft by its ID.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number",
+          "description": "Pending email draft ID"
+        }
+      },
+      "required": ["id"]
+    }
+  }
+]

@@ -71,8 +71,7 @@ pub async fn fetch_registry() -> Result<HashMap<String, RegistryPlugin>> {
     }
 
     let body = resp.text().await?;
-    let registry: RegistryFile =
-        toml::from_str(&body).context("Failed to parse registry.toml")?;
+    let registry: RegistryFile = toml::from_str(&body).context("Failed to parse registry.toml")?;
 
     Ok(registry.plugins)
 }
@@ -91,8 +90,7 @@ pub async fn list_remote() -> Result<Vec<RemotePluginInfo>> {
     for name in names {
         let p = &plugins[&name];
         // Available if: has "all" asset, or has asset for current platform
-        let available =
-            p.assets.contains_key("all") || p.assets.contains_key(&platform);
+        let available = p.assets.contains_key("all") || p.assets.contains_key(&platform);
         let installed = installed_dir.join(&name).join("plugin.toml").exists();
 
         infos.push(RemotePluginInfo {
@@ -167,19 +165,14 @@ pub async fn install_remote(name: &str, alias_override: Option<&str>) -> Result<
         .with_context(|| format!("Failed to download from {}", asset.url))?;
 
     if !resp.status().is_success() {
-        bail!(
-            "Download failed: HTTP {} from {}",
-            resp.status(),
-            asset.url
-        );
+        bail!("Download failed: HTTP {} from {}", resp.status(), asset.url);
     }
 
     let bytes = resp.bytes().await?;
     println!("Downloaded {} bytes", bytes.len());
 
     // Extract to temp dir
-    let tmp_dir =
-        std::env::temp_dir().join(format!("lukan-plugin-{name}-{}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!("lukan-plugin-{name}-{}", std::process::id()));
     tokio::fs::create_dir_all(&tmp_dir).await?;
 
     let tar_path = tmp_dir.join("archive.tar.gz");

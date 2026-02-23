@@ -149,7 +149,11 @@ impl Tool for EditFileTool {
                     .get("replace_all")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                edits.push(SingleEdit { old_text, new_text, replace_all });
+                edits.push(SingleEdit {
+                    old_text,
+                    new_text,
+                    replace_all,
+                });
             }
 
             // Apply sequentially to an in-memory copy — atomic: all-or-nothing
@@ -168,17 +172,29 @@ impl Tool for EditFileTool {
             let old_text = input
                 .get("old_text")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("Missing required field: old_text (or provide edits array)"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Missing required field: old_text (or provide edits array)")
+                })?;
             let new_text = input
                 .get("new_text")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("Missing required field: new_text (or provide edits array)"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Missing required field: new_text (or provide edits array)")
+                })?;
             let replace_all = input
                 .get("replace_all")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            match apply_edit(&content, &SingleEdit { old_text, new_text, replace_all }, file_path_str) {
+            match apply_edit(
+                &content,
+                &SingleEdit {
+                    old_text,
+                    new_text,
+                    replace_all,
+                },
+                file_path_str,
+            ) {
                 Ok(result) => result,
                 Err(msg) => return Ok(ToolResult::error(msg)),
             }

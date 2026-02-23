@@ -58,15 +58,16 @@ impl PluginProcess {
             cmd.env(k, v);
         }
 
-        let child = cmd
-            .spawn()
-            .with_context(|| format!("Failed to spawn plugin '{}': {} {:?}", self.name, run.command, run.args))?;
+        let child = cmd.spawn().with_context(|| {
+            format!(
+                "Failed to spawn plugin '{}': {} {:?}",
+                self.name, run.command, run.args
+            )
+        })?;
 
-        // Save PID
-        if let Some(pid) = child.id() {
-            let pid_path = LukanPaths::plugin_pid(&self.name);
-            tokio::fs::write(&pid_path, pid.to_string()).await.ok();
-        }
+        // NOTE: Do NOT overwrite plugin.pid here — it contains the daemon PID
+        // written by daemon_spawn(). The daemon is the process that should be
+        // killed on `stop`/`restart`; it will take the child process down with it.
 
         info!(plugin = %self.name, "Plugin process spawned");
         self.child = Some(child);
@@ -89,7 +90,9 @@ impl PluginProcess {
     /// Returns channels for communicating with the plugin:
     /// - `plugin_rx`: receives PluginMessages from the plugin
     /// - `host_tx`: sends HostMessages to the plugin
-    pub fn run_io_loop(&mut self) -> Result<(mpsc::Receiver<PluginMessage>, mpsc::Sender<HostMessage>)> {
+    pub fn run_io_loop(
+        &mut self,
+    ) -> Result<(mpsc::Receiver<PluginMessage>, mpsc::Sender<HostMessage>)> {
         let child = self.child.as_mut().context("Plugin process not running")?;
 
         let stdout = child.stdout.take().context("Plugin stdout not available")?;
@@ -159,12 +162,7 @@ impl PluginProcess {
             }
 
             // Wait up to 5 seconds for graceful exit
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                child.wait(),
-            )
-            .await
-            {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
                 Ok(Ok(status)) => {
                     info!(plugin = %self.name, ?status, "Plugin exited gracefully");
                 }

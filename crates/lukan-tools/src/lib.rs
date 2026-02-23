@@ -1,11 +1,11 @@
-pub mod bg_processes;
-pub mod plugin_tools;
-pub mod sandbox;
 mod bash;
+pub mod bg_processes;
 mod edit_file;
 mod glob_tool;
 mod grep;
+pub mod plugin_tools;
 mod read_file;
+pub mod sandbox;
 mod web_fetch;
 mod write_file;
 
@@ -160,6 +160,15 @@ pub(crate) fn format_stats(added: usize, removed: usize) -> String {
         (0, r) => format!("Removed {r} lines"),
         (a, r) => format!("Added {a} lines, removed {r} lines"),
     }
+}
+
+/// List all available tool names (core + plugin-provided).
+/// Lightweight: only reads tool names without full initialization.
+pub fn all_tool_names() -> Vec<String> {
+    let registry = create_default_registry();
+    let mut names: Vec<String> = registry.tools.keys().cloned().collect();
+    names.sort();
+    names
 }
 
 /// Create a registry with all default tools

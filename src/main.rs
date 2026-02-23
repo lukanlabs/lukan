@@ -13,8 +13,8 @@ mod plugin_config;
 mod plugin_exec;
 mod sandbox_cmd;
 mod setup;
-mod whatsapp_compat;
 mod update;
+mod whatsapp_compat;
 mod worker;
 
 #[derive(Parser)]
@@ -226,14 +226,57 @@ async fn dispatch_alias_command(args: &[String]) -> Result<()> {
 
     // No subcommand → status
     if sub_args.is_empty() {
-        return plugin::handle_plugin_command(plugin::PluginCommands::Status {
-            name: plugin_name,
-        })
-        .await;
+        return plugin::handle_plugin_command(plugin::PluginCommands::Status { name: plugin_name })
+            .await;
     }
 
     let subcmd = sub_args[0].as_str();
     let rest = &sub_args[1..];
+
+    // ── Help ──
+    if subcmd == "--help" || subcmd == "-h" || subcmd == "help" {
+        let manifest = PluginManager::load_manifest(&plugin_name).await?;
+
+        println!("\x1b[1mUsage:\x1b[0m lukan {alias} <command>\n");
+        println!("\x1b[1mLifecycle:\x1b[0m");
+        println!("  start     Start the plugin daemon");
+        println!("  stop      Stop the plugin daemon");
+        println!("  restart   Restart the plugin daemon");
+        println!("  status    Show plugin status");
+        println!("  logs      Show plugin logs (--follow, --lines N)");
+
+        if !manifest.commands.is_empty() {
+            println!("\n\x1b[1mCommands:\x1b[0m");
+            let mut cmds: Vec<_> = manifest.commands.iter().collect();
+            cmds.sort_by_key(|(k, _)| *k);
+            for (name, def) in cmds {
+                let desc = &def.description;
+                println!("  {name:<18} {desc}");
+            }
+        }
+
+        if !manifest.config.is_empty() {
+            println!("\n\x1b[1mConfig:\x1b[0m");
+            let mut keys: Vec<_> = manifest.config.iter().collect();
+            keys.sort_by_key(|(k, _)| *k);
+            for (key, schema) in keys {
+                let type_label = match schema.field_type {
+                    lukan_core::models::plugin::ConfigFieldType::String => "string",
+                    lukan_core::models::plugin::ConfigFieldType::StringArray => "string[]",
+                    lukan_core::models::plugin::ConfigFieldType::Number => "number",
+                    lukan_core::models::plugin::ConfigFieldType::Bool => "bool",
+                };
+                let desc = if schema.description.is_empty() {
+                    String::new()
+                } else {
+                    format!("  {}", schema.description)
+                };
+                println!("  {key:<18} \x1b[2m({type_label}){desc}\x1b[0m");
+            }
+        }
+
+        return Ok(());
+    }
 
     match subcmd {
         // ── Lifecycle commands ──
@@ -247,10 +290,7 @@ async fn dispatch_alias_command(args: &[String]) -> Result<()> {
             .await
         }
         "stop" => {
-            plugin::handle_plugin_command(plugin::PluginCommands::Stop {
-                name: plugin_name,
-            })
-            .await
+            plugin::handle_plugin_command(plugin::PluginCommands::Stop { name: plugin_name }).await
         }
         "restart" => {
             // Stop then start
@@ -269,10 +309,8 @@ async fn dispatch_alias_command(args: &[String]) -> Result<()> {
             .await
         }
         "status" => {
-            plugin::handle_plugin_command(plugin::PluginCommands::Status {
-                name: plugin_name,
-            })
-            .await
+            plugin::handle_plugin_command(plugin::PluginCommands::Status { name: plugin_name })
+                .await
         }
         "logs" => {
             let (follow, lines) = parse_logs_flags(rest);
@@ -297,12 +335,15 @@ async fn dispatch_alias_command(args: &[String]) -> Result<()> {
             else if manifest.config.contains_key(other) {
                 let action = rest.first().map(|s| s.as_str());
                 let value = rest.get(1).map(|s| s.as_str());
-                plugin_config::handle_plugin_config(&plugin_name, Some(other), action, value)
-                    .await
+                plugin_config::handle_plugin_config(&plugin_name, Some(other), action, value).await
             } else {
                 // Unknown subcommand
                 let mut available = Vec::new();
-                available.extend(["start", "stop", "restart", "status", "logs"].iter().map(|s| s.to_string()));
+                available.extend(
+                    ["start", "stop", "restart", "status", "logs"]
+                        .iter()
+                        .map(|s| s.to_string()),
+                );
                 for key in manifest.config.keys() {
                     available.push(key.clone());
                 }

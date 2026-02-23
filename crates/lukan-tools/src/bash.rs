@@ -231,9 +231,7 @@ impl Tool for BashTool {
                 }
                 RaceResult::Finished(Err(e)) => {
                     let _ = tokio::fs::remove_file(&log_path).await;
-                    Ok(ToolResult::error(format!(
-                        "Failed to execute command: {e}"
-                    )))
+                    Ok(ToolResult::error(format!("Failed to execute command: {e}")))
                 }
                 RaceResult::Timeout => {
                     let _ = child.kill().await;
@@ -252,11 +250,7 @@ impl Tool for BashTool {
                         });
 
                         let log_display = log_path.display().to_string();
-                        bg_processes::add_bg_process(
-                            child_pid,
-                            command_str,
-                            log_path,
-                        );
+                        bg_processes::add_bg_process(child_pid, command_str, log_path);
 
                         Ok(ToolResult::success(format!(
                             "The user pressed Alt+B to send this command to background. \
@@ -286,9 +280,7 @@ impl Tool for BashTool {
 
         match result {
             Ok(Ok(output)) => build_foreground_result(output),
-            Ok(Err(e)) => Ok(ToolResult::error(format!(
-                "Failed to execute command: {e}"
-            ))),
+            Ok(Err(e)) => Ok(ToolResult::error(format!("Failed to execute command: {e}"))),
             Err(_) => Ok(ToolResult::error(format!(
                 "Command timed out after {timeout_ms}ms"
             ))),
@@ -355,9 +347,7 @@ impl BashTool {
         let pid = match child.id() {
             Some(pid) => pid,
             None => {
-                return Ok(ToolResult::error(
-                    "Failed to get PID of spawned process.",
-                ));
+                return Ok(ToolResult::error("Failed to get PID of spawned process."));
             }
         };
 

@@ -1,0 +1,99 @@
+[plugin]
+name = "email"
+version = "0.1.0"
+description = "Email channel and tools via IMAP/SMTP"
+plugin_type = "channel"
+protocol_version = 1
+alias = "mail"
+
+[run]
+command = "node"
+args = ["bridge.js"]
+
+# ── SMTP config ──
+
+[config.smtp_host]
+type = "string"
+description = "SMTP server hostname"
+
+[config.smtp_port]
+type = "number"
+description = "SMTP server port"
+
+[config.smtp_secure]
+type = "bool"
+description = "Use TLS for SMTP"
+
+[config.smtp_user]
+type = "string"
+description = "SMTP username (email address)"
+
+[config.smtp_pass]
+type = "string"
+description = "SMTP password or app password"
+
+# ── IMAP config ──
+
+[config.imap_host]
+type = "string"
+description = "IMAP server hostname"
+
+[config.imap_port]
+type = "number"
+description = "IMAP server port"
+
+[config.imap_secure]
+type = "bool"
+description = "Use TLS for IMAP"
+
+[config.imap_user]
+type = "string"
+description = "IMAP username (email address)"
+
+[config.imap_pass]
+type = "string"
+description = "IMAP password or app password"
+
+# ── Channel config ──
+
+[config.whitelist]
+type = "string[]"
+description = "Allowed sender email addresses"
+
+[config.prefix]
+type = "string"
+description = "Subject prefix filter (e.g. '[agent]')"
+
+[config.tools]
+type = "string[]"
+description = "Agent tools available in email sessions"
+valid_values = [
+  "ReadFile", "WriteFile", "EditFile",
+  "Grep", "Glob",
+  "Bash",
+  "WebFetch", "WebSearch",
+  "EmailList", "EmailRead", "EmailSend", "EmailReply", "EmailFolders",
+  "EmailConfirm", "EmailCancel",
+  "SheetsRead", "SheetsWrite", "SheetsCreate",
+  "CalendarList", "CalendarCreate", "CalendarUpdate",
+  "DocsRead", "DocsCreate", "DocsUpdate",
+  "DriveList", "DriveDownload",
+]
+
+[config.enabled]
+type = "bool"
+description = "Enable/disable email channel"
+
+# ── Commands ──
+
+[commands.setup]
+description = "Interactive Gmail quick-setup"
+handler = "setup"
+
+[commands.test-smtp]
+description = "Test SMTP connection"
+handler = "test-smtp"
+
+[commands.test-imap]
+description = "Test IMAP connection and show message count"
+handler = "test-imap"

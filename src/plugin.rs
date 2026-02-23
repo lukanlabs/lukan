@@ -3,7 +3,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Subcommand;
 
-use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, ResolvedConfig, WA_DEFAULT_TOOLS};
+use lukan_core::config::{
+    ConfigManager, CredentialsManager, LukanPaths, ResolvedConfig, TOOL_GROUPS, WA_DEFAULT_TOOLS,
+};
 use lukan_plugins::{PluginChannel, PluginManager};
 use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::create_default_registry;
@@ -109,7 +111,11 @@ pub enum PluginCommands {
 pub async fn handle_plugin_command(command: PluginCommands) -> Result<()> {
     match command {
         PluginCommands::List => plugin_list().await,
-        PluginCommands::Install { source, name, alias } => {
+        PluginCommands::Install {
+            source,
+            name,
+            alias,
+        } => {
             if let Some(ref src) = source {
                 plugin_install(src, name.as_deref(), alias.as_deref()).await
             } else {
@@ -396,15 +402,22 @@ async fn daemon_spawn(
         args.push(m.clone());
     }
 
-    // Spawn detached
-    let child = std::process::Command::new(&self_exe)
-        .args(&args)
+    // Spawn detached in its own process group (setsid) so that
+    // `kill(-pid, SIGTERM)` in plugin_stop kills daemon + all children.
+    let mut cmd = std::process::Command::new(&self_exe);
+    cmd.args(&args)
         .env("LUKAN_DAEMON", "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(log_file))
-        .stderr(std::process::Stdio::from(log_file2))
-        .spawn()
-        .context("Failed to spawn daemon process")?;
+        .stderr(std::process::Stdio::from(log_file2));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0); // setsid — daemon becomes its own process group leader
+    }
+
+    let child = cmd.spawn().context("Failed to spawn daemon process")?;
 
     let pid = child.id();
 
@@ -414,9 +427,7 @@ async fn daemon_spawn(
     // Detach: drop the child handle without waiting
     std::mem::forget(child);
 
-    println!(
-        "{GREEN}✓{RESET} Plugin '{CYAN}{name}{RESET}' daemon started (PID {pid})"
-    );
+    println!("{GREEN}✓{RESET} Plugin '{CYAN}{name}{RESET}' daemon started (PID {pid})");
     println!("{DIM}Logs: {}{RESET}", log_path.display());
     println!("{DIM}Stop: lukan plugin stop {name}{RESET}");
 
@@ -441,16 +452,19 @@ async fn plugin_start_foreground(
         .cloned();
 
     // Apply provider override: CLI > plugin config override > global
-    if let Some(p) = provider_override
-        .or_else(|| plugin_overrides.as_ref().and_then(|o| o.provider.as_ref()).map(|p| p.to_string()))
-    {
+    if let Some(p) = provider_override.or_else(|| {
+        plugin_overrides
+            .as_ref()
+            .and_then(|o| o.provider.as_ref())
+            .map(|p| p.to_string())
+    }) {
         config.provider = serde_json::from_value(serde_json::Value::String(p))
             .context("Invalid provider name")?;
     }
 
     // Apply model override: CLI > plugin config override > global
-    if let Some(m) = model_override
-        .or_else(|| plugin_overrides.as_ref().and_then(|o| o.model.clone()))
+    if let Some(m) =
+        model_override.or_else(|| plugin_overrides.as_ref().and_then(|o| o.model.clone()))
     {
         config.model = Some(m);
     }
@@ -468,7 +482,8 @@ async fn plugin_start_foreground(
 
     if is_whatsapp {
         // Load WhatsApp plugin config for tool list
-        let wa_config = whatsapp_compat::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
+        let wa_config =
+            whatsapp_compat::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
         let tool_names: Vec<String> = wa_config
             .tools
             .clone()
@@ -480,13 +495,26 @@ async fn plugin_start_foreground(
         registry.retain(&refs);
     }
 
+    // Collect the active tool names for hot-reload defaults
+    let active_tool_names: Vec<String> = registry
+        .definitions()
+        .iter()
+        .map(|d| d.name.clone())
+        .collect();
+
     // Max response length
     let max_response_len = plugin_overrides.as_ref().and_then(|o| o.max_response_len);
 
-    // Build system prompt — WhatsApp gets its specialized prompt with dir restrictions
+    // Build system prompt — WhatsApp adds formatting/dir restrictions on top of the shared base
+    let tz_name = resolved
+        .config
+        .timezone
+        .clone()
+        .unwrap_or_else(|| "UTC".to_string());
     let system_prompt = if is_whatsapp {
-        let wa_config = whatsapp_compat::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
-        whatsapp_compat::build_whatsapp_system_prompt(&wa_config)
+        let wa_config =
+            whatsapp_compat::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
+        whatsapp_compat::build_whatsapp_system_prompt(&wa_config, Some(&tz_name)).await
     } else {
         let mut cached = vec![BASE_PROMPT.to_string()];
         // Load prompt.txt from installed plugins that provide tools
@@ -503,7 +531,6 @@ async fn plugin_start_foreground(
             }
         }
         let now = chrono::Utc::now();
-        let tz_name = resolved.config.timezone.clone().unwrap_or_else(|| "UTC".to_string());
         let dynamic = format!(
             "Current date: {} ({}). Use this for any time-relative operations.",
             now.format("%Y-%m-%d %H:%M UTC"),
@@ -542,8 +569,8 @@ async fn plugin_start_foreground(
 
     // Run channel loop (blocks until plugin disconnects or error)
     let log_path = LukanPaths::plugin_log(name);
-    let channel = PluginChannel::new(name, max_response_len)
-        .with_log_file(log_path);
+    let mut channel =
+        PluginChannel::new(name, max_response_len, active_tool_names).with_log_file(log_path);
     channel.run(&mut agent, plugin_rx, host_tx).await?;
 
     // Cleanup
@@ -592,22 +619,25 @@ async fn plugin_status(name: &str) -> Result<()> {
 
     // Check daemon status via PID
     let pid_path = LukanPaths::plugin_pid(name);
-    let (daemon_running, daemon_pid) = if let Ok(pid_str) = tokio::fs::read_to_string(&pid_path).await {
-        if let Ok(pid) = pid_str.trim().parse::<i32>() {
-            #[cfg(unix)]
-            let alive = unsafe { libc::kill(pid, 0) == 0 };
-            #[cfg(not(unix))]
-            let alive = false;
-            (alive, Some(pid))
+    let (daemon_running, daemon_pid) =
+        if let Ok(pid_str) = tokio::fs::read_to_string(&pid_path).await {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                #[cfg(unix)]
+                let alive = unsafe { libc::kill(pid, 0) == 0 };
+                #[cfg(not(unix))]
+                let alive = false;
+                (alive, Some(pid))
+            } else {
+                (false, None)
+            }
         } else {
             (false, None)
-        }
-    } else {
-        (false, None)
-    };
+        };
 
     // Load plugin config values
-    let config = plugin_config::load_plugin_config(name).await.unwrap_or_default();
+    let config = plugin_config::load_plugin_config(name)
+        .await
+        .unwrap_or_default();
     let config_obj = config.as_object();
 
     // Load global config for provider/model info
@@ -658,10 +688,75 @@ async fn plugin_status(name: &str) -> Result<()> {
             let camel = plugin_config::snake_to_camel(key);
             let current = config_obj.and_then(|obj| obj.get(&camel));
 
+            // Grouped display for "tools" key — discover all tools dynamically
+            if key == "tools" {
+                let all_tools = lukan_tools::all_tool_names();
+                let active_tools: Vec<String> = current
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_else(|| {
+                        WA_DEFAULT_TOOLS
+                            .iter()
+                            .filter(|t| all_tools.iter().any(|a| a == **t))
+                            .map(|s| s.to_string())
+                            .collect()
+                    });
+
+                println!("  {BOLD}Tools:{RESET}");
+                let mut seen = std::collections::HashSet::new();
+                for (group_name, group_tools) in TOOL_GROUPS {
+                    if !group_tools
+                        .iter()
+                        .any(|t| all_tools.iter().any(|a| a == *t))
+                    {
+                        continue;
+                    }
+                    let tool_strs: Vec<String> = group_tools
+                        .iter()
+                        .filter(|t| all_tools.iter().any(|a| a == **t))
+                        .map(|t| {
+                            seen.insert(t.to_string());
+                            if active_tools.iter().any(|a| a == *t) {
+                                format!("{GREEN}{t}{RESET}")
+                            } else {
+                                format!("{DIM}{t}{RESET}")
+                            }
+                        })
+                        .collect();
+                    println!(
+                        "    {:<18} {}",
+                        format!("{group_name}:"),
+                        tool_strs.join(", ")
+                    );
+                }
+                // Plugin-provided tools not in TOOL_GROUPS
+                let ungrouped: Vec<String> = all_tools
+                    .iter()
+                    .filter(|t| !seen.contains(t.as_str()))
+                    .map(|t| {
+                        if active_tools.iter().any(|a| a == t) {
+                            format!("{GREEN}{t}{RESET}")
+                        } else {
+                            format!("{DIM}{t}{RESET}")
+                        }
+                    })
+                    .collect();
+                if !ungrouped.is_empty() {
+                    println!("    {:<18} {}", "Plugin:", ungrouped.join(", "));
+                }
+                continue;
+            }
+
             let val_str = match current {
                 Some(v) => plugin_config::format_value(v),
                 None => match &schema.field_type {
-                    lukan_core::models::plugin::ConfigFieldType::StringArray => format!("{DIM}(empty){RESET}"),
+                    lukan_core::models::plugin::ConfigFieldType::StringArray => {
+                        format!("{DIM}(empty){RESET}")
+                    }
                     lukan_core::models::plugin::ConfigFieldType::Bool => format!("{DIM}off{RESET}"),
                     _ => format!("{DIM}(not set){RESET}"),
                 },
@@ -692,7 +787,10 @@ async fn plugin_status(name: &str) -> Result<()> {
         let alias = manifest.plugin.alias.as_deref().unwrap_or(name);
         println!(
             "\n{DIM}  Commands: {}{RESET}",
-            cmds.iter().map(|c| format!("lukan {alias} {c}")).collect::<Vec<_>>().join(", ")
+            cmds.iter()
+                .map(|c| format!("lukan {alias} {c}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 

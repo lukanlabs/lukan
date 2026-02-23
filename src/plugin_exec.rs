@@ -19,7 +19,11 @@ pub async fn handle_plugin_exec(name: &str, command: &str, args: &[String]) -> R
         } else {
             anyhow::anyhow!(
                 "Unknown command '{command}' for plugin '{name}'.\nAvailable: {}",
-                available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                available
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
         }
     })?;
@@ -42,7 +46,10 @@ pub async fn handle_plugin_exec(name: &str, command: &str, args: &[String]) -> R
         .map(|r| r.command.as_str())
         .unwrap_or("node");
 
-    let mut cmd_args = vec![cli_script.to_string_lossy().to_string(), cmd_def.handler.clone()];
+    let mut cmd_args = vec![
+        cli_script.to_string_lossy().to_string(),
+        cmd_def.handler.clone(),
+    ];
     cmd_args.extend_from_slice(args);
 
     let status = std::process::Command::new(run_command)

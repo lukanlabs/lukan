@@ -33,7 +33,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 /// Serve the embedded React SPA
 async fn serve_embedded_html() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"))],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/html; charset=utf-8"),
+        )],
         Html(EMBEDDED_HTML),
     )
 }
@@ -43,10 +46,7 @@ async fn auth_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let password = body
-        .get("password")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let password = body.get("password").and_then(|v| v.as_str()).unwrap_or("");
 
     match state.validate_password(password) {
         Some(token) => Json(serde_json::json!({ "token": token })).into_response(),

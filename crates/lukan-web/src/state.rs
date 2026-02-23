@@ -38,14 +38,7 @@ impl AppState {
             .collect::<String>();
 
         let web_password = resolved.config.web_password.clone();
-        let token_ttl_ms = resolved
-            .config
-            .web_token_ttl
-            .unwrap_or(24)
-            .max(1)
-            * 60
-            * 60
-            * 1000;
+        let token_ttl_ms = resolved.config.web_token_ttl.unwrap_or(24).max(1) * 60 * 60 * 1000;
 
         let provider_name = resolved.config.provider.to_string();
         let model_name = resolved.effective_model();

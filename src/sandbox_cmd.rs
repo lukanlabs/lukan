@@ -56,9 +56,7 @@ async fn sandbox_status() -> Result<()> {
         "default"
     };
 
-    println!(
-        "  Config source:     {DIM}{config_source}{RESET}"
-    );
+    println!("  Config source:     {DIM}{config_source}{RESET}");
     println!(
         "  os_sandbox:        {}",
         if os_sandbox_enabled {

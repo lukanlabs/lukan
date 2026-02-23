@@ -11,7 +11,6 @@ use syntect::easy::HighlightLines;
 
 use super::markdown::{render_markdown, syntax_set, theme};
 
-
 /// Sanitize text for terminal display.
 ///
 /// Replaces tab characters with spaces (terminals expand `\t` to variable-width
@@ -109,10 +108,7 @@ impl ChatMessage {
 /// This is a standalone function used both by `ChatWidget::render` and by
 /// `commit_overflow` in `app.rs` (to push old messages into the terminal
 /// scrollback via `insert_before`).
-pub fn build_message_lines(
-    messages: &[ChatMessage],
-    streaming_text: &str,
-) -> Vec<Line<'static>> {
+pub fn build_message_lines(messages: &[ChatMessage], streaming_text: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     for msg in messages {
@@ -248,10 +244,7 @@ pub struct ChatWidget<'a> {
 }
 
 impl<'a> ChatWidget<'a> {
-    pub fn new(
-        messages: &'a [ChatMessage],
-        streaming_text: &'a str,
-    ) -> Self {
+    pub fn new(messages: &'a [ChatMessage], streaming_text: &'a str) -> Self {
         Self {
             messages,
             streaming_text,
@@ -266,10 +259,7 @@ impl Widget for ChatWidget<'_> {
         // previous frames bleed through as ghost text.
         Clear.render(area, buf);
 
-        let lines = build_message_lines(
-            self.messages,
-            self.streaming_text,
-        );
+        let lines = build_message_lines(self.messages, self.streaming_text);
 
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
 
@@ -334,7 +324,10 @@ fn inline_changed_spans(code: &str, counterpart: &str, bg: Color, hl: Color) -> 
 
         if is_changed != in_highlight && !buf.is_empty() {
             let b = if in_highlight { hl } else { bg };
-            spans.push(Span::styled(buf.clone(), Style::default().fg(Color::White).bg(b)));
+            spans.push(Span::styled(
+                buf.clone(),
+                Style::default().fg(Color::White).bg(b),
+            ));
             buf.clear();
         }
         in_highlight = is_changed;
@@ -593,9 +586,17 @@ fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> Color {
     let (r, g, b) = (r as i16, g as i16, b as i16);
 
     if r >= g && r >= b {
-        if g >= b { Color::LightYellow } else { Color::LightMagenta }
+        if g >= b {
+            Color::LightYellow
+        } else {
+            Color::LightMagenta
+        }
     } else if g >= r && g >= b {
-        if r >= b { Color::LightYellow } else { Color::LightGreen }
+        if r >= b {
+            Color::LightYellow
+        } else {
+            Color::LightGreen
+        }
     } else if g >= r {
         Color::LightCyan
     } else {

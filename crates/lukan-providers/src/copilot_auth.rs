@@ -73,7 +73,10 @@ pub async fn auth_copilot_device_flow(client: &Client, client_id: &str) -> Resul
     println!("\n\x1b[1m\x1b[33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m");
     println!("\x1b[1mPlease authorize lukan:\x1b[0m\n");
     println!("  1. Visit: \x1b[36m{}\x1b[0m", device.verification_uri);
-    println!("  2. Enter code: \x1b[32m\x1b[1m{}\x1b[0m\n", device.user_code);
+    println!(
+        "  2. Enter code: \x1b[32m\x1b[1m{}\x1b[0m\n",
+        device.user_code
+    );
     println!("\x1b[2mWaiting for authorization...\x1b[0m");
     println!("\x1b[1m\x1b[33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m\n");
 
@@ -95,10 +98,7 @@ pub async fn auth_copilot_device_flow(client: &Client, client_id: &str) -> Resul
             .form(&[
                 ("client_id", client_id),
                 ("device_code", &*device.device_code),
-                (
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:device_code",
-                ),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ])
             .send()
             .await;

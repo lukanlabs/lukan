@@ -160,8 +160,7 @@ impl MdRenderer {
             }
             Tag::BlockQuote(_) => {
                 self.flush_line();
-                self.style_stack
-                    .push(Style::default().fg(Color::Green));
+                self.style_stack.push(Style::default().fg(Color::Green));
                 self.indent_stack.push(IndentCtx {
                     prefix: "│ ".to_string(),
                     marker: None,
@@ -403,10 +402,7 @@ impl MdRenderer {
                 };
 
                 if i > 0 {
-                    spans.push(Span::styled(
-                        " │ ",
-                        Style::default().fg(Color::DarkGray),
-                    ));
+                    spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
                 }
                 spans.push(Span::styled(padded, style));
             }
@@ -512,20 +508,14 @@ fn highlight_code(code: &str, lang: &str) -> Vec<Line<'static>> {
                     Ok(ranges) => {
                         let mut spans: Vec<Span<'static>> = vec![Span::raw("    ")];
                         for (style, text) in ranges {
-                            spans.push(Span::styled(
-                                text.to_string(),
-                                syntect_to_ratatui(style),
-                            ));
+                            spans.push(Span::styled(text.to_string(), syntect_to_ratatui(style)));
                         }
                         lines.push(Line::from(spans));
                     }
                     Err(_) => {
                         lines.push(Line::from(vec![
                             Span::raw("    "),
-                            Span::styled(
-                                line.to_string(),
-                                Style::default().fg(Color::Cyan),
-                            ),
+                            Span::styled(line.to_string(), Style::default().fg(Color::Cyan)),
                         ]));
                     }
                 }

@@ -14,6 +14,7 @@ mod plugin_exec;
 mod sandbox_cmd;
 mod setup;
 mod whatsapp_compat;
+mod worker;
 
 #[derive(Parser)]
 #[command(name = "lukan", version, about = "AI agent CLI")]
@@ -72,6 +73,11 @@ enum Commands {
     Sandbox {
         #[command(subcommand)]
         command: sandbox_cmd::SandboxCommands,
+    },
+    /// Manage scheduled workers
+    Worker {
+        #[command(subcommand)]
+        command: worker::WorkerCommands,
     },
     /// Catch-all for plugin aliases (e.g. `lukan wa ...`)
     #[command(external_subcommand)]
@@ -141,6 +147,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Sandbox { command }) => {
             sandbox_cmd::handle_sandbox_command(command).await?;
+        }
+        Some(Commands::Worker { command }) => {
+            worker::handle_worker_command(command).await?;
         }
         Some(Commands::External(args)) => {
             dispatch_alias_command(&args).await?;

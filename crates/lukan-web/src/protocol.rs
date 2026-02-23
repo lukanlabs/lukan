@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use lukan_core::models::checkpoints::Checkpoint;
 use lukan_core::models::messages::Message;
 use lukan_core::models::sessions::SessionSummary;
+use lukan_core::workers::{WorkerCreateInput, WorkerDetail, WorkerRun, WorkerSummary, WorkerUpdateInput};
 
 /// Messages sent from the client (browser) to the server
 #[derive(Debug, Deserialize)]
@@ -40,8 +41,8 @@ pub enum ClientMessage {
     AbortSubAgent { id: String },
     SetScreenshots { enabled: bool },
     ListWorkers,
-    CreateWorker { worker: serde_json::Value },
-    UpdateWorker { id: String, patch: serde_json::Value },
+    CreateWorker { worker: WorkerCreateInput },
+    UpdateWorker { id: String, patch: WorkerUpdateInput },
     DeleteWorker { id: String },
     ToggleWorker { id: String, enabled: bool },
     GetWorkerDetail { id: String },
@@ -54,6 +55,7 @@ pub enum ClientMessage {
 /// Messages sent from the server to the client (browser)
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[allow(dead_code)]
 pub enum ServerMessage {
     Init {
         session_id: String,
@@ -100,7 +102,19 @@ pub enum ServerMessage {
         agents: Vec<serde_json::Value>,
     },
     WorkersUpdate {
-        workers: Vec<serde_json::Value>,
+        workers: Vec<WorkerSummary>,
+    },
+    WorkerDetailMsg {
+        worker: WorkerDetail,
+    },
+    WorkerRunDetailMsg {
+        run: WorkerRun,
+    },
+    WorkerNotification {
+        worker_id: String,
+        worker_name: String,
+        status: String,
+        summary: String,
     },
     AuthRequired,
     AuthOk {

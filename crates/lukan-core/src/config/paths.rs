@@ -114,11 +114,32 @@ impl LukanPaths {
         Self::plugin_dir(name).join("plugin.pid")
     }
 
+    /// Workers definition file: ~/.config/lukan/workers.json
+    pub fn workers_file() -> PathBuf {
+        Self::config_dir().join("workers.json")
+    }
+
+    /// Workers runs directory: ~/.config/lukan/workers/
+    pub fn workers_runs_dir() -> PathBuf {
+        Self::config_dir().join("workers")
+    }
+
+    /// Runs directory for a specific worker: ~/.config/lukan/workers/{id}/
+    pub fn worker_runs_dir(id: &str) -> PathBuf {
+        Self::workers_runs_dir().join(id)
+    }
+
+    /// Run file for a specific worker run: ~/.config/lukan/workers/{id}/{run_id}.json
+    pub fn worker_run_file(id: &str, run_id: &str) -> PathBuf {
+        Self::worker_runs_dir(id).join(format!("{run_id}.json"))
+    }
+
     /// Ensure all required directories exist
     pub async fn ensure_dirs() -> std::io::Result<()> {
         tokio::fs::create_dir_all(Self::config_dir()).await?;
         tokio::fs::create_dir_all(Self::sessions_dir()).await?;
         tokio::fs::create_dir_all(Self::plugins_dir()).await?;
+        tokio::fs::create_dir_all(Self::workers_runs_dir()).await?;
         Ok(())
     }
 }

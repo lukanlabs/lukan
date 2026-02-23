@@ -15,6 +15,10 @@ use crate::state::AppState;
 /// Start the web server with embedded React UI
 pub async fn start_web_server(resolved: ResolvedConfig, port: u16) -> Result<()> {
     let state = Arc::new(AppState::new(resolved));
+
+    // Start the worker scheduler
+    state.worker_scheduler.start().await;
+
     let router = server::create_router(Arc::clone(&state));
 
     let addr = format!("0.0.0.0:{port}");
@@ -27,6 +31,9 @@ pub async fn start_web_server(resolved: ResolvedConfig, port: u16) -> Result<()>
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("Web server listening on {addr}");
     axum::serve(listener, router).await?;
+
+    // Stop scheduler on shutdown
+    state.worker_scheduler.stop();
 
     Ok(())
 }

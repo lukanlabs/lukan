@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use lukan_agent::AgentLoop;
+use lukan_agent::{AgentLoop, WorkerScheduler};
 use lukan_core::config::ResolvedConfig;
 use tokio::sync::Mutex;
 
@@ -22,6 +22,8 @@ pub struct AppState {
     pub provider_name: Mutex<String>,
     /// Current model name
     pub model_name: Mutex<String>,
+    /// Worker scheduler
+    pub worker_scheduler: WorkerScheduler,
     /// Connection ID counter
     connection_counter: AtomicUsize,
 }
@@ -48,6 +50,8 @@ impl AppState {
         let provider_name = resolved.config.provider.to_string();
         let model_name = resolved.effective_model();
 
+        let worker_scheduler = WorkerScheduler::new(resolved.clone());
+
         Self {
             agent: Mutex::new(None),
             config: Mutex::new(resolved),
@@ -57,6 +61,7 @@ impl AppState {
             token_ttl_ms,
             provider_name: Mutex::new(provider_name),
             model_name: Mutex::new(model_name),
+            worker_scheduler,
             connection_counter: AtomicUsize::new(1),
         }
     }

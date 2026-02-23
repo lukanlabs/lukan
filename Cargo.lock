@@ -1268,6 +1268,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.26.2",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
@@ -1279,6 +1280,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs",
+ "rand",
  "schemars",
  "serde",
  "serde_json",

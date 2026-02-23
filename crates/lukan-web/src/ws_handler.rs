@@ -263,17 +263,140 @@ async fn dispatch_message(
             .await;
         }
 
-        ClientMessage::ListWorkers
-        | ClientMessage::CreateWorker { .. }
-        | ClientMessage::UpdateWorker { .. }
-        | ClientMessage::DeleteWorker { .. }
-        | ClientMessage::ToggleWorker { .. }
-        | ClientMessage::GetWorkerDetail { .. }
-        | ClientMessage::GetWorkerRunDetail { .. } => {
-            send_json(ws_tx, &ServerMessage::WorkersUpdate {
-                workers: vec![],
-            })
-            .await;
+        ClientMessage::ListWorkers => {
+            match state.worker_scheduler.list_workers().await {
+                Ok(workers) => {
+                    send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
+                }
+                Err(e) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Failed to list workers: {e}"),
+                    })
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::CreateWorker { worker } => {
+            match state.worker_scheduler.create_worker(worker).await {
+                Ok(_) => {
+                    if let Ok(workers) = state.worker_scheduler.list_workers().await {
+                        send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
+                    }
+                }
+                Err(e) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Failed to create worker: {e}"),
+                    })
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::UpdateWorker { id, patch } => {
+            match state.worker_scheduler.update_worker(&id, patch).await {
+                Ok(Some(_)) => {
+                    if let Ok(workers) = state.worker_scheduler.list_workers().await {
+                        send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
+                    }
+                }
+                Ok(None) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Worker not found: {id}"),
+                    })
+                    .await;
+                }
+                Err(e) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Failed to update worker: {e}"),
+                    })
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::DeleteWorker { id } => {
+            match state.worker_scheduler.delete_worker(&id).await {
+                Ok(true) => {
+                    if let Ok(workers) = state.worker_scheduler.list_workers().await {
+                        send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
+                    }
+                }
+                Ok(false) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Worker not found: {id}"),
+                    })
+                    .await;
+                }
+                Err(e) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Failed to delete worker: {e}"),
+                    })
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::ToggleWorker { id, enabled } => {
+            match state.worker_scheduler.toggle_worker(&id, enabled).await {
+                Ok(Some(_)) => {
+                    if let Ok(workers) = state.worker_scheduler.list_workers().await {
+                        send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
+                    }
+                }
+                Ok(None) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Worker not found: {id}"),
+                    })
+                    .await;
+                }
+                Err(e) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Failed to toggle worker: {e}"),
+                    })
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::GetWorkerDetail { id } => {
+            match state.worker_scheduler.get_worker_detail(&id).await {
+                Ok(Some(detail)) => {
+                    send_json(ws_tx, &ServerMessage::WorkerDetailMsg { worker: detail }).await;
+                }
+                Ok(None) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Worker not found: {id}"),
+                    })
+                    .await;
+                }
+                Err(e) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Failed to get worker detail: {e}"),
+                    })
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::GetWorkerRunDetail { worker_id, run_id } => {
+            match state.worker_scheduler.get_worker_run_detail(&worker_id, &run_id).await {
+                Ok(Some(run)) => {
+                    send_json(ws_tx, &ServerMessage::WorkerRunDetailMsg { run }).await;
+                }
+                Ok(None) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Worker run not found: {worker_id}/{run_id}"),
+                    })
+                    .await;
+                }
+                Err(e) => {
+                    send_json(ws_tx, &ServerMessage::Error {
+                        error: format!("Failed to get worker run: {e}"),
+                    })
+                    .await;
+                }
+            }
         }
 
         ClientMessage::PlanAccept { .. }

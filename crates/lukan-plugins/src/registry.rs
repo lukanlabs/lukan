@@ -6,9 +6,8 @@ use lukan_core::config::LukanPaths;
 use serde::Deserialize;
 use tracing::info;
 
-/// Default URL to fetch the registry from (raw GitHub).
-const DEFAULT_REGISTRY_URL: &str =
-    "https://raw.githubusercontent.com/lukanlabs/lukan/master/registry.toml";
+/// Default URL to fetch the registry from (R2 CDN).
+const DEFAULT_REGISTRY_URL: &str = "https://get.lukan.ai/registry.toml";
 
 // ── Registry TOML types ───────────────────────────────────────────────
 
@@ -34,17 +33,15 @@ pub struct RegistryPlugin {
     pub plugin_type: String,
     pub source: String,
     #[serde(default)]
-    pub homepage: Option<String>,
-    #[serde(default)]
-    pub note: Option<String>,
-    #[serde(default)]
     pub assets: HashMap<String, PluginAsset>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct PluginAsset {
     pub url: String,
-    pub binary: String,
+    /// Binary name inside the archive (only for native/binary plugins).
+    #[serde(default)]
+    pub binary: Option<String>,
 }
 
 /// Summary for display.
@@ -62,17 +59,15 @@ pub struct RemotePluginInfo {
 
 /// Fetch and parse the plugin registry.
 pub async fn fetch_registry() -> Result<HashMap<String, RegistryPlugin>> {
-    let url = std::env::var("LUKAN_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.to_string());
+    let url =
+        std::env::var("LUKAN_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.to_string());
 
     let resp = reqwest::get(&url)
         .await
         .with_context(|| format!("Failed to fetch registry from {url}"))?;
 
     if !resp.status().is_success() {
-        bail!(
-            "Registry fetch failed: HTTP {} from {url}",
-            resp.status()
-        );
+        bail!("Registry fetch failed: HTTP {} from {url}", resp.status());
     }
 
     let body = resp.text().await?;
@@ -87,7 +82,6 @@ pub async fn list_remote() -> Result<Vec<RemotePluginInfo>> {
     let plugins = fetch_registry().await?;
     let platform = current_platform();
 
-    // Check which are already installed
     let installed_dir = LukanPaths::plugins_dir();
     let mut infos: Vec<RemotePluginInfo> = Vec::new();
 
@@ -96,7 +90,9 @@ pub async fn list_remote() -> Result<Vec<RemotePluginInfo>> {
 
     for name in names {
         let p = &plugins[&name];
-        let available = p.source == "bundled" || p.assets.contains_key(&platform);
+        // Available if: has "all" asset, or has asset for current platform
+        let available =
+            p.assets.contains_key("all") || p.assets.contains_key(&platform);
         let installed = installed_dir.join(&name).join("plugin.toml").exists();
 
         infos.push(RemotePluginInfo {
@@ -115,12 +111,9 @@ pub async fn list_remote() -> Result<Vec<RemotePluginInfo>> {
 
 /// Install a plugin from the remote registry.
 ///
-/// 1. Fetch registry
-/// 2. Find plugin entry
-/// 3. Detect platform
-/// 4. Download tarball
-/// 5. Extract to temp dir
-/// 6. Copy plugin.toml + binary to plugins dir
+/// Supports two source types:
+/// - "archive": platform-independent (Node.js plugins), uses assets.all
+/// - "binary": platform-specific (compiled plugins), uses assets.<platform>
 pub async fn install_remote(name: &str, alias_override: Option<&str>) -> Result<String> {
     let plugins = fetch_registry().await?;
 
@@ -128,41 +121,45 @@ pub async fn install_remote(name: &str, alias_override: Option<&str>) -> Result<
         .get(name)
         .with_context(|| format!("Plugin '{name}' not found in registry"))?;
 
-    if entry.source == "bundled" {
-        bail!(
-            "Plugin '{name}' is bundled with lukan releases.\n\
-             {}",
-            entry.note.as_deref().unwrap_or("Install it from the local plugins/ directory.")
-        );
-    }
-
-    if entry.source != "binary" {
-        bail!(
-            "Plugin '{name}' has source type '{}' which is not yet supported for remote install.",
-            entry.source
-        );
-    }
-
+    // Resolve the download asset: try "all" first, then platform-specific
     let platform = current_platform();
-    let asset = entry.assets.get(&platform).with_context(|| {
-        let available: Vec<_> = entry.assets.keys().cloned().collect();
-        format!(
-            "No binary available for platform '{platform}'.\nAvailable platforms: {}",
-            available.join(", ")
-        )
-    })?;
+    let asset = entry
+        .assets
+        .get("all")
+        .or_else(|| entry.assets.get(&platform))
+        .with_context(|| {
+            let available: Vec<_> = entry.assets.keys().cloned().collect();
+            format!(
+                "No download available for plugin '{name}' on platform '{platform}'.\n\
+                 Available: {}",
+                if available.is_empty() {
+                    "none".to_string()
+                } else {
+                    available.join(", ")
+                }
+            )
+        })?;
 
     // Check if already installed
     let dest = LukanPaths::plugin_dir(name);
     if dest.exists() {
         bail!(
-            "Plugin '{name}' is already installed at {}\nUse `lukan plugin remove {name}` first to reinstall.",
+            "Plugin '{name}' is already installed at {}\n\
+             Use `lukan plugin remove {name}` first to reinstall.",
             dest.display()
         );
     }
 
-    info!(plugin = %name, platform = %platform, "Downloading plugin");
-    println!("Downloading {name} v{} for {platform}...", entry.version);
+    let platform_label = if entry.assets.contains_key("all") {
+        "universal"
+    } else {
+        &platform
+    };
+    info!(plugin = %name, platform = %platform_label, "Downloading plugin");
+    println!(
+        "Downloading {name} v{} ({platform_label})...",
+        entry.version
+    );
 
     // Download tarball
     let resp = reqwest::get(&asset.url)
@@ -181,15 +178,20 @@ pub async fn install_remote(name: &str, alias_override: Option<&str>) -> Result<
     println!("Downloaded {} bytes", bytes.len());
 
     // Extract to temp dir
-    let tmp_dir = std::env::temp_dir().join(format!("lukan-plugin-{name}-{}", std::process::id()));
+    let tmp_dir =
+        std::env::temp_dir().join(format!("lukan-plugin-{name}-{}", std::process::id()));
     tokio::fs::create_dir_all(&tmp_dir).await?;
 
     let tar_path = tmp_dir.join("archive.tar.gz");
     tokio::fs::write(&tar_path, &bytes).await?;
 
-    // Extract using tar
     let status = tokio::process::Command::new("tar")
-        .args(["xzf", tar_path.to_str().unwrap(), "-C", tmp_dir.to_str().unwrap()])
+        .args([
+            "xzf",
+            tar_path.to_str().unwrap(),
+            "-C",
+            tmp_dir.to_str().unwrap(),
+        ])
         .status()
         .await
         .context("Failed to run tar")?;
@@ -201,35 +203,31 @@ pub async fn install_remote(name: &str, alias_override: Option<&str>) -> Result<
 
     // Find plugin.toml in extracted files (may be in a subdirectory)
     let plugin_toml = find_file_recursive(&tmp_dir, "plugin.toml").await?;
-    let extract_dir = plugin_toml
-        .parent()
-        .unwrap_or(&tmp_dir)
-        .to_path_buf();
+    let extract_dir = plugin_toml.parent().unwrap_or(&tmp_dir).to_path_buf();
 
-    // Verify binary exists
-    let binary_path = extract_dir.join(&asset.binary);
-    if !binary_path.exists() {
-        // Try in the tmp_dir root too
-        let alt_binary = tmp_dir.join(&asset.binary);
-        if alt_binary.exists() {
-            // Copy binary to extract_dir
-            tokio::fs::copy(&alt_binary, &binary_path).await?;
-        } else {
-            let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
-            bail!(
-                "Binary '{}' not found in archive. Contents: {:?}",
-                asset.binary,
-                list_dir_contents(&tmp_dir).await
-            );
+    // If this is a binary plugin, verify the binary exists and make it executable
+    if let Some(ref binary_name) = asset.binary {
+        let binary_path = extract_dir.join(binary_name);
+        if !binary_path.exists() {
+            let alt_binary = tmp_dir.join(binary_name);
+            if alt_binary.exists() {
+                tokio::fs::copy(&alt_binary, &binary_path).await?;
+            } else {
+                let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+                bail!(
+                    "Binary '{}' not found in archive. Contents: {:?}",
+                    binary_name,
+                    list_dir_contents(&tmp_dir).await
+                );
+            }
         }
-    }
 
-    // Make binary executable
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o755);
-        std::fs::set_permissions(&binary_path, perms)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o755);
+            std::fs::set_permissions(&binary_path, perms)?;
+        }
     }
 
     // Install from extracted directory (reuse existing install logic)

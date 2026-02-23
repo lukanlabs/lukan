@@ -90,6 +90,9 @@ impl PluginManager {
 
         let manifest = Self::load_manifest(name).await?;
 
+        // Verify runtime dependencies before starting
+        verify_runtime_deps(&manifest)?;
+
         // Load plugin-specific config.json (if exists)
         let config_path = LukanPaths::plugin_config(name);
         let config: serde_json::Value = if config_path.exists() {
@@ -322,6 +325,9 @@ impl PluginManager {
         // Post-install: run npm/bun install if package.json exists (recursively)
         run_post_install(&dest).await?;
 
+        // Check runtime dependencies
+        check_runtime_deps(&manifest);
+
         info!(plugin = %plugin_name, "Plugin installed");
         Ok(plugin_name.to_string())
     }
@@ -457,4 +463,64 @@ fn which_exists(cmd: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// Install-time check: warn if runtime dependencies are missing (non-blocking).
+fn check_runtime_deps(manifest: &PluginManifest) {
+    let Some(ref run) = manifest.run else {
+        return;
+    };
+
+    let cmd = &run.command;
+
+    // Skip checking for plugin binaries that live inside the plugin dir
+    if cmd.starts_with("lukan-") || cmd.starts_with("./") {
+        return;
+    }
+
+    if !which_exists(cmd) {
+        let hint = install_hint(cmd);
+        eprintln!(
+            "\n\x1b[33m  Warning: this plugin requires '{cmd}' but it was not found in PATH.\x1b[0m"
+        );
+        if let Some(h) = hint {
+            eprintln!("\x1b[33m  Install it: {h}\x1b[0m");
+        }
+        eprintln!();
+    }
+}
+
+/// Start-time check: fail if runtime dependencies are missing (blocking).
+fn verify_runtime_deps(manifest: &PluginManifest) -> Result<()> {
+    let Some(ref run) = manifest.run else {
+        return Ok(());
+    };
+
+    let cmd = &run.command;
+
+    if cmd.starts_with("lukan-") || cmd.starts_with("./") {
+        return Ok(());
+    }
+
+    if !which_exists(cmd) {
+        let hint = install_hint(cmd);
+        let mut msg = format!("Plugin '{}' requires '{cmd}' but it was not found in PATH.", manifest.plugin.name);
+        if let Some(h) = hint {
+            msg.push_str(&format!("\nInstall it: {h}"));
+        }
+        anyhow::bail!(msg);
+    }
+
+    Ok(())
+}
+
+/// Suggest how to install a missing dependency.
+fn install_hint(cmd: &str) -> Option<&'static str> {
+    match cmd {
+        "node" => Some("https://nodejs.org or `curl -fsSL https://fnm.vercel.app/install | bash && fnm install --lts`"),
+        "python3" | "python" => Some("https://python.org or `sudo apt install python3`"),
+        "bun" => Some("https://bun.sh or `curl -fsSL https://bun.sh/install | bash`"),
+        "deno" => Some("https://deno.land or `curl -fsSL https://deno.land/install.sh | sh`"),
+        _ => None,
+    }
 }

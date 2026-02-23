@@ -3,14 +3,17 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 
 use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, ResolvedConfig};
+use lukan_plugins::PluginManager;
 use lukan_providers::create_provider;
 use lukan_tui::app::App;
 
 mod models;
 mod plugin;
+mod plugin_config;
+mod plugin_exec;
 mod sandbox_cmd;
 mod setup;
-mod whatsapp;
+mod whatsapp_compat;
 
 #[derive(Parser)]
 #[command(name = "lukan", version, about = "AI agent CLI")]
@@ -62,23 +65,6 @@ enum Commands {
         /// Model entry for "add" subcommand (format: provider:model-id)
         model_entry: Option<String>,
     },
-    /// Start WhatsApp channel
-    Whatsapp {
-        /// Override the LLM provider
-        #[arg(long, short)]
-        provider: Option<String>,
-        /// Override the model
-        #[arg(long, short)]
-        model: Option<String>,
-        /// Don't auto-start the connector
-        #[arg(long)]
-        no_connector: bool,
-    },
-    /// WhatsApp plugin management
-    Wa {
-        #[command(subcommand)]
-        command: whatsapp::WaCommands,
-    },
     /// Plugin management commands
     Plugin {
         #[command(subcommand)]
@@ -89,6 +75,9 @@ enum Commands {
         #[command(subcommand)]
         command: sandbox_cmd::SandboxCommands,
     },
+    /// Catch-all for plugin aliases (e.g. `lukan wa ...`)
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 #[tokio::main]
@@ -133,57 +122,33 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Setup) => {
             setup::run_setup().await?;
-            return Ok(());
         }
         Some(Commands::Doctor) => {
             setup::run_doctor().await?;
-            return Ok(());
         }
         Some(Commands::CodexAuth { device }) => {
             setup::run_codex_auth(device).await?;
-            return Ok(());
         }
         Some(Commands::CopilotAuth) => {
             setup::run_copilot_auth().await?;
-            return Ok(());
         }
         Some(Commands::GoogleAuth) => {
             run_google_auth().await?;
-            return Ok(());
         }
         Some(Commands::Models {
             provider,
             model_entry,
         }) => {
             models::run_models(provider.as_deref(), model_entry.as_deref()).await?;
-            return Ok(());
-        }
-        Some(Commands::Wa { command }) => {
-            whatsapp::handle_wa_command(command).await?;
-            return Ok(());
         }
         Some(Commands::Plugin { command }) => {
             plugin::handle_plugin_command(command).await?;
-            return Ok(());
         }
         Some(Commands::Sandbox { command }) => {
             sandbox_cmd::handle_sandbox_command(command).await?;
-            return Ok(());
         }
-        Some(Commands::Whatsapp {
-            provider,
-            model,
-            no_connector,
-        }) => {
-            // Load config + credentials for WhatsApp
-            let config = ConfigManager::load().await?;
-            let credentials = CredentialsManager::load().await?;
-            let resolved = ResolvedConfig {
-                config,
-                credentials,
-            };
-            whatsapp::run_whatsapp(provider, model, no_connector, &resolved).await?;
-            return Ok(());
+        Some(Commands::External(args)) => {
+            dispatch_alias_command(&args).await?;
         }
         Some(Commands::Chat {
             provider,
@@ -193,17 +158,214 @@ async fn main() -> Result<()> {
             let provider_override = provider.or(cli.provider);
             let model_override = model.or(cli.model);
             if ui == "web" {
-                return run_web(provider_override, model_override).await;
+                run_web(provider_override, model_override).await?;
+            } else {
+                run_chat(provider_override, model_override).await?;
             }
-            return run_chat(provider_override, model_override).await;
         }
         None => {
             let provider_override = cli.provider;
             let model_override = cli.model;
-            return run_chat(provider_override, model_override).await;
+            run_chat(provider_override, model_override).await?;
+        }
+    }
+
+    Ok(())
+}
+
+// ── Dynamic alias routing ────────────────────────────────────────────
+
+/// Resolve a plugin alias to its plugin name.
+/// Scans all installed plugins and returns the plugin name if the alias matches.
+async fn resolve_plugin_alias(alias: &str) -> Result<Option<String>> {
+    let manager = PluginManager::new();
+    let names = manager.discover().await?;
+
+    for name in names {
+        if let Ok(manifest) = PluginManager::load_manifest(&name).await
+            && (manifest.plugin.alias.as_deref() == Some(alias) || manifest.plugin.name == alias)
+        {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
+}
+
+/// Dispatch a command that matched via external_subcommand (plugin alias).
+///
+/// Routing logic:
+///   lukan <alias>                        → plugin status <name>
+///   lukan <alias> start [-p X] [-m Y]   → plugin start <name> ...
+///   lukan <alias> stop                   → plugin stop <name>
+///   lukan <alias> restart                → plugin stop + start <name>
+///   lukan <alias> logs [-f] [-n 50]     → plugin logs <name> ...
+///   lukan <alias> status                 → plugin status <name>
+///   lukan <alias> <config_key> ...       → plugin config <name> <key> ...
+///   lukan <alias> <custom_command> ...   → plugin exec <name> <cmd> ...
+async fn dispatch_alias_command(args: &[String]) -> Result<()> {
+    if args.is_empty() {
+        anyhow::bail!("No command provided");
+    }
+
+    let alias = &args[0];
+    let plugin_name = resolve_plugin_alias(alias)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Unknown command: '{alias}'"))?;
+
+    let sub_args = &args[1..];
+
+    // No subcommand → status
+    if sub_args.is_empty() {
+        return plugin::handle_plugin_command(plugin::PluginCommands::Status {
+            name: plugin_name,
+        })
+        .await;
+    }
+
+    let subcmd = sub_args[0].as_str();
+    let rest = &sub_args[1..];
+
+    match subcmd {
+        // ── Lifecycle commands ──
+        "start" => {
+            let (provider, model) = parse_provider_model_flags(rest);
+            plugin::handle_plugin_command(plugin::PluginCommands::Start {
+                name: plugin_name,
+                provider,
+                model,
+            })
+            .await
+        }
+        "stop" => {
+            plugin::handle_plugin_command(plugin::PluginCommands::Stop {
+                name: plugin_name,
+            })
+            .await
+        }
+        "restart" => {
+            // Stop then start
+            plugin::handle_plugin_command(plugin::PluginCommands::Stop {
+                name: plugin_name.clone(),
+            })
+            .await
+            .ok(); // Ignore error if not running
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            let (provider, model) = parse_provider_model_flags(rest);
+            plugin::handle_plugin_command(plugin::PluginCommands::Start {
+                name: plugin_name,
+                provider,
+                model,
+            })
+            .await
+        }
+        "status" => {
+            plugin::handle_plugin_command(plugin::PluginCommands::Status {
+                name: plugin_name,
+            })
+            .await
+        }
+        "logs" => {
+            let (follow, lines) = parse_logs_flags(rest);
+            plugin::handle_plugin_command(plugin::PluginCommands::Logs {
+                name: plugin_name,
+                follow,
+                lines,
+            })
+            .await
+        }
+
+        // ── Could be a config key or a custom command ──
+        other => {
+            let manifest = PluginManager::load_manifest(&plugin_name).await?;
+
+            // Check if it's a custom command first
+            if manifest.commands.contains_key(other) {
+                let cmd_args: Vec<String> = rest.to_vec();
+                plugin_exec::handle_plugin_exec(&plugin_name, other, &cmd_args).await
+            }
+            // Check if it's a config key
+            else if manifest.config.contains_key(other) {
+                let action = rest.first().map(|s| s.as_str());
+                let value = rest.get(1).map(|s| s.as_str());
+                plugin_config::handle_plugin_config(&plugin_name, Some(other), action, value)
+                    .await
+            } else {
+                // Unknown subcommand
+                let mut available = Vec::new();
+                available.extend(["start", "stop", "restart", "status", "logs"].iter().map(|s| s.to_string()));
+                for key in manifest.config.keys() {
+                    available.push(key.clone());
+                }
+                for key in manifest.commands.keys() {
+                    available.push(key.clone());
+                }
+                available.sort();
+
+                anyhow::bail!(
+                    "Unknown subcommand '{other}' for plugin '{plugin_name}'.\n\
+                     Available: {}",
+                    available.join(", ")
+                )
+            }
         }
     }
 }
+
+/// Parse -p/--provider and -m/--model flags from remaining args.
+fn parse_provider_model_flags(args: &[String]) -> (Option<String>, Option<String>) {
+    let mut provider = None;
+    let mut model = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-p" | "--provider" => {
+                if i + 1 < args.len() {
+                    provider = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "-m" | "--model" => {
+                if i + 1 < args.len() {
+                    model = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    (provider, model)
+}
+
+/// Parse -f/--follow and -n/--lines flags from remaining args.
+fn parse_logs_flags(args: &[String]) -> (bool, String) {
+    let mut follow = false;
+    let mut lines = "50".to_string();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-f" | "--follow" => {
+                follow = true;
+                i += 1;
+            }
+            "-n" | "--lines" => {
+                if i + 1 < args.len() {
+                    lines = args[i + 1].clone();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    (follow, lines)
+}
+
+// ── Existing command handlers ────────────────────────────────────────
 
 async fn run_google_auth() -> Result<()> {
     use lukan_core::config::CredentialsManager;

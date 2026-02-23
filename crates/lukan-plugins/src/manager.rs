@@ -28,6 +28,7 @@ pub struct PluginInfo {
     pub description: String,
     pub plugin_type: String,
     pub running: bool,
+    pub alias: Option<String>,
 }
 
 impl Default for PluginManager {
@@ -187,6 +188,7 @@ impl PluginManager {
                         description: manifest.plugin.description,
                         plugin_type: manifest.plugin.plugin_type,
                         running: self.running.contains_key(&name),
+                        alias: manifest.plugin.alias,
                     });
                 }
                 Err(e) => {
@@ -196,6 +198,7 @@ impl PluginManager {
                         description: format!("(error loading manifest: {e})"),
                         plugin_type: "unknown".to_string(),
                         running: false,
+                        alias: None,
                     });
                 }
             }
@@ -204,8 +207,19 @@ impl PluginManager {
         Ok(infos)
     }
 
+    /// Reserved command names that cannot be used as plugin aliases.
+    pub const RESERVED_COMMANDS: &[&str] = &[
+        "chat", "setup", "doctor", "codex-auth", "copilot-auth", "google-auth",
+        "models", "plugin", "sandbox",
+    ];
+
     /// Install a plugin from a local directory (copies files to plugins dir).
-    pub async fn install(source: &str, name: Option<&str>) -> Result<String> {
+    /// If `alias_override` is provided, it replaces the alias in the installed plugin.toml.
+    pub async fn install(
+        source: &str,
+        name: Option<&str>,
+        alias_override: Option<&str>,
+    ) -> Result<String> {
         let source_path = Path::new(source);
         if !source_path.exists() {
             anyhow::bail!("Source path does not exist: {source}");
@@ -223,6 +237,37 @@ impl PluginManager {
             .context("Failed to parse plugin.toml")?;
 
         let plugin_name = name.unwrap_or(&manifest.plugin.name);
+
+        // Determine effective alias
+        let effective_alias = alias_override.or(manifest.plugin.alias.as_deref());
+
+        // Validate alias against reserved commands and other plugins
+        if let Some(alias) = effective_alias {
+            if Self::RESERVED_COMMANDS.contains(&alias) {
+                anyhow::bail!(
+                    "Alias '{alias}' conflicts with a reserved command.\n\
+                     Use --alias <other> to choose a different alias."
+                );
+            }
+
+            // Check for conflicts with other installed plugins
+            let manager = PluginManager::new();
+            let existing = manager.discover().await?;
+            for existing_name in &existing {
+                if existing_name == plugin_name {
+                    continue; // Skip self (re-install case)
+                }
+                if let Ok(existing_manifest) = Self::load_manifest(existing_name).await
+                    && existing_manifest.plugin.alias.as_deref() == Some(alias)
+                {
+                    anyhow::bail!(
+                        "Alias '{alias}' already used by plugin '{existing_name}'.\n\
+                         Use --alias <other> to choose a different alias."
+                    );
+                }
+            }
+        }
+
         let dest = LukanPaths::plugin_dir(plugin_name);
 
         if dest.exists() {
@@ -235,6 +280,35 @@ impl PluginManager {
 
         // Copy directory recursively
         copy_dir_recursive(source_path, &dest).await?;
+
+        // If alias_override was provided, update the installed plugin.toml
+        if let Some(alias) = alias_override {
+            let installed_manifest_path = dest.join("plugin.toml");
+            let mut toml_content = tokio::fs::read_to_string(&installed_manifest_path).await?;
+
+            // Simple replacement: if alias already exists, replace it; otherwise add it
+            if toml_content.contains("alias =") {
+                // Replace existing alias line
+                let mut new_content = String::new();
+                for line in toml_content.lines() {
+                    if line.trim_start().starts_with("alias") && line.contains('=') {
+                        new_content.push_str(&format!("alias = \"{alias}\""));
+                    } else {
+                        new_content.push_str(line);
+                    }
+                    new_content.push('\n');
+                }
+                toml_content = new_content;
+            } else {
+                // Add alias after the [plugin] section header
+                toml_content = toml_content.replace(
+                    "[plugin]\n",
+                    &format!("[plugin]\nalias = \"{alias}\"\n"),
+                );
+            }
+
+            tokio::fs::write(&installed_manifest_path, toml_content).await?;
+        }
 
         info!(plugin = %plugin_name, "Plugin installed");
         Ok(plugin_name.to_string())

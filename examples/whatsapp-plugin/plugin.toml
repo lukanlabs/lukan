@@ -4,7 +4,63 @@ version = "0.1.0"
 description = "WhatsApp channel via baileys connector"
 plugin_type = "channel"
 protocol_version = 1
+alias = "wa"
 
 [run]
 command = "node"
 args = ["bridge.js"]
+
+# Config schema — each field is editable via generic CLI
+[config.whitelist]
+type = "string[]"
+description = "Allowed phone numbers"
+
+[config.prefix]
+type = "string"
+description = "Command prefix"
+
+[config.allowed_groups]
+type = "string[]"
+description = "Allowed group IDs"
+
+[config.tools]
+type = "string[]"
+description = "Agent tools"
+valid_values = ["Grep", "Glob", "ReadFile", "WebFetch", "Bash", "WriteFile", "EditFile"]
+
+[config.allowed_dirs]
+type = "string[]"
+description = "Allowed directories for file access"
+
+[config.skip_dir_restrictions]
+type = "bool"
+description = "Disable directory restrictions"
+
+[config.bridge_url]
+type = "string"
+description = "Connector WebSocket URL"
+
+[config.enabled]
+type = "bool"
+description = "Enable/disable channel"
+
+[config.reminder_advance]
+type = "number"
+description = "Minutes before reminder"
+
+[config.reminder_chat]
+type = "string"
+description = "Chat ID for reminders"
+
+# Custom commands handled by cli.js
+[commands.auth]
+description = "Authenticate WhatsApp by scanning QR code"
+handler = "auth"
+
+[commands.logout]
+description = "Delete WhatsApp session"
+handler = "logout"
+
+[commands.groups]
+description = "List available WhatsApp groups"
+handler = "groups"

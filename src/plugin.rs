@@ -8,7 +8,9 @@ use lukan_plugins::{PluginChannel, PluginManager};
 use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::create_default_registry;
 
-use crate::whatsapp;
+use crate::plugin_config;
+use crate::plugin_exec;
+use crate::whatsapp_compat;
 
 // ── Colors ─────────────────────────────────────────────────────────────
 
@@ -37,6 +39,9 @@ pub enum PluginCommands {
         /// Override plugin name
         #[arg(long)]
         name: Option<String>,
+        /// Override CLI alias
+        #[arg(long)]
+        alias: Option<String>,
     },
     /// Remove an installed plugin
     Remove {
@@ -75,6 +80,26 @@ pub enum PluginCommands {
         #[arg(long, short = 'n', default_value = "50")]
         lines: String,
     },
+    /// View or modify plugin configuration
+    Config {
+        /// Plugin name
+        name: String,
+        /// Config key (omit to show all)
+        key: Option<String>,
+        /// Action (depends on type: set/unset, add/remove/list/clear, on/off)
+        action: Option<String>,
+        /// Value for the action
+        value: Option<String>,
+    },
+    /// Execute a custom plugin command
+    Exec {
+        /// Plugin name
+        name: String,
+        /// Command name (defined in plugin.toml [commands])
+        command: String,
+        /// Additional arguments
+        args: Vec<String>,
+    },
 }
 
 // ── Dispatch ───────────────────────────────────────────────────────────
@@ -82,7 +107,9 @@ pub enum PluginCommands {
 pub async fn handle_plugin_command(command: PluginCommands) -> Result<()> {
     match command {
         PluginCommands::List => plugin_list().await,
-        PluginCommands::Install { source, name } => plugin_install(&source, name.as_deref()).await,
+        PluginCommands::Install { source, name, alias } => {
+            plugin_install(&source, name.as_deref(), alias.as_deref()).await
+        }
         PluginCommands::Remove { name } => plugin_remove(&name).await,
         PluginCommands::Start {
             name,
@@ -96,6 +123,25 @@ pub async fn handle_plugin_command(command: PluginCommands) -> Result<()> {
             follow,
             lines,
         } => plugin_logs(&name, follow, &lines).await,
+        PluginCommands::Config {
+            name,
+            key,
+            action,
+            value,
+        } => {
+            plugin_config::handle_plugin_config(
+                &name,
+                key.as_deref(),
+                action.as_deref(),
+                value.as_deref(),
+            )
+            .await
+        }
+        PluginCommands::Exec {
+            name,
+            command,
+            args,
+        } => plugin_exec::handle_plugin_exec(&name, &command, &args).await,
     }
 }
 
@@ -118,8 +164,12 @@ async fn plugin_list() -> Result<()> {
         } else {
             format!("{DIM}stopped{RESET}")
         };
+        let alias_str = match &p.alias {
+            Some(a) => format!(" {DIM}(alias: {a}){RESET}"),
+            None => String::new(),
+        };
         println!(
-            "  {CYAN}{}{RESET} v{} [{status}]",
+            "  {CYAN}{}{RESET} v{} [{status}]{alias_str}",
             p.name, p.version
         );
         if !p.description.is_empty() {
@@ -130,8 +180,8 @@ async fn plugin_list() -> Result<()> {
     Ok(())
 }
 
-async fn plugin_install(source: &str, name: Option<&str>) -> Result<()> {
-    let installed_name = PluginManager::install(source, name).await?;
+async fn plugin_install(source: &str, name: Option<&str>, alias: Option<&str>) -> Result<()> {
+    let installed_name = PluginManager::install(source, name, alias).await?;
     println!("{GREEN}✓{RESET} Plugin '{CYAN}{installed_name}{RESET}' installed.");
     println!("{DIM}Start it with: lukan plugin start {installed_name}{RESET}");
     Ok(())
@@ -188,7 +238,7 @@ async fn plugin_start(
 
     if is_whatsapp {
         // Load WhatsApp plugin config for tool list
-        let wa_config = whatsapp::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
+        let wa_config = whatsapp_compat::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
         let tool_names: Vec<String> = wa_config
             .tools
             .clone()
@@ -205,8 +255,8 @@ async fn plugin_start(
 
     // Build system prompt — WhatsApp gets its specialized prompt with dir restrictions
     let system_prompt = if is_whatsapp {
-        let wa_config = whatsapp::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
-        whatsapp::build_whatsapp_system_prompt(&wa_config)
+        let wa_config = whatsapp_compat::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
+        whatsapp_compat::build_whatsapp_system_prompt(&wa_config)
     } else {
         SystemPrompt::Text(BASE_PROMPT.to_string())
     };
@@ -309,6 +359,9 @@ async fn plugin_status(name: &str) -> Result<()> {
     };
 
     println!("{BOLD}Plugin: {CYAN}{}{RESET}", manifest.plugin.name);
+    if let Some(ref alias) = manifest.plugin.alias {
+        println!("  Alias:       {alias}");
+    }
     println!("  Version:     {}", manifest.plugin.version);
     println!("  Type:        {}", manifest.plugin.plugin_type);
     println!("  Description: {}", manifest.plugin.description);

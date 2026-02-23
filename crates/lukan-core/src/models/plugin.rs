@@ -5,6 +5,55 @@ use serde::{Deserialize, Serialize};
 /// Protocol version for host ↔ plugin communication
 pub const PROTOCOL_VERSION: u32 = 1;
 
+// ── Config schema types ──────────────────────────────────────────────
+
+/// Supported configuration field types
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigFieldType {
+    String,
+    StringArray,
+    Number,
+    Bool,
+}
+
+impl<'de> serde::Deserialize<'de> for ConfigFieldType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = <std::string::String as serde::Deserialize>::deserialize(deserializer)?;
+        match s.as_str() {
+            "string" => Ok(ConfigFieldType::String),
+            "string[]" => Ok(ConfigFieldType::StringArray),
+            "number" => Ok(ConfigFieldType::Number),
+            "bool" => Ok(ConfigFieldType::Bool),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["string", "string[]", "number", "bool"],
+            )),
+        }
+    }
+}
+
+/// Schema for a single configuration field declared in plugin.toml
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConfigFieldSchema {
+    #[serde(rename = "type")]
+    pub field_type: ConfigFieldType,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub valid_values: Vec<String>,
+}
+
+/// A custom command declared by a plugin in plugin.toml
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginCommandDef {
+    #[serde(default)]
+    pub description: String,
+    pub handler: String,
+}
+
 // ── Host → Plugin messages ──────────────────────────────────────────────
 
 /// Messages sent from the host (lukan) to a plugin process via stdin
@@ -94,6 +143,10 @@ pub enum LogLevel {
 pub struct PluginManifest {
     pub plugin: PluginMeta,
     pub run: PluginRunConfig,
+    #[serde(default)]
+    pub config: HashMap<String, ConfigFieldSchema>,
+    #[serde(default)]
+    pub commands: HashMap<String, PluginCommandDef>,
 }
 
 /// Metadata about the plugin
@@ -107,6 +160,8 @@ pub struct PluginMeta {
     pub plugin_type: String,
     #[serde(default = "default_protocol_version")]
     pub protocol_version: u32,
+    /// CLI alias for this plugin (e.g. "wa" → `lukan wa ...`)
+    pub alias: Option<String>,
 }
 
 fn default_plugin_type() -> String {

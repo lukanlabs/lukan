@@ -34,6 +34,9 @@ let allowedGroups = [];
 let prefix = null;
 let bridgeUrl = "ws://localhost:3001";
 
+// Audio transcription
+let openaiApiKey = process.env.OPENAI_API_KEY || null;
+
 // Track pending requests: requestId is generated per incoming message
 let requestCounter = 0;
 // Map: requestId → chatId (so we know where to send the agent response)
@@ -242,19 +245,77 @@ function handleConnectorEvent(event) {
     }
 
     case "audio": {
-      const { sender, chatId, isGroup } = event;
+      const { sender, chatId, audioBase64, seconds, ptt, isGroup } = event;
       if (!shouldProcess(sender, chatId, isGroup)) return;
 
-      // Audio not supported yet — reply directly
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({
-            type: "send",
-            to: chatId,
-            text: "Audio messages are not supported yet. Please send a text message.",
-          }),
-        );
+      if (!openaiApiKey) {
+        log("warn", `Audio from ${sender} ignored — no OPENAI_API_KEY configured`);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: "send",
+              to: chatId,
+              text: "Audio transcription is not configured. Set OPENAI_API_KEY to enable it.",
+            }),
+          );
+        }
+        break;
       }
+
+      if (!audioBase64) {
+        log("warn", `Audio from ${sender} has no audioBase64 data`);
+        break;
+      }
+
+      // Dedup by chatId
+      if (processing.has(chatId)) {
+        log("info", `Already processing ${chatId}, skipping audio`);
+        break;
+      }
+      processing.add(chatId);
+
+      log("info", `Audio from ${sender} (${seconds || "?"}s, ptt=${!!ptt}) — transcribing...`);
+
+      // Transcribe and forward as channelMessage
+      transcribeAudio(audioBase64, event.mimetype || "audio/ogg; codecs=opus")
+        .then((transcript) => {
+          if (!transcript || !transcript.trim()) {
+            log("warn", `Empty transcription for audio from ${sender}`);
+            processing.delete(chatId);
+            return;
+          }
+
+          log("info", `Transcription: ${transcript.slice(0, 80)}${transcript.length > 80 ? "..." : ""}`);
+
+          // Strip prefix if configured
+          const message = stripPrefix(transcript);
+
+          const requestId = `wa-${++requestCounter}`;
+          pendingRequests.set(requestId, chatId);
+
+          // Send transcribed text to host as a regular channelMessage
+          send({
+            type: "channelMessage",
+            requestId,
+            sender,
+            channelId: chatId,
+            content: `[Audio ${seconds || "?"}s] ${message}`,
+          });
+        })
+        .catch((err) => {
+          log("error", `Transcription failed: ${err.message}`);
+          processing.delete(chatId);
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(
+              JSON.stringify({
+                type: "send",
+                to: chatId,
+                text: `Failed to transcribe audio: ${err.message}`,
+              }),
+            );
+          }
+        });
+
       break;
     }
 
@@ -290,6 +351,56 @@ function stripPrefix(content) {
   return content;
 }
 
+// ── Audio transcription via OpenAI API ───────────────────────────────
+
+async function transcribeAudio(audioBase64, mimetype) {
+  const buffer = Buffer.from(audioBase64, "base64");
+
+  // Determine file extension from mimetype
+  const ext = mimetype.includes("ogg")
+    ? "ogg"
+    : mimetype.includes("mp4")
+      ? "m4a"
+      : mimetype.includes("mpeg")
+        ? "mp3"
+        : "ogg";
+
+  // Build multipart form data manually (no external deps)
+  const boundary = `----FormBoundary${Date.now()}`;
+  const filename = `audio.${ext}`;
+
+  const parts = [];
+  // model field
+  parts.push(
+    `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\ngpt-4o-transcribe\r\n`,
+  );
+  // file field
+  parts.push(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimetype}\r\n\r\n`,
+  );
+
+  const header = Buffer.from(parts.join(""));
+  const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const body = Buffer.concat([header, buffer, footer]);
+
+  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${openaiApiKey}`,
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OpenAI API error ${response.status}: ${text}`);
+  }
+
+  const result = await response.json();
+  return result.text || "";
+}
+
 // ── Handle messages from the lukan host (stdin) ────────────────────────
 
 function handleHostMessage(msg) {
@@ -303,11 +414,14 @@ function handleHostMessage(msg) {
       whitelist = config.whitelist || [];
       allowedGroups = config.allowedGroups || [];
       prefix = config.prefix || null;
+      // API key: config > env
+      openaiApiKey = config.openaiApiKey || process.env.OPENAI_API_KEY || null;
 
       log(
         "info",
         `Config: bridge=${bridgeUrl}, whitelist=[${whitelist.join(",")}], groups=[${allowedGroups.join(",")}], prefix=${prefix || "(none)"}`,
       );
+      log("info", `Audio transcription: ${openaiApiKey ? "enabled" : "disabled (no OPENAI_API_KEY)"}`);
 
       // Send Ready
       send({ type: "ready", version: "0.1.0", capabilities: [] });

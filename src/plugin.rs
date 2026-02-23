@@ -32,10 +32,10 @@ const BASE_PROMPT: &str = include_str!("../prompts/base.txt");
 pub enum PluginCommands {
     /// List installed plugins
     List,
-    /// Install a plugin from local directory or remote registry
+    /// Install plugins (interactive picker or by name)
     Install {
-        /// Plugin name (remote) or source directory path (local)
-        source: String,
+        /// Plugin name (remote) or source directory path (local). Omit for interactive picker.
+        source: Option<String>,
         /// Override plugin name
         #[arg(long)]
         name: Option<String>,
@@ -45,10 +45,10 @@ pub enum PluginCommands {
     },
     /// List plugins available in the remote registry
     ListRemote,
-    /// Remove an installed plugin
+    /// Remove plugins (interactive picker or by name)
     Remove {
-        /// Plugin name
-        name: String,
+        /// Plugin name. Omit for interactive picker.
+        name: Option<String>,
     },
     /// Start a plugin and run the channel loop
     Start {
@@ -110,10 +110,20 @@ pub async fn handle_plugin_command(command: PluginCommands) -> Result<()> {
     match command {
         PluginCommands::List => plugin_list().await,
         PluginCommands::Install { source, name, alias } => {
-            plugin_install(&source, name.as_deref(), alias.as_deref()).await
+            if let Some(ref src) = source {
+                plugin_install(src, name.as_deref(), alias.as_deref()).await
+            } else {
+                plugin_install_interactive().await
+            }
         }
         PluginCommands::ListRemote => plugin_list_remote().await,
-        PluginCommands::Remove { name } => plugin_remove(&name).await,
+        PluginCommands::Remove { name } => {
+            if let Some(ref n) = name {
+                plugin_remove(n).await
+            } else {
+                plugin_remove_interactive().await
+            }
+        }
         PluginCommands::Start {
             name,
             provider,
@@ -177,6 +187,87 @@ async fn plugin_list() -> Result<()> {
         );
         if !p.description.is_empty() {
             println!("    {DIM}{}{RESET}", p.description);
+        }
+    }
+
+    Ok(())
+}
+
+async fn plugin_install_interactive() -> Result<()> {
+    println!("{DIM}Fetching plugin registry...{RESET}");
+    let plugins = lukan_plugins::registry::list_remote().await?;
+
+    let installable: Vec<_> = plugins
+        .iter()
+        .filter(|p| p.available && !p.installed)
+        .collect();
+
+    if installable.is_empty() {
+        println!("{YELLOW}All available plugins are already installed.{RESET}");
+        return Ok(());
+    }
+
+    let items: Vec<String> = installable
+        .iter()
+        .map(|p| format!("{} — {}", p.name, p.description))
+        .collect();
+
+    let selections = dialoguer::MultiSelect::new()
+        .with_prompt("Select plugins to install (Space to toggle, Enter to confirm)")
+        .items(&items)
+        .interact()?;
+
+    if selections.is_empty() {
+        println!("{DIM}No plugins selected.{RESET}");
+        return Ok(());
+    }
+
+    for idx in selections {
+        let p = installable[idx];
+        print!("  Installing {CYAN}{}{RESET}... ", p.name);
+        match lukan_plugins::registry::install_remote(&p.name, None).await {
+            Ok(_) => println!("{GREEN}✓{RESET}"),
+            Err(e) => println!("{RED}✗{RESET} {e}"),
+        }
+    }
+
+    Ok(())
+}
+
+async fn plugin_remove_interactive() -> Result<()> {
+    let manager = PluginManager::new();
+    let plugins = manager.list().await?;
+
+    if plugins.is_empty() {
+        println!("{YELLOW}No plugins installed.{RESET}");
+        return Ok(());
+    }
+
+    let items: Vec<String> = plugins
+        .iter()
+        .map(|p| {
+            let status = if p.running { " (running)" } else { "" };
+            format!("{}{status} — {}", p.name, p.description)
+        })
+        .collect();
+
+    let selections = dialoguer::MultiSelect::new()
+        .with_prompt("Select plugins to remove (Space to toggle, Enter to confirm)")
+        .items(&items)
+        .interact()?;
+
+    if selections.is_empty() {
+        println!("{DIM}No plugins selected.{RESET}");
+        return Ok(());
+    }
+
+    for idx in selections {
+        let p = &plugins[idx];
+        print!("  Removing {CYAN}{}{RESET}... ", p.name);
+        let mut mgr = PluginManager::new();
+        match mgr.remove(&p.name).await {
+            Ok(_) => println!("{GREEN}✓{RESET}"),
+            Err(e) => println!("{RED}✗{RESET} {e}"),
         }
     }
 

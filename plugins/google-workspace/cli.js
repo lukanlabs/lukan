@@ -211,6 +211,7 @@ async function main() {
 
   try {
     await commands[handler]();
+    process.exit(0);
   } catch (err) {
     console.error(`\x1b[31mError:\x1b[0m ${err.message}`);
     process.exit(1);

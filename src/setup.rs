@@ -529,6 +529,30 @@ pub async fn run_doctor() -> Result<()> {
     }
     println!();
 
+    // ── Plugins ──
+    println!("{BOLD}Plugins{RESET}");
+    let plugin_mgr = lukan_plugins::PluginManager::new();
+    let installed = plugin_mgr.discover().await.unwrap_or_default();
+    if installed.is_empty() {
+        println!("  {DIM}No plugins installed{RESET}");
+    } else {
+        for name in &installed {
+            if let Ok(manifest) = lukan_plugins::PluginManager::load_manifest(name).await {
+                let alias = manifest
+                    .plugin
+                    .alias
+                    .as_ref()
+                    .map(|a| format!(" {DIM}(alias: {a}){RESET}"))
+                    .unwrap_or_default();
+                let ptype = &manifest.plugin.plugin_type;
+                println!("  {GREEN}✓{RESET} {BOLD}{name}{RESET} [{ptype}]{alias}");
+            } else {
+                println!("  {YELLOW}!{RESET} {name} {DIM}(manifest error){RESET}");
+            }
+        }
+    }
+    println!();
+
     Ok(())
 }
 

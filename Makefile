@@ -102,7 +102,7 @@ upload: release
 	@for f in dist/plugins/*.tar.gz; do \
 		name=$$(basename $$f); \
 		echo "Uploading plugin: $$name"; \
-		bunx wrangler r2 object put --remote $(R2_BUCKET)/plugins/$$name --file "$$f"; \
+		bunx wrangler r2 object put --remote $(R2_BUCKET)/plugins/$$name --file "$$f" --cache-control "public, max-age=60"; \
 	done
 	@# Upload registry
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/registry.toml --file registry.toml

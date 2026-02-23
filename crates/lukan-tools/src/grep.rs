@@ -67,6 +67,15 @@ impl Tool for GrepTool {
 
         let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
 
+        // Check path restrictions
+        let resolved_path = {
+            let p = std::path::PathBuf::from(path);
+            if p.is_absolute() { p } else { ctx.cwd.join(&p) }
+        };
+        if let Err(msg) = ctx.check_path_allowed(&resolved_path) {
+            return Ok(ToolResult::error(msg));
+        }
+
         let glob_pattern = input.get("glob").and_then(|v| v.as_str());
         let case_insensitive = input
             .get("case_insensitive")

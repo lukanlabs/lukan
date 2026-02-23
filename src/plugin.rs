@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::Subcommand;
 
 use lukan_core::config::{
-    ConfigManager, CredentialsManager, LukanPaths, ResolvedConfig, TOOL_GROUPS, WA_DEFAULT_TOOLS,
+    ConfigManager, CredentialsManager, LukanPaths, ResolvedConfig, TOOL_GROUPS,
 };
 use lukan_plugins::{PluginChannel, PluginManager};
 use lukan_providers::{SystemPrompt, create_provider};
@@ -12,7 +12,6 @@ use lukan_tools::create_default_registry;
 
 use crate::plugin_config;
 use crate::plugin_exec;
-use crate::whatsapp_compat;
 
 // ── Colors ─────────────────────────────────────────────────────────────
 
@@ -444,6 +443,10 @@ async fn plugin_start_foreground(
     let mut config = ConfigManager::load().await?;
     let credentials = CredentialsManager::load().await?;
 
+    // Load plugin manifest for security policy
+    let manifest = PluginManager::load_manifest(name).await?;
+    let security = &manifest.security;
+
     // Check for per-plugin overrides in config
     let plugin_overrides = config
         .plugins
@@ -476,22 +479,29 @@ async fn plugin_start_foreground(
 
     let provider = create_provider(&resolved)?;
 
-    // Build tool registry — for whatsapp, use plugin config tools; otherwise, global overrides
+    // ── Tool filtering (generic) ───────────────────────────────────────
+    // Priority: config.json tools > manifest security.default_tools > all
     let mut registry = create_default_registry();
-    let is_whatsapp = name == "whatsapp";
+    let plugin_config = plugin_config::load_plugin_config(name)
+        .await
+        .unwrap_or_default();
+    let config_tools: Option<Vec<String>> = plugin_config
+        .get("tools")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
 
-    if is_whatsapp {
-        // Load WhatsApp plugin config for tool list
-        let wa_config =
-            whatsapp_compat::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
-        let tool_names: Vec<String> = wa_config
-            .tools
-            .clone()
-            .unwrap_or_else(|| WA_DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect());
-        let refs: Vec<&str> = tool_names.iter().map(|s| s.as_str()).collect();
+    if let Some(ref tools) = config_tools {
+        let refs: Vec<&str> = tools.iter().map(|s| s.as_str()).collect();
         registry.retain(&refs);
-    } else if let Some(ref names) = plugin_overrides.as_ref().and_then(|o| o.tools.clone()) {
-        let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    } else if !security.default_tools.is_empty() {
+        let refs: Vec<&str> = security.default_tools.iter().map(|s| s.as_str()).collect();
+        registry.retain(&refs);
+    } else if let Some(ref tools) = plugin_overrides.as_ref().and_then(|o| o.tools.clone()) {
+        let refs: Vec<&str> = tools.iter().map(|s| s.as_str()).collect();
         registry.retain(&refs);
     }
 
@@ -505,39 +515,38 @@ async fn plugin_start_foreground(
     // Max response length
     let max_response_len = plugin_overrides.as_ref().and_then(|o| o.max_response_len);
 
-    // Build system prompt — WhatsApp adds formatting/dir restrictions on top of the shared base
+    // ── Directory restrictions (generic) ───────────────────────────────
+    let skip_dir_restrictions = plugin_config
+        .get("skipDirRestrictions")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let allowed_dirs: Vec<String> = plugin_config
+        .get("allowedDirs")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let allowed_paths: Option<Vec<std::path::PathBuf>> =
+        if security.dir_restrictions && !skip_dir_restrictions {
+            Some(allowed_dirs.iter().map(std::path::PathBuf::from).collect())
+        } else {
+            None
+        };
+
+    // ── System prompt (generic) ────────────────────────────────────────
     let tz_name = resolved
         .config
         .timezone
         .clone()
         .unwrap_or_else(|| "UTC".to_string());
-    let system_prompt = if is_whatsapp {
-        let wa_config =
-            whatsapp_compat::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
-        whatsapp_compat::build_whatsapp_system_prompt(&wa_config, Some(&tz_name)).await
-    } else {
-        let mut cached = vec![BASE_PROMPT.to_string()];
-        // Load prompt.txt from installed plugins that provide tools
-        let plugins_dir = LukanPaths::plugins_dir();
-        if let Ok(mut entries) = tokio::fs::read_dir(&plugins_dir).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let prompt_path = entry.path().join("prompt.txt");
-                if let Ok(plugin_prompt) = tokio::fs::read_to_string(&prompt_path).await {
-                    let trimmed = plugin_prompt.trim();
-                    if !trimmed.is_empty() {
-                        cached.push(trimmed.to_string());
-                    }
-                }
-            }
-        }
-        let now = chrono::Utc::now();
-        let dynamic = format!(
-            "Current date: {} ({}). Use this for any time-relative operations.",
-            now.format("%Y-%m-%d %H:%M UTC"),
-            tz_name
-        );
-        SystemPrompt::Structured { cached, dynamic }
-    };
+    let system_prompt =
+        build_plugin_system_prompt(name, security, &active_tool_names, &allowed_dirs, &tz_name)
+            .await;
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
@@ -549,6 +558,7 @@ async fn plugin_start_foreground(
         provider_name: resolved.config.provider.to_string(),
         model_name: resolved.effective_model(),
         bg_signal: None,
+        allowed_paths,
     };
 
     println!(
@@ -581,6 +591,91 @@ async fn plugin_start_foreground(
     let _ = tokio::fs::remove_file(&pid_path).await;
 
     Ok(())
+}
+
+/// Build the system prompt for any plugin, driven by its `[security]` manifest.
+async fn build_plugin_system_prompt(
+    name: &str,
+    security: &lukan_core::models::plugin::PluginSecurity,
+    active_tools: &[String],
+    allowed_dirs: &[String],
+    tz_name: &str,
+) -> SystemPrompt {
+    let mut cached = vec![BASE_PROMPT.to_string()];
+
+    // ── Memory (if security.include_memory) ────────────────────────────
+    if security.include_memory {
+        let global_path = LukanPaths::global_memory_file();
+        if let Ok(memory) = tokio::fs::read_to_string(&global_path).await {
+            let trimmed = memory.trim();
+            if !trimmed.is_empty() {
+                cached.push(format!("## Global Memory\n\n{trimmed}"));
+            }
+        }
+        let active_path = LukanPaths::project_memory_active_file();
+        if tokio::fs::metadata(&active_path).await.is_ok() {
+            let project_path = LukanPaths::project_memory_file();
+            if let Ok(memory) = tokio::fs::read_to_string(&project_path).await {
+                let trimmed = memory.trim();
+                if !trimmed.is_empty() {
+                    cached.push(format!("## Project Memory\n\n{trimmed}"));
+                }
+            }
+        }
+    }
+
+    // ── Plugin prompts (prompt.txt from all installed plugins) ──────────
+    let plugins_dir = LukanPaths::plugins_dir();
+    if let Ok(mut entries) = tokio::fs::read_dir(&plugins_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let prompt_path = entry.path().join("prompt.txt");
+            if let Ok(plugin_prompt) = tokio::fs::read_to_string(&prompt_path).await {
+                let trimmed = plugin_prompt.trim();
+                if !trimmed.is_empty() {
+                    cached.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    // ── Directory restriction prompts (if security.dir_restrictions) ───
+    if security.dir_restrictions {
+        let has_dangerous = active_tools
+            .iter()
+            .any(|t| security.dangerous_tools.iter().any(|d| d == t));
+
+        if has_dangerous {
+            let plugin_dir = LukanPaths::plugins_dir().join(name);
+            if allowed_dirs.is_empty() {
+                if let Some(ref tpl) = security.prompts.dir_none {
+                    let path = plugin_dir.join(tpl);
+                    if let Ok(text) = tokio::fs::read_to_string(&path).await {
+                        cached.push(text);
+                    }
+                }
+            } else if let Some(ref tpl) = security.prompts.dir_allowed {
+                let dir_list = allowed_dirs
+                    .iter()
+                    .map(|d| format!("- `{d}`"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let path = plugin_dir.join(tpl);
+                if let Ok(text) = tokio::fs::read_to_string(&path).await {
+                    cached.push(text.replace("{{ALLOWED_DIRS}}", &dir_list));
+                }
+            }
+        }
+    }
+
+    // ── Dynamic: current date/time ─────────────────────────────────────
+    let now = chrono::Utc::now();
+    let dynamic = format!(
+        "Current date: {} ({}). Use this for any time-relative operations.",
+        now.format("%Y-%m-%d %H:%M UTC"),
+        tz_name
+    );
+
+    SystemPrompt::Structured { cached, dynamic }
 }
 
 async fn plugin_stop(name: &str) -> Result<()> {
@@ -699,10 +794,12 @@ async fn plugin_status(name: &str) -> Result<()> {
                             .collect()
                     })
                     .unwrap_or_else(|| {
-                        WA_DEFAULT_TOOLS
+                        manifest
+                            .security
+                            .default_tools
                             .iter()
-                            .filter(|t| all_tools.iter().any(|a| a == **t))
-                            .map(|s| s.to_string())
+                            .filter(|t| all_tools.iter().any(|a| a == *t))
+                            .cloned()
                             .collect()
                     });
 

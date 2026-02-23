@@ -29,6 +29,36 @@ pub struct ToolContext {
     pub bg_signal: Option<watch::Receiver<()>>,
     /// OS-level sandbox configuration (bwrap)
     pub sandbox: Option<sandbox::SandboxConfig>,
+    /// Hard path restrictions — when set, only paths under these dirs are allowed
+    pub allowed_paths: Option<Vec<PathBuf>>,
+}
+
+impl ToolContext {
+    /// Check if a path is allowed under the configured restrictions.
+    /// Returns `Ok(())` if allowed, or an error `ToolResult` if blocked.
+    pub fn check_path_allowed(&self, path: &std::path::Path) -> Result<(), String> {
+        let dirs = match &self.allowed_paths {
+            Some(dirs) if !dirs.is_empty() => dirs,
+            _ => return Ok(()),
+        };
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        for allowed in dirs {
+            let allowed_canon = allowed
+                .canonicalize()
+                .unwrap_or_else(|_| allowed.to_path_buf());
+            if canonical.starts_with(&allowed_canon) {
+                return Ok(());
+            }
+        }
+        Err(format!(
+            "Path '{}' is outside allowed directories. Allowed: {}",
+            path.display(),
+            dirs.iter()
+                .map(|d| d.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
 }
 
 /// Trait that all tools must implement

@@ -61,6 +61,10 @@ impl Tool for ReadFileTool {
             ctx.cwd.join(&path)
         };
 
+        if let Err(msg) = ctx.check_path_allowed(&path) {
+            return Ok(ToolResult::error(msg));
+        }
+
         let explicit_offset = input.get("offset").and_then(|v| v.as_u64());
         let offset = explicit_offset.unwrap_or(0);
         let limit = input

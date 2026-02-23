@@ -3,7 +3,7 @@ use console::Style;
 use dialoguer::MultiSelect;
 use dialoguer::theme::ColorfulTheme;
 
-use lukan_core::config::{LukanPaths, TOOL_GROUPS, WA_DEFAULT_TOOLS};
+use lukan_core::config::{LukanPaths, TOOL_GROUPS};
 use lukan_core::models::plugin::ConfigFieldType;
 use lukan_plugins::PluginManager;
 
@@ -284,10 +284,12 @@ pub async fn handle_plugin_config(
                                     .collect()
                             })
                             .unwrap_or_else(|| {
-                                WA_DEFAULT_TOOLS
+                                manifest
+                                    .security
+                                    .default_tools
                                     .iter()
-                                    .filter(|t| all_tools.iter().any(|a| a == **t))
-                                    .map(|s| s.to_string())
+                                    .filter(|t| all_tools.iter().any(|a| a == *t))
+                                    .cloned()
                                     .collect()
                             });
 
@@ -390,10 +392,12 @@ pub async fn handle_plugin_config(
                                     .collect()
                             })
                             .unwrap_or_else(|| {
-                                WA_DEFAULT_TOOLS
+                                manifest
+                                    .security
+                                    .default_tools
                                     .iter()
-                                    .filter(|t| all_tools.iter().any(|a| a == **t))
-                                    .map(|s| s.to_string())
+                                    .filter(|t| all_tools.iter().any(|a| a == *t))
+                                    .cloned()
                                     .collect()
                             });
 

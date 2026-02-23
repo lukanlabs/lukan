@@ -32,6 +32,7 @@ pub async fn configure(
     provider_name: String,
     model_name: String,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
+    allowed_paths: Option<Vec<std::path::PathBuf>>,
 ) {
     let mut mgr = MANAGER.write().await;
     mgr.provider = Some(provider);
@@ -40,6 +41,7 @@ pub async fn configure(
     mgr.provider_name = Some(provider_name);
     mgr.model_name = Some(model_name);
     mgr.sandbox = sandbox;
+    mgr.allowed_paths = allowed_paths;
 }
 
 // ── Manager ───────────────────────────────────────────────────────────────
@@ -52,6 +54,7 @@ struct SubAgentManager {
     provider_name: Option<String>,
     model_name: Option<String>,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
+    allowed_paths: Option<Vec<std::path::PathBuf>>,
 }
 
 impl SubAgentManager {
@@ -64,6 +67,7 @@ impl SubAgentManager {
             provider_name: None,
             model_name: None,
             sandbox: None,
+            allowed_paths: None,
         }
     }
 }
@@ -117,7 +121,7 @@ async fn spawn_sub_agent(
         hex::encode(&buf)
     };
 
-    let (provider, system_prompt, cwd, _provider_name, _model_name, sandbox) = {
+    let (provider, system_prompt, cwd, _provider_name, _model_name, sandbox, allowed_paths) = {
         let mgr = MANAGER.read().await;
         let provider = mgr
             .provider
@@ -131,7 +135,8 @@ async fn spawn_sub_agent(
         let pn = mgr.provider_name.clone().unwrap_or_default();
         let mn = mgr.model_name.clone().unwrap_or_default();
         let sandbox = mgr.sandbox.clone();
-        (provider, sp, cwd, pn, mn, sandbox)
+        let allowed_paths = mgr.allowed_paths.clone();
+        (provider, sp, cwd, pn, mn, sandbox, allowed_paths)
     };
 
     let entry = SubAgentEntry {
@@ -164,6 +169,7 @@ async fn spawn_sub_agent(
             system_prompt,
             cwd,
             sandbox,
+            allowed_paths,
         )
         .await;
     });
@@ -181,6 +187,7 @@ async fn run_sub_agent(
     system_prompt: SystemPrompt,
     cwd: std::path::PathBuf,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
+    allowed_paths: Option<Vec<std::path::PathBuf>>,
 ) {
     let mut history = MessageHistory::new();
     history.add_user_message(&task);
@@ -321,6 +328,7 @@ async fn run_sub_agent(
             let inp = input.clone();
 
             let sandbox_cfg = sandbox.clone();
+            let ap = allowed_paths.clone();
             handles.push(tokio::spawn(async move {
                 let ctx = ToolContext {
                     progress_tx: None,
@@ -328,6 +336,7 @@ async fn run_sub_agent(
                     cwd: c,
                     bg_signal: None,
                     sandbox: sandbox_cfg,
+                    allowed_paths: ap,
                 };
                 match reg.execute(&n, inp, &ctx).await {
                     Ok(r) => r,

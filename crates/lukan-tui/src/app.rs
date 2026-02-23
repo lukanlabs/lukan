@@ -200,6 +200,7 @@ impl App {
             provider_name: self.config.config.provider.to_string(),
             model_name: self.config.effective_model(),
             bg_signal: Some(self.bg_signal_rx.clone()),
+            allowed_paths: None,
         };
 
         match AgentLoop::new(config).await {
@@ -1408,6 +1409,7 @@ impl App {
             provider_name: self.config.config.provider.to_string(),
             model_name: self.config.effective_model(),
             bg_signal: Some(self.bg_signal_rx.clone()),
+            allowed_paths: None,
         };
 
         match AgentLoop::load_session(config, &session_id).await {

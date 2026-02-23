@@ -14,7 +14,6 @@ mod plugin_exec;
 mod sandbox_cmd;
 mod setup;
 mod update;
-mod whatsapp_compat;
 mod worker;
 
 #[derive(Parser)]

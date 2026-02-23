@@ -143,6 +143,47 @@ pub struct PluginManifest {
     pub config: HashMap<String, ConfigFieldSchema>,
     #[serde(default)]
     pub commands: HashMap<String, PluginCommandDef>,
+    /// Security policy declared by the plugin
+    #[serde(default)]
+    pub security: PluginSecurity,
+}
+
+/// Security policy declared in plugin.toml `[security]`
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PluginSecurity {
+    /// Default tools when none are configured in the plugin's config.json.
+    /// Empty = all tools allowed.
+    #[serde(default)]
+    pub default_tools: Vec<String>,
+    /// Include global/project memory in the system prompt
+    #[serde(default)]
+    pub include_memory: bool,
+    /// Enable directory-based path restrictions
+    #[serde(default)]
+    pub dir_restrictions: bool,
+    /// Tool names considered "dangerous" (trigger dir restriction prompts)
+    #[serde(default = "default_dangerous_tools")]
+    pub dangerous_tools: Vec<String>,
+    /// Prompt template filenames for directory restrictions
+    #[serde(default)]
+    pub prompts: SecurityPrompts,
+}
+
+fn default_dangerous_tools() -> Vec<String> {
+    vec![
+        "Bash".to_string(),
+        "WriteFile".to_string(),
+        "EditFile".to_string(),
+    ]
+}
+
+/// Prompt template filenames (relative to plugin dir) for directory restrictions
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SecurityPrompts {
+    /// Prompt shown when no directories are allowed
+    pub dir_none: Option<String>,
+    /// Prompt shown when some directories are allowed (supports `{{ALLOWED_DIRS}}`)
+    pub dir_allowed: Option<String>,
 }
 
 /// Metadata about the plugin

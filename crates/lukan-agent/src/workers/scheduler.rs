@@ -337,6 +337,7 @@ async fn run_worker(
         provider_name,
         model_name,
         bg_signal: None,
+        allowed_paths: None,
     };
 
     // Create agent and run

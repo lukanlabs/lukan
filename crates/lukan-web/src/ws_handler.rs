@@ -877,6 +877,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         provider_name,
         model_name,
         bg_signal: None,
+        allowed_paths: None,
     };
 
     AgentLoop::new(agent_config).await
@@ -902,6 +903,7 @@ async fn create_agent_with_session(
         provider_name,
         model_name,
         bg_signal: None,
+        allowed_paths: None,
     };
 
     AgentLoop::load_session(agent_config, session_id).await

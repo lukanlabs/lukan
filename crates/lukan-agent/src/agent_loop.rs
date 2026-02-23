@@ -46,6 +46,8 @@ pub struct AgentConfig {
     pub model_name: String,
     /// Optional signal receiver for Alt+B (send Bash to background)
     pub bg_signal: Option<watch::Receiver<()>>,
+    /// Hard path restrictions for file tools (from plugin security)
+    pub allowed_paths: Option<Vec<PathBuf>>,
 }
 
 /// Pending tool call accumulated from stream events
@@ -72,6 +74,8 @@ pub struct AgentLoop {
     read_files: Arc<Mutex<HashSet<PathBuf>>>,
     /// Optional signal receiver for Alt+B (send Bash to background)
     bg_signal: Option<watch::Receiver<()>>,
+    /// Hard path restrictions for file tools (from plugin security)
+    allowed_paths: Option<Vec<PathBuf>>,
 }
 
 impl AgentLoop {
@@ -104,10 +108,12 @@ impl AgentLoop {
             config.provider_name.clone(),
             config.model_name.clone(),
             sub_agent_sandbox,
+            config.allowed_paths.clone(),
         )
         .await;
 
         let bg_signal = config.bg_signal.take();
+        let allowed_paths = config.allowed_paths.take();
         let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
         Ok(Self {
             provider: config.provider,
@@ -122,6 +128,7 @@ impl AgentLoop {
             last_memory_update_tokens: 0,
             read_files: Arc::new(Mutex::new(HashSet::new())),
             bg_signal,
+            allowed_paths,
         })
     }
 
@@ -153,10 +160,12 @@ impl AgentLoop {
             config.provider_name.clone(),
             config.model_name.clone(),
             sub_agent_sandbox,
+            config.allowed_paths.clone(),
         )
         .await;
 
         let bg_signal = config.bg_signal.take();
+        let allowed_paths = config.allowed_paths.take();
         let session = SessionManager::load(session_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
@@ -177,6 +186,7 @@ impl AgentLoop {
             session,
             read_files: Arc::new(Mutex::new(HashSet::new())),
             bg_signal,
+            allowed_paths,
         })
     }
 
@@ -766,6 +776,7 @@ impl AgentLoop {
             let tx = event_tx.clone();
             let bg_signal = self.bg_signal.clone();
             let sandbox_cfg = sandbox_cfg.clone();
+            let allowed_paths = self.allowed_paths.clone();
 
             handles.push(tokio::spawn(async move {
                 // Send progress start
@@ -783,6 +794,7 @@ impl AgentLoop {
                     cwd,
                     bg_signal,
                     sandbox: sandbox_cfg.clone(),
+                    allowed_paths,
                 };
 
                 match registry.execute(&name, input, &ctx).await {

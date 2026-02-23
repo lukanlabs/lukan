@@ -66,6 +66,10 @@ impl Tool for GlobTool {
             ctx.cwd.join(&base_path)
         };
 
+        if let Err(msg) = ctx.check_path_allowed(&base_path) {
+            return Ok(ToolResult::error(msg));
+        }
+
         let max_results = input
             .get("max_results")
             .and_then(|v| v.as_u64())

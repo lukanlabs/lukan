@@ -119,6 +119,10 @@ impl Tool for EditFileTool {
             ctx.cwd.join(&path)
         };
 
+        if let Err(msg) = ctx.check_path_allowed(&path) {
+            return Ok(ToolResult::error(msg));
+        }
+
         // Must have been read first
         if !ctx.read_files.lock().await.contains(&path) {
             return Ok(ToolResult::error(format!(

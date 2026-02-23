@@ -70,6 +70,17 @@ description = "Minutes before reminder"
 type = "string"
 description = "Chat ID for reminders"
 
+# Security policy — generic protocol
+[security]
+default_tools = ["Grep", "Glob", "ReadFile", "WebFetch"]
+include_memory = true
+dir_restrictions = true
+dangerous_tools = ["Bash", "WriteFile", "EditFile"]
+
+[security.prompts]
+dir_none = "prompt-dir-none.txt"
+dir_allowed = "prompt-dir-allowed.txt"
+
 # Custom commands handled by cli.js
 [commands.auth]
 description = "Authenticate WhatsApp by scanning QR code"

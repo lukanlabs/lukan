@@ -10,7 +10,7 @@ use similar::{ChangeTag, TextDiff};
 use syntect::easy::HighlightLines;
 
 use super::markdown::{render_markdown, syntax_set, theme};
-use super::shimmer::shimmer_spans;
+
 
 /// Sanitize text for terminal display.
 ///
@@ -109,16 +109,9 @@ impl ChatMessage {
 /// This is a standalone function used both by `ChatWidget::render` and by
 /// `commit_overflow` in `app.rs` (to push old messages into the terminal
 /// scrollback via `insert_before`).
-///
-/// `thinking_text`: accumulated reasoning/thinking from the model (Codex).
-/// `is_streaming`: whether the model is currently generating output.
-/// When both `thinking_text` is non-empty and `streaming_text` is empty
-/// (model is in thinking phase), a shimmer "Thinking..." label is shown.
 pub fn build_message_lines(
     messages: &[ChatMessage],
     streaming_text: &str,
-    thinking_text: &str,
-    is_streaming: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
@@ -228,23 +221,10 @@ pub fn build_message_lines(
         }
     }
 
-    // Shimmer indicators — shown above the input while the agent is processing
-    if is_streaming && thinking_text.is_empty() && streaming_text.is_empty() {
-        // Waiting for first token — agent just started
-        lines.push(Line::from(shimmer_spans("Working on it...")));
-    } else if is_streaming && !thinking_text.is_empty() && streaming_text.is_empty() {
-        // Thinking phase — model is reasoning but no text output yet
-        lines.push(Line::from(shimmer_spans("Thinking...")));
-    }
-
     // Streaming text — render markdown with styles & syntax highlighting
     if !streaming_text.is_empty() {
         let sanitized = sanitize_for_display(streaming_text);
         lines.extend(render_markdown(&sanitized));
-        // Show "Writing..." shimmer after the text while still streaming
-        if is_streaming {
-            lines.push(Line::from(shimmer_spans("Writing...")));
-        }
     }
 
     lines
@@ -265,22 +245,16 @@ pub fn physical_row_count(lines: &[Line], width: u16) -> u16 {
 pub struct ChatWidget<'a> {
     messages: &'a [ChatMessage],
     streaming_text: &'a str,
-    thinking_text: &'a str,
-    is_streaming: bool,
 }
 
 impl<'a> ChatWidget<'a> {
     pub fn new(
         messages: &'a [ChatMessage],
         streaming_text: &'a str,
-        thinking_text: &'a str,
-        is_streaming: bool,
     ) -> Self {
         Self {
             messages,
             streaming_text,
-            thinking_text,
-            is_streaming,
         }
     }
 }
@@ -295,8 +269,6 @@ impl Widget for ChatWidget<'_> {
         let lines = build_message_lines(
             self.messages,
             self.streaming_text,
-            self.thinking_text,
-            self.is_streaming,
         );
 
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });

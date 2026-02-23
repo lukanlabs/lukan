@@ -297,28 +297,33 @@ impl App {
             terminal.draw(|frame| {
                 let area = frame.area();
 
+                // Shimmer status line: 1 row when streaming, 0 otherwise
+                let shimmer_h: u16 = if self.is_streaming { 1 } else { 0 };
+
                 // Dynamic layout: palette below input, above status bar
-                let (chat_area, input_area, palette_area, status_area) = if palette_visible {
+                let (chat_area, shimmer_area, input_area, palette_area, status_area) = if palette_visible {
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
                             Constraint::Min(1),
+                            Constraint::Length(shimmer_h),
                             Constraint::Length(input_h),
                             Constraint::Length(palette_h),
                             Constraint::Length(1),
                         ])
                         .split(area);
-                    (chunks[0], chunks[1], Some(chunks[2]), chunks[3])
+                    (chunks[0], chunks[1], chunks[2], Some(chunks[3]), chunks[4])
                 } else {
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
                             Constraint::Min(1),
+                            Constraint::Length(shimmer_h),
                             Constraint::Length(input_h),
                             Constraint::Length(1),
                         ])
                         .split(area);
-                    (chunks[0], chunks[1], None, chunks[2])
+                    (chunks[0], chunks[1], chunks[2], None, chunks[3])
                 };
 
                 // Chat (or overlay pickers)
@@ -346,8 +351,6 @@ impl App {
                     let chat = ChatWidget::new(
                         &self.messages[self.committed_msg_idx..],
                         &self.streaming_text,
-                        &self.streaming_thinking,
-                        self.is_streaming,
                     );
                     frame.render_widget(chat, chat_area);
                 }
@@ -364,6 +367,21 @@ impl App {
                         let widget = CommandPaletteWidget::new(&filtered_cmds, palette_idx);
                         frame.render_widget(widget, p_area);
                     }
+                }
+
+                // Shimmer indicator — fixed above input
+                if self.is_streaming && shimmer_area.height > 0 {
+                    use crate::widgets::shimmer::shimmer_spans;
+                    let label = if self.streaming_text.is_empty() && self.streaming_thinking.is_empty() {
+                        "Working on it..."
+                    } else if !self.streaming_thinking.is_empty() && self.streaming_text.is_empty() {
+                        "Thinking..."
+                    } else {
+                        "Writing..."
+                    };
+                    let line = ratatui::text::Line::from(shimmer_spans(label));
+                    let paragraph = ratatui::widgets::Paragraph::new(line);
+                    frame.render_widget(paragraph, shimmer_area);
                 }
 
                 // Input — show paste preview + typed-after text when available
@@ -1920,7 +1938,7 @@ fn commit_overflow(
     }
 
     let uncommitted = &messages[*committed_msg_idx..];
-    let all_lines = build_message_lines(uncommitted, "", "", false);
+    let all_lines = build_message_lines(uncommitted, "");
     let total_rows = physical_row_count(&all_lines, width);
 
     if total_rows <= chat_area_h {
@@ -1936,14 +1954,14 @@ fn commit_overflow(
         if rows_acc >= rows_to_free {
             break;
         }
-        let msg_lines = build_message_lines(std::slice::from_ref(msg), "", "", false);
+        let msg_lines = build_message_lines(std::slice::from_ref(msg), "");
         rows_acc += physical_row_count(&msg_lines, width);
         msgs_to_commit += 1;
     }
 
     if msgs_to_commit > 0 && rows_acc > 0 {
         let commit_msgs = &messages[*committed_msg_idx..*committed_msg_idx + msgs_to_commit];
-        let commit_lines = build_message_lines(commit_msgs, "", "", false);
+        let commit_lines = build_message_lines(commit_msgs, "");
         let commit_rows = physical_row_count(&commit_lines, width);
 
         use ratatui::widgets::{Paragraph, Widget, Wrap};

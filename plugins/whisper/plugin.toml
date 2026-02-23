@@ -1,0 +1,40 @@
+[plugin]
+name = "whisper"
+version = "0.1.0"
+description = "Local audio transcription via whisper.cpp (GPU/CPU auto-detect)"
+plugin_type = "channel"
+protocol_version = 1
+alias = "whisper"
+
+[run]
+command = "lukan-whisper"
+args = []
+
+[config.model_size]
+type = "string"
+description = "Whisper model size (tiny, base, small, medium, large-v3)"
+valid_values = ["tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium", "medium.en", "large-v3", "large-v3-turbo"]
+
+[config.port]
+type = "number"
+description = "HTTP server port for transcription API"
+
+[config.language]
+type = "string"
+description = "Force transcription language (e.g. 'es', 'en'). Leave empty for auto-detect"
+
+[config.use_gpu]
+type = "bool"
+description = "Use GPU acceleration if available (CUDA/Metal)"
+
+[commands.download]
+description = "Download a whisper model from HuggingFace"
+handler = "download"
+
+[commands.models]
+description = "List downloaded whisper models"
+handler = "models"
+
+[commands.serve]
+description = "Start the transcription server directly"
+handler = "serve"

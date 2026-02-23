@@ -44,6 +44,8 @@ bundle_whatsapp() {
   # Copy non-JS files needed at runtime
   cp "$src/plugin.toml" "$dist/"
   cp "$src/config.json" "$dist/" 2>/dev/null || true
+  cp "$src/prompt.txt" "$dist/" 2>/dev/null || true
+  cp "$src"/prompt-dir-*.txt "$dist/" 2>/dev/null || true
 
   ok "whatsapp → dist/ (bridge.js, cli.js, connector)"
 }

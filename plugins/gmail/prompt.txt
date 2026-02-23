@@ -19,6 +19,15 @@ You have direct API access to Gmail via dedicated tools. **ALWAYS use these tool
 - `in:inbox is:unread` — unread inbox emails
 - `label:important` — emails with a label
 
+### Important: Confirmation before sending
+
+**ALWAYS show the user the full email content and ask for explicit confirmation before calling `GmailSend` or `GmailReply`.** Display:
+- **To** (and Cc/Bcc if applicable)
+- **Subject**
+- **Body** (full text)
+
+Wait for the user to confirm before sending. Never send an email without confirmation. This applies to all channels (CLI, WhatsApp, etc.).
+
 These API tools are faster, more reliable, and use less tokens than browser navigation. Never open Gmail in the browser when these tools are available.
 
 If a tool returns "Gmail not configured", tell the user to run: `lukan gmail auth`

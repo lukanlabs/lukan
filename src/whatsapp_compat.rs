@@ -9,9 +9,6 @@ use serde::{Deserialize, Serialize};
 use lukan_core::config::{LukanPaths, PluginOverrides, WA_DEFAULT_TOOLS, WhatsAppConfig};
 use lukan_providers::SystemPrompt;
 
-const WA_FORMAT_PROMPT: &str = include_str!("../prompts/whatsapp-format.txt");
-const WA_DIR_NONE_PROMPT: &str = include_str!("../prompts/whatsapp-dir-none.txt");
-const WA_DIR_ALLOWED_PROMPT: &str = include_str!("../prompts/whatsapp-dir-allowed.txt");
 const BASE_PROMPT: &str = include_str!("../prompts/base.txt");
 
 const WA_PLUGIN_NAME: &str = "whatsapp";
@@ -127,10 +124,7 @@ pub async fn build_whatsapp_system_prompt(
         }
     }
 
-    // WhatsApp-specific: formatting guidelines
-    cached.push(WA_FORMAT_PROMPT.to_string());
-
-    // WhatsApp-specific: directory restrictions
+    // WhatsApp-specific: directory restrictions (read templates from plugin dir)
     let tools: Vec<String> = wa_config
         .tools
         .clone()
@@ -142,15 +136,22 @@ pub async fn build_whatsapp_system_prompt(
 
     if has_dangerous && !wa_config.skip_dir_restrictions.unwrap_or(false) {
         let dirs = wa_config.allowed_dirs.clone().unwrap_or_default();
+        let wa_plugin_dir = LukanPaths::plugins_dir().join("whatsapp");
         if dirs.is_empty() {
-            cached.push(WA_DIR_NONE_PROMPT.to_string());
+            let path = wa_plugin_dir.join("prompt-dir-none.txt");
+            if let Ok(text) = tokio::fs::read_to_string(&path).await {
+                cached.push(text);
+            }
         } else {
             let dir_list = dirs
                 .iter()
                 .map(|d| format!("- `{d}`"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            cached.push(WA_DIR_ALLOWED_PROMPT.replace("{{ALLOWED_DIRS}}", &dir_list));
+            let path = wa_plugin_dir.join("prompt-dir-allowed.txt");
+            if let Ok(text) = tokio::fs::read_to_string(&path).await {
+                cached.push(text.replace("{{ALLOWED_DIRS}}", &dir_list));
+            }
         }
     }
 

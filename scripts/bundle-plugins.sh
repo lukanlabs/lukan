@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Bundle Node.js plugins into self-contained single-file scripts.
+# Output goes to plugins/<name>/dist/ — ready for distribution without node_modules.
+#
+# Usage:
+#   ./scripts/bundle-plugins.sh          # Bundle all plugins
+#   ./scripts/bundle-plugins.sh whatsapp # Bundle specific plugin
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(dirname "$SCRIPT_DIR")"
+PLUGINS_DIR="$ROOT/plugins"
+
+info() { printf "\033[36m%s\033[0m\n" "$*"; }
+ok()   { printf "\033[32m✓\033[0m %s\n" "$*"; }
+err()  { printf "\033[31m✗\033[0m %s\n" "$*" >&2; }
+
+# Require bun
+if ! command -v bun >/dev/null 2>&1; then
+  err "bun is required for bundling. Install: https://bun.sh"
+  exit 1
+fi
+
+bundle_whatsapp() {
+  local src="$PLUGINS_DIR/whatsapp"
+  local dist="$src/dist"
+  info "Bundling whatsapp plugin..."
+
+  # Install deps if needed
+  if [ ! -d "$src/node_modules" ]; then
+    (cd "$src" && bun install --frozen-lockfile 2>/dev/null || bun install)
+  fi
+  if [ ! -d "$src/whatsapp-connector/node_modules" ]; then
+    (cd "$src/whatsapp-connector" && bun install --frozen-lockfile 2>/dev/null || bun install)
+  fi
+
+  mkdir -p "$dist/whatsapp-connector"
+
+  bun build "$src/bridge.js" --target=node --outfile="$dist/bridge.js" 2>/dev/null
+  bun build "$src/cli.js" --target=node --outfile="$dist/cli.js" 2>/dev/null
+  bun build "$src/whatsapp-connector/index.js" --target=node --outfile="$dist/whatsapp-connector/index.js" 2>/dev/null
+
+  # Copy non-JS files needed at runtime
+  cp "$src/plugin.toml" "$dist/"
+  cp "$src/config.json" "$dist/" 2>/dev/null || true
+
+  ok "whatsapp → dist/ (bridge.js, cli.js, connector)"
+}
+
+bundle_google_workspace() {
+  local src="$PLUGINS_DIR/google-workspace"
+  local dist="$src/dist"
+  info "Bundling google-workspace plugin..."
+
+  mkdir -p "$dist"
+
+  # No external deps — just copy files
+  cp "$src/plugin.toml" "$dist/"
+  cp "$src/cli.js" "$dist/"
+  cp "$src/tools.js" "$dist/"
+  cp "$src/tools.json" "$dist/"
+  cp "$src/prompt.txt" "$dist/"
+
+  ok "google-workspace → dist/ (no bundling needed, zero deps)"
+}
+
+# ── Main ──────────────────────────────────────────────────────────────
+
+TARGET="${1:-all}"
+
+case "$TARGET" in
+  whatsapp)
+    bundle_whatsapp
+    ;;
+  google-workspace|google)
+    bundle_google_workspace
+    ;;
+  all)
+    bundle_whatsapp
+    bundle_google_workspace
+    ;;
+  *)
+    err "Unknown plugin: $TARGET"
+    echo "Available: whatsapp, google-workspace, all"
+    exit 1
+    ;;
+esac
+
+echo ""
+ok "Bundle complete. Distributable files are in plugins/*/dist/"

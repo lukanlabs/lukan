@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::io::Write;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use lukan_agent::AgentLoop;
@@ -17,6 +19,7 @@ const DEFAULT_MAX_RESPONSE_LEN: usize = 4000;
 pub struct PluginChannel {
     name: String,
     max_response_len: usize,
+    log_path: Option<PathBuf>,
 }
 
 impl PluginChannel {
@@ -24,6 +27,23 @@ impl PluginChannel {
         Self {
             name: name.to_string(),
             max_response_len: max_response_len.unwrap_or(DEFAULT_MAX_RESPONSE_LEN),
+            log_path: None,
+        }
+    }
+
+    /// Set the plugin log file path. Events will be appended here in addition to tracing.
+    pub fn with_log_file(mut self, path: PathBuf) -> Self {
+        self.log_path = Some(path);
+        self
+    }
+
+    /// Append a line to the plugin log file (best-effort, never fails).
+    fn log_to_file(&self, level: &str, message: &str) {
+        if let Some(ref path) = self.log_path
+            && let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path)
+        {
+            let now = chrono::Utc::now().format("%H:%M:%S");
+            let _ = writeln!(f, "[{now}] {level}: {message}");
         }
     }
 
@@ -55,6 +75,12 @@ impl PluginChannel {
                     }
                     processing.insert(channel_id.clone());
 
+                    let preview = if content.len() > 80 {
+                        format!("{}...", &content[..80])
+                    } else {
+                        content.clone()
+                    };
+                    self.log_to_file("MSG", &format!("{sender} → {preview}"));
                     info!(
                         plugin = %self.name,
                         sender = %sender,
@@ -65,6 +91,13 @@ impl PluginChannel {
                     let response = collect_agent_response(agent, &content, self.max_response_len).await;
                     let is_error = response.starts_with("Error:");
 
+                    let resp_preview = if response.len() > 120 {
+                        format!("{}...", &response[..120])
+                    } else {
+                        response.clone()
+                    };
+                    self.log_to_file("REPLY", &format!("→ {channel_id}: {resp_preview}"));
+
                     let reply = HostMessage::AgentResponse {
                         request_id,
                         text: response,
@@ -72,6 +105,7 @@ impl PluginChannel {
                     };
 
                     if let Err(e) = host_tx.send(reply).await {
+                        self.log_to_file("ERROR", &format!("Failed to send response: {e}"));
                         error!(plugin = %self.name, "Failed to send agent response: {e}");
                     }
 
@@ -84,9 +118,17 @@ impl PluginChannel {
                         PluginStatus::Reconnecting => "reconnecting",
                         PluginStatus::Authenticating => "authenticating",
                     };
+                    self.log_to_file("STATUS", status_str);
                     info!(plugin = %self.name, status = %status_str, "Plugin status update");
                 }
                 PluginMessage::Log { level, message } => {
+                    let level_str = match level {
+                        LogLevel::Debug => "DEBUG",
+                        LogLevel::Info => "INFO",
+                        LogLevel::Warn => "WARN",
+                        LogLevel::Error => "ERROR",
+                    };
+                    self.log_to_file(level_str, &message);
                     match level {
                         LogLevel::Debug => tracing::debug!(plugin = %self.name, "{message}"),
                         LogLevel::Info => info!(plugin = %self.name, "{message}"),
@@ -98,6 +140,7 @@ impl PluginChannel {
                     message,
                     recoverable,
                 } => {
+                    self.log_to_file("ERROR", &format!("{message} (recoverable={recoverable})"));
                     error!(
                         plugin = %self.name,
                         recoverable,
@@ -109,6 +152,7 @@ impl PluginChannel {
                     }
                 }
                 PluginMessage::Ready { version, capabilities } => {
+                    self.log_to_file("INFO", &format!("Ready v{version}"));
                     info!(
                         plugin = %self.name,
                         version = %version,
@@ -119,6 +163,7 @@ impl PluginChannel {
             }
         }
 
+        self.log_to_file("INFO", "Channel loop ended");
         info!(plugin = %self.name, "Plugin channel loop ended");
         Ok(())
     }

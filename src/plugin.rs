@@ -401,7 +401,9 @@ async fn plugin_start_foreground(
     println!("Plugin ready. Listening for messages...");
 
     // Run channel loop (blocks until plugin disconnects or error)
-    let channel = PluginChannel::new(name, max_response_len);
+    let log_path = LukanPaths::plugin_log(name);
+    let channel = PluginChannel::new(name, max_response_len)
+        .with_log_file(log_path);
     channel.run(&mut agent, plugin_rx, host_tx).await?;
 
     // Cleanup

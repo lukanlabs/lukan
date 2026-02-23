@@ -15,3 +15,5 @@ toml.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+reqwest.workspace = true
+futures.workspace = true

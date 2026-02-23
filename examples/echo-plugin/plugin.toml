@@ -1,10 +1,27 @@
+# Echo Plugin — Example/template for building lukan plugins.
+# See README.md for the full plugin development guide.
+
 [plugin]
 name = "echo"
 version = "0.1.0"
-description = "Echo plugin for testing the plugin system"
+description = "Example plugin that echoes messages back (use as template)"
 plugin_type = "channel"
 protocol_version = 1
+alias = "echo"
 
 [run]
 command = "bash"
 args = ["echo-bridge.sh"]
+
+# Example config fields — users manage these via `lukan echo config <key> <action> <value>`
+[config.greeting]
+type = "string"
+description = "Custom greeting prefix"
+
+[config.repeat_count]
+type = "number"
+description = "How many times to repeat the echo"
+
+[config.uppercase]
+type = "bool"
+description = "Convert responses to uppercase"

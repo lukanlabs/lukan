@@ -32,9 +32,9 @@ const BASE_PROMPT: &str = include_str!("../prompts/base.txt");
 pub enum PluginCommands {
     /// List installed plugins
     List,
-    /// Install a plugin from a local directory
+    /// Install a plugin from local directory or remote registry
     Install {
-        /// Source directory containing plugin.toml
+        /// Plugin name (remote) or source directory path (local)
         source: String,
         /// Override plugin name
         #[arg(long)]
@@ -43,6 +43,8 @@ pub enum PluginCommands {
         #[arg(long)]
         alias: Option<String>,
     },
+    /// List plugins available in the remote registry
+    ListRemote,
     /// Remove an installed plugin
     Remove {
         /// Plugin name
@@ -110,6 +112,7 @@ pub async fn handle_plugin_command(command: PluginCommands) -> Result<()> {
         PluginCommands::Install { source, name, alias } => {
             plugin_install(&source, name.as_deref(), alias.as_deref()).await
         }
+        PluginCommands::ListRemote => plugin_list_remote().await,
         PluginCommands::Remove { name } => plugin_remove(&name).await,
         PluginCommands::Start {
             name,
@@ -181,9 +184,55 @@ async fn plugin_list() -> Result<()> {
 }
 
 async fn plugin_install(source: &str, name: Option<&str>, alias: Option<&str>) -> Result<()> {
-    let installed_name = PluginManager::install(source, name, alias).await?;
+    let source_path = std::path::Path::new(source);
+
+    // If source looks like a path (contains / or . or exists on disk), install locally.
+    // Otherwise treat it as a remote plugin name from the registry.
+    let is_local = source.contains('/') || source.contains('.') || source_path.exists();
+
+    let installed_name = if is_local {
+        PluginManager::install(source, name, alias).await?
+    } else {
+        println!("{DIM}Fetching plugin registry...{RESET}");
+        lukan_plugins::registry::install_remote(source, alias).await?
+    };
+
     println!("{GREEN}✓{RESET} Plugin '{CYAN}{installed_name}{RESET}' installed.");
     println!("{DIM}Start it with: lukan plugin start {installed_name}{RESET}");
+    Ok(())
+}
+
+async fn plugin_list_remote() -> Result<()> {
+    println!("{DIM}Fetching plugin registry...{RESET}");
+    let plugins = lukan_plugins::registry::list_remote().await?;
+
+    if plugins.is_empty() {
+        println!("{YELLOW}No plugins available in the registry.{RESET}");
+        return Ok(());
+    }
+
+    println!("{BOLD}Available plugins:{RESET}\n");
+    for p in &plugins {
+        let status = if p.installed {
+            format!(" {GREEN}(installed){RESET}")
+        } else if !p.available {
+            format!(" {YELLOW}(not available for your platform){RESET}")
+        } else {
+            String::new()
+        };
+        let source_tag = match p.source.as_str() {
+            "binary" => format!("{DIM}binary{RESET}"),
+            "bundled" => format!("{DIM}bundled{RESET}"),
+            other => format!("{DIM}{other}{RESET}"),
+        };
+        println!(
+            "  {CYAN}{}{RESET} v{} [{source_tag}]{status}",
+            p.name, p.version
+        );
+        println!("    {DIM}{}{RESET}", p.description);
+    }
+
+    println!("\n{DIM}Install with: lukan plugin install <name>{RESET}");
     Ok(())
 }
 

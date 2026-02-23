@@ -1,0 +1,51 @@
+# Lukan Plugin Registry
+#
+# Lists available plugins that can be installed remotely via:
+#   lukan plugin install <name>
+#
+# Each plugin entry specifies:
+#   - description: Short description
+#   - version: Current version
+#   - plugin_type: "channel" | "tool" | "extension"
+#   - source: "binary" (precompiled) | "rust" (compile from source)
+#
+# For binary plugins, platform-specific download URLs are under [plugins.<name>.assets.<platform>]
+# where <platform> is one of: linux-x86_64, linux-aarch64, macos-x86_64, macos-aarch64
+#
+# The registry_url field in [meta] points to the raw URL of this file on GitHub.
+# When users run `lukan plugin install <name>`, the CLI fetches this file to discover
+# available plugins and their download URLs.
+
+[meta]
+version = 1
+registry_url = "https://raw.githubusercontent.com/lukanlabs/lukan/master/registry.toml"
+
+[plugins.whisper]
+description = "Local audio transcription via whisper.cpp (OpenAI-compatible API)"
+version = "0.1.0"
+plugin_type = "channel"
+source = "binary"
+homepage = "https://github.com/lukanlabs/lukan/tree/master/plugins/whisper"
+
+[plugins.whisper.assets.linux-x86_64]
+url = "https://github.com/lukanlabs/lukan/releases/download/plugin-whisper-v0.1.0/lukan-whisper-linux-x86_64.tar.gz"
+binary = "lukan-whisper"
+
+[plugins.whisper.assets.linux-aarch64]
+url = "https://github.com/lukanlabs/lukan/releases/download/plugin-whisper-v0.1.0/lukan-whisper-linux-aarch64.tar.gz"
+binary = "lukan-whisper"
+
+[plugins.whisper.assets.macos-x86_64]
+url = "https://github.com/lukanlabs/lukan/releases/download/plugin-whisper-v0.1.0/lukan-whisper-macos-x86_64.tar.gz"
+binary = "lukan-whisper"
+
+[plugins.whisper.assets.macos-aarch64]
+url = "https://github.com/lukanlabs/lukan/releases/download/plugin-whisper-v0.1.0/lukan-whisper-macos-aarch64.tar.gz"
+binary = "lukan-whisper"
+
+[plugins.whatsapp]
+description = "WhatsApp channel via Baileys bridge"
+version = "0.1.0"
+plugin_type = "channel"
+source = "bundled"
+note = "Included in lukan release, use `lukan plugin install ./plugins/whatsapp` for local install"

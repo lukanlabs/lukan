@@ -40,6 +40,15 @@ description = "Disable directory restrictions"
 type = "string"
 description = "Connector WebSocket URL"
 
+[config.transcription_backend]
+type = "string"
+description = "Audio transcription backend: 'openai' (API) or 'local' (whisper.cpp server)"
+valid_values = ["openai", "local"]
+
+[config.whisper_url]
+type = "string"
+description = "Local Whisper server URL (used when transcription_backend = 'local')"
+
 [config.enabled]
 type = "bool"
 description = "Enable/disable channel"

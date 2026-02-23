@@ -36,6 +36,10 @@ let bridgeUrl = "ws://localhost:3001";
 
 // Audio transcription
 let openaiApiKey = process.env.OPENAI_API_KEY || null;
+let transcriptionBackend = "openai"; // "openai" | "local"
+let whisperUrl = "http://localhost:8787";
+let whisperChild = null; // child process if we started whisper server
+let whisperReady = false;
 
 // Track pending requests: requestId is generated per incoming message
 let requestCounter = 0;
@@ -134,6 +138,103 @@ function killConnector() {
       // Ignore — process may already be dead
     }
     connectorChild = null;
+  }
+}
+
+// ── Whisper server auto-start ────────────────────────────────────────
+
+/** Find lukan-whisper binary in known locations */
+function findWhisperBinary() {
+  const candidates = [
+    resolve(process.env.HOME || "", ".config/lukan/plugins/whisper/lukan-whisper"),
+    resolve(process.env.HOME || "", ".local/bin/lukan-whisper"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+/** Start whisper server and wait until it responds on /health */
+async function startWhisperServer() {
+  // Already running externally?
+  try {
+    const res = await fetch(`${whisperUrl}/health`);
+    if (res.ok) {
+      log("info", "Whisper server already running");
+      whisperReady = true;
+      return true;
+    }
+  } catch {
+    // Not running — start it
+  }
+
+  const bin = findWhisperBinary();
+  if (!bin) {
+    log("error", "lukan-whisper binary not found — install the whisper plugin");
+    return false;
+  }
+
+  // Extract port from whisperUrl
+  let port = "8787";
+  try {
+    port = new URL(whisperUrl).port || "8787";
+  } catch {}
+
+  log("info", `Starting whisper server: ${bin} serve ${port}`);
+  whisperChild = spawn(bin, ["serve", port], {
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: false,
+  });
+
+  whisperChild.stdout.on("data", (data) => {
+    for (const line of data.toString().split("\n").filter(Boolean)) {
+      log("debug", `[whisper] ${line}`);
+    }
+  });
+
+  whisperChild.stderr.on("data", (data) => {
+    for (const line of data.toString().split("\n").filter(Boolean)) {
+      log("debug", `[whisper] ${line}`);
+    }
+  });
+
+  whisperChild.on("exit", (code) => {
+    log("warn", `Whisper server exited with code ${code}`);
+    whisperChild = null;
+    whisperReady = false;
+  });
+
+  // Poll /health until ready (max 30s for model loading)
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const res = await fetch(`${whisperUrl}/health`);
+      if (res.ok) {
+        log("info", "Whisper server is ready");
+        whisperReady = true;
+        return true;
+      }
+    } catch {
+      // Not ready yet
+    }
+  }
+
+  log("error", "Whisper server failed to start within 30s");
+  return false;
+}
+
+/** Kill the whisper server child process if we started it */
+function killWhisper() {
+  if (whisperChild) {
+    log("info", "Killing whisper server");
+    try {
+      whisperChild.kill("SIGTERM");
+    } catch {
+      // Ignore
+    }
+    whisperChild = null;
+    whisperReady = false;
   }
 }
 
@@ -248,7 +349,21 @@ function handleConnectorEvent(event) {
       const { sender, chatId, audioBase64, seconds, ptt, isGroup } = event;
       if (!shouldProcess(sender, chatId, isGroup)) return;
 
-      if (!openaiApiKey) {
+      // Check if transcription is available based on backend
+      if (transcriptionBackend === "local" && !whisperReady) {
+        log("warn", `Audio from ${sender} ignored — whisper server not ready yet`);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: "send",
+              to: chatId,
+              text: "Audio transcription is starting up, try again in a moment.",
+            }),
+          );
+        }
+        break;
+      }
+      if (transcriptionBackend === "openai" && !openaiApiKey) {
         log("warn", `Audio from ${sender} ignored — no OPENAI_API_KEY configured`);
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(
@@ -351,12 +466,19 @@ function stripPrefix(content) {
   return content;
 }
 
-// ── Audio transcription via OpenAI API ───────────────────────────────
+// ── Audio transcription ──────────────────────────────────────────────
 
 async function transcribeAudio(audioBase64, mimetype) {
+  if (transcriptionBackend === "local") {
+    return transcribeLocal(audioBase64, mimetype);
+  }
+  return transcribeOpenAI(audioBase64, mimetype);
+}
+
+/** Transcribe via local Whisper server (whisper.cpp HTTP API) */
+async function transcribeLocal(audioBase64, mimetype) {
   const buffer = Buffer.from(audioBase64, "base64");
 
-  // Determine file extension from mimetype
   const ext = mimetype.includes("ogg")
     ? "ogg"
     : mimetype.includes("mp4")
@@ -365,16 +487,53 @@ async function transcribeAudio(audioBase64, mimetype) {
         ? "mp3"
         : "ogg";
 
-  // Build multipart form data manually (no external deps)
+  const boundary = `----FormBoundary${Date.now()}`;
+  const filename = `audio.${ext}`;
+
+  // Whisper server only needs the file field (no model field)
+  const fileHeader = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimetype}\r\n\r\n`,
+  );
+  const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const body = Buffer.concat([fileHeader, buffer, footer]);
+
+  const url = `${whisperUrl}/v1/audio/transcriptions`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Whisper server error ${response.status}: ${text}`);
+  }
+
+  const result = await response.json();
+  return result.text || "";
+}
+
+/** Transcribe via OpenAI API */
+async function transcribeOpenAI(audioBase64, mimetype) {
+  const buffer = Buffer.from(audioBase64, "base64");
+
+  const ext = mimetype.includes("ogg")
+    ? "ogg"
+    : mimetype.includes("mp4")
+      ? "m4a"
+      : mimetype.includes("mpeg")
+        ? "mp3"
+        : "ogg";
+
   const boundary = `----FormBoundary${Date.now()}`;
   const filename = `audio.${ext}`;
 
   const parts = [];
-  // model field
   parts.push(
     `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\ngpt-4o-transcribe\r\n`,
   );
-  // file field
   parts.push(
     `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimetype}\r\n\r\n`,
   );
@@ -416,12 +575,24 @@ function handleHostMessage(msg) {
       prefix = config.prefix || null;
       // API key: config > env
       openaiApiKey = config.openaiApiKey || process.env.OPENAI_API_KEY || null;
+      // Transcription backend: "openai" (default) or "local" (whisper.cpp)
+      transcriptionBackend = config.transcriptionBackend || "openai";
+      whisperUrl = config.whisperUrl || "http://localhost:8787";
 
       log(
         "info",
         `Config: bridge=${bridgeUrl}, whitelist=[${whitelist.join(",")}], groups=[${allowedGroups.join(",")}], prefix=${prefix || "(none)"}`,
       );
-      log("info", `Audio transcription: ${openaiApiKey ? "enabled" : "disabled (no OPENAI_API_KEY)"}`);
+
+      if (transcriptionBackend === "local") {
+        log("info", `Audio transcription: local whisper (${whisperUrl})`);
+        // Auto-start whisper server in background
+        startWhisperServer().catch((err) => {
+          log("error", `Failed to start whisper server: ${err.message}`);
+        });
+      } else {
+        log("info", `Audio transcription: ${openaiApiKey ? "openai (enabled)" : "openai (disabled — no OPENAI_API_KEY)"}`);
+      }
 
       // Send Ready
       send({ type: "ready", version: "0.1.0", capabilities: [] });
@@ -475,6 +646,7 @@ function shutdown() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (ws) ws.close();
   killConnector();
+  killWhisper();
   process.exit(0);
 }
 

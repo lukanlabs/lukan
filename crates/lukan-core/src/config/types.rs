@@ -146,16 +146,6 @@ pub struct Credentials {
     pub zai_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openai_compatible_api_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub google_client_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub google_client_secret: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub google_access_token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub google_refresh_token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub google_token_expiry: Option<u64>,
 }
 
 /// Config + credentials resolved together

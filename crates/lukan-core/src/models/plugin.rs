@@ -142,7 +142,9 @@ pub enum LogLevel {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PluginManifest {
     pub plugin: PluginMeta,
-    pub run: PluginRunConfig,
+    /// How to run the plugin process. Optional for "tools"-type plugins
+    /// that only provide tools via tools.json and don't need a long-running process.
+    pub run: Option<PluginRunConfig>,
     #[serde(default)]
     pub config: HashMap<String, ConfigFieldSchema>,
     #[serde(default)]

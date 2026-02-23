@@ -704,15 +704,14 @@ async fn create_agent_with_session(
 /// Build system prompt (matches TUI logic)
 async fn build_system_prompt() -> SystemPrompt {
     const BASE: &str = include_str!("../../../prompts/base.txt");
-    let mut combined = BASE.to_string();
+    let mut cached = vec![BASE.to_string()];
 
     // Load global memory
     let global_path = LukanPaths::global_memory_file();
     if let Ok(memory) = tokio::fs::read_to_string(&global_path).await {
         let trimmed = memory.trim();
         if !trimmed.is_empty() {
-            combined.push_str("\n\n## Global Memory\n\n");
-            combined.push_str(trimmed);
+            cached.push(format!("## Global Memory\n\n{trimmed}"));
         }
     }
 
@@ -723,11 +722,37 @@ async fn build_system_prompt() -> SystemPrompt {
         if let Ok(memory) = tokio::fs::read_to_string(&project_path).await {
             let trimmed = memory.trim();
             if !trimmed.is_empty() {
-                combined.push_str("\n\n## Project Memory\n\n");
-                combined.push_str(trimmed);
+                cached.push(format!("## Project Memory\n\n{trimmed}"));
             }
         }
     }
 
-    SystemPrompt::Text(combined)
+    // Load prompt.txt from installed plugins that provide tools
+    let plugins_dir = LukanPaths::plugins_dir();
+    if let Ok(mut entries) = tokio::fs::read_dir(&plugins_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let prompt_path = entry.path().join("prompt.txt");
+            if let Ok(prompt) = tokio::fs::read_to_string(&prompt_path).await {
+                let trimmed = prompt.trim();
+                if !trimmed.is_empty() {
+                    cached.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    // Dynamic part: current date/time and timezone (changes every call, not cached)
+    let now = chrono::Utc::now();
+    let tz_name = lukan_core::config::ConfigManager::load()
+        .await
+        .ok()
+        .and_then(|c| c.timezone)
+        .unwrap_or_else(|| "UTC".to_string());
+    let dynamic = format!(
+        "Current date: {} ({}). Use this for any time-relative operations.",
+        now.format("%Y-%m-%d %H:%M UTC"),
+        tz_name
+    );
+
+    SystemPrompt::Structured { cached, dynamic }
 }

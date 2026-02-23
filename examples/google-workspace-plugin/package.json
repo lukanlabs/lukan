@@ -1,0 +1,9 @@
+{
+  "name": "lukan-google-workspace",
+  "version": "0.1.0",
+  "description": "Google Workspace plugin for Lukan (Sheets, Calendar, Docs, Drive)",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

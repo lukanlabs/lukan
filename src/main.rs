@@ -56,8 +56,6 @@ enum Commands {
     },
     /// Authenticate with GitHub Copilot (OAuth Device Flow)
     CopilotAuth,
-    /// Authenticate with Google (OAuth2 PKCE) for Workspace tools
-    GoogleAuth,
     /// List and select models for a provider
     Models {
         /// Provider name (anthropic, nebius, fireworks, github-copilot, openai-codex, zai, openai-compatible) or "add"
@@ -131,9 +129,6 @@ async fn main() -> Result<()> {
         }
         Some(Commands::CopilotAuth) => {
             setup::run_copilot_auth().await?;
-        }
-        Some(Commands::GoogleAuth) => {
-            run_google_auth().await?;
         }
         Some(Commands::Models {
             provider,
@@ -366,62 +361,6 @@ fn parse_logs_flags(args: &[String]) -> (bool, String) {
 }
 
 // ── Existing command handlers ────────────────────────────────────────
-
-async fn run_google_auth() -> Result<()> {
-    use lukan_core::config::CredentialsManager;
-
-    println!("\n\x1b[1m\x1b[36m  lukan google-auth\x1b[0m");
-    println!("\x1b[2m  Google Workspace authentication (OAuth2 PKCE)\x1b[0m\n");
-
-    // Load existing credentials to get client_id / client_secret
-    let creds = CredentialsManager::load().await?;
-
-    let client_id = creds
-        .google_client_id
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("GOOGLE_CLIENT_ID").ok())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Google Client ID not configured.\n\
-                 Set it via: lukan setup  or  export GOOGLE_CLIENT_ID=...\n\
-                 Or set 'googleClientId' in ~/.config/lukan/credentials.json\n\
-                 Create credentials at https://console.cloud.google.com/apis/credentials"
-            )
-        })?;
-
-    let client_secret = creds
-        .google_client_secret
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("GOOGLE_CLIENT_SECRET").ok())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Google Client Secret not configured.\n\
-                 Set it via: lukan setup  or  export GOOGLE_CLIENT_SECRET=...\n\
-                 Or set 'googleClientSecret' in ~/.config/lukan/credentials.json"
-            )
-        })?;
-
-    let tokens =
-        lukan_tools::google_auth::authenticate_google(&client_id, &client_secret).await?;
-
-    // Save tokens
-    let mut creds = CredentialsManager::load().await?;
-    creds.google_client_id = Some(client_id);
-    creds.google_client_secret = Some(client_secret);
-    creds.google_access_token = Some(tokens.access_token);
-    creds.google_refresh_token = Some(tokens.refresh_token);
-    creds.google_token_expiry = Some(tokens.expires_at);
-    CredentialsManager::save(&creds).await?;
-
-    println!("\x1b[32m✓\x1b[0m Google authentication successful!");
-    println!(
-        "\x1b[32m✓\x1b[0m Credentials saved to \x1b[2m{}\x1b[0m",
-        lukan_core::config::LukanPaths::credentials_file().display()
-    );
-    println!("\n\x1b[2mGoogle Workspace tools (Sheets, Calendar, Docs, Drive) are now available.\x1b[0m\n");
-
-    Ok(())
-}
 
 async fn run_web(provider_override: Option<String>, model_override: Option<String>) -> Result<()> {
     // Load config

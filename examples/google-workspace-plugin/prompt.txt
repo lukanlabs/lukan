@@ -13,4 +13,4 @@ These API tools are faster, more reliable, and use less tokens than browser navi
 - `DocsCreate` and `DocsUpdate` support **bold** (`**text**`) and *italic* (`*text*`) formatting — these markers are converted to real Google Docs bold/italic.
 - Use real newlines for line breaks, not escaped `\n`.
 
-If a tool returns "Google not configured", tell the user to run: `lukan google-auth`
+If a tool returns "Google not configured", tell the user to run: `lukan google auth`

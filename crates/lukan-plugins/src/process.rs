@@ -29,7 +29,11 @@ impl PluginProcess {
 
     /// Spawn the plugin process based on its manifest run config.
     pub async fn spawn(&mut self) -> Result<()> {
-        let run = &self.manifest.run;
+        let run = self
+            .manifest
+            .run
+            .as_ref()
+            .context("Plugin has no [run] config — cannot spawn a process")?;
 
         // Open log file for stderr
         let log_path = LukanPaths::plugin_log(&self.name);

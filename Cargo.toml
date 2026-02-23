@@ -109,5 +109,6 @@ reqwest.workspace = true
 regex.workspace = true
 futures.workspace = true
 libc.workspace = true
+chrono.workspace = true
 dialoguer = "0.11"
 console = "0.15"

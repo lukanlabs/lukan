@@ -34,11 +34,18 @@ pub async fn handle_plugin_exec(name: &str, command: &str, args: &[String]) -> R
         );
     }
 
-    // Build command: node cli.js <handler> [args...]
+    // Build command: <run.command> cli.js <handler> [args...]
+    // Default to "node" if no [run] section in manifest
+    let run_command = manifest
+        .run
+        .as_ref()
+        .map(|r| r.command.as_str())
+        .unwrap_or("node");
+
     let mut cmd_args = vec![cli_script.to_string_lossy().to_string(), cmd_def.handler.clone()];
     cmd_args.extend_from_slice(args);
 
-    let status = std::process::Command::new(&manifest.run.command)
+    let status = std::process::Command::new(run_command)
         .args(&cmd_args)
         .current_dir(&plugin_dir)
         .stdin(std::process::Stdio::inherit())

@@ -199,6 +199,96 @@ async fn plugin_start(
     provider_override: Option<String>,
     model_override: Option<String>,
 ) -> Result<()> {
+    // If not running as daemon, self-respawn detached and exit immediately
+    if std::env::var("LUKAN_DAEMON").as_deref() != Ok("1") {
+        return daemon_spawn(name, provider_override, model_override).await;
+    }
+
+    // ── Running as daemon ──────────────────────────────────────────────
+    plugin_start_foreground(name, provider_override, model_override).await
+}
+
+/// Self-respawn the current binary as a detached daemon process.
+/// Writes PID file, redirects stdout/stderr to the plugin log, and exits.
+async fn daemon_spawn(
+    name: &str,
+    provider_override: Option<String>,
+    model_override: Option<String>,
+) -> Result<()> {
+    // Check if already running
+    let pid_path = LukanPaths::plugin_pid(name);
+    if let Ok(pid_str) = tokio::fs::read_to_string(&pid_path).await
+        && let Ok(pid) = pid_str.trim().parse::<i32>()
+    {
+        #[cfg(unix)]
+        {
+            let alive = unsafe { libc::kill(pid, 0) == 0 };
+            if alive {
+                println!(
+                    "{YELLOW}Plugin '{name}' is already running (PID {pid}).{RESET}\n\
+                     {DIM}Use `lukan {name} stop` first, or `lukan {name} restart`.{RESET}"
+                );
+                return Ok(());
+            }
+        }
+    }
+
+    // Find our own binary path
+    let self_exe = std::env::current_exe().context("Failed to find current executable")?;
+
+    // Open log file for stdout/stderr of the daemon
+    let log_path = LukanPaths::plugin_log(name);
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("Failed to open log file: {}", log_path.display()))?;
+    let log_file2 = log_file.try_clone()?;
+
+    // Build args: `lukan plugin start <name> [--provider X] [--model Y]`
+    let mut args = vec!["plugin".to_string(), "start".to_string(), name.to_string()];
+    if let Some(ref p) = provider_override {
+        args.push("--provider".to_string());
+        args.push(p.clone());
+    }
+    if let Some(ref m) = model_override {
+        args.push("--model".to_string());
+        args.push(m.clone());
+    }
+
+    // Spawn detached
+    let child = std::process::Command::new(&self_exe)
+        .args(&args)
+        .env("LUKAN_DAEMON", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(log_file))
+        .stderr(std::process::Stdio::from(log_file2))
+        .spawn()
+        .context("Failed to spawn daemon process")?;
+
+    let pid = child.id();
+
+    // Write PID file
+    tokio::fs::write(&pid_path, pid.to_string()).await?;
+
+    // Detach: drop the child handle without waiting
+    std::mem::forget(child);
+
+    println!(
+        "{GREEN}✓{RESET} Plugin '{CYAN}{name}{RESET}' daemon started (PID {pid})"
+    );
+    println!("{DIM}Logs: {}{RESET}", log_path.display());
+    println!("{DIM}Stop: lukan plugin stop {name}{RESET}");
+
+    Ok(())
+}
+
+/// Run the plugin in foreground (called when LUKAN_DAEMON=1).
+async fn plugin_start_foreground(
+    name: &str,
+    provider_override: Option<String>,
+    model_override: Option<String>,
+) -> Result<()> {
     // Load config + credentials
     let mut config = ConfigManager::load().await?;
     let credentials = CredentialsManager::load().await?;
@@ -258,7 +348,28 @@ async fn plugin_start(
         let wa_config = whatsapp_compat::load_wa_config_for_plugin(plugin_overrides.as_ref()).await?;
         whatsapp_compat::build_whatsapp_system_prompt(&wa_config)
     } else {
-        SystemPrompt::Text(BASE_PROMPT.to_string())
+        let mut cached = vec![BASE_PROMPT.to_string()];
+        // Load prompt.txt from installed plugins that provide tools
+        let plugins_dir = LukanPaths::plugins_dir();
+        if let Ok(mut entries) = tokio::fs::read_dir(&plugins_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let prompt_path = entry.path().join("prompt.txt");
+                if let Ok(plugin_prompt) = tokio::fs::read_to_string(&prompt_path).await {
+                    let trimmed = plugin_prompt.trim();
+                    if !trimmed.is_empty() {
+                        cached.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        let now = chrono::Utc::now();
+        let tz_name = resolved.config.timezone.clone().unwrap_or_else(|| "UTC".to_string());
+        let dynamic = format!(
+            "Current date: {} ({}). Use this for any time-relative operations.",
+            now.format("%Y-%m-%d %H:%M UTC"),
+            tz_name
+        );
+        SystemPrompt::Structured { cached, dynamic }
     };
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -274,7 +385,8 @@ async fn plugin_start(
     };
 
     println!(
-        "{GREEN}✓{RESET} Starting plugin '{CYAN}{name}{RESET}' ({} with {})",
+        "Starting plugin '{}' ({} with {})",
+        name,
         resolved.config.provider,
         resolved.effective_model()
     );
@@ -286,14 +398,18 @@ async fn plugin_start(
     let mut manager = PluginManager::new();
     let (plugin_rx, host_tx) = manager.start(name).await?;
 
-    println!("{GREEN}✓{RESET} Plugin ready. Listening for messages...");
+    println!("Plugin ready. Listening for messages...");
 
-    // Run channel loop
+    // Run channel loop (blocks until plugin disconnects or error)
     let channel = PluginChannel::new(name, max_response_len);
     channel.run(&mut agent, plugin_rx, host_tx).await?;
 
     // Cleanup
     manager.stop(name).await.ok();
+
+    // Remove PID file on clean exit
+    let pid_path = LukanPaths::plugin_pid(name);
+    let _ = tokio::fs::remove_file(&pid_path).await;
 
     Ok(())
 }
@@ -366,7 +482,9 @@ async fn plugin_status(name: &str) -> Result<()> {
     println!("  Type:        {}", manifest.plugin.plugin_type);
     println!("  Description: {}", manifest.plugin.description);
     println!("  Status:      {status}");
-    println!("  Command:     {} {}", manifest.run.command, manifest.run.args.join(" "));
+    if let Some(ref run) = manifest.run {
+        println!("  Command:     {} {}", run.command, run.args.join(" "));
+    }
     println!("  Directory:   {}", dir.display());
 
     // Show config if present

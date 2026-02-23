@@ -1,6 +1,5 @@
 pub mod bg_processes;
-pub mod google_auth;
-pub mod google_workspace;
+pub mod plugin_tools;
 pub mod sandbox;
 mod bash;
 mod edit_file;
@@ -173,17 +172,7 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(Box::new(grep::GrepTool));
     registry.register(Box::new(glob_tool::GlobTool));
     registry.register(Box::new(web_fetch::WebFetchTool));
-    // Google Workspace tools
-    registry.register(Box::new(google_workspace::SheetsReadTool));
-    registry.register(Box::new(google_workspace::SheetsWriteTool));
-    registry.register(Box::new(google_workspace::SheetsCreateTool));
-    registry.register(Box::new(google_workspace::CalendarListTool));
-    registry.register(Box::new(google_workspace::CalendarCreateTool));
-    registry.register(Box::new(google_workspace::CalendarUpdateTool));
-    registry.register(Box::new(google_workspace::DocsReadTool));
-    registry.register(Box::new(google_workspace::DocsCreateTool));
-    registry.register(Box::new(google_workspace::DocsUpdateTool));
-    registry.register(Box::new(google_workspace::DriveListTool));
-    registry.register(Box::new(google_workspace::DriveDownloadTool));
+    // Plugin-provided tools (scanned from installed plugins)
+    plugin_tools::register_plugin_tools(&mut registry);
     registry
 }

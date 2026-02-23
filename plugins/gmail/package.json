@@ -1,0 +1,9 @@
+{
+  "name": "lukan-gmail",
+  "version": "0.1.0",
+  "description": "Gmail plugin for Lukan (search, read, send, reply, modify)",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

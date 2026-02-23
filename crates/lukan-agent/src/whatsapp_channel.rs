@@ -314,7 +314,8 @@ fn strip_prefix(content: &str, prefix: &Option<String>) -> String {
 async fn collect_agent_response(agent: &mut AgentLoop, message: &str) -> String {
     let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
 
-    // Run agent in a task-like fashion — we drive it and collect events
+    // run_turn takes ownership of event_tx. When it returns, the sender drops,
+    // so recv().await will return None once all buffered events are consumed.
     let turn_result = agent.run_turn(message, event_tx).await;
 
     if let Err(e) = turn_result {
@@ -322,10 +323,11 @@ async fn collect_agent_response(agent: &mut AgentLoop, message: &str) -> String 
         return format!("Error: {e}");
     }
 
-    // Collect the final text response from events
+    // Drain all events. recv().await blocks until an event arrives or the
+    // sender is dropped (returns None), ensuring we collect everything.
     let mut response = String::new();
 
-    while let Ok(event) = event_rx.try_recv() {
+    while let Some(event) = event_rx.recv().await {
         match event {
             StreamEvent::TextDelta { text } => {
                 response.push_str(&text);

@@ -65,6 +65,23 @@ bundle_google_workspace() {
   ok "google-workspace → dist/ (no bundling needed, zero deps)"
 }
 
+bundle_gmail() {
+  local src="$PLUGINS_DIR/gmail"
+  local dist="$src/dist"
+  info "Bundling gmail plugin..."
+
+  mkdir -p "$dist"
+
+  # No external deps — just copy files
+  cp "$src/plugin.toml" "$dist/"
+  cp "$src/cli.js" "$dist/"
+  cp "$src/tools.js" "$dist/"
+  cp "$src/tools.json" "$dist/"
+  cp "$src/prompt.txt" "$dist/"
+
+  ok "gmail → dist/ (no bundling needed, zero deps)"
+}
+
 # ── Main ──────────────────────────────────────────────────────────────
 
 TARGET="${1:-all}"
@@ -76,13 +93,17 @@ case "$TARGET" in
   google-workspace|google)
     bundle_google_workspace
     ;;
+  gmail)
+    bundle_gmail
+    ;;
   all)
     bundle_whatsapp
     bundle_google_workspace
+    bundle_gmail
     ;;
   *)
     err "Unknown plugin: $TARGET"
-    echo "Available: whatsapp, google-workspace, all"
+    echo "Available: whatsapp, google-workspace, gmail, all"
     exit 1
     ;;
 esac

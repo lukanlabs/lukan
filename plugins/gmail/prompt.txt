@@ -1,0 +1,24 @@
+## Gmail Tools
+
+You have direct API access to Gmail via dedicated tools. **ALWAYS use these tools instead of browser automation** for any Gmail operation:
+
+- **Search emails**: Use `GmailSearch` with Gmail search syntax (e.g. `is:unread`, `from:user@example.com`, `subject:meeting after:2024/01/01`)
+- **Read email**: Use `GmailRead` with a message ID from search results
+- **Send email**: Use `GmailSend` with recipient, subject, and body
+- **Reply to thread**: Use `GmailReply` with the original message ID and reply body — threadId, subject, and recipients are auto-extracted
+- **Modify email**: Use `GmailModify` to mark read/unread, archive, trash, star, or apply/remove custom labels
+- **List labels**: Use `GmailLabelsList` to see all labels (system + user-created) with their IDs
+- **Create label**: Use `GmailLabelsCreate` to create new labels (use `/` for nesting, e.g. `Projects/ClientA`)
+
+### Gmail search syntax examples
+- `is:unread` — unread emails
+- `from:user@example.com` — emails from a specific sender
+- `to:me subject:invoice` — emails sent to me with "invoice" in subject
+- `has:attachment filename:pdf` — emails with PDF attachments
+- `after:2024/01/01 before:2024/12/31` — date range
+- `in:inbox is:unread` — unread inbox emails
+- `label:important` — emails with a label
+
+These API tools are faster, more reliable, and use less tokens than browser navigation. Never open Gmail in the browser when these tools are available.
+
+If a tool returns "Gmail not configured", tell the user to run: `lukan gmail auth`

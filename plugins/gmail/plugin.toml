@@ -1,0 +1,30 @@
+[plugin]
+name = "gmail"
+version = "0.1.0"
+alias = "gmail"
+description = "Gmail tools (search, read, send, reply, modify)"
+plugin_type = "tools"
+
+[config.client_id]
+type = "string"
+description = "Google OAuth Client ID"
+
+[config.client_secret]
+type = "string"
+description = "Google OAuth Client Secret"
+
+[config.access_token]
+type = "string"
+description = "OAuth access token (set by auth)"
+
+[config.refresh_token]
+type = "string"
+description = "OAuth refresh token (set by auth)"
+
+[config.token_expiry]
+type = "number"
+description = "Token expiry timestamp in ms (set by auth)"
+
+[commands.auth]
+description = "Authenticate with Google for Gmail access (OAuth2 PKCE)"
+handler = "auth"

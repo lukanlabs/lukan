@@ -30,6 +30,15 @@ source = "archive"
 [plugins.google-workspace.assets.all]
 url = "https://get.lukan.ai/plugins/lukan-plugin-google-workspace.tar.gz"
 
+[plugins.gmail]
+description = "Gmail tools (search, read, send, reply, modify)"
+version = "0.1.0"
+plugin_type = "tools"
+source = "archive"
+
+[plugins.gmail.assets.all]
+url = "https://get.lukan.ai/plugins/lukan-plugin-gmail.tar.gz"
+
 # ── Native plugins (platform-specific) ─────────────────────────────────
 
 [plugins.whisper]

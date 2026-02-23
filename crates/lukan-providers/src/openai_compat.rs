@@ -356,7 +356,10 @@ impl OpenAiCompatBase {
         let mut stream = response.bytes_stream();
         use futures::StreamExt;
 
-        while let Some(chunk) = stream.next().await {
+        let chunk_timeout = std::time::Duration::from_secs(60);
+        while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next()).await
+            .context("Provider stream timed out (no data for 60s)")?
+        {
             let chunk = chunk.context("Error reading stream chunk")?;
             let text = String::from_utf8_lossy(&chunk);
 

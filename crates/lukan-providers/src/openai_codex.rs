@@ -251,7 +251,10 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
     // Track the last item_id seen for fallback
     let mut last_item_id = String::new();
 
-    while let Some(chunk) = stream.next().await {
+    let chunk_timeout = std::time::Duration::from_secs(60);
+    while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next()).await
+        .context("Provider stream timed out (no data for 60s)")?
+    {
         let chunk = chunk.context("Stream read error")?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 

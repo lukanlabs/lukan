@@ -1,0 +1,150 @@
+[
+  {
+    "name": "GmailSearch",
+    "description": "Search or list Gmail emails using Gmail search syntax (e.g. 'is:unread', 'from:user@example.com', 'subject:meeting')",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Gmail search query (same syntax as Gmail search bar). Examples: 'is:unread', 'from:boss@company.com', 'subject:invoice after:2024/01/01'"
+        },
+        "maxResults": {
+          "type": "number",
+          "description": "Maximum number of emails to return (default: 10)",
+          "default": 10
+        },
+        "pageToken": {
+          "type": "string",
+          "description": "Page token for fetching next page of results"
+        }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "GmailRead",
+    "description": "Read the full content of a Gmail email by its message ID",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "The Gmail message ID (from GmailSearch results)"
+        }
+      },
+      "required": ["messageId"]
+    }
+  },
+  {
+    "name": "GmailSend",
+    "description": "Send a new email via Gmail",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "string",
+          "description": "Recipient email address (comma-separated for multiple)"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Email subject line"
+        },
+        "body": {
+          "type": "string",
+          "description": "Email body (plain text)"
+        },
+        "cc": {
+          "type": "string",
+          "description": "CC recipients (comma-separated)"
+        },
+        "bcc": {
+          "type": "string",
+          "description": "BCC recipients (comma-separated)"
+        }
+      },
+      "required": ["to", "subject", "body"]
+    }
+  },
+  {
+    "name": "GmailReply",
+    "description": "Reply to an existing Gmail thread. Automatically extracts threadId, subject, and recipient from the original message.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "The message ID to reply to (from GmailSearch or GmailRead)"
+        },
+        "body": {
+          "type": "string",
+          "description": "Reply body (plain text)"
+        }
+      },
+      "required": ["messageId", "body"]
+    }
+  },
+  {
+    "name": "GmailModify",
+    "description": "Modify a Gmail message's labels/state (mark read/unread, archive, trash, star) or apply/remove custom labels",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "The message ID to modify"
+        },
+        "action": {
+          "type": "string",
+          "description": "Action to perform: read, unread, archive, unarchive, trash, untrash, star, unstar",
+          "enum": ["read", "unread", "archive", "unarchive", "trash", "untrash", "star", "unstar"]
+        },
+        "addLabelIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Label IDs to add to the message (use GmailLabelsList to get IDs)"
+        },
+        "removeLabelIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Label IDs to remove from the message"
+        }
+      },
+      "required": ["messageId"]
+    }
+  },
+  {
+    "name": "GmailLabelsList",
+    "description": "List all Gmail labels (both system and user-created)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "GmailLabelsCreate",
+    "description": "Create a new Gmail label (like a folder) to organize emails",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Label name. Use '/' for nesting (e.g. 'Projects/ClientA')"
+        },
+        "showInList": {
+          "type": "string",
+          "description": "Visibility in label list: show, hide, showIfUnread (default: show)",
+          "enum": ["show", "hide", "showIfUnread"],
+          "default": "show"
+        },
+        "showInMessageList": {
+          "type": "string",
+          "description": "Visibility in message list: show, hide (default: show)",
+          "enum": ["show", "hide"],
+          "default": "show"
+        }
+      },
+      "required": ["name"]
+    }
+  }
+]

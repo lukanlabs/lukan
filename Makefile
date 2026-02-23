@@ -73,6 +73,9 @@ package-plugins: bundle-plugins
 	@# Google Workspace plugin
 	@cd plugins/google-workspace/dist && tar czf ../../../dist/plugins/lukan-plugin-google-workspace.tar.gz .
 	@echo "  Packaged: lukan-plugin-google-workspace.tar.gz"
+	@# Gmail plugin
+	@cd plugins/gmail/dist && tar czf ../../../dist/plugins/lukan-plugin-gmail.tar.gz .
+	@echo "  Packaged: lukan-plugin-gmail.tar.gz"
 
 ## release: Build binary + bundle plugins + generate checksums
 release: build bundle-plugins package-plugins

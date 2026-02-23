@@ -233,6 +233,8 @@ impl PluginChannel {
 async fn collect_agent_response(agent: &mut AgentLoop, message: &str, max_len: usize) -> String {
     let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
 
+    // run_turn takes ownership of event_tx. When it returns, the sender drops,
+    // so recv().await will return None once all buffered events are consumed.
     let turn_result = agent.run_turn(message, event_tx).await;
 
     if let Err(e) = turn_result {
@@ -240,9 +242,11 @@ async fn collect_agent_response(agent: &mut AgentLoop, message: &str, max_len: u
         return format!("Error: {e}");
     }
 
+    // Drain all events. recv().await blocks until an event arrives or the
+    // sender is dropped (returns None), ensuring we collect everything.
     let mut response = String::new();
 
-    while let Ok(event) = event_rx.try_recv() {
+    while let Some(event) = event_rx.recv().await {
         match event {
             StreamEvent::TextDelta { text } => {
                 response.push_str(&text);

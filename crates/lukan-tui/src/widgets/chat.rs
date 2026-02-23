@@ -228,9 +228,12 @@ pub fn build_message_lines(
         }
     }
 
-    // Shimmer "Thinking..." indicator — shown during thinking phase
-    // (model is streaming, thinking text is accumulating, but no text output yet)
-    if is_streaming && !thinking_text.is_empty() && streaming_text.is_empty() {
+    // Shimmer indicators — shown above the input while the agent is processing
+    if is_streaming && thinking_text.is_empty() && streaming_text.is_empty() {
+        // Waiting for first token — agent just started
+        lines.push(Line::from(shimmer_spans("Working on it...")));
+    } else if is_streaming && !thinking_text.is_empty() && streaming_text.is_empty() {
+        // Thinking phase — model is reasoning but no text output yet
         lines.push(Line::from(shimmer_spans("Thinking...")));
     }
 
@@ -238,6 +241,10 @@ pub fn build_message_lines(
     if !streaming_text.is_empty() {
         let sanitized = sanitize_for_display(streaming_text);
         lines.extend(render_markdown(&sanitized));
+        // Show "Writing..." shimmer after the text while still streaming
+        if is_streaming {
+            lines.push(Line::from(shimmer_spans("Writing...")));
+        }
     }
 
     lines

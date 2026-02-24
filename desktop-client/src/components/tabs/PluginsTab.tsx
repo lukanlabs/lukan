@@ -1042,7 +1042,7 @@ function DetailView({
 // WhatsApp Config Section
 // ===========================================================================
 
-const WHATSAPP_MANAGED_KEYS = ["bridgeUrl", "prefix", "whitelist", "allowedGroups"];
+const WHATSAPP_MANAGED_KEYS = ["bridgeUrl", "prefix", "whitelist", "allowedGroups", "transcriptionBackend", "whisperUrl"];
 
 const COUNTRY_CODES: { value: string; label: string; code: string }[] = [
   { value: "54", label: "Argentina (+54)", code: "+54" },
@@ -1123,6 +1123,12 @@ function WhatsAppConfigSection({
   const [showAddPhone, setShowAddPhone] = useState(false);
   const [phoneCountry, setPhoneCountry] = useState("54");
   const [phoneNumber, setPhoneNumber] = useState("");
+
+  // --- Transcription state ---
+  const transcriptionBackend = (config.transcriptionBackend as string) ?? "openai";
+  const whisperUrl = (config.whisperUrl as string) ?? "http://localhost:8787";
+  const [localWhisperUrl, setLocalWhisperUrl] = useState(whisperUrl);
+  useEffect(() => setLocalWhisperUrl((config.whisperUrl as string) ?? "http://localhost:8787"), [config.whisperUrl]);
 
   // --- Helpers ---
   const saveField = (key: string, value: unknown) => {
@@ -1239,6 +1245,56 @@ function WhatsAppConfigSection({
         <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
           When set, only messages starting with this prefix will be processed.
         </p>
+      </Card>
+
+      {/* Transcription Backend */}
+      <Card className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <Settings2 size={14} style={{ color: "var(--text-muted)" }} />
+          <h3
+            className="text-[11px] font-bold uppercase tracking-[0.1em]"
+            style={{ color: "var(--text-muted)" }}
+          >
+            Audio Transcription
+          </h3>
+        </div>
+        <Select
+          label="Backend"
+          value={transcriptionBackend}
+          onChange={(e) => saveField("transcriptionBackend", e.target.value)}
+          options={[
+            { value: "openai", label: "OpenAI API" },
+            { value: "local", label: "Local (whisper.cpp)" },
+          ]}
+        />
+        {transcriptionBackend === "local" && (
+          <div className="mt-3">
+            <Input
+              label="Whisper Server URL"
+              value={localWhisperUrl}
+              placeholder="http://localhost:8787"
+              onChange={(e) => setLocalWhisperUrl(e.target.value)}
+              onBlur={() => {
+                if (localWhisperUrl !== whisperUrl) {
+                  saveField("whisperUrl", localWhisperUrl);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && localWhisperUrl !== whisperUrl) {
+                  saveField("whisperUrl", localWhisperUrl);
+                }
+              }}
+            />
+            <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
+              URL of the local whisper.cpp server. The whisper plugin auto-starts if installed.
+            </p>
+          </div>
+        )}
+        {transcriptionBackend === "openai" && (
+          <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
+            Uses OpenAI Whisper API. Requires OPENAI_API_KEY in credentials.
+          </p>
+        )}
       </Card>
 
       {/* Allowed Groups */}

@@ -88,16 +88,27 @@ pub fn get_bg_log(pid: u32, max_lines: usize) -> Option<String> {
     }
 }
 
-/// Kill a background process by PID
+/// Kill a background process and all its children by sending SIGTERM to the
+/// entire process group. Processes are spawned with `setsid` so the tracked
+/// PID is also the process group leader — using a negative PID in `kill()`
+/// targets every process in that group (e.g. `uv run` → `bash` → `uvicorn`).
 pub fn kill_bg_process(pid: u32) -> bool {
-    // SAFETY: sending SIGTERM to the process
-    let result = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    // SAFETY: sending SIGTERM to the entire process group (-pid)
+    let pgid = -(pid as i32);
+    let result = unsafe { libc::kill(pgid, libc::SIGTERM) };
     if result == 0 {
-        debug!(pid, "Sent SIGTERM to background process");
+        debug!(pid, "Sent SIGTERM to process group");
         true
     } else {
-        warn!(pid, "Failed to kill background process");
-        false
+        // Fallback: try killing just the single PID (in case setsid wasn't used)
+        let result = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        if result == 0 {
+            debug!(pid, "Sent SIGTERM to single process (group kill failed)");
+            true
+        } else {
+            warn!(pid, "Failed to kill background process");
+            false
+        }
     }
 }
 
@@ -127,13 +138,17 @@ pub fn remove_bg_process(pid: u32) {
     }
 }
 
-/// Clean up all tracked processes: kill alive ones, remove log files
+/// Clean up all tracked processes: kill alive ones (entire group), remove log files
 pub fn cleanup_all() {
     let mut t = tracker().lock().unwrap();
     for (pid, process) in t.processes.drain() {
         if is_process_alive(pid) {
+            // Kill entire process group first, fallback to single PID
+            let pgid = -(pid as i32);
             unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+                if libc::kill(pgid, libc::SIGTERM) != 0 {
+                    libc::kill(pid as i32, libc::SIGTERM);
+                }
             }
         }
         let _ = std::fs::remove_file(&process.log_file);

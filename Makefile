@@ -82,8 +82,14 @@ release: build bundle-plugins package-plugins
 	@echo "Building release $(VERSION) for $(PLATFORM)..."
 	@mkdir -p dist
 	@cp target/release/$(BINARY_NAME) dist/$(BINARY_NAME)-$(PLATFORM)
+	@if [ -f target/release/$(BINARY_NAME)-desktop ]; then \
+		cp target/release/$(BINARY_NAME)-desktop dist/$(BINARY_NAME)-desktop-$(PLATFORM); \
+	fi
 	@# Generate checksums
 	@cd dist && sha256sum $(BINARY_NAME)-$(PLATFORM) > checksums.txt
+	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
+		cd dist && sha256sum $(BINARY_NAME)-desktop-$(PLATFORM) >> checksums.txt; \
+	fi
 	@cd dist && sha256sum ../install.sh | sed 's#  \.\./install\.sh$$#  install.sh#' >> checksums.txt
 	@cd dist/plugins && sha256sum *.tar.gz >> ../checksums.txt
 	@# Write version file
@@ -91,6 +97,7 @@ release: build bundle-plugins package-plugins
 	@echo ""
 	@echo "Release $(VERSION) built in dist/"
 	@echo "  Binary:  dist/$(BINARY_NAME)-$(PLATFORM)"
+	@echo "  Desktop: dist/$(BINARY_NAME)-desktop-$(PLATFORM)"
 	@echo "  Plugins: dist/plugins/*.tar.gz"
 	@echo "  Checksums: dist/checksums.txt"
 
@@ -98,6 +105,9 @@ release: build bundle-plugins package-plugins
 upload: release
 	@echo "Uploading $(VERSION) to R2:$(R2_BUCKET)..."
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/$(BINARY_NAME)-$(PLATFORM) --file dist/$(BINARY_NAME)-$(PLATFORM)
+	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
+		bunx wrangler r2 object put --remote $(R2_BUCKET)/$(BINARY_NAME)-desktop-$(PLATFORM) --file dist/$(BINARY_NAME)-desktop-$(PLATFORM); \
+	fi
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/checksums.txt --file dist/checksums.txt
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/latest --file dist/latest
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/install.sh --file install.sh
@@ -116,17 +126,21 @@ upload: release
 ## upload-gh: Upload release to GitHub Releases
 upload-gh: release
 	@echo "Uploading $(VERSION) to GitHub Releases..."
-	@if gh release view $(VERSION) --repo $(GH_REPO) >/dev/null 2>&1; then \
+	@DESKTOP_FILE=""; \
+	if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
+		DESKTOP_FILE="dist/$(BINARY_NAME)-desktop-$(PLATFORM)"; \
+	fi; \
+	if gh release view $(VERSION) --repo $(GH_REPO) >/dev/null 2>&1; then \
 		echo "Release $(VERSION) exists, overwriting assets..."; \
 		gh release upload $(VERSION) --repo $(GH_REPO) --clobber \
-			dist/$(BINARY_NAME)-$(PLATFORM) dist/checksums.txt dist/latest install.sh \
+			dist/$(BINARY_NAME)-$(PLATFORM) $$DESKTOP_FILE dist/checksums.txt dist/latest install.sh \
 			dist/plugins/*.tar.gz; \
 	else \
 		echo "Creating release $(VERSION)..."; \
 		gh release create $(VERSION) --repo $(GH_REPO) \
 			--title "$(VERSION)" \
 			--notes "Release $(VERSION)" \
-			dist/$(BINARY_NAME)-$(PLATFORM) dist/checksums.txt dist/latest install.sh \
+			dist/$(BINARY_NAME)-$(PLATFORM) $$DESKTOP_FILE dist/checksums.txt dist/latest install.sh \
 			dist/plugins/*.tar.gz; \
 	fi
 	@echo ""

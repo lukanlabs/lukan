@@ -6,7 +6,7 @@ use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 use walkdir::WalkDir;
 
-use crate::{Tool, ToolContext};
+use crate::{Tool, ToolContext, sandbox};
 
 const DEFAULT_MAX_RESULTS: u64 = 100;
 
@@ -80,6 +80,23 @@ impl Tool for GlobTool {
             Err(e) => return Ok(ToolResult::error(format!("Invalid glob pattern: {e}"))),
         };
 
+        // Extract sensitive patterns for use inside spawn_blocking
+        let sensitive_patterns: Vec<String> = if let Some(ref sb) = ctx.sandbox {
+            if sb.sensitive_patterns.is_empty() {
+                sandbox::DEFAULT_SENSITIVE_PATTERNS
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect()
+            } else {
+                sb.sensitive_patterns.clone()
+            }
+        } else {
+            sandbox::DEFAULT_SENSITIVE_PATTERNS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
+        };
+
         // Run blocking walk in a spawn_blocking to avoid blocking the async runtime
         let base = base_path.clone();
         let matches = tokio::task::spawn_blocking(move || {
@@ -90,6 +107,13 @@ impl Tool for GlobTool {
                 .filter_map(|e| e.ok())
             {
                 let path = entry.path();
+
+                // Skip files/dirs matching sensitive patterns (gitignore-style)
+                let pat_refs: Vec<&str> = sensitive_patterns.iter().map(|s| s.as_str()).collect();
+                if sandbox::match_sensitive_pattern(path, &pat_refs).is_some() {
+                    continue;
+                }
+
                 // Match against relative path from base
                 if let Ok(rel) = path.strip_prefix(&base)
                     && glob.is_match(rel)

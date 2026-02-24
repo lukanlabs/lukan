@@ -3,7 +3,7 @@ use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 use tokio::process::Command;
 
-use crate::{Tool, ToolContext};
+use crate::{Tool, ToolContext, sandbox};
 
 const MAX_OUTPUT_BYTES: usize = 30_000;
 
@@ -76,6 +76,30 @@ impl Tool for GrepTool {
             return Ok(ToolResult::error(msg));
         }
 
+        // If targeting a single file, check sensitive patterns
+        if resolved_path.is_file()
+            && let Err(msg) = ctx.check_sensitive(&resolved_path)
+        {
+            return Ok(ToolResult::error(msg));
+        }
+
+        // Build sensitive patterns for exclusion in rg/grep
+        let sensitive_patterns: Vec<String> = if let Some(ref sb) = ctx.sandbox {
+            if sb.sensitive_patterns.is_empty() {
+                sandbox::DEFAULT_SENSITIVE_PATTERNS
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect()
+            } else {
+                sb.sensitive_patterns.clone()
+            }
+        } else {
+            sandbox::DEFAULT_SENSITIVE_PATTERNS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
+        };
+
         let glob_pattern = input.get("glob").and_then(|v| v.as_str());
         let case_insensitive = input
             .get("case_insensitive")
@@ -87,22 +111,24 @@ impl Tool for GrepTool {
             .unwrap_or(50);
         let context_lines = input.get("context_lines").and_then(|v| v.as_u64());
 
-        // Try rg first, fallback to grep
-        let output = try_rg(
+        let opts = GrepOpts {
             pattern,
             path,
             glob_pattern,
             case_insensitive,
             max_results,
             context_lines,
-            &ctx.cwd,
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("rg not available"));
+            sensitive_patterns: &sensitive_patterns,
+        };
+
+        // Try rg first, fallback to grep
+        let output = try_rg(&opts, &ctx.cwd)
+            .await
+            .map_err(|_| anyhow::anyhow!("rg not available"));
 
         let output = match output {
             Ok(o) => o,
-            Err(_) => try_grep(pattern, path, case_insensitive, max_results, &ctx.cwd).await?,
+            Err(_) => try_grep(&opts, &ctx.cwd).await?,
         };
 
         let mut text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -119,30 +145,45 @@ impl Tool for GrepTool {
     }
 }
 
-async fn try_rg(
-    pattern: &str,
-    path: &str,
-    glob_pattern: Option<&str>,
+struct GrepOpts<'a> {
+    pattern: &'a str,
+    path: &'a str,
+    glob_pattern: Option<&'a str>,
     case_insensitive: bool,
     max_results: u64,
     context_lines: Option<u64>,
+    sensitive_patterns: &'a [String],
+}
+
+async fn try_rg(
+    opts: &GrepOpts<'_>,
     cwd: &std::path::Path,
 ) -> anyhow::Result<std::process::Output> {
     let mut cmd = Command::new("rg");
     cmd.arg("-n"); // line numbers
-    cmd.arg("--max-count").arg(max_results.to_string());
+    cmd.arg("--max-count").arg(opts.max_results.to_string());
 
-    if case_insensitive {
+    if opts.case_insensitive {
         cmd.arg("-i");
     }
-    if let Some(ctx) = context_lines {
+    if let Some(ctx) = opts.context_lines {
         cmd.arg("-C").arg(ctx.to_string());
     }
-    if let Some(glob) = glob_pattern {
+    if let Some(glob) = opts.glob_pattern {
         cmd.arg("--glob").arg(glob);
     }
 
-    cmd.arg(pattern).arg(path).current_dir(cwd);
+    // Exclude sensitive patterns (gitignore-style)
+    for sp in opts.sensitive_patterns {
+        if let Some(dir) = sp.strip_suffix('/') {
+            // Directory pattern: exclude dir/**
+            cmd.arg("--glob").arg(format!("!{dir}/**"));
+        } else {
+            cmd.arg("--glob").arg(format!("!{sp}"));
+        }
+    }
+
+    cmd.arg(opts.pattern).arg(opts.path).current_dir(cwd);
 
     let output = cmd.output().await?;
     // rg exit code 1 means no matches (not an error)
@@ -150,21 +191,27 @@ async fn try_rg(
 }
 
 async fn try_grep(
-    pattern: &str,
-    path: &str,
-    case_insensitive: bool,
-    max_results: u64,
+    opts: &GrepOpts<'_>,
     cwd: &std::path::Path,
 ) -> anyhow::Result<std::process::Output> {
     let mut cmd = Command::new("grep");
     cmd.arg("-rn");
-    cmd.arg("--max-count").arg(max_results.to_string());
+    cmd.arg("--max-count").arg(opts.max_results.to_string());
 
-    if case_insensitive {
+    if opts.case_insensitive {
         cmd.arg("-i");
     }
 
-    cmd.arg(pattern).arg(path).current_dir(cwd);
+    // Exclude sensitive patterns (gitignore-style)
+    for sp in opts.sensitive_patterns {
+        if let Some(dir) = sp.strip_suffix('/') {
+            cmd.arg("--exclude-dir").arg(dir);
+        } else {
+            cmd.arg("--exclude").arg(sp);
+        }
+    }
+
+    cmd.arg(opts.pattern).arg(opts.path).current_dir(cwd);
 
     Ok(cmd.output().await?)
 }

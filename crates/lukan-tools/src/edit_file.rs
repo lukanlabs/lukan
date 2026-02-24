@@ -123,6 +123,10 @@ impl Tool for EditFileTool {
             return Ok(ToolResult::error(msg));
         }
 
+        if let Err(msg) = ctx.check_sensitive(&path) {
+            return Ok(ToolResult::error(msg));
+        }
+
         // Must have been read first
         if !ctx.read_files.lock().await.contains(&path) {
             return Ok(ToolResult::error(format!(

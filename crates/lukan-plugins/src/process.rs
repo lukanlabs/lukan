@@ -45,7 +45,20 @@ impl PluginProcess {
 
         let plugin_dir = LukanPaths::plugin_dir(&self.name);
 
-        let mut cmd = Command::new(&run.command);
+        // Resolve plugin-local binaries (e.g. "lukan-whisper") to the plugin dir
+        let resolved_command = if run.command.starts_with("lukan-") || run.command.starts_with("./")
+        {
+            let local = plugin_dir.join(run.command.trim_start_matches("./"));
+            if local.exists() {
+                local.to_string_lossy().to_string()
+            } else {
+                run.command.clone()
+            }
+        } else {
+            run.command.clone()
+        };
+
+        let mut cmd = Command::new(&resolved_command);
         cmd.args(&run.args)
             .current_dir(&plugin_dir)
             .stdin(Stdio::piped())

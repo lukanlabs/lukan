@@ -86,7 +86,12 @@ impl PluginChannel {
             })
             .unwrap_or_else(|| self.default_tools.clone());
 
-        let mut registry = lukan_tools::create_default_registry();
+        // Load project permissions for sensitive patterns (sync read is fine here)
+        let permissions = {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            load_permissions_sync(&cwd)
+        };
+        let mut registry = lukan_tools::create_configured_registry(&permissions);
         let refs: Vec<&str> = tools_list.iter().map(|s| s.as_str()).collect();
         registry.retain(&refs);
 
@@ -235,7 +240,7 @@ async fn collect_agent_response(agent: &mut AgentLoop, message: &str, max_len: u
 
     // run_turn takes ownership of event_tx. When it returns, the sender drops,
     // so recv().await will return None once all buffered events are consumed.
-    let turn_result = agent.run_turn(message, event_tx).await;
+    let turn_result = agent.run_turn(message, event_tx, None).await;
 
     if let Err(e) = turn_result {
         error!("Agent turn error: {e}");
@@ -270,4 +275,24 @@ async fn collect_agent_response(agent: &mut AgentLoop, message: &str, max_len: u
     } else {
         response
     }
+}
+
+/// Load `PermissionsConfig` synchronously by walking up from `start_dir`.
+/// Returns defaults if no `.lukan/config.json` is found.
+fn load_permissions_sync(
+    start_dir: &std::path::Path,
+) -> lukan_core::config::types::PermissionsConfig {
+    let mut dir = start_dir.to_path_buf();
+    loop {
+        let config_path = dir.join(".lukan").join("config.json");
+        if let Ok(content) = std::fs::read_to_string(&config_path)
+            && let Ok(cfg) = serde_json::from_str::<lukan_core::config::ProjectConfig>(&content)
+        {
+            return cfg.permissions;
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    lukan_core::config::types::PermissionsConfig::default()
 }

@@ -13,7 +13,7 @@ use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
 use lukan_core::config::LukanPaths;
 use lukan_core::models::events::StreamEvent;
 use lukan_providers::{SystemPrompt, create_provider};
-use lukan_tools::create_default_registry;
+use lukan_tools::create_configured_registry;
 
 use crate::protocol::{ClientMessage, ServerMessage, TokenUsage};
 use crate::state::AppState;
@@ -523,7 +523,7 @@ async fn handle_send_message(
 
     // Spawn the agent turn
     let agent_handle = tokio::spawn(async move {
-        let result = agent.run_turn(&content_owned, event_tx).await;
+        let result = agent.run_turn(&content_owned, event_tx, None).await;
         (agent, result)
     });
 
@@ -869,15 +869,31 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
 
+    let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
+        .await
+        .ok()
+        .flatten()
+        .map(|(_, cfg)| cfg);
+
+    let permissions = project_cfg
+        .as_ref()
+        .map(|c| c.permissions.clone())
+        .unwrap_or_default();
+
+    let allowed = project_cfg
+        .as_ref()
+        .map(|c| c.resolve_allowed_paths(&cwd))
+        .unwrap_or_else(|| vec![cwd.clone()]);
+
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
-        tools: create_default_registry(),
+        tools: create_configured_registry(&permissions),
         system_prompt,
         cwd,
         provider_name,
         model_name,
         bg_signal: None,
-        allowed_paths: None,
+        allowed_paths: Some(allowed),
     };
 
     AgentLoop::new(agent_config).await
@@ -895,19 +911,36 @@ async fn create_agent_with_session(
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
 
+    let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
+        .await
+        .ok()
+        .flatten()
+        .map(|(_, cfg)| cfg);
+
+    let permissions = project_cfg
+        .as_ref()
+        .map(|c| c.permissions.clone())
+        .unwrap_or_default();
+
+    let allowed = project_cfg
+        .as_ref()
+        .map(|c| c.resolve_allowed_paths(&cwd))
+        .unwrap_or_else(|| vec![cwd.clone()]);
+
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
-        tools: create_default_registry(),
+        tools: create_configured_registry(&permissions),
         system_prompt,
         cwd,
         provider_name,
         model_name,
         bg_signal: None,
-        allowed_paths: None,
+        allowed_paths: Some(allowed),
     };
 
     AgentLoop::load_session(agent_config, session_id).await
 }
+
 
 /// Build system prompt (matches TUI logic)
 async fn build_system_prompt() -> SystemPrompt {

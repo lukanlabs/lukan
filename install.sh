@@ -221,8 +221,12 @@ install_binary() {
 mkdir -p "${BIN_DIR}"
 
 install_binary "lukan-${PLATFORM}" "lukan"
-
 ok "Checksum verified"
+
+# Install lukan-desktop (optional — only if available in release)
+if echo "${CHECKSUMS}" | grep -q "lukan-desktop-${PLATFORM}"; then
+  install_binary "lukan-desktop-${PLATFORM}" "lukan-desktop" || warn "Desktop app not installed (optional)"
+fi
 
 # --- Setup PATH ---
 if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then

@@ -19,7 +19,7 @@ use lukan_core::workers::{
     WorkerTokenUsage, WorkerUpdateInput,
 };
 use lukan_providers::{SystemPrompt, create_provider};
-use lukan_tools::create_default_registry;
+use lukan_tools::create_configured_registry;
 
 use crate::{AgentConfig, AgentLoop};
 
@@ -313,7 +313,18 @@ async fn run_worker(
     };
 
     // Build tool registry with optional filter
-    let mut registry = create_default_registry();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
+        .await
+        .ok()
+        .flatten()
+        .map(|(_, cfg)| cfg);
+
+    let permissions = project_cfg
+        .as_ref()
+        .map(|c| c.permissions.clone())
+        .unwrap_or_default();
+    let mut registry = create_configured_registry(&permissions);
     if let Some(tool_names) = tools_filter {
         let refs: Vec<&str> = tool_names.iter().map(|s| s.as_str()).collect();
         registry.retain(&refs);
@@ -321,7 +332,11 @@ async fn run_worker(
 
     let provider_name = config.config.provider.to_string();
     let model_name = config.effective_model();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    let allowed = project_cfg
+        .as_ref()
+        .map(|c| c.resolve_allowed_paths(&cwd))
+        .unwrap_or_else(|| vec![cwd.clone()]);
 
     let system_prompt = SystemPrompt::Text(
         "You are a scheduled worker agent. Execute the task described in the user message. \
@@ -337,7 +352,7 @@ async fn run_worker(
         provider_name,
         model_name,
         bg_signal: None,
-        allowed_paths: None,
+        allowed_paths: Some(allowed),
     };
 
     // Create agent and run
@@ -347,7 +362,7 @@ async fn run_worker(
 
             let prompt_owned = prompt.to_string();
             let agent_handle = tokio::spawn(async move {
-                let result = agent.run_turn(&prompt_owned, event_tx).await;
+                let result = agent.run_turn(&prompt_owned, event_tx, None).await;
                 (agent, result)
             });
 

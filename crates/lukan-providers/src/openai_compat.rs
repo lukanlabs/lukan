@@ -357,7 +357,8 @@ impl OpenAiCompatBase {
         use futures::StreamExt;
 
         let chunk_timeout = std::time::Duration::from_secs(60);
-        while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next()).await
+        while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next())
+            .await
             .context("Provider stream timed out (no data for 60s)")?
         {
             let chunk = chunk.context("Error reading stream chunk")?;

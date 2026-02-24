@@ -63,6 +63,10 @@ impl Tool for WriteFileTool {
             return Ok(ToolResult::error(msg));
         }
 
+        if let Err(msg) = ctx.check_sensitive(&path) {
+            return Ok(ToolResult::error(msg));
+        }
+
         // Check if file exists and was read
         let old_content = if path.exists() {
             if !ctx.read_files.lock().await.contains(&path) {

@@ -251,8 +251,18 @@ async fn main() -> Result<()> {
         // CLI mode
         match args[1].as_str() {
             "download" => {
-                let size = args.get(2).map(|s| s.as_str()).unwrap_or("base");
-                cli_download(size).await?;
+                let size = args.get(2).map(|s| s.to_string()).unwrap_or_else(|| {
+                    // Read model_size from plugin config.json
+                    let home = std::env::var("HOME").unwrap_or_default();
+                    let config_path = std::path::PathBuf::from(home)
+                        .join(".config/lukan/plugins/whisper/config.json");
+                    std::fs::read_to_string(&config_path)
+                        .ok()
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                        .and_then(|v| v.get("modelSize").or(v.get("model_size"))?.as_str().map(String::from))
+                        .unwrap_or_else(|| "base".to_string())
+                });
+                cli_download(&size).await?;
             }
             "models" => {
                 cli_models().await?;

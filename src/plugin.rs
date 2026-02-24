@@ -8,7 +8,7 @@ use lukan_core::config::{
 };
 use lukan_plugins::{PluginChannel, PluginManager};
 use lukan_providers::{SystemPrompt, create_provider};
-use lukan_tools::create_default_registry;
+use lukan_tools::create_configured_registry;
 
 use crate::plugin_config;
 use crate::plugin_exec;
@@ -481,7 +481,14 @@ async fn plugin_start_foreground(
 
     // ── Tool filtering (generic) ───────────────────────────────────────
     // Priority: config.json tools > manifest security.default_tools > all
-    let mut registry = create_default_registry();
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let permissions = lukan_core::config::ProjectConfig::load(&cwd)
+        .await
+        .ok()
+        .flatten()
+        .map(|(_, cfg)| cfg.permissions)
+        .unwrap_or_default();
+    let mut registry = create_configured_registry(&permissions);
     let plugin_config = plugin_config::load_plugin_config(name)
         .await
         .unwrap_or_default();

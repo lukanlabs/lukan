@@ -12,6 +12,7 @@ import { existsSync, rmSync, readFileSync, writeFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
+import { createServer } from "net";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -57,6 +58,22 @@ function findConnectorPath() {
   return null;
 }
 
+// ── Port check ──────────────────────────────────────────────────────
+
+function isPortInUse(port) {
+  return new Promise((resolve) => {
+    const srv = createServer();
+    srv.once("error", (err) => {
+      if (err.code === "EADDRINUSE") resolve(true);
+      else resolve(false);
+    });
+    srv.once("listening", () => {
+      srv.close(() => resolve(false));
+    });
+    srv.listen(port);
+  });
+}
+
 // ── Auth command ─────────────────────────────────────────────────────
 
 async function cmdAuth() {
@@ -71,6 +88,22 @@ async function cmdAuth() {
     console.error(
       `${RED}Could not find whatsapp-connector/index.js${RESET}`
     );
+    process.exit(1);
+  }
+
+  // Check if connector port is already in use (plugin daemon running)
+  const config = loadConfig();
+  const bridgeUrl = config.bridgeUrl || "ws://localhost:3001";
+  const portMatch = bridgeUrl.match(/:(\d+)/);
+  const port = portMatch ? parseInt(portMatch[1], 10) : 3001;
+
+  if (await isPortInUse(port)) {
+    console.log(
+      `${RED}✗${RESET} Port ${port} is already in use — the WhatsApp connector is already running.`
+    );
+    console.log(`\nStop the plugin first, then retry:`);
+    console.log(`  ${CYAN}lukan wa stop${RESET}`);
+    console.log(`  ${CYAN}lukan wa auth${RESET}`);
     process.exit(1);
   }
 

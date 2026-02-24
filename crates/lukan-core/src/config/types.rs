@@ -278,7 +278,9 @@ pub struct PermissionsConfig {
     /// Enable OS-level sandbox (bwrap) -- default true
     #[serde(default = "default_true")]
     pub os_sandbox: bool,
-    /// File patterns to block inside sandbox
+    /// Gitignore-style patterns to block sensitive files/directories.
+    /// Patterns ending with `/` block entire directories (e.g. `.ssh/`).
+    /// Other patterns match against filenames (e.g. `*.pem`, `.env*`).
     #[serde(default = "default_sensitive_patterns")]
     pub sensitive_patterns: Vec<String>,
 }
@@ -289,12 +291,20 @@ fn default_true() -> bool {
 
 fn default_sensitive_patterns() -> Vec<String> {
     vec![
+        // File patterns
         ".env*".into(),
         "credentials.json".into(),
         "*.pem".into(),
         "*.key".into(),
         "*.p12".into(),
+        "*.pfx".into(),
         ".npmrc".into(),
+        ".netrc".into(),
+        // Directory patterns
+        ".ssh/".into(),
+        ".gnupg/".into(),
+        ".aws/".into(),
+        ".docker/".into(),
     ]
 }
 

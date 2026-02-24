@@ -16,14 +16,27 @@ profile bwrap /usr/bin/bwrap flags=(unconfined) {
 }
 "#;
 
-/// Default file patterns to block inside the sandbox.
+/// Default sensitive patterns (gitignore-style).
+///
+/// - Patterns ending with `/` match **directories** — any path component that matches
+///   will block the entire subtree (e.g. `.ssh/` blocks `/home/user/.ssh/id_rsa`).
+/// - All other patterns match against the **filename** only (e.g. `*.pem` blocks
+///   `/any/path/cert.pem`).
 pub const DEFAULT_SENSITIVE_PATTERNS: &[&str] = &[
+    // File patterns
     ".env*",
     "credentials.json",
     "*.pem",
     "*.key",
     "*.p12",
+    "*.pfx",
     ".npmrc",
+    ".netrc",
+    // Directory patterns
+    ".ssh/",
+    ".gnupg/",
+    ".aws/",
+    ".docker/",
 ];
 
 /// Configuration for building bwrap command arguments.
@@ -443,7 +456,7 @@ fn resolve_path(path: &str) -> String {
 /// - `"prefix*"` -- matches entries starting with `prefix`
 /// - `"exact"` -- exact match
 /// - `"*mid*"` -- contains match (both sides have `*`)
-fn glob_match(pattern: &str, entry: &str) -> bool {
+pub fn glob_match(pattern: &str, entry: &str) -> bool {
     if pattern == entry {
         // Exact match
         return true;
@@ -473,6 +486,41 @@ fn glob_match(pattern: &str, entry: &str) -> bool {
             false
         }
     }
+}
+
+/// Check if a path is sensitive according to gitignore-style patterns.
+///
+/// - Patterns ending with `/` are **directory patterns**: they match any path
+///   component. E.g. `.ssh/` blocks `/home/user/.ssh/id_rsa`.
+/// - All other patterns are **file patterns**: they match against the filename
+///   (last component) using [`glob_match`]. E.g. `*.pem` blocks `cert.pem`.
+///
+/// Returns `Some(pattern)` if the path is sensitive, `None` otherwise.
+pub fn match_sensitive_pattern<'a>(
+    path: &std::path::Path,
+    patterns: &[&'a str],
+) -> Option<&'a str> {
+    for pattern in patterns {
+        if let Some(dir_pattern) = pattern.strip_suffix('/') {
+            // Directory pattern — check every component of the path
+            for component in path.components() {
+                if let std::path::Component::Normal(c) = component
+                    && let Some(s) = c.to_str()
+                    && glob_match(dir_pattern, s)
+                {
+                    return Some(pattern);
+                }
+            }
+        } else {
+            // File pattern — check filename only
+            if let Some(filename) = path.file_name().and_then(|f| f.to_str())
+                && glob_match(pattern, filename)
+            {
+                return Some(pattern);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -506,6 +554,58 @@ mod tests {
     fn test_glob_match_contains() {
         assert!(glob_match("*secret*", "my-secret-file"));
         assert!(!glob_match("*secret*", "my-file"));
+    }
+
+    #[test]
+    fn test_match_sensitive_file_patterns() {
+        let patterns = &[".env*", "*.pem", "credentials.json"];
+        // File patterns match against filename
+        assert!(match_sensitive_pattern(Path::new("/home/user/.env"), patterns).is_some());
+        assert!(match_sensitive_pattern(Path::new("/home/user/.env.local"), patterns).is_some());
+        assert!(match_sensitive_pattern(Path::new("/any/path/cert.pem"), patterns).is_some());
+        assert!(match_sensitive_pattern(Path::new("/app/credentials.json"), patterns).is_some());
+        // Normal files don't match
+        assert!(match_sensitive_pattern(Path::new("/home/user/main.rs"), patterns).is_none());
+        assert!(match_sensitive_pattern(Path::new("/home/user/README.md"), patterns).is_none());
+    }
+
+    #[test]
+    fn test_match_sensitive_dir_patterns() {
+        let patterns = &[".ssh/", ".gnupg/", ".aws/"];
+        // Directory patterns match any component
+        assert!(match_sensitive_pattern(Path::new("/home/user/.ssh/id_rsa"), patterns).is_some());
+        assert!(
+            match_sensitive_pattern(Path::new("/home/user/.ssh/known_hosts"), patterns).is_some()
+        );
+        assert!(
+            match_sensitive_pattern(Path::new("/home/user/.gnupg/pubring.kbx"), patterns).is_some()
+        );
+        assert!(
+            match_sensitive_pattern(Path::new("/home/user/.aws/credentials"), patterns).is_some()
+        );
+        // The directory itself is also blocked
+        assert!(match_sensitive_pattern(Path::new("/home/user/.ssh"), patterns).is_some());
+        // Paths not containing the directory
+        assert!(match_sensitive_pattern(Path::new("/home/user/src/main.rs"), patterns).is_none());
+    }
+
+    #[test]
+    fn test_match_sensitive_mixed_patterns() {
+        let patterns = &[".ssh/", "*.key", ".env*"];
+        // Dir pattern
+        assert!(match_sensitive_pattern(Path::new("/home/user/.ssh/config"), patterns).is_some());
+        // File pattern
+        assert!(match_sensitive_pattern(Path::new("/home/user/server.key"), patterns).is_some());
+        assert!(match_sensitive_pattern(Path::new("/app/.env.prod"), patterns).is_some());
+        // Returns the matched pattern
+        assert_eq!(
+            match_sensitive_pattern(Path::new("/home/user/.ssh/id_rsa"), patterns),
+            Some(".ssh/")
+        );
+        assert_eq!(
+            match_sensitive_pattern(Path::new("/home/user/tls.key"), patterns),
+            Some("*.key")
+        );
     }
 
     #[test]

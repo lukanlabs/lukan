@@ -16,7 +16,7 @@ import qrcode from "qrcode-terminal";
 import pino from "pino";
 import { join } from "path";
 import { homedir } from "os";
-import { mkdirSync } from "fs";
+import { mkdirSync, writeFileSync, unlinkSync } from "fs";
 
 const logger = pino({ level: "silent" });
 
@@ -25,6 +25,8 @@ const AUTH_DIR = join(XDG_DATA_HOME, "lukan", "whatsapp-auth");
 const WS_PORT = parseInt(process.env.CONNECTOR_PORT || "3001", 10);
 
 mkdirSync(AUTH_DIR, { recursive: true });
+
+const QR_FILE = join(AUTH_DIR, "current-qr.txt");
 
 // --- Message store for retry handling ---
 const messageStore = new Map();
@@ -188,11 +190,14 @@ async function startWhatsApp() {
     if (qr) {
       console.log("\n[connector] Scan this QR code with WhatsApp:\n");
       qrcode.generate(qr, { small: true });
+      writeFileSync(QR_FILE, qr, "utf-8");
+      console.log(`[connector] QR saved to ${QR_FILE}`);
       broadcast({ type: "status", status: "qr" });
     }
 
     if (connection === "open") {
       console.log("[connector] WhatsApp connected as", sock.user?.id);
+      try { unlinkSync(QR_FILE); } catch {}
       broadcast({ type: "status", status: "connected" });
 
       // Pre-cache all group metadata on connect

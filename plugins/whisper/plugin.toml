@@ -34,7 +34,3 @@ handler = "download"
 [commands.models]
 description = "List downloaded whisper models"
 handler = "models"
-
-[commands.serve]
-description = "Start the transcription server directly"
-handler = "serve"

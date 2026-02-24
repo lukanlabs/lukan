@@ -50,10 +50,6 @@ valid_values = ["openai", "local"]
 type = "string"
 description = "Local Whisper server URL (used when transcription_backend = 'local')"
 
-[config.enabled]
-type = "bool"
-description = "Enable/disable channel"
-
 [config.reminder_advance]
 type = "number"
 description = "Minutes before reminder"

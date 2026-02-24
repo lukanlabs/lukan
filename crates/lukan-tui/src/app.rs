@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::io::{Stdout, stdout};
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
+use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
@@ -22,7 +23,7 @@ use lukan_core::config::{
 use lukan_core::models::events::{StopReason, StreamEvent};
 use lukan_core::models::sessions::SessionSummary;
 use lukan_providers::{Provider, SystemPrompt, create_provider};
-use lukan_tools::create_default_registry;
+use lukan_tools::create_configured_registry;
 
 use chrono::Utc;
 
@@ -80,10 +81,20 @@ pub struct App {
     rewind_picker: Option<RewindPicker>,
     /// Memory viewer overlay content (shown via Alt+M)
     memory_viewer: Option<String>,
+    /// Trust prompt overlay (shown on first launch in an untrusted directory)
+    trust_prompt: Option<TrustPrompt>,
     /// Sender to signal Alt+B (send running Bash to background)
     bg_signal_tx: watch::Sender<()>,
     /// Receiver half (cloned into AgentConfig)
     bg_signal_rx: watch::Receiver<()>,
+    /// Cancellation token for the current agent turn (ESC to cancel)
+    cancel_token: Option<CancellationToken>,
+}
+
+/// Trust prompt state — shown when the user hasn't trusted this workspace yet
+struct TrustPrompt {
+    cwd: String,
+    selected: usize, // 0 = Yes, 1 = No
 }
 
 /// Interactive model picker state
@@ -139,8 +150,10 @@ impl App {
             bg_picker: None,
             rewind_picker: None,
             memory_viewer: None,
+            trust_prompt: None,
             bg_signal_tx,
             bg_signal_rx,
+            cancel_token: None,
         }
     }
 
@@ -192,15 +205,32 @@ impl App {
 
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
 
+        // Load project config for permissions and allowed paths
+        let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
+            .await
+            .ok()
+            .flatten()
+            .map(|(_, cfg)| cfg);
+
+        let permissions = project_cfg
+            .as_ref()
+            .map(|c| c.permissions.clone())
+            .unwrap_or_default();
+
+        let allowed = project_cfg
+            .as_ref()
+            .map(|c| c.resolve_allowed_paths(&cwd))
+            .unwrap_or_else(|| vec![cwd.clone()]);
+
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),
-            tools: create_default_registry(),
+            tools: create_configured_registry(&permissions),
             system_prompt,
             cwd,
             provider_name: self.config.config.provider.to_string(),
             model_name: self.config.effective_model(),
             bg_signal: Some(self.bg_signal_rx.clone()),
-            allowed_paths: None,
+            allowed_paths: Some(allowed),
         };
 
         match AgentLoop::new(config).await {
@@ -236,6 +266,20 @@ impl App {
 
         let (agent_tx, mut agent_rx) = mpsc::channel::<StreamEvent>(256);
 
+        // Check workspace trust before proceeding
+        let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
+        let is_trusted = lukan_core::config::ProjectConfig::load(&cwd)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|(_, cfg)| cfg.trusted);
+        if !is_trusted {
+            self.trust_prompt = Some(TrustPrompt {
+                cwd: cwd.display().to_string(),
+                selected: 0,
+            });
+        }
+
         // Welcome banner
         self.messages.push(ChatMessage::new(
             "banner",
@@ -250,7 +294,8 @@ impl App {
             let display_input = self.display_input();
             let cur_input_h = input_height(&display_input, term_size.width, 8);
             let chat_area_h = term_size.height.saturating_sub(cur_input_h + 1);
-            if self.session_picker.is_none()
+            if self.trust_prompt.is_none()
+                && self.session_picker.is_none()
                 && self.bg_picker.is_none()
                 && self.rewind_picker.is_none()
                 && self.memory_viewer.is_none()
@@ -335,7 +380,10 @@ impl App {
                     };
 
                 // Chat (or overlay pickers)
-                if let Some(ref content) = self.memory_viewer {
+                if let Some(ref prompt) = self.trust_prompt {
+                    let widget = TrustPromptWidget::new(prompt);
+                    frame.render_widget(widget, chat_area);
+                } else if let Some(ref content) = self.memory_viewer {
                     use ratatui::widgets::{Block, Borders, Wrap};
                     let block = Block::default()
                         .borders(Borders::ALL)
@@ -398,7 +446,9 @@ impl App {
                 // Input — show paste preview + typed-after text when available
                 let di = self.display_input();
                 let dc = self.display_cursor();
-                let input_widget = if self.memory_viewer.is_some() {
+                let input_widget = if self.trust_prompt.is_some() {
+                    InputWidget::new("↑↓ select · Enter confirm · ESC exit", 0, false)
+                } else if self.memory_viewer.is_some() {
                     InputWidget::new("ESC close", 0, false)
                 } else if self.rewind_picker.is_some() {
                     let hint = match self.rewind_picker.as_ref().map(|p| p.view) {
@@ -451,7 +501,8 @@ impl App {
                 frame.render_widget(status, status_area);
 
                 // Set cursor position only when not in picker and not streaming
-                if self.memory_viewer.is_none()
+                if self.trust_prompt.is_none()
+                    && self.memory_viewer.is_none()
                     && self.rewind_picker.is_none()
                     && self.bg_picker.is_none()
                     && self.session_picker.is_none()
@@ -468,7 +519,33 @@ impl App {
                 Some(event) = event_rx.recv() => {
                     match event {
                         AppEvent::Key(key) => {
-                            if self.memory_viewer.is_some() {
+                            if self.trust_prompt.is_some() {
+                                // Trust prompt overlay
+                                match key.code {
+                                    KeyCode::Up => {
+                                        self.trust_prompt.as_mut().unwrap().selected = 0;
+                                    }
+                                    KeyCode::Down => {
+                                        self.trust_prompt.as_mut().unwrap().selected = 1;
+                                    }
+                                    KeyCode::Enter => {
+                                        let selected = self.trust_prompt.as_ref().unwrap().selected;
+                                        if selected == 0 {
+                                            // Trust — persist and continue
+                                            let _ = lukan_core::config::ProjectConfig::mark_trusted(&cwd).await;
+                                            self.trust_prompt = None;
+                                            self.force_redraw = true;
+                                        } else {
+                                            // No trust — exit
+                                            self.should_quit = true;
+                                        }
+                                    }
+                                    KeyCode::Esc => {
+                                        self.should_quit = true;
+                                    }
+                                    _ => {}
+                                }
+                            } else if self.memory_viewer.is_some() {
                                 // Memory viewer overlay — ESC closes
                                 if key.code == KeyCode::Esc {
                                     self.memory_viewer = None;
@@ -726,6 +803,24 @@ impl App {
                                 }
                             } else if is_quit(&key) {
                                 self.should_quit = true;
+                            } else if key.code == KeyCode::Esc
+                                && self.is_streaming
+                            {
+                                // ESC during streaming: cancel the agent turn
+                                if let Some(token) = self.cancel_token.take() {
+                                    token.cancel();
+                                }
+                                self.is_streaming = false;
+                                self.active_tool = None;
+                                // Flush any partial streaming text
+                                if !self.streaming_text.is_empty() {
+                                    let content = std::mem::take(&mut self.streaming_text);
+                                    self.messages.push(ChatMessage::new("assistant", content));
+                                }
+                                self.messages.push(ChatMessage::new(
+                                    "system",
+                                    "Response cancelled.",
+                                ));
                             } else if key.code == KeyCode::Char('b')
                                 && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
                                 && self.is_streaming
@@ -1330,13 +1425,17 @@ impl App {
 
         self.session_id = Some(agent.session_id().to_string());
 
+        // Cancellation token for ESC-to-cancel
+        let cancel_token = CancellationToken::new();
+        self.cancel_token = Some(cancel_token.clone());
+
         // Oneshot channel to get the agent back after the turn
         let (return_tx, return_rx) = tokio::sync::oneshot::channel::<AgentLoop>();
         self.agent_return_rx = Some(return_rx);
 
         let mut agent = agent;
         tokio::spawn(async move {
-            if let Err(e) = agent.run_turn(&text, agent_tx.clone()).await {
+            if let Err(e) = agent.run_turn(&text, agent_tx.clone(), Some(cancel_token)).await {
                 error!("Agent loop error: {e}");
                 agent_tx
                     .send(StreamEvent::Error {
@@ -1401,15 +1500,31 @@ impl App {
         let system_prompt = build_system_prompt().await;
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
 
+        let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
+            .await
+            .ok()
+            .flatten()
+            .map(|(_, cfg)| cfg);
+
+        let permissions = project_cfg
+            .as_ref()
+            .map(|c| c.permissions.clone())
+            .unwrap_or_default();
+
+        let allowed = project_cfg
+            .as_ref()
+            .map(|c| c.resolve_allowed_paths(&cwd))
+            .unwrap_or_else(|| vec![cwd.clone()]);
+
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),
-            tools: create_default_registry(),
+            tools: create_configured_registry(&permissions),
             system_prompt,
             cwd,
             provider_name: self.config.config.provider.to_string(),
             model_name: self.config.effective_model(),
             bg_signal: Some(self.bg_signal_rx.clone()),
-            allowed_paths: None,
+            allowed_paths: Some(allowed),
         };
 
         match AgentLoop::load_session(config, &session_id).await {
@@ -2513,6 +2628,114 @@ impl Widget for SessionPickerWidget<'_> {
         }
 
         let paragraph = Paragraph::new(lines);
+        paragraph.render(area, buf);
+    }
+}
+
+// ── Trust Prompt Widget ─────────────────────────────────────────────────
+
+struct TrustPromptWidget<'a> {
+    prompt: &'a TrustPrompt,
+}
+
+impl<'a> TrustPromptWidget<'a> {
+    fn new(prompt: &'a TrustPrompt) -> Self {
+        Self { prompt }
+    }
+}
+
+impl Widget for TrustPromptWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use ratatui::widgets::{Block, Borders, Wrap};
+
+        Clear.render(area, buf);
+
+        let yes_pointer = if self.prompt.selected == 0 {
+            "❯ "
+        } else {
+            "  "
+        };
+        let no_pointer = if self.prompt.selected == 1 {
+            "❯ "
+        } else {
+            "  "
+        };
+
+        let yes_style = if self.prompt.selected == 0 {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let no_style = if self.prompt.selected == 1 {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                " Workspace access:",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                format!(" {}", self.prompt.cwd),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                " Quick safety check: Is this a project you created or",
+                Style::default().fg(Color::White),
+            )),
+            Line::from(Span::styled(
+                " one you trust? If you're not sure, take a moment to",
+                Style::default().fg(Color::White),
+            )),
+            Line::from(Span::styled(
+                " review what's in this folder first.",
+                Style::default().fg(Color::White),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                " lukan will be able to read, edit, and execute code",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                " and files in this directory.",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(format!(" {yes_pointer}"), yes_style),
+                Span::styled("1. Yes, I trust this folder", yes_style),
+            ]),
+            Line::from(vec![
+                Span::styled(format!(" {no_pointer}"), no_style),
+                Span::styled("2. No, exit", no_style),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                " Enter to confirm · Esc to cancel",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false });
         paragraph.render(area, buf);
     }
 }

@@ -44,6 +44,9 @@ enum Commands {
         /// UI mode: tui (default) or web
         #[arg(long, default_value = "tui")]
         ui: String,
+        /// Open the desktop settings app (Tauri)
+        #[arg(long)]
+        desktop: bool,
     },
     /// Interactive setup wizard (provider, model, API keys)
     Setup,
@@ -163,13 +166,18 @@ async fn main() -> Result<()> {
             provider,
             model,
             ui,
+            desktop,
         }) => {
-            let provider_override = provider.or(cli.provider);
-            let model_override = model.or(cli.model);
-            if ui == "web" {
-                run_web(provider_override, model_override).await?;
+            if desktop {
+                run_desktop().await?;
             } else {
-                run_chat(provider_override, model_override).await?;
+                let provider_override = provider.or(cli.provider);
+                let model_override = model.or(cli.model);
+                if ui == "web" {
+                    run_web(provider_override, model_override).await?;
+                } else {
+                    run_chat(provider_override, model_override).await?;
+                }
             }
         }
         None => {
@@ -446,6 +454,130 @@ async fn run_web(provider_override: Option<String>, model_override: Option<Strin
     lukan_web::start_web_server(resolved, port).await?;
 
     Ok(())
+}
+
+async fn run_desktop() -> Result<()> {
+    // Desktop requires a graphical display (X11 or Wayland)
+    let has_display = std::env::var("DISPLAY").is_ok_and(|v| !v.is_empty())
+        || std::env::var("WAYLAND_DISPLAY").is_ok_and(|v| !v.is_empty());
+
+    if !has_display {
+        anyhow::bail!(
+            "No graphical display detected (DISPLAY/WAYLAND_DISPLAY not set).\n\
+             --desktop requires a desktop environment with X11 or Wayland.\n\
+             Use 'lukan chat' for TUI or 'lukan chat --ui web' for browser."
+        );
+    }
+
+    // Find the lukan-desktop binary next to this executable, or in PATH
+    let self_exe = std::env::current_exe().context("Failed to get current executable path")?;
+    let desktop_bin = self_exe
+        .parent()
+        .map(|p| p.join("lukan-desktop"))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| std::path::PathBuf::from("lukan-desktop"));
+
+    if !desktop_bin.exists() && which_cmd_exists("lukan-desktop").is_none() {
+        anyhow::bail!(
+            "lukan-desktop binary not found.\n\
+             Build it with: cargo build -p lukan-desktop"
+        );
+    }
+
+    info!("Launching lukan-desktop from {}", desktop_bin.display());
+
+    let output = tokio::process::Command::new(&desktop_bin)
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("Failed to run {}", desktop_bin.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output.status.code();
+
+        // Check stderr for common issues
+        let stderr_lower = stderr.to_lowercase();
+        if stderr_lower.contains("libwebkit2gtk")
+            || stderr_lower.contains("shared object file")
+            || stderr_lower.contains("shared library")
+            || code == Some(127)
+        {
+            eprintln!("Error: lukan-desktop is missing required system libraries.");
+            eprintln!();
+            eprintln!("Install the dependencies:");
+            eprintln!("  Ubuntu/Debian: sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0");
+            eprintln!("  Fedora:        sudo dnf install webkit2gtk4.1 gtk3");
+            eprintln!("  Arch:          sudo pacman -S webkit2gtk-4.1 gtk3");
+            eprintln!();
+            eprintln!("Or use the browser UI instead: lukan chat --ui web");
+            std::process::exit(1);
+        }
+
+        if stderr_lower.contains("gtk") || stderr_lower.contains("display") {
+            // GTK/display init failure — our panic hook already printed a message
+            if !stderr.is_empty() {
+                eprint!("{stderr}");
+            }
+            std::process::exit(1);
+        }
+
+        // code=None means killed by signal
+        if let Some(c) = code {
+            if c == 1 || c == 101 {
+                // Our panic hook (1) or raw panic (101) already printed to stderr
+                if !stderr.is_empty() {
+                    eprint!("{stderr}");
+                }
+                std::process::exit(c);
+            }
+            anyhow::bail!("lukan-desktop exited with code {c}\n{stderr}");
+        }
+
+        // Killed by signal (SIGSEGV, SIGABRT, etc.)
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(sig) = output.status.signal() {
+                let sig_name = match sig {
+                    11 => "SIGSEGV (segmentation fault)",
+                    6 => "SIGABRT (aborted)",
+                    9 => "SIGKILL",
+                    _ => "",
+                };
+                eprintln!(
+                    "Error: lukan-desktop crashed (signal {sig}{}).",
+                    if sig_name.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" — {sig_name}")
+                    }
+                );
+                if !stderr.is_empty() {
+                    eprintln!("{stderr}");
+                }
+                eprintln!();
+                eprintln!("This usually means a missing or incompatible system library.");
+                eprintln!("Try: sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0");
+                eprintln!("Or use: lukan chat --ui web");
+                std::process::exit(1);
+            }
+        }
+
+        anyhow::bail!("lukan-desktop failed\n{stderr}");
+    }
+
+    Ok(())
+}
+
+/// Check if a command exists in PATH, returning its path.
+fn which_cmd_exists(cmd: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths).find_map(|dir| {
+            let full = dir.join(cmd);
+            if full.is_file() { Some(full) } else { None }
+        })
+    })
 }
 
 async fn run_chat(provider_override: Option<String>, model_override: Option<String>) -> Result<()> {

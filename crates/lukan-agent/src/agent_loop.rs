@@ -13,6 +13,7 @@ use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
 use rand::Rng;
 use tokio::sync::{Mutex, mpsc, watch};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::message_history::MessageHistory;
@@ -113,7 +114,7 @@ impl AgentLoop {
         .await;
 
         let bg_signal = config.bg_signal.take();
-        let allowed_paths = config.allowed_paths.take();
+        let allowed_paths = Self::expand_allowed_paths(config.allowed_paths.take());
         let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
         Ok(Self {
             provider: config.provider,
@@ -165,7 +166,7 @@ impl AgentLoop {
         .await;
 
         let bg_signal = config.bg_signal.take();
-        let allowed_paths = config.allowed_paths.take();
+        let allowed_paths = Self::expand_allowed_paths(config.allowed_paths.take());
         let session = SessionManager::load(session_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
@@ -188,6 +189,36 @@ impl AgentLoop {
             bg_signal,
             allowed_paths,
         })
+    }
+
+    /// Expand allowed_paths to include lukan's own config/data directories.
+    /// The agent needs access to these for sessions, memory, plugin configs, etc.
+    fn expand_allowed_paths(paths: Option<Vec<PathBuf>>) -> Option<Vec<PathBuf>> {
+        let mut dirs = paths?;
+
+        // Always allow lukan's config directory (~/.config/lukan/)
+        let config_dir = lukan_core::config::LukanPaths::config_dir();
+        if !dirs.iter().any(|d| config_dir.starts_with(d)) {
+            dirs.push(config_dir);
+        }
+
+        // Allow lukan's data directory (~/.local/share/lukan/)
+        let data_dir = lukan_core::config::LukanPaths::whatsapp_auth_dir()
+            .parent()
+            .map(|p| p.to_path_buf());
+        if let Some(data_dir) = data_dir
+            && !dirs.iter().any(|d| data_dir.starts_with(d))
+        {
+            dirs.push(data_dir);
+        }
+
+        // Allow /tmp for temporary files
+        let tmp = PathBuf::from("/tmp");
+        if !dirs.iter().any(|d| tmp.starts_with(d)) {
+            dirs.push(tmp);
+        }
+
+        Some(dirs)
     }
 
     /// Get the session ID
@@ -340,11 +371,13 @@ impl AgentLoop {
         self.history.add_user_message(content);
     }
 
-    /// Run a single user turn: sends the message and loops until no more tool calls
+    /// Run a single user turn: sends the message and loops until no more tool calls.
+    /// The optional `cancel` token allows the caller (TUI) to abort mid-turn.
     pub async fn run_turn(
         &mut self,
         user_message: &str,
         event_tx: mpsc::Sender<StreamEvent>,
+        cancel: Option<CancellationToken>,
     ) -> Result<()> {
         // Capture message index *before* adding the user message.
         // This is the truncation point used by restore_checkpoint().
@@ -382,7 +415,23 @@ impl AgentLoop {
             let mut pending_tools: Vec<PendingToolCall> = Vec::new();
             let mut stop_reason = StopReason::EndTurn;
 
-            while let Some(event) = stream_rx.recv().await {
+            let mut cancelled = false;
+            loop {
+                let event = if let Some(ref token) = cancel {
+                    tokio::select! {
+                        biased;
+                        _ = token.cancelled() => {
+                            cancelled = true;
+                            break;
+                        }
+                        ev = stream_rx.recv() => ev,
+                    }
+                } else {
+                    stream_rx.recv().await
+                };
+
+                let Some(event) = event else { break };
+
                 match &event {
                     StreamEvent::TextDelta { text } => {
                         text_content.push_str(text);
@@ -423,6 +472,19 @@ impl AgentLoop {
                 }
             }
 
+            if cancelled {
+                stream_handle.abort();
+                info!("Turn cancelled by user");
+                // Save any partial text so the conversation stays coherent
+                if !text_content.is_empty() {
+                    self.history.add_assistant_blocks(vec![ContentBlock::Text {
+                        text: text_content,
+                    }]);
+                }
+                self.save_session().await?;
+                return Ok(());
+            }
+
             // Wait for provider task to finish
             let _ = stream_handle.await;
 
@@ -460,6 +522,13 @@ impl AgentLoop {
                     "Turn complete, no tool calls"
                 );
                 break;
+            }
+
+            // Check cancellation before executing tools
+            if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+                info!("Turn cancelled before tool execution");
+                self.save_session().await?;
+                return Ok(());
             }
 
             // Execute tool calls in parallel

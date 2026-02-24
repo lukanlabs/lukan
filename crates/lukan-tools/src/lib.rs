@@ -59,6 +59,49 @@ impl ToolContext {
                 .join(", ")
         ))
     }
+
+    /// Check if a path points to a sensitive file or is inside a sensitive directory.
+    ///
+    /// Supports gitignore-style patterns:
+    /// - `*.pem`, `.env*` — match against the filename
+    /// - `.ssh/`, `.aws/` — match against any path component (blocks the entire subtree)
+    ///
+    /// Uses `sensitive_patterns` from the sandbox config when available,
+    /// otherwise falls back to `DEFAULT_SENSITIVE_PATTERNS`.
+    /// Checks both the original path and the canonicalized path to prevent symlink bypass.
+    pub fn check_sensitive(&self, path: &std::path::Path) -> Result<(), String> {
+        let patterns: Vec<&str> = if let Some(ref sb) = self.sandbox {
+            if sb.sensitive_patterns.is_empty() {
+                sandbox::DEFAULT_SENSITIVE_PATTERNS.to_vec()
+            } else {
+                sb.sensitive_patterns.iter().map(|s| s.as_str()).collect()
+            }
+        } else {
+            sandbox::DEFAULT_SENSITIVE_PATTERNS.to_vec()
+        };
+
+        // Check both original path and canonicalized path (symlink bypass prevention)
+        if let Some(matched) = sandbox::match_sensitive_pattern(path, &patterns) {
+            return Err(format!(
+                "Access denied: '{}' matches sensitive pattern '{}'",
+                path.display(),
+                matched
+            ));
+        }
+
+        if let Ok(canonical) = path.canonicalize()
+            && canonical != path
+            && let Some(matched) = sandbox::match_sensitive_pattern(&canonical, &patterns)
+        {
+            return Err(format!(
+                "Access denied: '{}' matches sensitive pattern '{}'",
+                path.display(),
+                matched
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 /// Trait that all tools must implement
@@ -243,6 +286,148 @@ mod tests {
         );
         assert!(ctx.check_path_allowed("/etc/secret".as_ref()).is_err());
     }
+
+    // ── check_sensitive tests ───────────────────────────────────────
+
+    #[test]
+    fn sensitive_blocks_env_file() {
+        let ctx = make_ctx(None);
+        assert!(ctx.check_sensitive("/home/user/.env".as_ref()).is_err());
+        assert!(
+            ctx.check_sensitive("/home/user/.env.local".as_ref())
+                .is_err()
+        );
+        assert!(
+            ctx.check_sensitive("/home/user/.env.production".as_ref())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn sensitive_blocks_key_files() {
+        let ctx = make_ctx(None);
+        assert!(
+            ctx.check_sensitive("/home/user/server.pem".as_ref())
+                .is_err()
+        );
+        assert!(
+            ctx.check_sensitive("/home/user/private.key".as_ref())
+                .is_err()
+        );
+        assert!(ctx.check_sensitive("/home/user/cert.p12".as_ref()).is_err());
+        assert!(
+            ctx.check_sensitive("/home/user/credentials.json".as_ref())
+                .is_err()
+        );
+        assert!(ctx.check_sensitive("/home/user/.npmrc".as_ref()).is_err());
+    }
+
+    #[test]
+    fn sensitive_allows_normal_files() {
+        let ctx = make_ctx(None);
+        assert!(
+            ctx.check_sensitive("/home/user/src/main.rs".as_ref())
+                .is_ok()
+        );
+        assert!(ctx.check_sensitive("/home/user/README.md".as_ref()).is_ok());
+        assert!(
+            ctx.check_sensitive("/home/user/Cargo.toml".as_ref())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn sensitive_uses_custom_patterns_from_sandbox() {
+        let mut ctx = make_ctx(None);
+        ctx.sandbox = Some(sandbox::SandboxConfig {
+            enabled: true,
+            allowed_dirs: vec![],
+            sensitive_patterns: vec!["*.secret".to_string(), "passwords*".to_string()],
+        });
+
+        // Custom patterns should block
+        assert!(
+            ctx.check_sensitive("/home/user/db.secret".as_ref())
+                .is_err()
+        );
+        assert!(
+            ctx.check_sensitive("/home/user/passwords.txt".as_ref())
+                .is_err()
+        );
+
+        // Default patterns should NOT block (custom overrides defaults)
+        assert!(ctx.check_sensitive("/home/user/.env".as_ref()).is_ok());
+    }
+
+    #[test]
+    fn sensitive_blocks_ssh_directory() {
+        let ctx = make_ctx(None);
+        assert!(
+            ctx.check_sensitive("/home/user/.ssh/id_rsa".as_ref())
+                .is_err()
+        );
+        assert!(
+            ctx.check_sensitive("/home/user/.ssh/known_hosts".as_ref())
+                .is_err()
+        );
+        assert!(
+            ctx.check_sensitive("/home/user/.ssh/config".as_ref())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn sensitive_blocks_other_sensitive_dirs() {
+        let ctx = make_ctx(None);
+        assert!(
+            ctx.check_sensitive("/home/user/.gnupg/pubring.kbx".as_ref())
+                .is_err()
+        );
+        assert!(
+            ctx.check_sensitive("/home/user/.aws/credentials".as_ref())
+                .is_err()
+        );
+        assert!(
+            ctx.check_sensitive("/home/user/.docker/config.json".as_ref())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn sensitive_custom_dir_patterns() {
+        let mut ctx = make_ctx(None);
+        ctx.sandbox = Some(sandbox::SandboxConfig {
+            enabled: true,
+            allowed_dirs: vec![],
+            sensitive_patterns: vec!["secrets/".to_string(), "*.key".to_string()],
+        });
+
+        // Custom dir pattern blocks subtree
+        assert!(
+            ctx.check_sensitive("/home/user/secrets/api_token".as_ref())
+                .is_err()
+        );
+        // Custom file pattern
+        assert!(ctx.check_sensitive("/home/user/tls.key".as_ref()).is_err());
+        // Default dir patterns should NOT block (custom overrides)
+        assert!(
+            ctx.check_sensitive("/home/user/.ssh/id_rsa".as_ref())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn sensitive_error_message_includes_pattern() {
+        let ctx = make_ctx(None);
+        let err = ctx.check_sensitive("/home/user/.env".as_ref()).unwrap_err();
+        assert!(err.contains("sensitive pattern"));
+        assert!(err.contains(".env*"));
+
+        let err = ctx
+            .check_sensitive("/home/user/.ssh/id_rsa".as_ref())
+            .unwrap_err();
+        assert!(err.contains(".ssh/"));
+    }
 }
 
 /// Format diff stats like "Added 5 lines, removed 2 lines"
@@ -276,5 +461,23 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(Box::new(web_fetch::WebFetchTool));
     // Plugin-provided tools (scanned from installed plugins)
     plugin_tools::register_plugin_tools(&mut registry);
+    registry
+}
+
+/// Create a registry configured with project permissions.
+///
+/// This is the preferred entry point — it reads `os_sandbox` and
+/// `sensitive_patterns` from the given `PermissionsConfig` and
+/// applies them so that all file tools (ReadFile, Glob, Grep, etc.)
+/// enforce the sensitive-file restrictions.
+pub fn create_configured_registry(
+    permissions: &lukan_core::config::types::PermissionsConfig,
+) -> ToolRegistry {
+    let mut registry = create_default_registry();
+    registry.set_sandbox(
+        permissions.os_sandbox,
+        vec![], // allowed_dirs filled by caller if needed
+        permissions.sensitive_patterns.clone(),
+    );
     registry
 }

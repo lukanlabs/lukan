@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
-/// Status bar showing provider, model, and token usage
+/// Status bar showing provider, model, token usage, and permission mode
 pub struct StatusBarWidget<'a> {
     provider: &'a str,
     model: &'a str,
@@ -15,9 +15,11 @@ pub struct StatusBarWidget<'a> {
     is_streaming: bool,
     active_tool: Option<&'a str>,
     memory_active: bool,
+    permission_mode: &'a str,
 }
 
 impl<'a> StatusBarWidget<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: &'a str,
         model: &'a str,
@@ -26,6 +28,7 @@ impl<'a> StatusBarWidget<'a> {
         is_streaming: bool,
         active_tool: Option<&'a str>,
         memory_active: bool,
+        permission_mode: &'a str,
     ) -> Self {
         Self {
             provider,
@@ -35,6 +38,7 @@ impl<'a> StatusBarWidget<'a> {
             is_streaming,
             active_tool,
             memory_active,
+            permission_mode,
         }
     }
 }
@@ -62,6 +66,18 @@ impl Widget for StatusBarWidget<'_> {
             Style::default().fg(Color::DarkGray),
         );
 
+        let mode_color = match self.permission_mode {
+            "manual" => Color::Yellow,
+            "auto" => Color::Green,
+            "skip" => Color::Cyan,
+            "planner" => Color::Magenta,
+            _ => Color::DarkGray,
+        };
+        let mode_indicator = Span::styled(
+            format!(" [{}] ", self.permission_mode),
+            Style::default().fg(mode_color),
+        );
+
         let memory_indicator = if self.memory_active {
             Span::styled(" [memory] ", Style::default().fg(Color::Magenta))
         } else {
@@ -81,6 +97,7 @@ impl Widget for StatusBarWidget<'_> {
             status_indicator,
             provider_info,
             tokens,
+            mode_indicator,
             memory_indicator,
             bash_hint,
             quit_hint,

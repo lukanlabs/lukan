@@ -11,7 +11,8 @@ use tracing::{error, info, warn};
 
 use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
 use lukan_core::config::LukanPaths;
-use lukan_core::models::events::StreamEvent;
+use lukan_core::config::types::PermissionMode;
+use lukan_core::models::events::{ApprovalResponse, StreamEvent};
 use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::create_configured_registry;
 
@@ -240,15 +241,39 @@ async fn dispatch_message(
         }
 
         ClientMessage::SetPermissionMode { mode } => {
+            // Parse mode string to enum
+            let parsed: PermissionMode =
+                serde_json::from_value(serde_json::Value::String(mode.clone()))
+                    .unwrap_or(PermissionMode::Auto);
+
+            // Store in state
+            *state.permission_mode.lock().await = parsed.clone();
+
+            // Update live agent if it exists
+            {
+                let mut agent_lock = state.agent.lock().await;
+                if let Some(ref mut agent) = *agent_lock {
+                    agent.set_permission_mode(parsed);
+                }
+            }
+
             send_json(ws_tx, &ServerMessage::ModeChanged { mode }).await;
         }
 
-        // Stubs — send empty updates or errors
-        ClientMessage::Approve { .. } | ClientMessage::DenyAll => {
-            send_json(ws_tx, &ServerMessage::Error {
-                error: "Approval flow not yet implemented in Rust backend. Tools are auto-approved.".to_string(),
-            })
-            .await;
+        ClientMessage::Approve { approved_ids } => {
+            let tx = state.approval_tx.lock().await;
+            if let Some(ref sender) = *tx {
+                let _ = sender
+                    .send(ApprovalResponse::Approved { approved_ids })
+                    .await;
+            }
+        }
+
+        ClientMessage::DenyAll => {
+            let tx = state.approval_tx.lock().await;
+            if let Some(ref sender) = *tx {
+                let _ = sender.send(ApprovalResponse::DeniedAll).await;
+            }
         }
 
         ClientMessage::AnswerQuestion { .. } => {
@@ -813,6 +838,7 @@ async fn send_init(
     let agent_lock = state.agent.lock().await;
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
+    let permission_mode = state.permission_mode.lock().await.to_string();
 
     let (session_id, messages, checkpoints, token_usage, context_size) =
         if let Some(ref agent) = *agent_lock {
@@ -851,7 +877,7 @@ async fn send_init(
             checkpoints,
             token_usage,
             context_size,
-            permission_mode: "skip".to_string(),
+            permission_mode,
             provider_name,
             model_name,
             browser_screenshots: false,
@@ -868,6 +894,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
+    let permission_mode = state.permission_mode.lock().await.clone();
 
     let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
         .await
@@ -885,6 +912,10 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         .map(|c| c.resolve_allowed_paths(&cwd))
         .unwrap_or_else(|| vec![cwd.clone()]);
 
+    // Create approval channel
+    let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
+    *state.approval_tx.lock().await = Some(approval_tx);
+
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools: create_configured_registry(&permissions),
@@ -894,6 +925,9 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         model_name,
         bg_signal: None,
         allowed_paths: Some(allowed),
+        permission_mode,
+        permissions,
+        approval_rx: Some(approval_rx),
     };
 
     AgentLoop::new(agent_config).await
@@ -910,6 +944,7 @@ async fn create_agent_with_session(
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
+    let permission_mode = state.permission_mode.lock().await.clone();
 
     let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
         .await
@@ -927,6 +962,10 @@ async fn create_agent_with_session(
         .map(|c| c.resolve_allowed_paths(&cwd))
         .unwrap_or_else(|| vec![cwd.clone()]);
 
+    // Create approval channel
+    let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
+    *state.approval_tx.lock().await = Some(approval_tx);
+
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools: create_configured_registry(&permissions),
@@ -936,11 +975,13 @@ async fn create_agent_with_session(
         model_name,
         bg_signal: None,
         allowed_paths: Some(allowed),
+        permission_mode,
+        permissions,
+        approval_rx: Some(approval_rx),
     };
 
     AgentLoop::load_session(agent_config, session_id).await
 }
-
 
 /// Build system prompt (matches TUI logic)
 async fn build_system_prompt() -> SystemPrompt {

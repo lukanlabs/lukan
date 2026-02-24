@@ -19,3 +19,4 @@ chrono.workspace = true
 rand.workspace = true
 tokio-tungstenite.workspace = true
 tokio-util.workspace = true
+globset.workspace = true

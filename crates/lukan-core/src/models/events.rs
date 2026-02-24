@@ -88,3 +88,12 @@ pub struct ToolApprovalRequest {
     pub name: String,
     pub input: serde_json::Value,
 }
+
+/// Response from the UI to an approval request (internal, not serialized over the wire)
+#[derive(Debug, Clone)]
+pub enum ApprovalResponse {
+    /// User approved specific tools (by ID)
+    Approved { approved_ids: Vec<String> },
+    /// User denied all pending tools
+    DeniedAll,
+}

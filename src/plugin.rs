@@ -573,6 +573,10 @@ async fn plugin_start_foreground(
         model_name: resolved.effective_model(),
         bg_signal: None,
         allowed_paths,
+        // Plugins run unattended — skip all permission checks
+        permission_mode: lukan_core::config::types::PermissionMode::Skip,
+        permissions: lukan_core::config::types::PermissionsConfig::default(),
+        approval_rx: None,
     };
 
     println!(

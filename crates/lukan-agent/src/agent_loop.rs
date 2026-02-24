@@ -5,12 +5,15 @@ use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
 use lukan_core::config::LukanPaths;
+use lukan_core::config::types::{PermissionMode, PermissionsConfig};
 use lukan_core::models::checkpoints::{Checkpoint, FileSnapshot};
-use lukan_core::models::events::{StopReason, StreamEvent};
+use lukan_core::models::events::{ApprovalResponse, StopReason, StreamEvent, ToolApprovalRequest};
 use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
 use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
+
+use crate::permission_matcher::{PLANNER_TOOL_WHITELIST, PermissionMatcher, ToolVerdict};
 use rand::Rng;
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -49,6 +52,12 @@ pub struct AgentConfig {
     pub bg_signal: Option<watch::Receiver<()>>,
     /// Hard path restrictions for file tools (from plugin security)
     pub allowed_paths: Option<Vec<PathBuf>>,
+    /// Permission mode for tool execution
+    pub permission_mode: PermissionMode,
+    /// Permission rules (deny/ask/allow lists)
+    pub permissions: PermissionsConfig,
+    /// Channel to receive approval responses from the UI
+    pub approval_rx: Option<mpsc::Receiver<ApprovalResponse>>,
 }
 
 /// Pending tool call accumulated from stream events
@@ -77,6 +86,10 @@ pub struct AgentLoop {
     bg_signal: Option<watch::Receiver<()>>,
     /// Hard path restrictions for file tools (from plugin security)
     allowed_paths: Option<Vec<PathBuf>>,
+    /// Permission matcher for tool approval
+    permission_matcher: PermissionMatcher,
+    /// Channel to receive approval responses from the UI
+    approval_rx: Option<mpsc::Receiver<ApprovalResponse>>,
 }
 
 impl AgentLoop {
@@ -115,6 +128,9 @@ impl AgentLoop {
 
         let bg_signal = config.bg_signal.take();
         let allowed_paths = Self::expand_allowed_paths(config.allowed_paths.take());
+        let permission_matcher =
+            PermissionMatcher::new(config.permission_mode, &config.permissions);
+        let approval_rx = config.approval_rx;
         let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
         Ok(Self {
             provider: config.provider,
@@ -130,6 +146,8 @@ impl AgentLoop {
             read_files: Arc::new(Mutex::new(HashSet::new())),
             bg_signal,
             allowed_paths,
+            permission_matcher,
+            approval_rx,
         })
     }
 
@@ -167,6 +185,9 @@ impl AgentLoop {
 
         let bg_signal = config.bg_signal.take();
         let allowed_paths = Self::expand_allowed_paths(config.allowed_paths.take());
+        let permission_matcher =
+            PermissionMatcher::new(config.permission_mode, &config.permissions);
+        let approval_rx = config.approval_rx;
         let session = SessionManager::load(session_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
@@ -188,6 +209,8 @@ impl AgentLoop {
             read_files: Arc::new(Mutex::new(HashSet::new())),
             bg_signal,
             allowed_paths,
+            permission_matcher,
+            approval_rx,
         })
     }
 
@@ -366,6 +389,16 @@ impl AgentLoop {
         self.tools = Arc::new(new_registry);
     }
 
+    /// Get the current permission mode
+    pub fn permission_mode(&self) -> &PermissionMode {
+        self.permission_matcher.mode()
+    }
+
+    /// Update the permission mode at runtime
+    pub fn set_permission_mode(&mut self, mode: PermissionMode) {
+        self.permission_matcher.set_mode(mode);
+    }
+
     /// Add user context (e.g. shell command output) without triggering a turn
     pub fn add_user_context(&mut self, content: &str) {
         self.history.add_user_message(content);
@@ -391,7 +424,11 @@ impl AgentLoop {
 
         // Inner loop: call LLM → execute tools → repeat until done
         loop {
-            let tool_defs = self.tools.definitions();
+            let mut tool_defs = self.tools.definitions();
+            // In planner mode, only expose read-only tools to the LLM
+            if *self.permission_matcher.mode() == PermissionMode::Planner {
+                tool_defs.retain(|d| PLANNER_TOOL_WHITELIST.contains(&d.name.as_str()));
+            }
 
             let params = StreamParams {
                 system_prompt: self.system_prompt.clone(),
@@ -477,9 +514,8 @@ impl AgentLoop {
                 info!("Turn cancelled by user");
                 // Save any partial text so the conversation stays coherent
                 if !text_content.is_empty() {
-                    self.history.add_assistant_blocks(vec![ContentBlock::Text {
-                        text: text_content,
-                    }]);
+                    self.history
+                        .add_assistant_blocks(vec![ContentBlock::Text { text: text_content }]);
                 }
                 self.save_session().await?;
                 return Ok(());
@@ -531,10 +567,126 @@ impl AgentLoop {
                 return Ok(());
             }
 
-            // Execute tool calls in parallel
-            debug!(count = pending_tools.len(), "Executing tool calls");
+            // ── Permission check ─────────────────────────────────────────
+            // Classify each pending tool as allowed, needs_approval, or denied
+            let mut allowed_tools: Vec<&PendingToolCall> = Vec::new();
+            let mut needs_approval: Vec<&PendingToolCall> = Vec::new();
+            let mut denied_results: Vec<(usize, lukan_core::models::tools::ToolResult)> =
+                Vec::new();
 
-            let tool_results = self.execute_tools(&pending_tools, &event_tx).await;
+            for (idx, tool) in pending_tools.iter().enumerate() {
+                match self.permission_matcher.verdict(&tool.name, &tool.input) {
+                    ToolVerdict::Allow => allowed_tools.push(tool),
+                    ToolVerdict::Ask => needs_approval.push(tool),
+                    ToolVerdict::Deny => {
+                        denied_results.push((
+                            idx,
+                            lukan_core::models::tools::ToolResult::error(format!(
+                                "Tool '{}' is denied by permission rules.",
+                                tool.name
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            // Handle tools that need approval
+            if !needs_approval.is_empty() {
+                let approval_requests: Vec<ToolApprovalRequest> = needs_approval
+                    .iter()
+                    .map(|t| ToolApprovalRequest {
+                        id: t.id.clone(),
+                        name: t.name.clone(),
+                        input: t.input.clone(),
+                    })
+                    .collect();
+
+                // Send approval request to UI
+                let _ = event_tx
+                    .send(StreamEvent::ApprovalRequired {
+                        tools: approval_requests,
+                    })
+                    .await;
+
+                // Wait for approval response
+                if let Some(ref mut rx) = self.approval_rx {
+                    match rx.recv().await {
+                        Some(ApprovalResponse::Approved { approved_ids }) => {
+                            for tool in &needs_approval {
+                                if approved_ids.contains(&tool.id) {
+                                    allowed_tools.push(tool);
+                                } else {
+                                    // Find original index for denied
+                                    let idx = pending_tools
+                                        .iter()
+                                        .position(|t| t.id == tool.id)
+                                        .unwrap_or(0);
+                                    denied_results.push((
+                                        idx,
+                                        lukan_core::models::tools::ToolResult::error(
+                                            "Tool denied by user.".to_string(),
+                                        ),
+                                    ));
+                                }
+                            }
+                        }
+                        Some(ApprovalResponse::DeniedAll) | None => {
+                            // Deny all pending tools
+                            for tool in &needs_approval {
+                                let idx = pending_tools
+                                    .iter()
+                                    .position(|t| t.id == tool.id)
+                                    .unwrap_or(0);
+                                denied_results.push((
+                                    idx,
+                                    lukan_core::models::tools::ToolResult::error(
+                                        "Tool denied by user.".to_string(),
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    // No approval channel (backward compat) — auto-approve all
+                    for tool in &needs_approval {
+                        allowed_tools.push(tool);
+                    }
+                }
+            }
+
+            // Execute only the approved tool calls
+            debug!(
+                allowed = allowed_tools.len(),
+                denied = denied_results.len(),
+                "Executing tool calls after permission check"
+            );
+
+            let executed_results = if allowed_tools.is_empty() {
+                vec![]
+            } else {
+                self.execute_tools(&allowed_tools, &event_tx).await
+            };
+
+            // Merge executed + denied results in original order
+            let tool_results: Vec<lukan_core::models::tools::ToolResult> = {
+                let mut merged: Vec<(usize, lukan_core::models::tools::ToolResult)> = Vec::new();
+
+                // Map allowed tools back to their original indices
+                let mut exec_iter = executed_results.into_iter();
+                for tool in &allowed_tools {
+                    let idx = pending_tools
+                        .iter()
+                        .position(|t| t.id == tool.id)
+                        .unwrap_or(0);
+                    if let Some(result) = exec_iter.next() {
+                        merged.push((idx, result));
+                    }
+                }
+
+                merged.extend(denied_results);
+                merged.sort_by_key(|(idx, _)| *idx);
+                merged.into_iter().map(|(_, r)| r).collect()
+            };
 
             // Add tool results to history and forward events
             let mut result_blocks = Vec::new();
@@ -819,7 +971,7 @@ impl AgentLoop {
     /// Execute multiple tool calls in parallel
     async fn execute_tools(
         &self,
-        tools: &[PendingToolCall],
+        tools: &[&PendingToolCall],
         event_tx: &mpsc::Sender<StreamEvent>,
     ) -> Vec<lukan_core::models::tools::ToolResult> {
         let mut handles = Vec::new();

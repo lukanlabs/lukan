@@ -266,6 +266,29 @@ pub enum PermissionMode {
     Planner,
 }
 
+impl fmt::Display for PermissionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PermissionMode::Manual => write!(f, "manual"),
+            PermissionMode::Auto => write!(f, "auto"),
+            PermissionMode::Skip => write!(f, "skip"),
+            PermissionMode::Planner => write!(f, "planner"),
+        }
+    }
+}
+
+impl PermissionMode {
+    /// Cycle to next mode: manual → auto → skip → planner → manual
+    pub fn next(&self) -> Self {
+        match self {
+            PermissionMode::Manual => PermissionMode::Auto,
+            PermissionMode::Auto => PermissionMode::Skip,
+            PermissionMode::Skip => PermissionMode::Planner,
+            PermissionMode::Planner => PermissionMode::Manual,
+        }
+    }
+}
+
 /// Permission rules configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionsConfig {

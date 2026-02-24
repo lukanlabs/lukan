@@ -2,7 +2,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lukan_agent::{AgentLoop, WorkerScheduler};
 use lukan_core::config::ResolvedConfig;
+use lukan_core::config::types::PermissionMode;
+use lukan_core::models::events::ApprovalResponse;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
 /// Shared application state for the web server
 pub struct AppState {
@@ -26,6 +29,10 @@ pub struct AppState {
     pub worker_scheduler: WorkerScheduler,
     /// Connection ID counter
     connection_counter: AtomicUsize,
+    /// Current permission mode
+    pub permission_mode: Mutex<PermissionMode>,
+    /// Sender half of the approval channel (sent to the agent)
+    pub approval_tx: Mutex<Option<mpsc::Sender<ApprovalResponse>>>,
 }
 
 impl AppState {
@@ -56,6 +63,8 @@ impl AppState {
             model_name: Mutex::new(model_name),
             worker_scheduler,
             connection_counter: AtomicUsize::new(1),
+            permission_mode: Mutex::new(PermissionMode::Auto),
+            approval_tx: Mutex::new(None),
         }
     }
 

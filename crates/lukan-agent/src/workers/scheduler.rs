@@ -353,6 +353,10 @@ async fn run_worker(
         model_name,
         bg_signal: None,
         allowed_paths: Some(allowed),
+        // Workers run unattended — skip all permission checks
+        permission_mode: lukan_core::config::types::PermissionMode::Skip,
+        permissions,
+        approval_rx: None,
     };
 
     // Create agent and run

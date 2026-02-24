@@ -17,10 +17,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
+use lukan_core::config::types::PermissionMode;
 use lukan_core::config::{
     ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig,
 };
-use lukan_core::models::events::{StopReason, StreamEvent};
+use lukan_core::models::events::{ApprovalResponse, StopReason, StreamEvent, ToolApprovalRequest};
 use lukan_core::models::sessions::SessionSummary;
 use lukan_providers::{Provider, SystemPrompt, create_provider};
 use lukan_tools::create_configured_registry;
@@ -89,12 +90,27 @@ pub struct App {
     bg_signal_rx: watch::Receiver<()>,
     /// Cancellation token for the current agent turn (ESC to cancel)
     cancel_token: Option<CancellationToken>,
+    /// Current permission mode
+    permission_mode: PermissionMode,
+    /// Sender half of the approval channel (cloned into AgentConfig)
+    approval_tx: Option<mpsc::Sender<ApprovalResponse>>,
+    /// Approval prompt overlay state
+    approval_prompt: Option<ApprovalPrompt>,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
 struct TrustPrompt {
     cwd: String,
     selected: usize, // 0 = Yes, 1 = No
+}
+
+/// Approval prompt overlay — shown when tools need user approval
+struct ApprovalPrompt {
+    tools: Vec<ToolApprovalRequest>,
+    /// Per-tool toggle (default all true = approved)
+    selections: Vec<bool>,
+    /// Cursor position
+    selected: usize,
 }
 
 /// Interactive model picker state
@@ -154,6 +170,9 @@ impl App {
             bg_signal_tx,
             bg_signal_rx,
             cancel_token: None,
+            permission_mode: PermissionMode::Auto,
+            approval_tx: None,
+            approval_prompt: None,
         }
     }
 
@@ -200,7 +219,7 @@ impl App {
     }
 
     /// Create a new AgentLoop with a fresh session
-    async fn create_agent(&self) -> AgentLoop {
+    async fn create_agent(&mut self) -> AgentLoop {
         let system_prompt = build_system_prompt().await;
 
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
@@ -222,6 +241,15 @@ impl App {
             .map(|c| c.resolve_allowed_paths(&cwd))
             .unwrap_or_else(|| vec![cwd.clone()]);
 
+        // Load permission mode from project config (if available)
+        if let Some(ref cfg) = project_cfg {
+            self.permission_mode = cfg.permission_mode.clone();
+        }
+
+        // Create approval channel
+        let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
+        self.approval_tx = Some(approval_tx);
+
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),
             tools: create_configured_registry(&permissions),
@@ -231,6 +259,9 @@ impl App {
             model_name: self.config.effective_model(),
             bg_signal: Some(self.bg_signal_rx.clone()),
             allowed_paths: Some(allowed),
+            permission_mode: self.permission_mode.clone(),
+            permissions,
+            approval_rx: Some(approval_rx),
         };
 
         match AgentLoop::new(config).await {
@@ -295,6 +326,7 @@ impl App {
             let cur_input_h = input_height(&display_input, term_size.width, 8);
             let chat_area_h = term_size.height.saturating_sub(cur_input_h + 1);
             if self.trust_prompt.is_none()
+                && self.approval_prompt.is_none()
                 && self.session_picker.is_none()
                 && self.bg_picker.is_none()
                 && self.rewind_picker.is_none()
@@ -383,6 +415,9 @@ impl App {
                 if let Some(ref prompt) = self.trust_prompt {
                     let widget = TrustPromptWidget::new(prompt);
                     frame.render_widget(widget, chat_area);
+                } else if let Some(ref prompt) = self.approval_prompt {
+                    let widget = ApprovalPromptWidget::new(prompt);
+                    frame.render_widget(widget, chat_area);
                 } else if let Some(ref content) = self.memory_viewer {
                     use ratatui::widgets::{Block, Borders, Wrap};
                     let block = Block::default()
@@ -446,7 +481,13 @@ impl App {
                 // Input — show paste preview + typed-after text when available
                 let di = self.display_input();
                 let dc = self.display_cursor();
-                let input_widget = if self.trust_prompt.is_some() {
+                let input_widget = if self.approval_prompt.is_some() {
+                    InputWidget::new(
+                        "Space toggle · Enter submit · a approve all · Esc deny all",
+                        0,
+                        false,
+                    )
+                } else if self.trust_prompt.is_some() {
                     InputWidget::new("↑↓ select · Enter confirm · ESC exit", 0, false)
                 } else if self.memory_viewer.is_some() {
                     InputWidget::new("ESC close", 0, false)
@@ -489,6 +530,7 @@ impl App {
                 // Status bar
                 let effective_model = self.config.effective_model();
                 let memory_active = LukanPaths::project_memory_active_file().exists();
+                let mode_str = self.permission_mode.to_string();
                 let status = StatusBarWidget::new(
                     self.provider.name(),
                     &effective_model,
@@ -497,11 +539,13 @@ impl App {
                     self.is_streaming,
                     self.active_tool.as_deref(),
                     memory_active,
+                    &mode_str,
                 );
                 frame.render_widget(status, status_area);
 
                 // Set cursor position only when not in picker and not streaming
                 if self.trust_prompt.is_none()
+                    && self.approval_prompt.is_none()
                     && self.memory_viewer.is_none()
                     && self.rewind_picker.is_none()
                     && self.bg_picker.is_none()
@@ -542,6 +586,76 @@ impl App {
                                     }
                                     KeyCode::Esc => {
                                         self.should_quit = true;
+                                    }
+                                    _ => {}
+                                }
+                            } else if self.approval_prompt.is_some() {
+                                // Approval prompt overlay
+                                match key.code {
+                                    KeyCode::Up => {
+                                        if let Some(ref mut prompt) = self.approval_prompt
+                                            && prompt.selected > 0
+                                        {
+                                            prompt.selected -= 1;
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if let Some(ref mut prompt) = self.approval_prompt
+                                            && prompt.selected + 1 < prompt.tools.len()
+                                        {
+                                            prompt.selected += 1;
+                                        }
+                                    }
+                                    KeyCode::Char(' ') => {
+                                        // Toggle individual tool approval
+                                        if let Some(ref mut prompt) = self.approval_prompt {
+                                            let idx = prompt.selected;
+                                            if idx < prompt.selections.len() {
+                                                prompt.selections[idx] = !prompt.selections[idx];
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        // Submit selections
+                                        if let Some(prompt) = self.approval_prompt.take() {
+                                            let approved_ids: Vec<String> = prompt
+                                                .tools
+                                                .iter()
+                                                .zip(prompt.selections.iter())
+                                                .filter(|(_, sel)| **sel)
+                                                .map(|(t, _)| t.id.clone())
+                                                .collect();
+                                            let response = if approved_ids.is_empty() {
+                                                ApprovalResponse::DeniedAll
+                                            } else {
+                                                ApprovalResponse::Approved { approved_ids }
+                                            };
+                                            if let Some(ref tx) = self.approval_tx {
+                                                let _ = tx.try_send(response);
+                                            }
+                                            self.force_redraw = true;
+                                        }
+                                    }
+                                    KeyCode::Char('a') => {
+                                        // Approve all and submit
+                                        if let Some(prompt) = self.approval_prompt.take() {
+                                            let approved_ids: Vec<String> =
+                                                prompt.tools.iter().map(|t| t.id.clone()).collect();
+                                            if let Some(ref tx) = self.approval_tx {
+                                                let _ = tx.try_send(ApprovalResponse::Approved {
+                                                    approved_ids,
+                                                });
+                                            }
+                                            self.force_redraw = true;
+                                        }
+                                    }
+                                    KeyCode::Esc => {
+                                        // Deny all
+                                        self.approval_prompt = None;
+                                        if let Some(ref tx) = self.approval_tx {
+                                            let _ = tx.try_send(ApprovalResponse::DeniedAll);
+                                        }
+                                        self.force_redraw = true;
                                     }
                                     _ => {}
                                 }
@@ -862,6 +976,18 @@ impl App {
                                     content = "No memory files found.\n\nUse /memories activate to enable project memory.".to_string();
                                 }
                                 self.memory_viewer = Some(content);
+                            } else if key.code == KeyCode::BackTab
+                                && !self.is_streaming
+                            {
+                                // Shift+Tab: cycle permission mode
+                                self.permission_mode = self.permission_mode.next();
+                                if let Some(ref mut agent) = self.agent {
+                                    agent.set_permission_mode(self.permission_mode.clone());
+                                }
+                                self.messages.push(ChatMessage::new(
+                                    "system",
+                                    format!("Permission mode: {}", self.permission_mode),
+                                ));
                             } else if !self.is_streaming {
                                 let cmds = filtered_commands(&self.input);
                                 let has_palette = !cmds.is_empty()
@@ -1435,7 +1561,10 @@ impl App {
 
         let mut agent = agent;
         tokio::spawn(async move {
-            if let Err(e) = agent.run_turn(&text, agent_tx.clone(), Some(cancel_token)).await {
+            if let Err(e) = agent
+                .run_turn(&text, agent_tx.clone(), Some(cancel_token))
+                .await
+            {
                 error!("Agent loop error: {e}");
                 agent_tx
                     .send(StreamEvent::Error {
@@ -1516,6 +1645,10 @@ impl App {
             .map(|c| c.resolve_allowed_paths(&cwd))
             .unwrap_or_else(|| vec![cwd.clone()]);
 
+        // Create approval channel for loaded session
+        let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
+        self.approval_tx = Some(approval_tx);
+
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),
             tools: create_configured_registry(&permissions),
@@ -1525,6 +1658,9 @@ impl App {
             model_name: self.config.effective_model(),
             bg_signal: Some(self.bg_signal_rx.clone()),
             allowed_paths: Some(allowed),
+            permission_mode: self.permission_mode.clone(),
+            permissions,
+            approval_rx: Some(approval_rx),
         };
 
         match AgentLoop::load_session(config, &session_id).await {
@@ -2012,6 +2148,14 @@ impl App {
                     self.active_tool = None;
                 }
             }
+            StreamEvent::ApprovalRequired { tools } => {
+                let count = tools.len();
+                self.approval_prompt = Some(ApprovalPrompt {
+                    selections: vec![true; count],
+                    selected: 0,
+                    tools,
+                });
+            }
             StreamEvent::Error { error } => {
                 self.messages
                     .push(ChatMessage::new("assistant", format!("Error: {error}")));
@@ -2212,7 +2356,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
  ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
- /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+M  Memory    Ctrl+C  Quit"
+ /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+M  Memory    Shift+Tab  Mode    Ctrl+C  Quit"
     )
 }
 
@@ -2732,6 +2876,92 @@ impl Widget for TrustPromptWidget<'_> {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
+
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        paragraph.render(area, buf);
+    }
+}
+
+// ── Approval Prompt Widget ───────────────────────────────────────────────
+
+struct ApprovalPromptWidget<'a> {
+    prompt: &'a ApprovalPrompt,
+}
+
+impl<'a> ApprovalPromptWidget<'a> {
+    fn new(prompt: &'a ApprovalPrompt) -> Self {
+        Self { prompt }
+    }
+}
+
+impl Widget for ApprovalPromptWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use ratatui::widgets::{Block, Borders, Wrap};
+
+        Clear.render(area, buf);
+
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " Tool Approval Required",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        for (i, tool) in self.prompt.tools.iter().enumerate() {
+            let is_selected = i == self.prompt.selected;
+            let is_checked = self.prompt.selections.get(i).copied().unwrap_or(false);
+
+            let pointer = if is_selected { "▸ " } else { "  " };
+            let checkbox = if is_checked { "[x] " } else { "[ ] " };
+
+            let summary = summarize_tool_input(&tool.name, &tool.input);
+            let label = format!(
+                "{}{}",
+                tool.name,
+                if summary.len() > 60 {
+                    format!("({}...)", &summary[..57])
+                } else {
+                    format!("({summary})")
+                }
+            );
+
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+
+            let check_style = if is_checked {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::Red)
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {pointer}"), style),
+                Span::styled(checkbox.to_string(), check_style),
+                Span::styled(label, style),
+            ]));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " Space toggle · Enter submit · a approve all · Esc deny all",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Tool Approval ")
+            .border_style(Style::default().fg(Color::Yellow));
 
         let paragraph = Paragraph::new(lines)
             .block(block)

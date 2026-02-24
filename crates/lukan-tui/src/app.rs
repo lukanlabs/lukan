@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
+use lukan_agent::{AgentConfig, AgentLoop, SessionManager, WorkerScheduler};
 use lukan_core::config::types::PermissionMode;
 use lukan_core::config::{
     ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig,
@@ -116,6 +116,8 @@ pub struct App {
     task_panel_entries: Vec<lukan_tools::tasks::TaskEntry>,
     /// Flag to trigger task panel refresh after task tool events
     task_panel_needs_refresh: bool,
+    /// Worker scheduler for autonomous background agents
+    worker_scheduler: WorkerScheduler,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -195,6 +197,7 @@ impl App {
     pub fn new(provider: Box<dyn Provider>, config: ResolvedConfig) -> Self {
         let provider = Arc::from(provider);
         let (bg_signal_tx, bg_signal_rx) = watch::channel(());
+        let worker_scheduler = WorkerScheduler::new(config.clone());
 
         Self {
             messages: Vec::new(),
@@ -238,6 +241,7 @@ impl App {
             task_panel_visible: false,
             task_panel_entries: Vec::new(),
             task_panel_needs_refresh: false,
+            worker_scheduler,
         }
     }
 
@@ -389,6 +393,10 @@ impl App {
                 selected: 0,
             });
         }
+
+        // Start worker scheduler and subscribe to notifications
+        self.worker_scheduler.start().await;
+        let mut worker_notify_rx = self.worker_scheduler.subscribe();
 
         // Welcome banner
         self.messages.push(ChatMessage::new(
@@ -1174,8 +1182,11 @@ impl App {
                                 self.task_panel_visible = !self.task_panel_visible;
                                 if self.task_panel_visible {
                                     let cwd = std::env::current_dir().unwrap_or_default();
-                                    self.task_panel_entries =
-                                        lukan_tools::tasks::read_all_tasks(&cwd).await;
+                                    self.task_panel_entries = lukan_tools::tasks::read_all_tasks(&cwd)
+                                        .await
+                                        .into_iter()
+                                        .filter(|t| t.status != lukan_tools::tasks::TaskStatus::Done)
+                                        .collect();
                                 }
                             } else if key.code == KeyCode::BackTab {
                                 // Shift+Tab: cycle permission mode (works during streaming too)
@@ -1391,6 +1402,29 @@ impl App {
                 Some(stream_event) = agent_rx.recv() => {
                     self.handle_stream_event(stream_event);
                 }
+                Ok(notification) = worker_notify_rx.recv() => {
+                    self.messages.push(ChatMessage::new(
+                        "system",
+                        format!(
+                            "Worker '{}' completed ({}): {}",
+                            notification.worker_name, notification.status, notification.summary
+                        ),
+                    ));
+                }
+            }
+
+            // Auto-refresh task panel after task tool events
+            if self.task_panel_needs_refresh {
+                self.task_panel_needs_refresh = false;
+                let cwd = std::env::current_dir().unwrap_or_default();
+                self.task_panel_entries = lukan_tools::tasks::read_all_tasks(&cwd)
+                    .await
+                    .into_iter()
+                    .filter(|t| t.status != lukan_tools::tasks::TaskStatus::Done)
+                    .collect();
+                if !self.task_panel_visible && !self.task_panel_entries.is_empty() {
+                    self.task_panel_visible = true; // Auto-show when tasks first appear
+                }
             }
 
             // Recover agent after turn completes (when no longer streaming)
@@ -1424,6 +1458,9 @@ impl App {
                 break;
             }
         }
+
+        // Stop worker scheduler
+        self.worker_scheduler.stop();
 
         // Clean up background processes before exiting
         lukan_tools::bg_processes::cleanup_all();
@@ -1646,6 +1683,61 @@ impl App {
             }
             if did_change && let Some(agent) = self.agent.as_mut() {
                 agent.reload_system_prompt(build_system_prompt().await);
+            }
+            return;
+        }
+
+        // Handle /workers
+        if text == "/workers" {
+            match self.worker_scheduler.list_workers().await {
+                Ok(workers) => {
+                    if workers.is_empty() {
+                        self.messages
+                            .push(ChatMessage::new("system", "No workers configured."));
+                    } else {
+                        let mut lines = vec!["Workers:".to_string()];
+                        for w in &workers {
+                            let d = &w.definition;
+                            let status = if d.enabled { "enabled" } else { "disabled" };
+                            let last = d
+                                .last_run_status
+                                .as_deref()
+                                .unwrap_or("never run");
+                            lines.push(format!(
+                                "  {} [{}] schedule={} last={}",
+                                d.name, status, d.schedule, last
+                            ));
+                        }
+                        self.messages
+                            .push(ChatMessage::new("system", lines.join("\n")));
+                    }
+                }
+                Err(e) => {
+                    self.messages.push(ChatMessage::new(
+                        "system",
+                        format!("Failed to list workers: {e}"),
+                    ));
+                }
+            }
+            return;
+        }
+
+        // Handle /skills
+        if text == "/skills" {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let skills = lukan_tools::skills::discover_skills(&cwd).await;
+            if skills.is_empty() {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "No skills found. Create one at .lukan/skills/<name>/SKILL.md",
+                ));
+            } else {
+                let mut lines = vec![format!("Skills ({}):", skills.len())];
+                for s in &skills {
+                    lines.push(format!("  {} — {}", s.folder, s.description));
+                }
+                self.messages
+                    .push(ChatMessage::new("system", lines.join("\n")));
             }
             return;
         }
@@ -2842,7 +2934,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
  ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
- /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+M  Memory    Shift+Tab  Mode    Ctrl+C  Quit"
+ /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+M  Memory    Alt+T  Tasks    Shift+Tab  Mode    Ctrl+C  Quit"
     )
 }
 
@@ -2860,6 +2952,8 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     ("/gmemory", "global memory (show | add <text> | clear)"),
     ("/checkpoints", "rewind to a checkpoint"),
+    ("/skills", "list available skills"),
+    ("/workers", "list scheduled workers"),
     ("/exit", "quit lukan"),
 ];
 

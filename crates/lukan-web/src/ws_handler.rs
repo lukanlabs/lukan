@@ -12,7 +12,7 @@ use tracing::{error, info, warn};
 use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
 use lukan_core::config::LukanPaths;
 use lukan_core::config::types::PermissionMode;
-use lukan_core::models::events::{ApprovalResponse, StreamEvent};
+use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse, PlanTask, StreamEvent};
 use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::create_configured_registry;
 
@@ -49,79 +49,104 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>) {
         send_init(&state, &mut ws_tx).await;
     }
 
-    // Message loop
-    while let Some(Ok(msg)) = ws_rx.next().await {
-        let text = match msg {
-            Message::Text(t) => t.to_string(),
-            Message::Close(_) => break,
-            _ => continue,
-        };
+    // Subscribe to worker notifications
+    let mut worker_notify_rx = state.worker_scheduler.subscribe();
 
-        let client_msg: ClientMessage = match serde_json::from_str(&text) {
-            Ok(m) => m,
-            Err(e) => {
-                warn!(conn_id, error = %e, "Invalid client message");
-                send_json(
-                    &mut ws_tx,
-                    &ServerMessage::Error {
-                        error: format!("Invalid message: {e}"),
-                    },
-                )
-                .await;
-                continue;
+    // Message loop: listen to both WebSocket messages and worker notifications
+    loop {
+        tokio::select! {
+            ws_msg = ws_rx.next() => {
+                let msg = match ws_msg {
+                    Some(Ok(msg)) => msg,
+                    Some(Err(_)) | None => break,
+                };
+                let text = match msg {
+                    Message::Text(t) => t.to_string(),
+                    Message::Close(_) => break,
+                    _ => continue,
+                };
+
+                let client_msg: ClientMessage = match serde_json::from_str(&text) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        warn!(conn_id, error = %e, "Invalid client message");
+                        send_json(
+                            &mut ws_tx,
+                            &ServerMessage::Error {
+                                error: format!("Invalid message: {e}"),
+                            },
+                        )
+                        .await;
+                        continue;
+                    }
+                };
+
+                // Handle auth messages before checking authentication
+                match &client_msg {
+                    ClientMessage::Auth { token } => {
+                        if state.verify_token(token) {
+                            authenticated = true;
+                            let new_token =
+                                crate::auth::create_auth_token(&state.auth_secret, state.token_ttl_ms);
+                            send_json(&mut ws_tx, &ServerMessage::AuthOk { token: new_token }).await;
+                            send_init(&state, &mut ws_tx).await;
+                        } else {
+                            send_json(
+                                &mut ws_tx,
+                                &ServerMessage::AuthError {
+                                    error: "Invalid or expired token".to_string(),
+                                },
+                            )
+                            .await;
+                        }
+                        continue;
+                    }
+                    ClientMessage::AuthLogin { password } => {
+                        match state.validate_password(password) {
+                            Some(token) => {
+                                authenticated = true;
+                                send_json(&mut ws_tx, &ServerMessage::AuthOk { token }).await;
+                                send_init(&state, &mut ws_tx).await;
+                            }
+                            None => {
+                                send_json(
+                                    &mut ws_tx,
+                                    &ServerMessage::AuthError {
+                                        error: "Invalid password".to_string(),
+                                    },
+                                )
+                                .await;
+                            }
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                // Gate all other messages behind authentication
+                if !authenticated {
+                    send_json(&mut ws_tx, &ServerMessage::AuthRequired).await;
+                    continue;
+                }
+
+                // Dispatch authenticated messages
+                dispatch_message(client_msg, conn_id, &state, &mut ws_tx).await;
             }
-        };
-
-        // Handle auth messages before checking authentication
-        match &client_msg {
-            ClientMessage::Auth { token } => {
-                if state.verify_token(token) {
-                    authenticated = true;
-                    let new_token =
-                        crate::auth::create_auth_token(&state.auth_secret, state.token_ttl_ms);
-                    send_json(&mut ws_tx, &ServerMessage::AuthOk { token: new_token }).await;
-                    send_init(&state, &mut ws_tx).await;
-                } else {
+            Ok(notification) = worker_notify_rx.recv() => {
+                if authenticated {
                     send_json(
                         &mut ws_tx,
-                        &ServerMessage::AuthError {
-                            error: "Invalid or expired token".to_string(),
+                        &ServerMessage::WorkerNotification {
+                            worker_id: notification.worker_id,
+                            worker_name: notification.worker_name,
+                            status: notification.status,
+                            summary: notification.summary,
                         },
                     )
                     .await;
                 }
-                continue;
             }
-            ClientMessage::AuthLogin { password } => {
-                match state.validate_password(password) {
-                    Some(token) => {
-                        authenticated = true;
-                        send_json(&mut ws_tx, &ServerMessage::AuthOk { token }).await;
-                        send_init(&state, &mut ws_tx).await;
-                    }
-                    None => {
-                        send_json(
-                            &mut ws_tx,
-                            &ServerMessage::AuthError {
-                                error: "Invalid password".to_string(),
-                            },
-                        )
-                        .await;
-                    }
-                }
-                continue;
-            }
-            _ => {}
         }
-
-        // Gate all other messages behind authentication
-        if !authenticated {
-            send_json(&mut ws_tx, &ServerMessage::AuthRequired).await;
-            continue;
-        }
-
-        // Dispatch authenticated messages
-        dispatch_message(client_msg, conn_id, &state, &mut ws_tx).await;
     }
 
     // On disconnect: release processing lock if owned, save session
@@ -484,16 +509,37 @@ async fn dispatch_message(
             }
         }
 
-        ClientMessage::PlanAccept { .. }
-        | ClientMessage::PlanReject { .. }
-        | ClientMessage::PlanTaskFeedback { .. } => {
-            send_json(
-                ws_tx,
-                &ServerMessage::Error {
-                    error: "Plan review not yet implemented".to_string(),
-                },
-            )
-            .await;
+        ClientMessage::PlanAccept { tasks } => {
+            let modified_tasks: Option<Vec<PlanTask>> =
+                tasks.and_then(|v| serde_json::from_value(v).ok());
+            let tx = state.plan_review_tx.lock().await;
+            if let Some(ref sender) = *tx {
+                let _ = sender
+                    .send(PlanReviewResponse::Accepted { modified_tasks })
+                    .await;
+            }
+        }
+
+        ClientMessage::PlanReject { feedback } => {
+            let tx = state.plan_review_tx.lock().await;
+            if let Some(ref sender) = *tx {
+                let _ = sender.send(PlanReviewResponse::Rejected { feedback }).await;
+            }
+        }
+
+        ClientMessage::PlanTaskFeedback {
+            task_index,
+            feedback,
+        } => {
+            let tx = state.plan_review_tx.lock().await;
+            if let Some(ref sender) = *tx {
+                let _ = sender
+                    .send(PlanReviewResponse::TaskFeedback {
+                        task_index: task_index as usize,
+                        feedback,
+                    })
+                    .await;
+            }
         }
 
         // Auth messages handled above
@@ -931,6 +977,14 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
     let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
     *state.approval_tx.lock().await = Some(approval_tx);
 
+    // Create plan review channel
+    let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
+    *state.plan_review_tx.lock().await = Some(plan_review_tx);
+
+    // Create planner answer channel
+    let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+    *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
+
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools: create_configured_registry(&permissions),
@@ -943,6 +997,8 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         permission_mode,
         permissions,
         approval_rx: Some(approval_rx),
+        plan_review_rx: Some(plan_review_rx),
+        planner_answer_rx: Some(planner_answer_rx),
     };
 
     AgentLoop::new(agent_config).await
@@ -981,6 +1037,14 @@ async fn create_agent_with_session(
     let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
     *state.approval_tx.lock().await = Some(approval_tx);
 
+    // Create plan review channel
+    let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
+    *state.plan_review_tx.lock().await = Some(plan_review_tx);
+
+    // Create planner answer channel
+    let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+    *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
+
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools: create_configured_registry(&permissions),
@@ -993,6 +1057,8 @@ async fn create_agent_with_session(
         permission_mode,
         permissions,
         approval_rx: Some(approval_rx),
+        plan_review_rx: Some(plan_review_rx),
+        planner_answer_rx: Some(planner_answer_rx),
     };
 
     AgentLoop::load_session(agent_config, session_id).await

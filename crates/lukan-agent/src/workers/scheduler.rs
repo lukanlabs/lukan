@@ -70,6 +70,10 @@ impl WorkerScheduler {
         }
 
         info!("Starting worker scheduler");
+        // Clean up any runs stuck in "running" from previous crashes
+        if let Err(e) = WorkerManager::cleanup_stale_runs().await {
+            error!(error = %e, "Failed to cleanup stale worker runs");
+        }
         match WorkerManager::list().await {
             Ok(workers) => {
                 for worker in workers {

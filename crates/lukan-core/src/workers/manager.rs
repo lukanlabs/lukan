@@ -197,6 +197,29 @@ impl WorkerManager {
         Ok(())
     }
 
+    /// Mark any runs stuck in "running" status as "error" (interrupted).
+    /// Called on scheduler startup to clean up after crashes/restarts.
+    pub async fn cleanup_stale_runs() -> Result<()> {
+        let workers = Self::list().await?;
+        for w in &workers {
+            let runs = Self::get_runs(&w.id, usize::MAX).await?;
+            for mut run in runs {
+                if run.status == "running" {
+                    run.status = "error".to_string();
+                    run.error = Some("Interrupted (process restarted)".to_string());
+                    run.completed_at = Some(chrono::Utc::now().to_rfc3339());
+                    Self::save_run(&run).await.ok();
+                    debug!(
+                        worker_id = %w.id,
+                        run_id = %run.id,
+                        "Marked stale running run as error"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Get worker summaries for list views
     pub async fn get_summaries() -> Result<Vec<WorkerSummary>> {
         let workers = Self::list().await?;

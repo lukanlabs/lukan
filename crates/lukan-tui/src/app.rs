@@ -353,7 +353,10 @@ impl App {
         };
 
         match AgentLoop::new(config).await {
-            Ok(agent) => agent,
+            Ok(mut agent) => {
+                agent.load_pending_events().await;
+                agent
+            }
             Err(e) => {
                 // Fallback: if session creation fails, log error and panic
                 // This shouldn't happen in normal operation
@@ -1944,6 +1947,34 @@ impl App {
             return;
         }
 
+        // Handle /events
+        if text == "/events" {
+            if let Some(ref agent) = self.agent {
+                let events = agent.pending_events();
+                if events.is_empty() {
+                    self.messages
+                        .push(ChatMessage::new("system", "No pending system events."));
+                } else {
+                    let mut lines = vec![format!("Pending events ({}):", events.len())];
+                    for ev in events {
+                        lines.push(format!(
+                            "  [{}] ({}) {}: {}",
+                            ev.ts,
+                            ev.level.to_uppercase(),
+                            ev.source,
+                            ev.detail
+                        ));
+                    }
+                    self.messages
+                        .push(ChatMessage::new("system", lines.join("\n")));
+                }
+            } else {
+                self.messages
+                    .push(ChatMessage::new("system", "No agent running."));
+            }
+            return;
+        }
+
         // Handle /bg
         if text == "/bg" {
             let processes = lukan_tools::bg_processes::get_bg_processes();
@@ -2219,7 +2250,8 @@ impl App {
         };
 
         match AgentLoop::load_session(config, &session_id).await {
-            Ok(agent) => {
+            Ok(mut agent) => {
+                agent.load_pending_events().await;
                 // Rebuild UI messages from the loaded session
                 self.messages.clear();
                 self.committed_msg_idx = 0;
@@ -2764,6 +2796,15 @@ impl App {
                 self.is_streaming = false;
                 self.queued_message = None;
             }
+            StreamEvent::SystemNotification {
+                source,
+                level,
+                detail,
+            } => {
+                let msg = format!("[{level}] {source}: {detail}");
+                self.toast_notifications
+                    .push((msg, Instant::now()));
+            }
             _ => {}
         }
     }
@@ -3155,6 +3196,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/gmemory", "global memory (show | add <text> | clear)"),
     ("/checkpoints", "rewind to a checkpoint"),
     ("/skills", "list available skills"),
+    ("/events", "show pending system events"),
     ("/workers", "browse workers and runs"),
     ("/exit", "quit lukan"),
 ];

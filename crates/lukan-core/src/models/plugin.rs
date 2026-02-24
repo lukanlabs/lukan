@@ -106,6 +106,12 @@ pub enum PluginMessage {
     Log { level: LogLevel, message: String },
     /// Error from the plugin
     Error { message: String, recoverable: bool },
+    /// Fire-and-forget system event (persisted, injected into agent context)
+    SystemEvent {
+        source: String,
+        level: String,
+        detail: String,
+    },
 }
 
 // ── Enums ───────────────────────────────────────────────────────────────

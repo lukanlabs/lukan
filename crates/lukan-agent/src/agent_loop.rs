@@ -114,6 +114,17 @@ pub struct AgentLoop {
     available_skills: Vec<lukan_tools::skills::SkillInfo>,
     /// Skills already loaded in this session (by folder name)
     loaded_skills: HashSet<String>,
+    /// Pending system events from plugins (injected into next turn)
+    pending_events: Vec<PendingEvent>,
+}
+
+/// A system event from a plugin, queued for injection into the agent context.
+#[derive(Debug, Clone)]
+pub struct PendingEvent {
+    pub ts: String,
+    pub source: String,
+    pub level: String,
+    pub detail: String,
 }
 
 impl AgentLoop {
@@ -181,6 +192,7 @@ impl AgentLoop {
             current_plan_content: None,
             available_skills,
             loaded_skills: HashSet::new(),
+            pending_events: Vec::new(),
         })
     }
 
@@ -253,6 +265,7 @@ impl AgentLoop {
             current_plan_content: None,
             available_skills,
             loaded_skills: HashSet::new(),
+            pending_events: Vec::new(),
         })
     }
 
@@ -451,6 +464,69 @@ impl AgentLoop {
         self.current_plan_file.as_deref()
     }
 
+    /// Load pending system events from disk (`~/.config/lukan/events/pending.jsonl`).
+    /// Drains the file after reading.
+    pub async fn load_pending_events(&mut self) {
+        let path = LukanPaths::pending_events_file();
+        let content = match tokio::fs::read_to_string(&path).await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                self.pending_events.push(PendingEvent {
+                    ts: val
+                        .get("ts")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    source: val
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    level: val
+                        .get("level")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("info")
+                        .to_string(),
+                    detail: val
+                        .get("detail")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                });
+            }
+        }
+        // Truncate the file after reading
+        let _ = tokio::fs::write(&path, "").await;
+        if !self.pending_events.is_empty() {
+            info!(
+                count = self.pending_events.len(),
+                "Loaded pending system events from disk"
+            );
+        }
+    }
+
+    /// Push a live system event from a plugin (called by PluginChannel).
+    pub fn push_event(&mut self, source: &str, level: &str, detail: &str) {
+        self.pending_events.push(PendingEvent {
+            ts: chrono::Utc::now().to_rfc3339(),
+            source: source.to_string(),
+            level: level.to_string(),
+            detail: detail.to_string(),
+        });
+    }
+
+    /// Get pending events (for TUI display).
+    pub fn pending_events(&self) -> &[PendingEvent] {
+        &self.pending_events
+    }
+
     /// Rebuild the system prompt based on current mode and plan state.
     /// Call this after mode changes (e.g. planner → auto on plan accept).
     pub async fn rebuild_system_prompt(&mut self) {
@@ -546,6 +622,18 @@ impl AgentLoop {
         // Capture message index *before* adding the user message.
         // This is the truncation point used by restore_checkpoint().
         let message_index_before = self.history.messages().len();
+
+        // Inject pending system events as context before the user message
+        if !self.pending_events.is_empty() {
+            let mut ctx = String::from("[SYSTEM EVENTS — the following occurred since your last interaction]\n");
+            for ev in self.pending_events.drain(..) {
+                ctx.push_str(&format!(
+                    "- [{}] ({}) {}: {}\n",
+                    ev.ts, ev.level.to_uppercase(), ev.source, ev.detail
+                ));
+            }
+            self.history.add_user_message(&ctx);
+        }
 
         // Add user message to history
         self.history.add_user_message(user_message);

@@ -1,0 +1,15 @@
+[plugin]
+name = "docker-monitor"
+version = "0.1.0"
+description = "Monitor Docker container events (crashes, OOM, health changes)"
+plugin_type = "channel"
+protocol_version = 1
+alias = "docker-monitor"
+
+[run]
+command = "bash"
+args = ["monitor.sh"]
+
+[config.containers]
+type = "string[]"
+description = "Container names to monitor (empty = all containers)"

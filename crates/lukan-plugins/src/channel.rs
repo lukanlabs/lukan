@@ -223,6 +223,23 @@ impl PluginChannel {
                         "Plugin sent Ready (unexpected in channel loop)"
                     );
                 }
+                PluginMessage::SystemEvent {
+                    source,
+                    level,
+                    detail,
+                } => {
+                    self.log_to_file("EVENT", &format!("[{level}] {source}: {detail}"));
+                    info!(
+                        plugin = %self.name,
+                        source = %source,
+                        level = %level,
+                        "System event: {detail}"
+                    );
+                    // Persist to pending events file
+                    persist_system_event(&source, &level, &detail);
+                    // Inject into agent context for next turn
+                    agent.push_event(&source, &level, &detail);
+                }
             }
         }
 
@@ -274,6 +291,28 @@ async fn collect_agent_response(agent: &mut AgentLoop, message: &str, max_len: u
         "(No response)".to_string()
     } else {
         response
+    }
+}
+
+/// Persist a system event to `~/.config/lukan/events/pending.jsonl` (append).
+/// Best-effort: never fails. Uses sync I/O since it's a single line append.
+fn persist_system_event(source: &str, level: &str, detail: &str) {
+    let path = LukanPaths::pending_events_file();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let event = serde_json::json!({
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "source": source,
+        "level": level,
+        "detail": detail,
+    });
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(f, "{}", event);
     }
 }
 

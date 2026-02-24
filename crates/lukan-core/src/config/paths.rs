@@ -114,6 +114,16 @@ impl LukanPaths {
         Self::plugin_dir(name).join("plugin.pid")
     }
 
+    /// Events directory: ~/.config/lukan/events/
+    pub fn events_dir() -> PathBuf {
+        Self::config_dir().join("events")
+    }
+
+    /// Pending events file: ~/.config/lukan/events/pending.jsonl
+    pub fn pending_events_file() -> PathBuf {
+        Self::events_dir().join("pending.jsonl")
+    }
+
     /// Workers definition file: ~/.config/lukan/workers.json
     pub fn workers_file() -> PathBuf {
         Self::config_dir().join("workers.json")
@@ -139,6 +149,7 @@ impl LukanPaths {
         tokio::fs::create_dir_all(Self::config_dir()).await?;
         tokio::fs::create_dir_all(Self::sessions_dir()).await?;
         tokio::fs::create_dir_all(Self::plugins_dir()).await?;
+        tokio::fs::create_dir_all(Self::events_dir()).await?;
         tokio::fs::create_dir_all(Self::workers_runs_dir()).await?;
         Ok(())
     }

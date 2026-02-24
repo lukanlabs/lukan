@@ -134,6 +134,13 @@ pub enum StreamEvent {
 
     /// An error occurred
     Error { error: String },
+
+    /// System event from a plugin (fire-and-forget notification)
+    SystemNotification {
+        source: String,
+        level: String,
+        detail: String,
+    },
 }
 
 /// A tool call that needs user approval

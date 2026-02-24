@@ -96,4 +96,9 @@ pub enum ApprovalResponse {
     Approved { approved_ids: Vec<String> },
     /// User denied all pending tools
     DeniedAll,
+    /// Approve + persist pattern to config allow list
+    AlwaysAllow {
+        approved_ids: Vec<String>,
+        tools: Vec<ToolApprovalRequest>,
+    },
 }

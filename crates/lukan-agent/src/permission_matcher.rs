@@ -200,6 +200,29 @@ impl PermissionMatcher {
     pub fn set_mode(&mut self, mode: PermissionMode) {
         self.mode = mode;
     }
+
+    /// Hot-add a parsed allow rule so the matcher immediately recognizes it
+    pub fn add_allow_rule(&mut self, pattern: &str) {
+        self.allow.push(PatternRule::parse(pattern));
+    }
+}
+
+/// Generate a broad allow pattern from a tool name and its input.
+///
+/// For Bash, generates `Bash(prefix:*)` based on the first word of the command.
+/// For other tools, generates a tool-name-only pattern.
+pub fn generate_allow_pattern(tool_name: &str, input: &serde_json::Value) -> String {
+    match tool_name {
+        "Bash" => {
+            let cmd = input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let first_word = cmd.split_whitespace().next().unwrap_or("");
+            format!("Bash({first_word}:*)")
+        }
+        _ => tool_name.to_string(),
+    }
 }
 
 /// The planner whitelist, exported for tool definition filtering

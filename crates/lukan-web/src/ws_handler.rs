@@ -269,6 +269,21 @@ async fn dispatch_message(
             }
         }
 
+        ClientMessage::AlwaysAllow {
+            approved_ids,
+            tools,
+        } => {
+            let tx = state.approval_tx.lock().await;
+            if let Some(ref sender) = *tx {
+                let _ = sender
+                    .send(ApprovalResponse::AlwaysAllow {
+                        approved_ids,
+                        tools,
+                    })
+                    .await;
+            }
+        }
+
         ClientMessage::DenyAll => {
             let tx = state.approval_tx.lock().await;
             if let Some(ref sender) = *tx {

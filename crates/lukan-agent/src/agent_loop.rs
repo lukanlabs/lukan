@@ -13,7 +13,10 @@ use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
 
-use crate::permission_matcher::{PLANNER_TOOL_WHITELIST, PermissionMatcher, ToolVerdict};
+use crate::permission_matcher::{
+    PLANNER_TOOL_WHITELIST, PermissionMatcher, ToolVerdict, generate_allow_pattern,
+};
+use lukan_core::config::project_config::ProjectConfig;
 use rand::Rng;
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -399,6 +402,11 @@ impl AgentLoop {
         self.permission_matcher.set_mode(mode);
     }
 
+    /// Add an allow rule to the in-memory permission matcher
+    pub fn add_allow_rule(&mut self, pattern: &str) {
+        self.permission_matcher.add_allow_rule(pattern);
+    }
+
     /// Add user context (e.g. shell command output) without triggering a turn
     pub fn add_user_context(&mut self, content: &str) {
         self.history.add_user_message(content);
@@ -629,6 +637,46 @@ impl AgentLoop {
                                     ));
                                 }
                             }
+                        }
+                        Some(ApprovalResponse::AlwaysAllow {
+                            approved_ids,
+                            tools,
+                        }) => {
+                            // Same approval logic as Approved
+                            for tool in &needs_approval {
+                                if approved_ids.contains(&tool.id) {
+                                    allowed_tools.push(tool);
+                                } else {
+                                    let idx = pending_tools
+                                        .iter()
+                                        .position(|t| t.id == tool.id)
+                                        .unwrap_or(0);
+                                    denied_results.push((
+                                        idx,
+                                        lukan_core::models::tools::ToolResult::error(
+                                            "Tool denied by user.".to_string(),
+                                        ),
+                                    ));
+                                }
+                            }
+                            // Generate and persist allow rules
+                            let cwd = self.cwd.clone();
+                            let mut patterns = Vec::new();
+                            for tool_req in &tools {
+                                let pattern =
+                                    generate_allow_pattern(&tool_req.name, &tool_req.input);
+                                self.permission_matcher.add_allow_rule(&pattern);
+                                if let Err(e) =
+                                    ProjectConfig::add_allow_rule(&cwd, &pattern).await
+                                {
+                                    warn!(error = %e, pattern, "Failed to persist allow rule");
+                                }
+                                patterns.push(pattern);
+                            }
+                            info!(
+                                rules = patterns.join(", "),
+                                "Persisted always-allow rules"
+                            );
                         }
                         Some(ApprovalResponse::DeniedAll) | None => {
                             // Deny all pending tools

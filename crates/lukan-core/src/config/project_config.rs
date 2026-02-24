@@ -95,6 +95,31 @@ impl ProjectConfig {
         allowed
     }
 
+    /// Add an allow rule to the project config.
+    /// Loads or creates .lukan/config.json and appends the rule to `permissions.allow`.
+    pub async fn add_allow_rule(project_dir: &Path, rule: &str) -> Result<()> {
+        let lukan_dir = project_dir.join(".lukan");
+        tokio::fs::create_dir_all(&lukan_dir).await?;
+
+        let config_path = lukan_dir.join("config.json");
+        let mut config: ProjectConfig = if config_path.exists() {
+            let content = tokio::fs::read_to_string(&config_path)
+                .await
+                .context("Failed to read .lukan/config.json")?;
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            Self::default()
+        };
+
+        if !config.permissions.allow.contains(&rule.to_string()) {
+            config.permissions.allow.push(rule.to_string());
+        }
+
+        let content = serde_json::to_string_pretty(&config)?;
+        tokio::fs::write(&config_path, content).await?;
+        Ok(())
+    }
+
     /// Initialize a .lukan directory with default config
     pub async fn init(project_dir: &Path) -> Result<PathBuf> {
         let lukan_dir = project_dir.join(".lukan");

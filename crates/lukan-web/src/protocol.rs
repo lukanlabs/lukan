@@ -23,6 +23,10 @@ pub enum ClientMessage {
     Approve {
         approved_ids: Vec<String>,
     },
+    AlwaysAllow {
+        approved_ids: Vec<String>,
+        tools: Vec<lukan_core::models::events::ToolApprovalRequest>,
+    },
     DenyAll,
     AnswerQuestion {
         answer: String,

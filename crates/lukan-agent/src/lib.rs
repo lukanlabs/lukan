@@ -8,6 +8,6 @@ pub mod workers;
 
 pub use agent_loop::{AgentConfig, AgentLoop};
 pub use message_history::MessageHistory;
-pub use permission_matcher::{PermissionMatcher, ToolVerdict};
+pub use permission_matcher::{PermissionMatcher, ToolVerdict, generate_allow_pattern};
 pub use session_manager::SessionManager;
 pub use workers::{WorkerNotification, WorkerScheduler};

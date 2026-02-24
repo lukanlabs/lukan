@@ -324,7 +324,7 @@ impl App {
             let term_size = terminal.size()?;
             let display_input = self.display_input();
             let cur_input_h = input_height(&display_input, term_size.width, 8);
-            let chat_area_h = term_size.height.saturating_sub(cur_input_h + 1);
+            let chat_area_h = term_size.height.saturating_sub(cur_input_h + 2); // +2 = status bar + margin
             if self.trust_prompt.is_none()
                 && self.approval_prompt.is_none()
                 && self.session_picker.is_none()
@@ -385,30 +385,34 @@ impl App {
                 let shimmer_h: u16 = if self.is_streaming { 1 } else { 0 };
 
                 // Dynamic layout: palette below input, above status bar
+                // margin_h adds a 1-row gap between chat content and shimmer/input
+                let margin_h: u16 = 1;
                 let (chat_area, shimmer_area, input_area, palette_area, status_area) =
                     if palette_visible {
                         let chunks = Layout::default()
                             .direction(Direction::Vertical)
                             .constraints([
                                 Constraint::Min(1),
+                                Constraint::Length(margin_h),
                                 Constraint::Length(shimmer_h),
                                 Constraint::Length(input_h),
                                 Constraint::Length(palette_h),
                                 Constraint::Length(1),
                             ])
                             .split(area);
-                        (chunks[0], chunks[1], chunks[2], Some(chunks[3]), chunks[4])
+                        (chunks[0], chunks[2], chunks[3], Some(chunks[4]), chunks[5])
                     } else {
                         let chunks = Layout::default()
                             .direction(Direction::Vertical)
                             .constraints([
                                 Constraint::Min(1),
+                                Constraint::Length(margin_h),
                                 Constraint::Length(shimmer_h),
                                 Constraint::Length(input_h),
                                 Constraint::Length(1),
                             ])
                             .split(area);
-                        (chunks[0], chunks[1], chunks[2], None, chunks[3])
+                        (chunks[0], chunks[2], chunks[3], None, chunks[4])
                     };
 
                 // Chat (or overlay pickers)
@@ -483,7 +487,7 @@ impl App {
                 let dc = self.display_cursor();
                 let input_widget = if self.approval_prompt.is_some() {
                     InputWidget::new(
-                        "Space toggle · Enter submit · a approve all · Esc deny all",
+                        "Space toggle · Enter submit · a approve all · A always allow · Esc deny all",
                         0,
                         false,
                     )
@@ -645,6 +649,23 @@ impl App {
                                                 let _ = tx.try_send(ApprovalResponse::Approved {
                                                     approved_ids,
                                                 });
+                                            }
+                                            self.force_redraw = true;
+                                        }
+                                    }
+                                    KeyCode::Char('A') => {
+                                        // Always allow — approve all + persist patterns to config
+                                        if let Some(prompt) = self.approval_prompt.take() {
+                                            let approved_ids: Vec<String> =
+                                                prompt.tools.iter().map(|t| t.id.clone()).collect();
+                                            let tools = prompt.tools.clone();
+                                            if let Some(ref tx) = self.approval_tx {
+                                                let _ = tx.try_send(
+                                                    ApprovalResponse::AlwaysAllow {
+                                                        approved_ids,
+                                                        tools,
+                                                    },
+                                                );
                                             }
                                             self.force_redraw = true;
                                         }
@@ -2954,7 +2975,7 @@ impl Widget for ApprovalPromptWidget<'_> {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            " Space toggle · Enter submit · a approve all · Esc deny all",
+            " Space toggle · Enter submit · a approve all · A always allow · Esc deny all",
             Style::default().fg(Color::DarkGray),
         )));
 

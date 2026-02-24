@@ -84,6 +84,21 @@ bundle_gmail() {
   ok "gmail → dist/ (no bundling needed, zero deps)"
 }
 
+bundle_docker_monitor() {
+  local src="$PLUGINS_DIR/docker-monitor"
+  local dist="$src/dist"
+  info "Bundling docker-monitor plugin..."
+
+  mkdir -p "$dist"
+
+  # Bash plugin — just copy files
+  cp "$src/plugin.toml" "$dist/"
+  cp "$src/monitor.sh" "$dist/"
+  chmod +x "$dist/monitor.sh"
+
+  ok "docker-monitor → dist/ (bash script, no deps)"
+}
+
 # ── Main ──────────────────────────────────────────────────────────────
 
 TARGET="${1:-all}"
@@ -98,14 +113,18 @@ case "$TARGET" in
   gmail)
     bundle_gmail
     ;;
+  docker-monitor|docker)
+    bundle_docker_monitor
+    ;;
   all)
     bundle_whatsapp
     bundle_google_workspace
     bundle_gmail
+    bundle_docker_monitor
     ;;
   *)
     err "Unknown plugin: $TARGET"
-    echo "Available: whatsapp, google-workspace, gmail, all"
+    echo "Available: whatsapp, google-workspace, gmail, docker-monitor, all"
     exit 1
     ;;
 esac

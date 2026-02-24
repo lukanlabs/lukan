@@ -39,6 +39,15 @@ source = "archive"
 [plugins.gmail.assets.all]
 url = "https://get.lukan.ai/plugins/lukan-plugin-gmail.tar.gz"
 
+[plugins.docker-monitor]
+description = "Monitor Docker container events (crashes, OOM, health changes)"
+version = "0.1.0"
+plugin_type = "channel"
+source = "archive"
+
+[plugins.docker-monitor.assets.all]
+url = "https://get.lukan.ai/plugins/lukan-plugin-docker-monitor.tar.gz"
+
 # ── Native plugins (platform-specific) ─────────────────────────────────
 
 [plugins.whisper]

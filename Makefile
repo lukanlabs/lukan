@@ -76,6 +76,9 @@ package-plugins: bundle-plugins
 	@# Gmail plugin
 	@cd plugins/gmail/dist && tar czf ../../../dist/plugins/lukan-plugin-gmail.tar.gz .
 	@echo "  Packaged: lukan-plugin-gmail.tar.gz"
+	@# Docker Monitor plugin
+	@cd plugins/docker-monitor/dist && tar czf ../../../dist/plugins/lukan-plugin-docker-monitor.tar.gz .
+	@echo "  Packaged: lukan-plugin-docker-monitor.tar.gz"
 
 ## release: Build binary + bundle plugins + generate checksums
 release: build bundle-plugins package-plugins

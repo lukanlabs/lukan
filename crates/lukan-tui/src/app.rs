@@ -126,6 +126,8 @@ pub struct App {
     worker_scheduler: WorkerScheduler,
     /// Toast notifications (message, created_at) — auto-expire after a few seconds
     toast_notifications: Vec<(String, Instant)>,
+    /// Last time we polled pending.jsonl for system events
+    last_event_poll: Instant,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -252,6 +254,7 @@ impl App {
             task_panel_needs_refresh: false,
             worker_scheduler,
             toast_notifications: Vec::new(),
+            last_event_poll: Instant::now(),
         }
     }
 
@@ -1605,6 +1608,11 @@ impl App {
                             // Expire old toast notifications (5 seconds)
                             self.toast_notifications
                                 .retain(|(_, created)| created.elapsed().as_secs() < 5);
+                            // Poll pending.jsonl for new system events (every 3 seconds)
+                            if self.last_event_poll.elapsed().as_secs() >= 3 {
+                                self.last_event_poll = Instant::now();
+                                self.poll_pending_events();
+                            }
                         }
                     }
                 }
@@ -2644,6 +2652,35 @@ impl App {
             Err(e) => {
                 self.messages
                     .push(ChatMessage::new("system", format!("Failed to switch: {e}")));
+            }
+        }
+    }
+
+    /// Poll `pending.jsonl` for new system events and show them as toasts.
+    /// Reads and truncates the file so events are only shown once.
+    fn poll_pending_events(&mut self) {
+        let path = LukanPaths::pending_events_file();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) if !c.trim().is_empty() => c,
+            _ => return,
+        };
+        // Truncate immediately so we don't re-read the same events
+        let _ = std::fs::write(&path, "");
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                let source = val.get("source").and_then(|v| v.as_str()).unwrap_or("?");
+                let level = val.get("level").and_then(|v| v.as_str()).unwrap_or("info");
+                let detail = val.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+                let msg = format!("[{}] {}: {}", level.to_uppercase(), source, detail);
+                self.toast_notifications.push((msg, Instant::now()));
+                // Also push into agent's pending events queue if agent is available
+                if let Some(ref mut agent) = self.agent {
+                    agent.push_event(source, level, detail);
+                }
             }
         }
     }

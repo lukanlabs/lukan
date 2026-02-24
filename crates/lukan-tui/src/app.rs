@@ -7,7 +7,7 @@ use crossterm::{
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
 };
 use std::collections::HashMap;
 use std::io::{Stdout, stdout};
@@ -443,11 +443,17 @@ impl App {
                     let widget = SessionPickerWidget::new(picker);
                     frame.render_widget(widget, chat_area);
                 } else {
+                    // Add left margin so chat text doesn't hug the border
+                    let padded_chat = Rect {
+                        x: chat_area.x + 1,
+                        width: chat_area.width.saturating_sub(1),
+                        ..chat_area
+                    };
                     let chat = ChatWidget::new(
                         &self.messages[self.committed_msg_idx..],
                         &self.streaming_text,
                     );
-                    frame.render_widget(chat, chat_area);
+                    frame.render_widget(chat, padded_chat);
                 }
 
                 // Palette area: reasoning picker, model picker, or command palette
@@ -2604,7 +2610,6 @@ impl Widget for ReasoningPaletteWidget<'_> {
 
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph, Widget},

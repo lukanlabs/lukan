@@ -21,7 +21,10 @@ use lukan_core::config::types::PermissionMode;
 use lukan_core::config::{
     ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig,
 };
-use lukan_core::models::events::{ApprovalResponse, StopReason, StreamEvent, ToolApprovalRequest};
+use lukan_core::models::events::{
+    ApprovalResponse, PlanReviewResponse, PlanTask, PlannerQuestionItem, StopReason, StreamEvent,
+    ToolApprovalRequest,
+};
 use lukan_core::models::sessions::SessionSummary;
 use lukan_providers::{Provider, SystemPrompt, create_provider};
 use lukan_tools::create_configured_registry;
@@ -96,6 +99,16 @@ pub struct App {
     approval_tx: Option<mpsc::Sender<ApprovalResponse>>,
     /// Approval prompt overlay state
     approval_prompt: Option<ApprovalPrompt>,
+    /// Plan review overlay state
+    plan_review: Option<PlanReviewState>,
+    /// Sender to respond to plan review
+    plan_review_tx: Option<mpsc::Sender<PlanReviewResponse>>,
+    /// Planner question overlay state
+    planner_question: Option<PlannerQuestionState>,
+    /// Sender to respond to planner questions
+    planner_answer_tx: Option<mpsc::Sender<String>>,
+    /// Message queued by the user while the agent was streaming
+    queued_message: Option<String>,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -132,6 +145,43 @@ struct SessionPicker {
     sessions: Vec<SessionSummary>,
     selected: usize,
     current_id: Option<String>,
+}
+
+/// Plan review overlay mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanReviewMode {
+    /// Viewing task list
+    List,
+    /// Viewing detail for selected task
+    Detail,
+    /// Typing feedback text
+    Feedback,
+}
+
+/// Plan review overlay state — shown when agent submits a plan
+struct PlanReviewState {
+    #[allow(dead_code)]
+    id: String,
+    title: String,
+    plan: String,
+    tasks: Vec<PlanTask>,
+    selected: usize,
+    mode: PlanReviewMode,
+    feedback_input: String,
+    #[allow(dead_code)]
+    scroll: u16,
+}
+
+/// Planner question overlay state
+struct PlannerQuestionState {
+    #[allow(dead_code)]
+    id: String,
+    questions: Vec<PlannerQuestionItem>,
+    current_question: usize,
+    /// Selected option index per question
+    selections: Vec<usize>,
+    /// For multi-select: which options are toggled per question
+    multi_selections: Vec<Vec<bool>>,
 }
 
 impl App {
@@ -173,6 +223,11 @@ impl App {
             permission_mode: PermissionMode::Auto,
             approval_tx: None,
             approval_prompt: None,
+            plan_review: None,
+            plan_review_tx: None,
+            planner_question: None,
+            planner_answer_tx: None,
+            queued_message: None,
         }
     }
 
@@ -250,6 +305,14 @@ impl App {
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
         self.approval_tx = Some(approval_tx);
 
+        // Create plan review channel
+        let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
+        self.plan_review_tx = Some(plan_review_tx);
+
+        // Create planner answer channel
+        let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        self.planner_answer_tx = Some(planner_answer_tx);
+
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),
             tools: create_configured_registry(&permissions),
@@ -262,6 +325,8 @@ impl App {
             permission_mode: self.permission_mode.clone(),
             permissions,
             approval_rx: Some(approval_rx),
+            plan_review_rx: Some(plan_review_rx),
+            planner_answer_rx: Some(planner_answer_rx),
         };
 
         match AgentLoop::new(config).await {
@@ -327,6 +392,8 @@ impl App {
             let chat_area_h = term_size.height.saturating_sub(cur_input_h + 2); // +2 = status bar + margin
             if self.trust_prompt.is_none()
                 && self.approval_prompt.is_none()
+                && self.plan_review.is_none()
+                && self.planner_question.is_none()
                 && self.session_picker.is_none()
                 && self.bg_picker.is_none()
                 && self.rewind_picker.is_none()
@@ -384,10 +451,13 @@ impl App {
                 // Shimmer status line: 1 row when streaming, 0 otherwise
                 let shimmer_h: u16 = if self.is_streaming { 1 } else { 0 };
 
+                // Queued message indicator: 1 row when a message is queued
+                let queued_h: u16 = if self.queued_message.is_some() { 1 } else { 0 };
+
                 // Dynamic layout: palette below input, above status bar
                 // margin_h adds a 1-row gap between chat content and shimmer/input
                 let margin_h: u16 = 1;
-                let (chat_area, shimmer_area, input_area, palette_area, status_area) =
+                let (chat_area, shimmer_area, queued_area, input_area, palette_area, status_area) =
                     if palette_visible {
                         let chunks = Layout::default()
                             .direction(Direction::Vertical)
@@ -395,12 +465,13 @@ impl App {
                                 Constraint::Min(1),
                                 Constraint::Length(margin_h),
                                 Constraint::Length(shimmer_h),
+                                Constraint::Length(queued_h),
                                 Constraint::Length(input_h),
                                 Constraint::Length(palette_h),
                                 Constraint::Length(1),
                             ])
                             .split(area);
-                        (chunks[0], chunks[2], chunks[3], Some(chunks[4]), chunks[5])
+                        (chunks[0], chunks[2], chunks[3], chunks[4], Some(chunks[5]), chunks[6])
                     } else {
                         let chunks = Layout::default()
                             .direction(Direction::Vertical)
@@ -408,16 +479,23 @@ impl App {
                                 Constraint::Min(1),
                                 Constraint::Length(margin_h),
                                 Constraint::Length(shimmer_h),
+                                Constraint::Length(queued_h),
                                 Constraint::Length(input_h),
                                 Constraint::Length(1),
                             ])
                             .split(area);
-                        (chunks[0], chunks[2], chunks[3], None, chunks[4])
+                        (chunks[0], chunks[2], chunks[3], chunks[4], None, chunks[5])
                     };
 
                 // Chat (or overlay pickers)
                 if let Some(ref prompt) = self.trust_prompt {
                     let widget = TrustPromptWidget::new(prompt);
+                    frame.render_widget(widget, chat_area);
+                } else if let Some(ref state) = self.plan_review {
+                    let widget = PlanReviewWidget::new(state);
+                    frame.render_widget(widget, chat_area);
+                } else if let Some(ref state) = self.planner_question {
+                    let widget = PlannerQuestionWidget::new(state);
                     frame.render_widget(widget, chat_area);
                 } else if let Some(ref prompt) = self.approval_prompt {
                     let widget = ApprovalPromptWidget::new(prompt);
@@ -488,10 +566,43 @@ impl App {
                     frame.render_widget(paragraph, shimmer_area);
                 }
 
+                // Queued message indicator
+                if let Some(ref queued) = self.queued_message {
+                    let max_chars = queued_area.width.saturating_sub(12) as usize;
+                    let preview: String = if queued.chars().count() > max_chars {
+                        let truncated: String = queued.chars().take(max_chars.saturating_sub(1)).collect();
+                        format!("{truncated}…")
+                    } else {
+                        queued.clone()
+                    };
+                    let line = ratatui::text::Line::from(vec![
+                        ratatui::text::Span::styled(
+                            "↳ queued: ",
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        ratatui::text::Span::styled(
+                            preview,
+                            Style::default().fg(Color::Yellow),
+                        ),
+                    ]);
+                    let paragraph = ratatui::widgets::Paragraph::new(line);
+                    frame.render_widget(paragraph, queued_area);
+                }
+
                 // Input — show paste preview + typed-after text when available
                 let di = self.display_input();
                 let dc = self.display_cursor();
-                let input_widget = if self.approval_prompt.is_some() {
+                let input_widget = if self.plan_review.is_some() {
+                    let hint = match self.plan_review.as_ref().map(|p| p.mode) {
+                        Some(PlanReviewMode::List) => "↑↓ navigate · Enter view · a accept · r request changes · Esc reject",
+                        Some(PlanReviewMode::Detail) => "Esc back to list",
+                        Some(PlanReviewMode::Feedback) => "Type feedback · Enter submit · Esc cancel",
+                        None => "",
+                    };
+                    InputWidget::new(hint, 0, false)
+                } else if self.planner_question.is_some() {
+                    InputWidget::new("↑↓ select · Space toggle · Enter confirm · Tab next question", 0, false)
+                } else if self.approval_prompt.is_some() {
                     InputWidget::new(
                         "Space toggle · Enter submit · a approve all · A always allow · Esc deny all",
                         0,
@@ -521,7 +632,7 @@ impl App {
                 {
                     InputWidget::new("↑↓ navigate · Enter select · ESC close", 0, false)
                 } else {
-                    InputWidget::new(&di, dc, !self.is_streaming)
+                    InputWidget::new(&di, dc, true)
                 };
                 frame.render_widget(input_widget, input_area);
 
@@ -553,15 +664,16 @@ impl App {
                 );
                 frame.render_widget(status, status_area);
 
-                // Set cursor position only when not in picker and not streaming
+                // Set cursor position only when not in picker/overlay
                 if self.trust_prompt.is_none()
                     && self.approval_prompt.is_none()
+                    && self.plan_review.is_none()
+                    && self.planner_question.is_none()
                     && self.memory_viewer.is_none()
                     && self.rewind_picker.is_none()
                     && self.bg_picker.is_none()
                     && self.session_picker.is_none()
                     && self.model_picker.is_none()
-                    && !self.is_streaming
                 {
                     let (cx, cy) = cursor_position(&di, dc, input_area);
                     frame.set_cursor_position((cx, cy));
@@ -599,6 +711,12 @@ impl App {
                                     }
                                     _ => {}
                                 }
+                            } else if self.plan_review.is_some() {
+                                // Plan review overlay
+                                self.handle_plan_review_key(key.code);
+                            } else if self.planner_question.is_some() {
+                                // Planner question overlay
+                                self.handle_planner_question_key(key.code);
                             } else if self.approval_prompt.is_some() {
                                 // Approval prompt overlay
                                 match key.code {
@@ -947,21 +1065,36 @@ impl App {
                             } else if key.code == KeyCode::Esc
                                 && self.is_streaming
                             {
-                                // ESC during streaming: cancel the agent turn
-                                if let Some(token) = self.cancel_token.take() {
-                                    token.cancel();
+                                // ESC during streaming: clear queued message first,
+                                // second ESC cancels the agent turn
+                                if self.queued_message.is_some() {
+                                    self.queued_message = None;
+                                } else {
+                                    if let Some(token) = self.cancel_token.take() {
+                                        token.cancel();
+                                    }
+                                    self.is_streaming = false;
+                                    self.active_tool = None;
+                                    // Flush any partial streaming text
+                                    if !self.streaming_text.is_empty() {
+                                        let content = std::mem::take(&mut self.streaming_text);
+                                        self.messages.push(ChatMessage::new("assistant", content));
+                                    }
+                                    self.messages.push(ChatMessage::new(
+                                        "system",
+                                        "Response cancelled.",
+                                    ));
                                 }
-                                self.is_streaming = false;
-                                self.active_tool = None;
-                                // Flush any partial streaming text
-                                if !self.streaming_text.is_empty() {
-                                    let content = std::mem::take(&mut self.streaming_text);
-                                    self.messages.push(ChatMessage::new("assistant", content));
+                            } else if key.code == KeyCode::Enter
+                                && self.is_streaming
+                            {
+                                // Enter during streaming: queue the message
+                                if !self.input.trim().is_empty() {
+                                    self.queued_message = Some(self.input.trim().to_string());
+                                    self.input.clear();
+                                    self.cursor_pos = 0;
+                                    self.paste_info = None;
                                 }
-                                self.messages.push(ChatMessage::new(
-                                    "system",
-                                    "Response cancelled.",
-                                ));
                             } else if key.code == KeyCode::Char('b')
                                 && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
                                 && self.is_streaming
@@ -1146,6 +1279,48 @@ impl App {
                                     KeyCode::End => self.cursor_pos = self.input.len(),
                                     _ => {}
                                 }
+                            } else if self.is_streaming {
+                                // Typing keys during streaming (Enter/Esc handled above)
+                                match key.code {
+                                    KeyCode::Char(c) => {
+                                        let clen = c.len_utf8();
+                                        self.input.insert(self.cursor_pos, c);
+                                        if let Some((ref mut s, ref mut e, _)) = self.paste_info
+                                            && self.cursor_pos <= *s
+                                        {
+                                            *s += clen;
+                                            *e += clen;
+                                        }
+                                        self.cursor_pos += clen;
+                                    }
+                                    KeyCode::Backspace => {
+                                        if self.cursor_pos > 0 {
+                                            let prev = self.input[..self.cursor_pos]
+                                                .char_indices().next_back()
+                                                .map(|(i, _)| i).unwrap_or(0);
+                                            self.input.drain(prev..self.cursor_pos);
+                                            self.cursor_pos = prev;
+                                        }
+                                    }
+                                    KeyCode::Left => {
+                                        if self.cursor_pos > 0 {
+                                            self.cursor_pos = self.input[..self.cursor_pos]
+                                                .char_indices().next_back()
+                                                .map(|(i, _)| i).unwrap_or(0);
+                                        }
+                                    }
+                                    KeyCode::Right => {
+                                        if self.cursor_pos < self.input.len() {
+                                            self.cursor_pos = self.input[self.cursor_pos..]
+                                                .char_indices().nth(1)
+                                                .map(|(i, _)| self.cursor_pos + i)
+                                                .unwrap_or(self.input.len());
+                                        }
+                                    }
+                                    KeyCode::Home => self.cursor_pos = 0,
+                                    KeyCode::End => self.cursor_pos = self.input.len(),
+                                    _ => {}
+                                }
                             }
                         }
                         AppEvent::Paste(text) => {
@@ -1187,6 +1362,13 @@ impl App {
                     Ok(agent) => {
                         self.session_id = Some(agent.session_id().to_string());
                         self.agent = Some(agent);
+
+                        // Auto-submit queued message if one was set
+                        if let Some(queued) = self.queued_message.take() {
+                            self.input = queued;
+                            self.cursor_pos = self.input.len();
+                            self.submit_message(agent_tx.clone()).await;
+                        }
                     }
                     Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
                         // Not ready yet, put it back
@@ -1676,6 +1858,14 @@ impl App {
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
         self.approval_tx = Some(approval_tx);
 
+        // Create plan review channel
+        let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
+        self.plan_review_tx = Some(plan_review_tx);
+
+        // Create planner answer channel
+        let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        self.planner_answer_tx = Some(planner_answer_tx);
+
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),
             tools: create_configured_registry(&permissions),
@@ -1688,6 +1878,8 @@ impl App {
             permission_mode: self.permission_mode.clone(),
             permissions,
             approval_rx: Some(approval_rx),
+            plan_review_rx: Some(plan_review_rx),
+            planner_answer_rx: Some(planner_answer_rx),
         };
 
         match AgentLoop::load_session(config, &session_id).await {
@@ -2183,10 +2375,230 @@ impl App {
                     tools,
                 });
             }
+            StreamEvent::PlanReview {
+                id,
+                title,
+                plan,
+                tasks,
+            } => {
+                self.plan_review = Some(PlanReviewState {
+                    id,
+                    title,
+                    plan,
+                    tasks,
+                    selected: 0,
+                    mode: PlanReviewMode::List,
+                    feedback_input: String::new(),
+                    scroll: 0,
+                });
+            }
+            StreamEvent::PlannerQuestion { id, questions } => {
+                let n = questions.len();
+                let multi_sels: Vec<Vec<bool>> = questions
+                    .iter()
+                    .map(|q| vec![false; q.options.len()])
+                    .collect();
+                self.planner_question = Some(PlannerQuestionState {
+                    id,
+                    questions,
+                    current_question: 0,
+                    selections: vec![0; n],
+                    multi_selections: multi_sels,
+                });
+            }
+            StreamEvent::ModeChanged { mode } => {
+                if let Ok(parsed) = serde_json::from_value::<PermissionMode>(
+                    serde_json::Value::String(mode.clone()),
+                ) {
+                    self.permission_mode = parsed;
+                }
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Mode changed to: {mode}"),
+                ));
+            }
             StreamEvent::Error { error } => {
                 self.messages
                     .push(ChatMessage::new("assistant", format!("Error: {error}")));
                 self.is_streaming = false;
+                self.queued_message = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle keyboard input for the plan review overlay
+    fn handle_plan_review_key(&mut self, code: KeyCode) {
+        let Some(ref mut state) = self.plan_review else {
+            return;
+        };
+
+        match state.mode {
+            PlanReviewMode::List => match code {
+                KeyCode::Up => {
+                    if state.selected > 0 {
+                        state.selected -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    // tasks + 2 action items (accept, request changes)
+                    let max = state.tasks.len();
+                    if state.selected + 1 < max {
+                        state.selected += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    // View task detail
+                    if state.selected < state.tasks.len() {
+                        state.mode = PlanReviewMode::Detail;
+                    }
+                }
+                KeyCode::Char('a') => {
+                    // Accept plan
+                    if let Some(state) = self.plan_review.take() {
+                        if let Some(ref tx) = self.plan_review_tx {
+                            let _ = tx.try_send(PlanReviewResponse::Accepted {
+                                modified_tasks: None,
+                            });
+                        }
+                        self.messages.push(ChatMessage::new(
+                            "system",
+                            format!("Plan accepted: {}", state.title),
+                        ));
+                        self.force_redraw = true;
+                    }
+                }
+                KeyCode::Char('r') => {
+                    // Request changes — enter feedback mode
+                    state.mode = PlanReviewMode::Feedback;
+                    state.feedback_input.clear();
+                }
+                KeyCode::Esc => {
+                    // Reject plan
+                    if let Some(_state) = self.plan_review.take() {
+                        if let Some(ref tx) = self.plan_review_tx {
+                            let _ = tx.try_send(PlanReviewResponse::Rejected {
+                                feedback: "User rejected the plan.".to_string(),
+                            });
+                        }
+                        self.messages
+                            .push(ChatMessage::new("system", "Plan rejected."));
+                        self.force_redraw = true;
+                    }
+                }
+                _ => {}
+            },
+            PlanReviewMode::Detail => {
+                if code == KeyCode::Esc {
+                    state.mode = PlanReviewMode::List;
+                }
+            }
+            PlanReviewMode::Feedback => match code {
+                KeyCode::Enter => {
+                    let feedback = state.feedback_input.clone();
+                    if let Some(_state) = self.plan_review.take() {
+                        if let Some(ref tx) = self.plan_review_tx {
+                            let _ = tx.try_send(PlanReviewResponse::Rejected { feedback });
+                        }
+                        self.messages.push(ChatMessage::new(
+                            "system",
+                            "Feedback submitted. Waiting for revised plan...",
+                        ));
+                        self.force_redraw = true;
+                    }
+                }
+                KeyCode::Esc => {
+                    state.mode = PlanReviewMode::List;
+                }
+                KeyCode::Char(c) => {
+                    state.feedback_input.push(c);
+                }
+                KeyCode::Backspace => {
+                    state.feedback_input.pop();
+                }
+                _ => {}
+            },
+        }
+    }
+
+    /// Handle keyboard input for the planner question overlay
+    fn handle_planner_question_key(&mut self, code: KeyCode) {
+        let Some(ref mut state) = self.planner_question else {
+            return;
+        };
+
+        let qi = state.current_question;
+        let q = &state.questions[qi];
+
+        match code {
+            KeyCode::Up => {
+                if state.selections[qi] > 0 {
+                    state.selections[qi] -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if state.selections[qi] + 1 < q.options.len() {
+                    state.selections[qi] += 1;
+                }
+            }
+            KeyCode::Char(' ') => {
+                if q.multi_select {
+                    let sel = state.selections[qi];
+                    if sel < state.multi_selections[qi].len() {
+                        state.multi_selections[qi][sel] = !state.multi_selections[qi][sel];
+                    }
+                }
+            }
+            KeyCode::Tab => {
+                // Next question
+                if state.current_question + 1 < state.questions.len() {
+                    state.current_question += 1;
+                }
+            }
+            KeyCode::BackTab => {
+                // Previous question
+                if state.current_question > 0 {
+                    state.current_question -= 1;
+                }
+            }
+            KeyCode::Enter => {
+                // Submit answers for all questions
+                if let Some(state) = self.planner_question.take() {
+                    let mut answers = Vec::new();
+                    for (i, q) in state.questions.iter().enumerate() {
+                        let answer = if q.multi_select {
+                            // Collect all selected options
+                            let selected: Vec<&str> = q
+                                .options
+                                .iter()
+                                .zip(state.multi_selections[i].iter())
+                                .filter(|(_, sel)| **sel)
+                                .map(|(opt, _)| opt.label.as_str())
+                                .collect();
+                            if selected.is_empty() {
+                                q.options[state.selections[i]].label.clone()
+                            } else {
+                                selected.join(", ")
+                            }
+                        } else {
+                            q.options[state.selections[i]].label.clone()
+                        };
+                        answers.push(format!("{}: {}", q.header, answer));
+                    }
+                    let answer_text = answers.join("\n");
+                    if let Some(ref tx) = self.planner_answer_tx {
+                        let _ = tx.try_send(answer_text);
+                    }
+                    self.force_redraw = true;
+                }
+            }
+            KeyCode::Esc => {
+                // Cancel — send empty answer
+                self.planner_question = None;
+                if let Some(ref tx) = self.planner_answer_tx {
+                    let _ = tx.try_send("User cancelled the question.".to_string());
+                }
+                self.force_redraw = true;
             }
             _ => {}
         }
@@ -2988,6 +3400,238 @@ impl Widget for ApprovalPromptWidget<'_> {
             .borders(Borders::ALL)
             .title(" Tool Approval ")
             .border_style(Style::default().fg(Color::Yellow));
+
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        paragraph.render(area, buf);
+    }
+}
+
+// ── Plan Review Widget ───────────────────────────────────────────────────
+
+struct PlanReviewWidget<'a> {
+    state: &'a PlanReviewState,
+}
+
+impl<'a> PlanReviewWidget<'a> {
+    fn new(state: &'a PlanReviewState) -> Self {
+        Self { state }
+    }
+}
+
+impl Widget for PlanReviewWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use ratatui::widgets::{Block, Borders, Wrap};
+
+        Clear.render(area, buf);
+
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        match self.state.mode {
+            PlanReviewMode::List => {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!(" Plan: {}", self.state.title),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+
+                for (i, task) in self.state.tasks.iter().enumerate() {
+                    let is_selected = i == self.state.selected;
+                    let pointer = if is_selected { "▸ " } else { "  " };
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    };
+
+                    lines.push(Line::from(vec![
+                        Span::styled(format!(" {pointer}"), style),
+                        Span::styled(format!("{}. {}", i + 1, task.title), style),
+                    ]));
+                }
+
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    " a=accept · r=request changes · Enter=view detail · Esc=reject",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            PlanReviewMode::Detail => {
+                let task = &self.state.tasks[self.state.selected];
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!(" Task {}: {}", self.state.selected + 1, task.title),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+
+                // Render task detail as plain text (markdown rendered as-is)
+                for line in task.detail.lines() {
+                    lines.push(Line::from(Span::styled(
+                        format!(" {line}"),
+                        Style::default().fg(Color::White),
+                    )));
+                }
+
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    " Esc=back to list",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            PlanReviewMode::Feedback => {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    " Request Changes",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    " Type your feedback:",
+                    Style::default().fg(Color::White),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!(" > {}_", self.state.feedback_input),
+                    Style::default().fg(Color::Green),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    " Enter=submit · Esc=cancel",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Plan Review ")
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        paragraph.render(area, buf);
+    }
+}
+
+// ── Planner Question Widget ──────────────────────────────────────────────
+
+struct PlannerQuestionWidget<'a> {
+    state: &'a PlannerQuestionState,
+}
+
+impl<'a> PlannerQuestionWidget<'a> {
+    fn new(state: &'a PlannerQuestionState) -> Self {
+        Self { state }
+    }
+}
+
+impl Widget for PlannerQuestionWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use ratatui::widgets::{Block, Borders, Wrap};
+
+        Clear.render(area, buf);
+
+        let qi = self.state.current_question;
+        let q = &self.state.questions[qi];
+
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        lines.push(Line::from(""));
+
+        // Tab headers
+        let mut tab_spans: Vec<Span<'_>> = vec![Span::raw(" ")];
+        for (i, question) in self.state.questions.iter().enumerate() {
+            let style = if i == qi {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            tab_spans.push(Span::styled(format!(" {} ", question.header), style));
+            if i + 1 < self.state.questions.len() {
+                tab_spans.push(Span::styled(" | ", Style::default().fg(Color::DarkGray)));
+            }
+        }
+        lines.push(Line::from(tab_spans));
+        lines.push(Line::from(""));
+
+        // Question text
+        lines.push(Line::from(Span::styled(
+            format!(" {}", q.question),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        // Options
+        for (i, opt) in q.options.iter().enumerate() {
+            let is_selected = i == self.state.selections[qi];
+            let is_checked = q.multi_select
+                && self.state.multi_selections[qi]
+                    .get(i)
+                    .copied()
+                    .unwrap_or(false);
+
+            let pointer = if is_selected { "▸ " } else { "  " };
+            let checkbox = if q.multi_select {
+                if is_checked { "[x] " } else { "[ ] " }
+            } else if is_selected {
+                "(●) "
+            } else {
+                "( ) "
+            };
+
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {pointer}"), style),
+                Span::styled(checkbox.to_string(), style),
+                Span::styled(opt.label.clone(), style),
+            ]));
+
+            if let Some(ref desc) = opt.description {
+                lines.push(Line::from(Span::styled(
+                    format!("       {desc}"),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+
+        lines.push(Line::from(""));
+        let hint = if self.state.questions.len() > 1 {
+            " ↑↓ select · Space toggle · Tab next · Enter confirm · Esc cancel"
+        } else {
+            " ↑↓ select · Space toggle · Enter confirm · Esc cancel"
+        };
+        lines.push(Line::from(Span::styled(
+            hint,
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Planner Question ")
+            .border_style(Style::default().fg(Color::Magenta));
 
         let paragraph = Paragraph::new(lines)
             .block(block)

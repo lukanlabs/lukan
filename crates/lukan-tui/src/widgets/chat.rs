@@ -191,6 +191,16 @@ pub fn build_message_lines(messages: &[ChatMessage], streaming_text: &str) -> Ve
                     }
                 }
             }
+            "notify" => {
+                // Compact one-liner notification: yellow prefix + gray text
+                lines.push(Line::from(vec![
+                    Span::styled("▸ ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        msg.content.lines().next().unwrap_or("").to_string(),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            }
             "system" => {
                 for line in msg.content.lines() {
                     lines.push(Line::from(Span::styled(

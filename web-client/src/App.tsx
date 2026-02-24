@@ -92,7 +92,10 @@ export function App() {
           onListModels={agent.listModels}
           onSetModel={agent.setModel}
           onOpenSubAgentViewer={() => setSubAgentViewerOpen(true)}
-          onOpenWorkersPanel={() => setWorkersPanelOpen(true)}
+          onOpenWorkersPanel={() => {
+            agent.listWorkers();
+            setWorkersPanelOpen(true);
+          }}
         />
 
         <ChatView

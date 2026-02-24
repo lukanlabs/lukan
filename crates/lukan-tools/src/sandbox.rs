@@ -165,11 +165,19 @@ pub fn build_bwrap_args(config: &BwrapConfig) -> Vec<String> {
     // 4. Writable /tmp (isolated)
     args.extend(["--tmpfs".into(), "/tmp".into()]);
 
-    // 5. Writable bind mounts for allowed directories
+    // 5. Writable bind mounts for cwd + allowed directories
+    //    The working directory must always be writable so that tools
+    //    (ReadFile, WriteFile, EditFile, Bash, etc.) can operate on it.
+    let mut writable_dirs: Vec<String> = vec![resolve_path(&config.cwd)];
     for dir in &config.allowed_dirs {
         let resolved = resolve_path(dir);
-        if Path::new(&resolved).exists() {
-            args.extend(["--bind".into(), resolved.clone(), resolved]);
+        if !writable_dirs.contains(&resolved) {
+            writable_dirs.push(resolved);
+        }
+    }
+    for resolved in &writable_dirs {
+        if Path::new(resolved).exists() {
+            args.extend(["--bind".into(), resolved.clone(), resolved.clone()]);
         }
     }
 

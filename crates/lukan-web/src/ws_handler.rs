@@ -456,7 +456,7 @@ async fn dispatch_message(
         ClientMessage::GetWorkerDetail { id } => {
             match state.worker_scheduler.get_worker_detail(&id).await {
                 Ok(Some(detail)) => {
-                    send_json(ws_tx, &ServerMessage::WorkerDetailMsg { worker: detail }).await;
+                    send_json(ws_tx, &ServerMessage::WorkerDetail { worker: detail }).await;
                 }
                 Ok(None) => {
                     send_json(
@@ -486,7 +486,7 @@ async fn dispatch_message(
                 .await
             {
                 Ok(Some(run)) => {
-                    send_json(ws_tx, &ServerMessage::WorkerRunDetailMsg { run }).await;
+                    send_json(ws_tx, &ServerMessage::WorkerRunDetail { run }).await;
                 }
                 Ok(None) => {
                     send_json(

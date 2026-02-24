@@ -12,6 +12,7 @@ use ratatui::{
 use std::collections::HashMap;
 use std::io::{Stdout, stdout};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -123,6 +124,8 @@ pub struct App {
     task_panel_needs_refresh: bool,
     /// Worker scheduler for autonomous background agents
     worker_scheduler: WorkerScheduler,
+    /// Toast notifications (message, created_at) — auto-expire after a few seconds
+    toast_notifications: Vec<(String, Instant)>,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -248,6 +251,7 @@ impl App {
             task_panel_entries: Vec::new(),
             task_panel_needs_refresh: false,
             worker_scheduler,
+            toast_notifications: Vec::new(),
         }
     }
 
@@ -677,6 +681,18 @@ impl App {
                         None => "",
                     };
                     InputWidget::new(hint, 0, false)
+                } else if self.worker_picker.is_some() {
+                    let hint = match self.worker_picker.as_ref().map(|p| p.view) {
+                        Some(WorkerPickerView::WorkerList) => {
+                            "↑↓ navigate · Enter runs · ESC close"
+                        }
+                        Some(WorkerPickerView::RunList) => {
+                            "↑↓ navigate · Enter detail · ESC back"
+                        }
+                        Some(WorkerPickerView::RunDetail) => "ESC back",
+                        None => "",
+                    };
+                    InputWidget::new(hint, 0, false)
                 } else if self.session_picker.is_some()
                     || self.model_picker.is_some()
                     || self.reasoning_picker.is_some()
@@ -715,6 +731,40 @@ impl App {
                 );
                 frame.render_widget(status, status_area);
 
+                // Toast notifications — floating overlay in top-right of chat area
+                if !self.toast_notifications.is_empty() {
+                    let toast_count = self.toast_notifications.len().min(5);
+                    let toasts = &self.toast_notifications
+                        [self.toast_notifications.len() - toast_count..];
+                    let toast_lines: Vec<Line<'_>> = toasts
+                        .iter()
+                        .map(|(msg, _)| {
+                            Line::from(vec![
+                                Span::styled("▸ ", Style::default().fg(Color::Yellow)),
+                                Span::styled(msg.clone(), Style::default().fg(Color::DarkGray)),
+                            ])
+                        })
+                        .collect();
+                    let toast_h = toast_lines.len() as u16;
+                    // Find the widest toast line for sizing
+                    let toast_w = toast_lines
+                        .iter()
+                        .map(|l| l.width() as u16 + 2)
+                        .max()
+                        .unwrap_or(20)
+                        .min(chat_area.width);
+                    let toast_area = Rect {
+                        x: chat_area.right().saturating_sub(toast_w),
+                        y: chat_area.y,
+                        width: toast_w,
+                        height: toast_h.min(chat_area.height),
+                    };
+                    Clear.render(toast_area, frame.buffer_mut());
+                    let toast_paragraph = Paragraph::new(toast_lines)
+                        .style(Style::default().bg(Color::Rgb(30, 30, 30)));
+                    frame.render_widget(toast_paragraph, toast_area);
+                }
+
                 // Set cursor position only when not in picker/overlay
                 if self.trust_prompt.is_none()
                     && self.approval_prompt.is_none()
@@ -723,6 +773,7 @@ impl App {
                     && self.memory_viewer.is_none()
                     && self.rewind_picker.is_none()
                     && self.bg_picker.is_none()
+                    && self.worker_picker.is_none()
                     && self.session_picker.is_none()
                     && self.model_picker.is_none()
                 {
@@ -1006,6 +1057,146 @@ impl App {
                                             } else {
                                                 self.bg_picker = None;
                                                 self.force_redraw = true;
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            } else if self.worker_picker.is_some() {
+                                // Worker picker mode
+                                match key.code {
+                                    KeyCode::Up => {
+                                        if let Some(ref mut picker) = self.worker_picker {
+                                            match picker.view {
+                                                WorkerPickerView::WorkerList => {
+                                                    if picker.selected > 0 {
+                                                        picker.selected -= 1;
+                                                    }
+                                                }
+                                                WorkerPickerView::RunList => {
+                                                    if picker.run_selected > 0 {
+                                                        picker.run_selected -= 1;
+                                                    }
+                                                }
+                                                WorkerPickerView::RunDetail => {}
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if let Some(ref mut picker) = self.worker_picker {
+                                            match picker.view {
+                                                WorkerPickerView::WorkerList => {
+                                                    if picker.selected + 1 < picker.entries.len() {
+                                                        picker.selected += 1;
+                                                    }
+                                                }
+                                                WorkerPickerView::RunList => {
+                                                    if picker.run_selected + 1 < picker.runs.len() {
+                                                        picker.run_selected += 1;
+                                                    }
+                                                }
+                                                WorkerPickerView::RunDetail => {}
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        if let Some(ref mut picker) = self.worker_picker {
+                                            match picker.view {
+                                                WorkerPickerView::WorkerList => {
+                                                    // Load runs for selected worker
+                                                    if let Some(entry) = picker.selected_worker() {
+                                                        let worker_id = entry.id.clone();
+                                                        let worker_name = entry.name.clone();
+                                                        match self
+                                                            .worker_scheduler
+                                                            .get_worker_detail(&worker_id)
+                                                            .await
+                                                        {
+                                                            Ok(Some(detail)) => {
+                                                                picker.runs = detail
+                                                                    .recent_runs
+                                                                    .into_iter()
+                                                                    .map(|r| RunEntry {
+                                                                        id: r.id,
+                                                                        status: r.status,
+                                                                        started_at: r.started_at,
+                                                                        turns: r.turns,
+                                                                    })
+                                                                    .collect();
+                                                                picker.run_selected = 0;
+                                                                picker.selected_worker_name =
+                                                                    worker_name;
+                                                                picker.selected_worker_id =
+                                                                    worker_id;
+                                                                picker.view =
+                                                                    WorkerPickerView::RunList;
+                                                            }
+                                                            Ok(None) => {
+                                                                picker.runs = Vec::new();
+                                                                picker.run_selected = 0;
+                                                                picker.selected_worker_name =
+                                                                    worker_name;
+                                                                picker.selected_worker_id =
+                                                                    worker_id;
+                                                                picker.view =
+                                                                    WorkerPickerView::RunList;
+                                                            }
+                                                            Err(_) => {}
+                                                        }
+                                                    }
+                                                }
+                                                WorkerPickerView::RunList => {
+                                                    // Load run detail
+                                                    if let Some(run) = picker.selected_run() {
+                                                        let run_id = run.id.clone();
+                                                        let run_status = run.status.clone();
+                                                        let worker_id =
+                                                            picker.selected_worker_id.clone();
+                                                        match self
+                                                            .worker_scheduler
+                                                            .get_worker_run_detail(
+                                                                &worker_id,
+                                                                &run_id,
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(Some(full_run)) => {
+                                                                picker.run_output =
+                                                                    full_run.output;
+                                                                picker.run_status = run_status;
+                                                                picker.run_id = run_id;
+                                                                picker.view =
+                                                                    WorkerPickerView::RunDetail;
+                                                            }
+                                                            Ok(None) => {
+                                                                picker.run_output =
+                                                                    "(run not found)".to_string();
+                                                                picker.run_status = run_status;
+                                                                picker.run_id = run_id;
+                                                                picker.view =
+                                                                    WorkerPickerView::RunDetail;
+                                                            }
+                                                            Err(_) => {}
+                                                        }
+                                                    }
+                                                }
+                                                WorkerPickerView::RunDetail => {}
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Esc => {
+                                        if let Some(ref mut picker) = self.worker_picker {
+                                            match picker.view {
+                                                WorkerPickerView::RunDetail => {
+                                                    picker.view = WorkerPickerView::RunList;
+                                                }
+                                                WorkerPickerView::RunList => {
+                                                    picker.view = WorkerPickerView::WorkerList;
+                                                }
+                                                WorkerPickerView::WorkerList => {
+                                                    self.worker_picker = None;
+                                                    self.force_redraw = true;
+                                                }
                                             }
                                         }
                                     }
@@ -1408,6 +1599,9 @@ impl App {
                             if let Some(ref mut picker) = self.bg_picker {
                                 picker.refresh_log();
                             }
+                            // Expire old toast notifications (5 seconds)
+                            self.toast_notifications
+                                .retain(|(_, created)| created.elapsed().as_secs() < 5);
                         }
                     }
                 }
@@ -1415,12 +1609,12 @@ impl App {
                     self.handle_stream_event(stream_event);
                 }
                 Ok(notification) = worker_notify_rx.recv() => {
-                    self.messages.push(ChatMessage::new(
-                        "system",
+                    self.toast_notifications.push((
                         format!(
-                            "Worker '{}' completed ({}): {}",
+                            "Worker '{}' {} — {}",
                             notification.worker_name, notification.status, notification.summary
                         ),
+                        Instant::now(),
                     ));
                 }
             }
@@ -1699,7 +1893,7 @@ impl App {
             return;
         }
 
-        // Handle /workers
+        // Handle /workers — open worker picker overlay
         if text == "/workers" {
             match self.worker_scheduler.list_workers().await {
                 Ok(workers) => {
@@ -1707,21 +1901,17 @@ impl App {
                         self.messages
                             .push(ChatMessage::new("system", "No workers configured."));
                     } else {
-                        let mut lines = vec!["Workers:".to_string()];
-                        for w in &workers {
-                            let d = &w.definition;
-                            let status = if d.enabled { "enabled" } else { "disabled" };
-                            let last = d
-                                .last_run_status
-                                .as_deref()
-                                .unwrap_or("never run");
-                            lines.push(format!(
-                                "  {} [{}] schedule={} last={}",
-                                d.name, status, d.schedule, last
-                            ));
-                        }
-                        self.messages
-                            .push(ChatMessage::new("system", lines.join("\n")));
+                        let entries: Vec<WorkerEntry> = workers
+                            .into_iter()
+                            .map(|w| WorkerEntry {
+                                id: w.definition.id,
+                                name: w.definition.name,
+                                enabled: w.definition.enabled,
+                                schedule: w.definition.schedule,
+                                last_run_status: w.definition.last_run_status,
+                            })
+                            .collect();
+                        self.worker_picker = Some(WorkerPicker::new(entries));
                     }
                 }
                 Err(e) => {
@@ -2965,7 +3155,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/gmemory", "global memory (show | add <text> | clear)"),
     ("/checkpoints", "rewind to a checkpoint"),
     ("/skills", "list available skills"),
-    ("/workers", "list scheduled workers"),
+    ("/workers", "browse workers and runs"),
     ("/exit", "quit lukan"),
 ];
 

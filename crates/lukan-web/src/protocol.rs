@@ -169,10 +169,10 @@ pub enum ServerMessage {
     WorkersUpdate {
         workers: Vec<WorkerSummary>,
     },
-    WorkerDetailMsg {
+    WorkerDetail {
         worker: WorkerDetail,
     },
-    WorkerRunDetailMsg {
+    WorkerRunDetail {
         run: WorkerRun,
     },
     WorkerNotification {
@@ -341,6 +341,58 @@ mod tests {
         assert!(
             !json.contains("is_error"),
             "should not have snake_case is_error: {json}"
+        );
+    }
+
+    #[test]
+    fn test_worker_detail_serialization() {
+        use lukan_core::workers::{
+            WorkerDefinition, WorkerDetail, WorkerRun, WorkerSummary, WorkerTokenUsage,
+        };
+        let detail = WorkerDetail {
+            summary: WorkerSummary {
+                definition: WorkerDefinition {
+                    id: "abc123".into(),
+                    name: "prueba".into(),
+                    schedule: "every:10s".into(),
+                    prompt: "test".into(),
+                    tools: None,
+                    provider: None,
+                    model: None,
+                    enabled: true,
+                    notify: None,
+                    created_at: "2024-01-01".into(),
+                    last_run_at: None,
+                    last_run_status: Some("success".into()),
+                },
+                recent_run_status: Some("success".into()),
+            },
+            recent_runs: vec![WorkerRun {
+                id: "run1".into(),
+                worker_id: "abc123".into(),
+                started_at: "2024-01-01T00:00:00Z".into(),
+                completed_at: Some("2024-01-01T00:01:00Z".into()),
+                status: "success".into(),
+                output: "done".into(),
+                error: None,
+                token_usage: WorkerTokenUsage::default(),
+                turns: 3,
+            }],
+        };
+        let msg = ServerMessage::WorkerDetail { worker: detail };
+        let json = serde_json::to_string_pretty(&msg).unwrap();
+        eprintln!("WorkerDetail JSON:\n{json}");
+        assert!(
+            json.contains(r#""type": "worker_detail""#),
+            "tag should be worker_detail: {json}"
+        );
+        assert!(
+            json.contains(r#""worker""#),
+            "should have worker field: {json}"
+        );
+        assert!(
+            json.contains(r#""recentRuns""#),
+            "should have recentRuns: {json}"
         );
     }
 }

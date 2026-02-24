@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for Lukan Desktop",
+  "windows": ["*"],
+  "permissions": ["core:default"]
+}

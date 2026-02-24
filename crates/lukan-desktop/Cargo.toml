@@ -1,0 +1,22 @@
+[package]
+name = "lukan-desktop"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "lukan-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+tauri.workspace = true
+lukan-core.workspace = true
+lukan-plugins.workspace = true
+lukan-providers.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+anyhow.workspace = true

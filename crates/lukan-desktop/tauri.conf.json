@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedoc/schemas/main/tauri/tauri.conf.json",
+  "productName": "Lukan Desktop",
+  "version": "0.1.0",
+  "identifier": "ai.lukan.desktop",
+  "build": {
+    "frontendDist": "../../desktop-client/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Lukan Settings",
+        "width": 1100,
+        "height": 750,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png"]
+  }
+}

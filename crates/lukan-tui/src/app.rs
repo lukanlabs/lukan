@@ -39,6 +39,7 @@ use crate::widgets::chat::{
 use crate::widgets::input::{InputWidget, cursor_position, input_height};
 use crate::widgets::rewind_picker::{RewindEntry, RewindPicker, RewindPickerWidget, RewindView};
 use crate::widgets::status_bar::StatusBarWidget;
+use crate::widgets::task_panel::TaskPanelWidget;
 
 /// Application state
 pub struct App {
@@ -109,6 +110,12 @@ pub struct App {
     planner_answer_tx: Option<mpsc::Sender<String>>,
     /// Message queued by the user while the agent was streaming
     queued_message: Option<String>,
+    /// Whether the task panel is visible (toggled with Alt+T)
+    task_panel_visible: bool,
+    /// Cached task entries for the task panel
+    task_panel_entries: Vec<lukan_tools::tasks::TaskEntry>,
+    /// Flag to trigger task panel refresh after task tool events
+    task_panel_needs_refresh: bool,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -228,6 +235,9 @@ impl App {
             planner_question: None,
             planner_answer_tx: None,
             queued_message: None,
+            task_panel_visible: false,
+            task_panel_entries: Vec::new(),
+            task_panel_needs_refresh: false,
         }
     }
 
@@ -296,10 +306,9 @@ impl App {
             .map(|c| c.resolve_allowed_paths(&cwd))
             .unwrap_or_else(|| vec![cwd.clone()]);
 
-        // Load permission mode from project config (if available)
-        if let Some(ref cfg) = project_cfg {
-            self.permission_mode = cfg.permission_mode.clone();
-        }
+        // NOTE: permission_mode is loaded once from project config in run(),
+        // not here, so user overrides via Shift+Tab are preserved across agent
+        // recreation (/clear, new session, etc.).
 
         // Create approval channel
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
@@ -362,13 +371,18 @@ impl App {
 
         let (agent_tx, mut agent_rx) = mpsc::channel::<StreamEvent>(256);
 
-        // Check workspace trust before proceeding
+        // Check workspace trust and load permission mode from project config
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
-        let is_trusted = lukan_core::config::ProjectConfig::load(&cwd)
+        let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
             .await
             .ok()
-            .flatten()
+            .flatten();
+        let is_trusted = project_cfg
+            .as_ref()
             .is_some_and(|(_, cfg)| cfg.trusted);
+        if let Some((_, ref cfg)) = project_cfg {
+            self.permission_mode = cfg.permission_mode.clone();
+        }
         if !is_trusted {
             self.trust_prompt = Some(TrustPrompt {
                 cwd: cwd.display().to_string(),
@@ -389,7 +403,16 @@ impl App {
             let term_size = terminal.size()?;
             let display_input = self.display_input();
             let cur_input_h = input_height(&display_input, term_size.width, 8);
-            let chat_area_h = term_size.height.saturating_sub(cur_input_h + 2); // +2 = status bar + margin
+            let task_panel_h: u16 = if self.task_panel_visible {
+                if self.task_panel_entries.is_empty() {
+                    3 // border top + "No tasks" + border bottom
+                } else {
+                    (self.task_panel_entries.len() as u16 + 2).min(8)
+                }
+            } else {
+                0
+            };
+            let chat_area_h = term_size.height.saturating_sub(cur_input_h + 2 + task_panel_h); // +2 = status bar + margin
             if self.trust_prompt.is_none()
                 && self.approval_prompt.is_none()
                 && self.plan_review.is_none()
@@ -457,12 +480,13 @@ impl App {
                 // Dynamic layout: palette below input, above status bar
                 // margin_h adds a 1-row gap between chat content and shimmer/input
                 let margin_h: u16 = 1;
-                let (chat_area, shimmer_area, queued_area, input_area, palette_area, status_area) =
+                let (chat_area, task_panel_area, shimmer_area, queued_area, input_area, palette_area, status_area) =
                     if palette_visible {
                         let chunks = Layout::default()
                             .direction(Direction::Vertical)
                             .constraints([
                                 Constraint::Min(1),
+                                Constraint::Length(task_panel_h),
                                 Constraint::Length(margin_h),
                                 Constraint::Length(shimmer_h),
                                 Constraint::Length(queued_h),
@@ -471,12 +495,13 @@ impl App {
                                 Constraint::Length(1),
                             ])
                             .split(area);
-                        (chunks[0], chunks[2], chunks[3], chunks[4], Some(chunks[5]), chunks[6])
+                        (chunks[0], chunks[1], chunks[3], chunks[4], chunks[5], Some(chunks[6]), chunks[7])
                     } else {
                         let chunks = Layout::default()
                             .direction(Direction::Vertical)
                             .constraints([
                                 Constraint::Min(1),
+                                Constraint::Length(task_panel_h),
                                 Constraint::Length(margin_h),
                                 Constraint::Length(shimmer_h),
                                 Constraint::Length(queued_h),
@@ -484,7 +509,7 @@ impl App {
                                 Constraint::Length(1),
                             ])
                             .split(area);
-                        (chunks[0], chunks[2], chunks[3], chunks[4], None, chunks[5])
+                        (chunks[0], chunks[1], chunks[3], chunks[4], chunks[5], None, chunks[6])
                     };
 
                 // Chat (or overlay pickers)
@@ -532,6 +557,12 @@ impl App {
                         &self.streaming_text,
                     );
                     frame.render_widget(chat, padded_chat);
+                }
+
+                // Task panel — between chat and shimmer/input
+                if self.task_panel_visible && task_panel_area.height > 0 {
+                    let widget = TaskPanelWidget::new(&self.task_panel_entries);
+                    frame.render_widget(widget, task_panel_area);
                 }
 
                 // Palette area: reasoning picker, model picker, or command palette
@@ -1136,10 +1167,18 @@ impl App {
                                     content = "No memory files found.\n\nUse /memories activate to enable project memory.".to_string();
                                 }
                                 self.memory_viewer = Some(content);
-                            } else if key.code == KeyCode::BackTab
-                                && !self.is_streaming
+                            } else if key.code == KeyCode::Char('t')
+                                && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
                             {
-                                // Shift+Tab: cycle permission mode
+                                // Alt+T: toggle task panel
+                                self.task_panel_visible = !self.task_panel_visible;
+                                if self.task_panel_visible {
+                                    let cwd = std::env::current_dir().unwrap_or_default();
+                                    self.task_panel_entries =
+                                        lukan_tools::tasks::read_all_tasks(&cwd).await;
+                                }
+                            } else if key.code == KeyCode::BackTab {
+                                // Shift+Tab: cycle permission mode (works during streaming too)
                                 self.permission_mode = self.permission_mode.next();
                                 if let Some(ref mut agent) = self.agent {
                                     agent.set_permission_mode(self.permission_mode.clone());
@@ -1359,7 +1398,10 @@ impl App {
                 && let Some(mut rx) = self.agent_return_rx.take()
             {
                 match rx.try_recv() {
-                    Ok(agent) => {
+                    Ok(mut agent) => {
+                        // Sync permission mode in case it was changed via
+                        // Shift+Tab while the agent was running its turn
+                        agent.set_permission_mode(self.permission_mode.clone());
                         self.session_id = Some(agent.session_id().to_string());
                         self.agent = Some(agent);
 
@@ -2307,6 +2349,11 @@ impl App {
                 let mut msg = ChatMessage::new("tool_call", format!("● {name}({summary})"));
                 msg.tool_id = Some(id);
                 self.messages.push(msg);
+
+                // Auto-refresh task panel when task tools are used
+                if matches!(name.as_str(), "TaskAdd" | "TaskUpdate" | "TaskList") {
+                    self.task_panel_needs_refresh = true;
+                }
             }
             StreamEvent::ToolProgress { id, name, content } => {
                 self.active_tool = Some(name);

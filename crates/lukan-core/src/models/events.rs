@@ -10,6 +10,45 @@ pub enum StopReason {
     Error,
 }
 
+/// A task in a submitted plan
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanTask {
+    pub title: String,
+    pub detail: String,
+}
+
+/// A question item for the PlannerQuestion tool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannerQuestionItem {
+    pub header: String,
+    pub question: String,
+    pub options: Vec<PlannerQuestionOption>,
+    #[serde(default)]
+    pub multi_select: bool,
+}
+
+/// An option in a PlannerQuestion
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlannerQuestionOption {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Response from the UI to a plan review request
+#[derive(Debug, Clone)]
+pub enum PlanReviewResponse {
+    /// User accepted the plan (optionally with modified task list)
+    Accepted {
+        modified_tasks: Option<Vec<PlanTask>>,
+    },
+    /// User rejected the plan with feedback
+    Rejected { feedback: String },
+    /// User wants changes to a specific task
+    TaskFeedback { task_index: usize, feedback: String },
+}
+
 /// Streaming events emitted by providers and the agent loop
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
@@ -62,6 +101,23 @@ pub enum StreamEvent {
 
     /// Tool calls require user approval
     ApprovalRequired { tools: Vec<ToolApprovalRequest> },
+
+    /// Plan submitted for user review
+    PlanReview {
+        id: String,
+        title: String,
+        plan: String,
+        tasks: Vec<PlanTask>,
+    },
+
+    /// Planner asking clarifying questions
+    PlannerQuestion {
+        id: String,
+        questions: Vec<PlannerQuestionItem>,
+    },
+
+    /// Permission mode changed (e.g. planner → auto after plan accept)
+    ModeChanged { mode: String },
 
     /// Token usage information
     Usage {

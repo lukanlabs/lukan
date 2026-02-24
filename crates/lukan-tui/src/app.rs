@@ -33,6 +33,9 @@ use chrono::Utc;
 
 use crate::event::{AppEvent, is_quit, spawn_event_reader};
 use crate::widgets::bg_picker::{BgEntry, BgPicker, BgPickerView, BgPickerWidget};
+use crate::widgets::worker_picker::{
+    RunEntry, WorkerEntry, WorkerPicker, WorkerPickerView, WorkerPickerWidget,
+};
 use crate::widgets::chat::{
     ChatMessage, ChatWidget, build_message_lines, physical_row_count, sanitize_for_display,
 };
@@ -82,6 +85,8 @@ pub struct App {
     paste_info: Option<(usize, usize, String)>,
     /// Background process picker state
     bg_picker: Option<BgPicker>,
+    /// Worker picker overlay state
+    worker_picker: Option<WorkerPicker>,
     /// Rewind (checkpoint restore) picker state
     rewind_picker: Option<RewindPicker>,
     /// Memory viewer overlay content (shown via Alt+M)
@@ -224,6 +229,7 @@ impl App {
             esc_pending: false,
             paste_info: None,
             bg_picker: None,
+            worker_picker: None,
             rewind_picker: None,
             memory_viewer: None,
             trust_prompt: None,
@@ -427,6 +433,7 @@ impl App {
                 && self.planner_question.is_none()
                 && self.session_picker.is_none()
                 && self.bg_picker.is_none()
+                && self.worker_picker.is_none()
                 && self.rewind_picker.is_none()
                 && self.memory_viewer.is_none()
             {
@@ -442,6 +449,7 @@ impl App {
             // Pre-compute palette state for this frame
             let filtered_cmds = filtered_commands(&self.input);
             let bg_picker_active = self.bg_picker.is_some();
+            let worker_picker_active = self.worker_picker.is_some();
             let rewind_picker_active = self.rewind_picker.is_some();
             let cmd_palette_active = !filtered_cmds.is_empty()
                 && !self.is_streaming
@@ -449,6 +457,7 @@ impl App {
                 && self.model_picker.is_none()
                 && self.reasoning_picker.is_none()
                 && !bg_picker_active
+                && !worker_picker_active
                 && !rewind_picker_active;
             let model_picker_active = self.model_picker.is_some() && self.session_picker.is_none();
             let reasoning_picker_active = self.reasoning_picker.is_some();
@@ -549,6 +558,9 @@ impl App {
                     frame.render_widget(widget, chat_area);
                 } else if let Some(ref picker) = self.bg_picker {
                     let widget = BgPickerWidget::new(picker);
+                    frame.render_widget(widget, chat_area);
+                } else if let Some(ref picker) = self.worker_picker {
+                    let widget = WorkerPickerWidget::new(picker);
                     frame.render_widget(widget, chat_area);
                 } else if let Some(ref picker) = self.session_picker {
                     let widget = SessionPickerWidget::new(picker);

@@ -577,6 +577,8 @@ async fn plugin_start_foreground(
         permission_mode: lukan_core::config::types::PermissionMode::Skip,
         permissions: lukan_core::config::types::PermissionsConfig::default(),
         approval_rx: None,
+        plan_review_rx: None,
+        planner_answer_rx: None,
     };
 
     println!(

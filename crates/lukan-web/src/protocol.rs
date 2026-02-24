@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use lukan_core::models::checkpoints::Checkpoint;
+use lukan_core::models::events::{PlanTask, PlannerQuestionItem};
 use lukan_core::models::messages::Message;
 use lukan_core::models::sessions::SessionSummary;
 use lukan_core::workers::{
@@ -195,6 +196,16 @@ pub enum ServerMessage {
     },
     ScreenshotsChanged {
         enabled: bool,
+    },
+    PlanReview {
+        id: String,
+        title: String,
+        plan: String,
+        tasks: Vec<PlanTask>,
+    },
+    PlannerQuestion {
+        id: String,
+        questions: Vec<PlannerQuestionItem>,
     },
 }
 

@@ -1,0 +1,29 @@
+## Task Tracking
+
+**Tasks are created automatically from accepted plans.** When a plan is accepted via SubmitPlan, tasks are created from the plan's task list. You do NOT need to create them again.
+
+### After a plan is accepted
+1. Tasks already exist — check with `TaskList` to see current state
+2. Use `TaskUpdate({"updates":[{"id":N, "status":"in_progress"}]})` when starting a task
+3. Use `TaskUpdate({"updates":[{"id":N, "status":"done"}, {"id":M, "status":"in_progress"}]})` when finishing one and starting the next
+4. Work through tasks **in order** (task #1 first, then #2, etc.)
+5. **NEVER use TaskAdd to recreate tasks that already exist** — this would duplicate or overwrite them
+
+### When no plan exists
+Use TaskAdd only for complex multi-step work that benefits from visible progress tracking:
+- Building a feature across multiple files
+- Significant refactoring or architectural changes
+- Multi-component work where the user needs to see progress
+
+Do NOT create tasks for:
+- Simple sequential actions — just do them
+- Quick fixes or single-file changes
+- Trivial steps the user listed explicitly
+
+### How TaskAdd works
+TaskAdd **appends** new tasks to the existing list. It does NOT replace existing tasks. Each new task gets the next available ID.
+
+### Rules
+- Batch updates in ONE TaskUpdate call — never call it multiple times in parallel
+- After context compaction, always call `TaskList` to see where you left off
+- The Active Plan in the system prompt shows the full plan for reference — consult it when unsure what a task requires

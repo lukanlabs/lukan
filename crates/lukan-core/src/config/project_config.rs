@@ -132,4 +132,42 @@ impl ProjectConfig {
 
         Ok(lukan_dir)
     }
+
+    /// Save a plan to `.lukan/plans/{date}-{slug}.md` and return the filename.
+    pub async fn save_plan(project_dir: &Path, title: &str, content: &str) -> Result<String> {
+        let plans_dir = project_dir.join(".lukan").join("plans");
+        tokio::fs::create_dir_all(&plans_dir).await?;
+
+        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let slug: String = title
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+            .split('-')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
+        let slug = if slug.len() > 50 { &slug[..50] } else { &slug };
+        let filename = format!("{date}-{slug}.md");
+
+        let path = plans_dir.join(&filename);
+        tokio::fs::write(&path, content)
+            .await
+            .context("Failed to write plan file")?;
+
+        Ok(filename)
+    }
+
+    /// Read a previously saved plan from `.lukan/plans/`.
+    pub async fn read_plan(project_dir: &Path, filename: &str) -> Result<Option<String>> {
+        let path = project_dir.join(".lukan").join("plans").join(filename);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = tokio::fs::read_to_string(&path)
+            .await
+            .context("Failed to read plan file")?;
+        Ok(Some(content))
+    }
 }

@@ -7,7 +7,10 @@ use chrono::Utc;
 use lukan_core::config::LukanPaths;
 use lukan_core::config::types::{PermissionMode, PermissionsConfig};
 use lukan_core::models::checkpoints::{Checkpoint, FileSnapshot};
-use lukan_core::models::events::{ApprovalResponse, StopReason, StreamEvent, ToolApprovalRequest};
+use lukan_core::models::events::{
+    ApprovalResponse, PlanReviewResponse, PlanTask, PlannerQuestionItem, StopReason, StreamEvent,
+    ToolApprovalRequest,
+};
 use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
 use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
@@ -40,6 +43,8 @@ const COMPACTION_SIMPLE_PROMPT: &str = include_str!("../../../prompts/compaction
 const COMPACTION_WITH_MEMORY_PROMPT: &str =
     include_str!("../../../prompts/compaction-with-memory.txt");
 const MEMORY_UPDATE_PROMPT: &str = include_str!("../../../prompts/memory_update.txt");
+const PLANNER_PROMPT: &str = include_str!("../../../prompts/planner.txt");
+const TASK_TRACKING_PROMPT: &str = include_str!("../../../prompts/task-tracking.txt");
 
 /// Configuration for creating an AgentLoop
 pub struct AgentConfig {
@@ -61,6 +66,10 @@ pub struct AgentConfig {
     pub permissions: PermissionsConfig,
     /// Channel to receive approval responses from the UI
     pub approval_rx: Option<mpsc::Receiver<ApprovalResponse>>,
+    /// Channel to receive plan review responses from the UI
+    pub plan_review_rx: Option<mpsc::Receiver<PlanReviewResponse>>,
+    /// Channel to receive planner question answers from the UI
+    pub planner_answer_rx: Option<mpsc::Receiver<String>>,
 }
 
 /// Pending tool call accumulated from stream events
@@ -93,6 +102,18 @@ pub struct AgentLoop {
     permission_matcher: PermissionMatcher,
     /// Channel to receive approval responses from the UI
     approval_rx: Option<mpsc::Receiver<ApprovalResponse>>,
+    /// Channel to receive plan review responses from the UI
+    plan_review_rx: Option<mpsc::Receiver<PlanReviewResponse>>,
+    /// Channel to receive planner question answers from the UI
+    planner_answer_rx: Option<mpsc::Receiver<String>>,
+    /// Filename of the currently active plan (e.g. "2024-01-15-add-auth.md")
+    current_plan_file: Option<String>,
+    /// Full markdown content of the currently active plan
+    current_plan_content: Option<String>,
+    /// Skills discovered at init from `.lukan/skills/`
+    available_skills: Vec<lukan_tools::skills::SkillInfo>,
+    /// Skills already loaded in this session (by folder name)
+    loaded_skills: HashSet<String>,
 }
 
 impl AgentLoop {
@@ -134,7 +155,10 @@ impl AgentLoop {
         let permission_matcher =
             PermissionMatcher::new(config.permission_mode, &config.permissions);
         let approval_rx = config.approval_rx;
+        let plan_review_rx = config.plan_review_rx;
+        let planner_answer_rx = config.planner_answer_rx;
         let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
+        let available_skills = lukan_tools::skills::discover_skills(&config.cwd).await;
         Ok(Self {
             provider: config.provider,
             tools: Arc::new(config.tools),
@@ -151,6 +175,12 @@ impl AgentLoop {
             allowed_paths,
             permission_matcher,
             approval_rx,
+            plan_review_rx,
+            planner_answer_rx,
+            current_plan_file: None,
+            current_plan_content: None,
+            available_skills,
+            loaded_skills: HashSet::new(),
         })
     }
 
@@ -191,6 +221,8 @@ impl AgentLoop {
         let permission_matcher =
             PermissionMatcher::new(config.permission_mode, &config.permissions);
         let approval_rx = config.approval_rx;
+        let plan_review_rx = config.plan_review_rx;
+        let planner_answer_rx = config.planner_answer_rx;
         let session = SessionManager::load(session_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
@@ -198,6 +230,7 @@ impl AgentLoop {
         let mut history = MessageHistory::new();
         history.load_from_json(session.messages.clone());
 
+        let available_skills = lukan_tools::skills::discover_skills(&config.cwd).await;
         Ok(Self {
             provider: config.provider,
             tools: Arc::new(config.tools),
@@ -214,6 +247,12 @@ impl AgentLoop {
             allowed_paths,
             permission_matcher,
             approval_rx,
+            plan_review_rx,
+            planner_answer_rx,
+            current_plan_file: None,
+            current_plan_content: None,
+            available_skills,
+            loaded_skills: HashSet::new(),
         })
     }
 
@@ -407,6 +446,90 @@ impl AgentLoop {
         self.permission_matcher.add_allow_rule(pattern);
     }
 
+    /// Get the current plan file name (if any)
+    pub fn current_plan_file(&self) -> Option<&str> {
+        self.current_plan_file.as_deref()
+    }
+
+    /// Rebuild the system prompt based on current mode and plan state.
+    /// Call this after mode changes (e.g. planner → auto on plan accept).
+    pub async fn rebuild_system_prompt(&mut self) {
+        let base = if *self.permission_matcher.mode() == PermissionMode::Planner {
+            PLANNER_PROMPT
+        } else {
+            include_str!("../../../prompts/base.txt")
+        };
+
+        let mut cached = vec![base.to_string(), TASK_TRACKING_PROMPT.to_string()];
+
+        // Load global memory
+        let global_path = LukanPaths::global_memory_file();
+        if let Ok(memory) = tokio::fs::read_to_string(&global_path).await {
+            let trimmed = memory.trim();
+            if !trimmed.is_empty() {
+                cached.push(format!("## Global Memory\n\n{trimmed}"));
+            }
+        }
+
+        // Load project memory if active
+        let active_path = LukanPaths::project_memory_active_file();
+        if tokio::fs::metadata(&active_path).await.is_ok() {
+            let project_path = LukanPaths::project_memory_file();
+            if let Ok(memory) = tokio::fs::read_to_string(&project_path).await {
+                let trimmed = memory.trim();
+                if !trimmed.is_empty() {
+                    cached.push(format!("## Project Memory\n\n{trimmed}"));
+                }
+            }
+        }
+
+        // Dynamic section: date + tasks + active plan
+        let now = chrono::Utc::now();
+        let tz_name = lukan_core::config::ConfigManager::load()
+            .await
+            .ok()
+            .and_then(|c| c.timezone)
+            .unwrap_or_else(|| "UTC".to_string());
+        let mut dynamic = format!(
+            "Current date: {} ({}). Use this for any time-relative operations.",
+            now.format("%Y-%m-%d %H:%M UTC"),
+            tz_name
+        );
+
+        // Include current tasks in dynamic section
+        if let Some(tasks_section) = lukan_tools::tasks::get_tasks_for_prompt(&self.cwd).await {
+            dynamic.push_str("\n\n## Current Tasks\n\n");
+            dynamic.push_str(&tasks_section);
+        }
+
+        // Include available skills in dynamic section
+        if !self.available_skills.is_empty() {
+            dynamic.push_str("\n\n## Available Skills\nIMPORTANT: When the user's request matches a skill below, you MUST call the LoadSkill tool with the skill's folder name BEFORE starting the task. The skill may contain project-specific instructions that override default behavior.\n");
+            for skill in &self.available_skills {
+                dynamic.push_str(&format!("- **{}**: {}\n", skill.folder, skill.description));
+            }
+            if !self.loaded_skills.is_empty() {
+                let mut list: Vec<&str> =
+                    self.loaded_skills.iter().map(|s| s.as_str()).collect();
+                list.sort();
+                dynamic.push_str(&format!(
+                    "\nAlready loaded (no need to reload): {}",
+                    list.join(", ")
+                ));
+            }
+        }
+
+        // Include active plan content in dynamic section (when not in planner mode)
+        if *self.permission_matcher.mode() != PermissionMode::Planner
+            && let Some(ref plan_content) = self.current_plan_content
+        {
+            dynamic.push_str("\n\n## Active Plan\n\n");
+            dynamic.push_str(plan_content);
+        }
+
+        self.system_prompt = SystemPrompt::Structured { cached, dynamic };
+    }
+
     /// Add user context (e.g. shell command output) without triggering a turn
     pub fn add_user_context(&mut self, content: &str) {
         self.history.add_user_message(content);
@@ -575,6 +698,18 @@ impl AgentLoop {
                 return Ok(());
             }
 
+            // ── Intercept planner tools ──────────────────────────────────
+            // PlannerQuestion and SubmitPlan are handled specially and
+            // removed from pending_tools before the normal permission check.
+            let intercepted = self
+                .intercept_planner_tools(&mut pending_tools, &event_tx)
+                .await;
+
+            // If all tools were intercepted (nothing left), continue loop
+            if pending_tools.is_empty() && intercepted {
+                continue;
+            }
+
             // ── Permission check ─────────────────────────────────────────
             // Classify each pending tool as allowed, needs_approval, or denied
             let mut allowed_tools: Vec<&PendingToolCall> = Vec::new();
@@ -666,17 +801,13 @@ impl AgentLoop {
                                 let pattern =
                                     generate_allow_pattern(&tool_req.name, &tool_req.input);
                                 self.permission_matcher.add_allow_rule(&pattern);
-                                if let Err(e) =
-                                    ProjectConfig::add_allow_rule(&cwd, &pattern).await
+                                if let Err(e) = ProjectConfig::add_allow_rule(&cwd, &pattern).await
                                 {
                                     warn!(error = %e, pattern, "Failed to persist allow rule");
                                 }
                                 patterns.push(pattern);
                             }
-                            info!(
-                                rules = patterns.join(", "),
-                                "Persisted always-allow rules"
-                            );
+                            info!(rules = patterns.join(", "), "Persisted always-allow rules");
                         }
                         Some(ApprovalResponse::DeniedAll) | None => {
                             // Deny all pending tools
@@ -759,6 +890,15 @@ impl AgentLoop {
                     })
                     .await;
 
+                // Track loaded skills for prompt injection
+                if tool.name == "LoadSkill"
+                    && !result.is_error
+                    && let Some(name) = tool.input.get("name").and_then(|v| v.as_str())
+                {
+                    self.loaded_skills.insert(name.to_string());
+                    self.rebuild_system_prompt().await;
+                }
+
                 // Collect file snapshots for checkpoint
                 if let Some(snapshot) = result.snapshot.clone() {
                     turn_snapshots.push(snapshot);
@@ -798,6 +938,343 @@ impl AgentLoop {
         self.check_auto_ops(&event_tx).await;
 
         Ok(())
+    }
+
+    /// Intercept PlannerQuestion and SubmitPlan tool calls.
+    /// Removes intercepted calls from `pending_tools`, handles them,
+    /// and injects tool results into history.
+    /// Returns `true` if any tools were intercepted.
+    async fn intercept_planner_tools(
+        &mut self,
+        pending_tools: &mut Vec<PendingToolCall>,
+        event_tx: &mpsc::Sender<StreamEvent>,
+    ) -> bool {
+        let mut intercepted = false;
+
+        // Process PlannerQuestion calls
+        let mut i = 0;
+        while i < pending_tools.len() {
+            if pending_tools[i].name == "PlannerQuestion" {
+                let tool = pending_tools.remove(i);
+                intercepted = true;
+
+                // Parse questions from input
+                let questions: Vec<PlannerQuestionItem> = tool
+                    .input
+                    .get("questions")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
+                if questions.is_empty() {
+                    // Invalid input — return error
+                    self.history.add(Message {
+                        role: Role::User,
+                        content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                            tool_use_id: tool.id.clone(),
+                            content: "No questions provided.".to_string(),
+                            is_error: Some(true),
+                            diff: None,
+                            image: None,
+                        }]),
+                        tool_call_id: None,
+                        name: None,
+                    });
+                    let _ = event_tx
+                        .send(StreamEvent::ToolResult {
+                            id: tool.id,
+                            name: "PlannerQuestion".to_string(),
+                            content: "No questions provided.".to_string(),
+                            is_error: Some(true),
+                            diff: None,
+                            image: None,
+                        })
+                        .await;
+                    continue;
+                }
+
+                // Send event to UI
+                let _ = event_tx
+                    .send(StreamEvent::PlannerQuestion {
+                        id: tool.id.clone(),
+                        questions,
+                    })
+                    .await;
+
+                // Wait for user answer
+                let answer = if let Some(ref mut rx) = self.planner_answer_rx {
+                    rx.recv()
+                        .await
+                        .unwrap_or_else(|| "No answer provided.".to_string())
+                } else {
+                    "PlannerQuestion channel not connected.".to_string()
+                };
+
+                // Inject answer as tool result
+                self.history.add(Message {
+                    role: Role::User,
+                    content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                        tool_use_id: tool.id.clone(),
+                        content: answer.clone(),
+                        is_error: None,
+                        diff: None,
+                        image: None,
+                    }]),
+                    tool_call_id: None,
+                    name: None,
+                });
+                let _ = event_tx
+                    .send(StreamEvent::ToolResult {
+                        id: tool.id,
+                        name: "PlannerQuestion".to_string(),
+                        content: answer,
+                        is_error: None,
+                        diff: None,
+                        image: None,
+                    })
+                    .await;
+            } else {
+                i += 1;
+            }
+        }
+
+        // Process SubmitPlan calls
+        let mut i = 0;
+        while i < pending_tools.len() {
+            if pending_tools[i].name == "SubmitPlan" {
+                let mut tool = pending_tools.remove(i);
+                intercepted = true;
+
+                // Normalize input (accept "description" as alias for "detail")
+                lukan_tools::planner_tools::normalize_submit_plan_input(&mut tool.input);
+
+                // Parse plan data
+                let title = tool
+                    .input
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Untitled Plan")
+                    .to_string();
+                let plan = tool
+                    .input
+                    .get("plan")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let tasks: Vec<PlanTask> = tool
+                    .input
+                    .get("tasks")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
+                if tasks.is_empty() {
+                    self.history.add(Message {
+                        role: Role::User,
+                        content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                            tool_use_id: tool.id.clone(),
+                            content: "Plan must include at least one task.".to_string(),
+                            is_error: Some(true),
+                            diff: None,
+                            image: None,
+                        }]),
+                        tool_call_id: None,
+                        name: None,
+                    });
+                    let _ = event_tx
+                        .send(StreamEvent::ToolResult {
+                            id: tool.id,
+                            name: "SubmitPlan".to_string(),
+                            content: "Plan must include at least one task.".to_string(),
+                            is_error: Some(true),
+                            diff: None,
+                            image: None,
+                        })
+                        .await;
+                    continue;
+                }
+
+                // Send plan review event to UI
+                let _ = event_tx
+                    .send(StreamEvent::PlanReview {
+                        id: tool.id.clone(),
+                        title: title.clone(),
+                        plan: plan.clone(),
+                        tasks: tasks.clone(),
+                    })
+                    .await;
+
+                // Wait for user review
+                let response = if let Some(ref mut rx) = self.plan_review_rx {
+                    rx.recv().await
+                } else {
+                    None
+                };
+
+                match response {
+                    Some(PlanReviewResponse::Accepted { modified_tasks }) => {
+                        let final_tasks = modified_tasks.unwrap_or(tasks);
+
+                        // Save plan to disk
+                        let cwd = self.cwd.clone();
+                        match ProjectConfig::save_plan(&cwd, &title, &plan).await {
+                            Ok(filename) => {
+                                self.current_plan_file = Some(filename);
+                                self.current_plan_content = Some(plan.clone());
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "Failed to save plan file");
+                                self.current_plan_content = Some(plan.clone());
+                            }
+                        }
+
+                        // Create tasks from plan
+                        let task_titles: Vec<String> =
+                            final_tasks.iter().map(|t| t.title.clone()).collect();
+                        lukan_tools::tasks::create_tasks_from_plan(&cwd, &task_titles).await;
+
+                        // Switch mode from planner to auto
+                        self.permission_matcher.set_mode(PermissionMode::Auto);
+
+                        // Rebuild system prompt with new mode + tasks + plan
+                        self.rebuild_system_prompt().await;
+
+                        // Notify UI of mode change
+                        let _ = event_tx
+                            .send(StreamEvent::ModeChanged {
+                                mode: "auto".to_string(),
+                            })
+                            .await;
+
+                        // Inject success tool result with instructions
+                        let task_summary: String = task_titles
+                            .iter()
+                            .enumerate()
+                            .map(|(i, t)| format!("  {}. {}", i + 1, t))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let result_content = format!(
+                            "Plan accepted! {} tasks created. Mode switched to auto.\n\n\
+                             Tasks:\n{}\n\n\
+                             Start implementing task #1 now. Use TaskUpdate to mark tasks in_progress/done as you go.",
+                            task_titles.len(),
+                            task_summary
+                        );
+
+                        self.history.add(Message {
+                            role: Role::User,
+                            content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                                tool_use_id: tool.id.clone(),
+                                content: result_content.clone(),
+                                is_error: None,
+                                diff: None,
+                                image: None,
+                            }]),
+                            tool_call_id: None,
+                            name: None,
+                        });
+                        let _ = event_tx
+                            .send(StreamEvent::ToolResult {
+                                id: tool.id,
+                                name: "SubmitPlan".to_string(),
+                                content: result_content,
+                                is_error: None,
+                                diff: None,
+                                image: None,
+                            })
+                            .await;
+                    }
+                    Some(PlanReviewResponse::Rejected { feedback }) => {
+                        let result_content = format!(
+                            "Plan rejected by user. Feedback: {feedback}\n\n\
+                             Please revise the plan based on this feedback and resubmit."
+                        );
+                        self.history.add(Message {
+                            role: Role::User,
+                            content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                                tool_use_id: tool.id.clone(),
+                                content: result_content.clone(),
+                                is_error: Some(true),
+                                diff: None,
+                                image: None,
+                            }]),
+                            tool_call_id: None,
+                            name: None,
+                        });
+                        let _ = event_tx
+                            .send(StreamEvent::ToolResult {
+                                id: tool.id,
+                                name: "SubmitPlan".to_string(),
+                                content: result_content,
+                                is_error: Some(true),
+                                diff: None,
+                                image: None,
+                            })
+                            .await;
+                    }
+                    Some(PlanReviewResponse::TaskFeedback {
+                        task_index,
+                        feedback,
+                    }) => {
+                        let result_content = format!(
+                            "User wants changes to task #{}: {feedback}\n\n\
+                             Please revise this task and resubmit the plan.",
+                            task_index + 1
+                        );
+                        self.history.add(Message {
+                            role: Role::User,
+                            content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                                tool_use_id: tool.id.clone(),
+                                content: result_content.clone(),
+                                is_error: Some(true),
+                                diff: None,
+                                image: None,
+                            }]),
+                            tool_call_id: None,
+                            name: None,
+                        });
+                        let _ = event_tx
+                            .send(StreamEvent::ToolResult {
+                                id: tool.id,
+                                name: "SubmitPlan".to_string(),
+                                content: result_content,
+                                is_error: Some(true),
+                                diff: None,
+                                image: None,
+                            })
+                            .await;
+                    }
+                    None => {
+                        // Channel closed — treat as rejection
+                        let result_content = "Plan review cancelled (channel closed).".to_string();
+                        self.history.add(Message {
+                            role: Role::User,
+                            content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                                tool_use_id: tool.id.clone(),
+                                content: result_content.clone(),
+                                is_error: Some(true),
+                                diff: None,
+                                image: None,
+                            }]),
+                            tool_call_id: None,
+                            name: None,
+                        });
+                        let _ = event_tx
+                            .send(StreamEvent::ToolResult {
+                                id: tool.id,
+                                name: "SubmitPlan".to_string(),
+                                content: result_content,
+                                is_error: Some(true),
+                                diff: None,
+                                image: None,
+                            })
+                            .await;
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        intercepted
     }
 
     /// Save current state to disk

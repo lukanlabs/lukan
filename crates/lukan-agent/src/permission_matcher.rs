@@ -19,10 +19,21 @@ pub enum ToolVerdict {
 }
 
 /// Tools that are always safe (read-only or low-risk)
-const SAFE_TOOLS: &[&str] = &["ReadFile", "Grep", "Glob", "WebFetch"];
+const SAFE_TOOLS: &[&str] = &["ReadFile", "Grep", "Glob", "WebFetch", "TaskAdd", "TaskList", "TaskUpdate", "PlannerQuestion", "SubmitPlan", "LoadSkill"];
 
-/// Tools allowed in planner mode (read-only exploration)
-const PLANNER_WHITELIST: &[&str] = &["ReadFile", "Grep", "Glob", "WebFetch"];
+/// Tools allowed in planner mode (read-only exploration + planner-specific)
+const PLANNER_WHITELIST: &[&str] = &[
+    "ReadFile",
+    "Grep",
+    "Glob",
+    "WebFetch",
+    "TaskAdd",
+    "TaskList",
+    "TaskUpdate",
+    "PlannerQuestion",
+    "SubmitPlan",
+    "LoadSkill",
+];
 
 /// Permission matcher: evaluates tool calls against mode + config rules
 pub struct PermissionMatcher {
@@ -214,10 +225,7 @@ impl PermissionMatcher {
 pub fn generate_allow_pattern(tool_name: &str, input: &serde_json::Value) -> String {
     match tool_name {
         "Bash" => {
-            let cmd = input
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
             let first_word = cmd.split_whitespace().next().unwrap_or("");
             format!("Bash({first_word}:*)")
         }

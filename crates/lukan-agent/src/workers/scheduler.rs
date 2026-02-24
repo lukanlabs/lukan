@@ -357,6 +357,8 @@ async fn run_worker(
         permission_mode: lukan_core::config::types::PermissionMode::Skip,
         permissions,
         approval_rx: None,
+        plan_review_rx: None,
+        planner_answer_rx: None,
     };
 
     // Create agent and run

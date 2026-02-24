@@ -3,9 +3,12 @@ pub mod bg_processes;
 mod edit_file;
 mod glob_tool;
 mod grep;
+pub mod planner_tools;
 pub mod plugin_tools;
 mod read_file;
 pub mod sandbox;
+pub mod skills;
+pub mod tasks;
 mod web_fetch;
 mod write_file;
 
@@ -459,6 +462,15 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(Box::new(grep::GrepTool));
     registry.register(Box::new(glob_tool::GlobTool));
     registry.register(Box::new(web_fetch::WebFetchTool));
+    // Task tools
+    registry.register(Box::new(tasks::TaskAddTool));
+    registry.register(Box::new(tasks::TaskListTool));
+    registry.register(Box::new(tasks::TaskUpdateTool));
+    // Planner tools (intercepted by agent loop)
+    registry.register(Box::new(planner_tools::SubmitPlanTool));
+    registry.register(Box::new(planner_tools::PlannerQuestionTool));
+    // Skill loading tool
+    registry.register(Box::new(skills::LoadSkillTool));
     // Plugin-provided tools (scanned from installed plugins)
     plugin_tools::register_plugin_tools(&mut registry);
     registry

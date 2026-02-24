@@ -62,35 +62,9 @@ else
   send_log "info" "Monitoring all containers"
 fi
 
-# ── Build docker events filter ───────────────────────────────────────
-# Events we care about:
-#   die        — container exited (includes exit code)
-#   oom        — out of memory kill
-#   health_status — health check result changed
-#   start      — container started
-#   stop       — container stopped
-#   kill       — container received signal
-
-DOCKER_ARGS=(
-  events
-  --format '{{json .}}'
-  --filter 'type=container'
-  --filter 'event=die'
-  --filter 'event=oom'
-  --filter 'event=health_status'
-  --filter 'event=start'
-  --filter 'event=stop'
-  --filter 'event=kill'
-)
-
-# Add container name filters if specified
-for name in "${CONTAINERS[@]}"; do
-  DOCKER_ARGS+=(--filter "container=${name}")
-done
-
 # ── Handle shutdown ──────────────────────────────────────────────────
 cleanup() {
-  [[ -n "${DOCKER_PID:-}" ]] && kill "$DOCKER_PID" 2>/dev/null || true
+  [[ -n "${STDIN_PID:-}" ]] && kill "$STDIN_PID" 2>/dev/null || true
   exit 0
 }
 trap cleanup SIGTERM SIGINT SIGHUP
@@ -107,10 +81,28 @@ trap cleanup SIGTERM SIGINT SIGHUP
 ) &
 STDIN_PID=$!
 
+# ── Build docker events filter args ─────────────────────────────────
+DOCKER_FILTER_ARGS=(
+  --filter 'type=container'
+  --filter 'event=die'
+  --filter 'event=oom'
+  --filter 'event=health_status'
+  --filter 'event=start'
+  --filter 'event=stop'
+  --filter 'event=kill'
+)
+
+for name in "${CONTAINERS[@]+"${CONTAINERS[@]}"}"; do
+  DOCKER_FILTER_ARGS+=(--filter "container=${name}")
+done
+
 # ── Main event loop ─────────────────────────────────────────────────
+# Use process substitution (not pipe) so the while loop runs in the
+# main shell. This avoids subshell pipe buffering — printf goes
+# directly to the real stdout which the host reads line-by-line.
 send_log "info" "Starting Docker event monitor..."
 
-docker "${DOCKER_ARGS[@]}" 2>/dev/null | while IFS= read -r event_json; do
+while IFS= read -r event_json; do
   # Parse event fields
   action=$(echo "$event_json" | jq -r '.Action // .status // empty' 2>/dev/null || true)
   container_name=$(echo "$event_json" | jq -r '.Actor.Attributes.name // empty' 2>/dev/null || true)
@@ -156,12 +148,7 @@ docker "${DOCKER_ARGS[@]}" 2>/dev/null | while IFS= read -r event_json; do
       # Ignore unknown actions
       ;;
   esac
-done &
-DOCKER_PID=$!
+done < <(docker events --format '{{json .}}' "${DOCKER_FILTER_ARGS[@]}" 2>/dev/null)
 
-# Wait for docker events process to exit
-wait "$DOCKER_PID" 2>/dev/null || true
 send_log "warn" "Docker event stream ended"
-
-# Cleanup stdin reader
 kill "$STDIN_PID" 2>/dev/null || true

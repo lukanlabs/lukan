@@ -69,7 +69,7 @@ impl Tool for BrowserNavigate {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Get snapshot
-        let snapshot = match manager.snapshot().await {
+        let snapshot = match manager.snapshot(false).await {
             Ok(s) => s,
             Err(e) => return Ok(ToolResult::error(format!("Failed to get snapshot: {e}"))),
         };
@@ -77,8 +77,10 @@ impl Tool for BrowserNavigate {
         // Quick screenshot
         let image = manager.quick_screenshot().await.ok();
 
-        let mut result =
-            ToolResult::success(format!("Navigated to {url}\n\n{}", wrap_untrusted(&snapshot)));
+        let mut result = ToolResult::success(format!(
+            "Navigated to {url}\n\n{}",
+            wrap_untrusted(&snapshot)
+        ));
         result.image = image;
         Ok(result)
     }

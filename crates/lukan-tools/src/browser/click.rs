@@ -154,13 +154,15 @@ impl Tool for BrowserClick {
 
         // Get updated snapshot
         let snapshot = manager
-            .snapshot()
+            .snapshot(false)
             .await
             .unwrap_or_else(|e| format!("(snapshot unavailable: {e})"));
 
         Ok(ToolResult::success(format!(
             "Clicked [{ref_num}] ({} \"{}\")\n\n{}",
-            entry.role, entry.name, wrap_untrusted(&snapshot)
+            entry.role,
+            entry.name,
+            wrap_untrusted(&snapshot)
         )))
     }
 }

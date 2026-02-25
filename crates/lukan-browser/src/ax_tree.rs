@@ -76,6 +76,67 @@ const STRUCTURAL_ROLES: &[&str] = &[
     "group",
 ];
 
+// ── Text sanitization ─────────────────────────────────────────────────
+
+/// Max chars per individual node name. Legitimate UI elements rarely exceed this.
+/// Longer text is likely page body content or injection attempts.
+const MAX_NODE_NAME_LEN: usize = 200;
+
+/// Sanitize a node's text: strip zero-width/control chars and truncate.
+fn sanitize_name(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| {
+            // Keep normal printable chars, newlines, tabs
+            if c.is_control() && *c != '\n' && *c != '\t' {
+                return false;
+            }
+            // Strip zero-width and invisible formatting chars
+            !matches!(
+                *c,
+                '\u{200B}' // zero-width space
+                | '\u{200C}' // zero-width non-joiner
+                | '\u{200D}' // zero-width joiner
+                | '\u{200E}' // left-to-right mark
+                | '\u{200F}' // right-to-left mark
+                | '\u{FEFF}' // BOM / zero-width no-break space
+                | '\u{2060}' // word joiner
+                | '\u{2061}' // function application
+                | '\u{2062}' // invisible times
+                | '\u{2063}' // invisible separator
+                | '\u{2064}' // invisible plus
+                | '\u{00AD}' // soft hyphen
+            )
+        })
+        .collect();
+
+    let trimmed = cleaned.trim();
+    if trimmed.len() > MAX_NODE_NAME_LEN {
+        format!("{}...", &trimmed[..MAX_NODE_NAME_LEN])
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Check if a node is explicitly hidden via AX properties.
+fn is_hidden_node(node: &Value) -> bool {
+    let Some(props) = node.get("properties").and_then(|p| p.as_array()) else {
+        return false;
+    };
+    for prop in props {
+        let name = prop.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let val = prop.get("value").and_then(|v| v.get("value"));
+        // aria-hidden="true" or hidden attribute
+        if name == "hidden"
+            && (val.and_then(|v| v.as_bool()) == Some(true)
+                || val.and_then(|v| v.as_str()) == Some("true"))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 // ── Snapshot builder ───────────────────────────────────────────────────
 
 const MAX_SNAPSHOT_LEN: usize = 10_000;
@@ -84,7 +145,10 @@ const MAX_SNAPSHOT_LEN: usize = 10_000;
 ///
 /// Interactive elements are numbered `[1], [2], ...` and stored in the RefMap
 /// so Click/Type tools can resolve them.
-pub async fn get_accessibility_snapshot(cdp: &CdpClient) -> Result<String> {
+///
+/// When `compact` is true, only interactive elements are included (no static
+/// text or structural markers), reducing token usage by ~50-70%.
+pub async fn get_accessibility_snapshot(cdp: &CdpClient, compact: bool) -> Result<String> {
     // Clear previous refs
     if let Ok(mut map) = global_ref_map().lock() {
         map.clear();
@@ -121,9 +185,11 @@ pub async fn get_accessibility_snapshot(cdp: &CdpClient) -> Result<String> {
                     .map(|s| s.to_string())
             })
             .unwrap_or_default();
-        let name = get_ax_name(node).unwrap_or_default();
+        let name = get_ax_name(node)
+            .map(|n| sanitize_name(&n))
+            .unwrap_or_default();
 
-        // Skip ignored/empty nodes
+        // Skip ignored/empty/hidden nodes
         if node
             .get("ignored")
             .and_then(|v| v.as_bool())
@@ -132,6 +198,9 @@ pub async fn get_accessibility_snapshot(cdp: &CdpClient) -> Result<String> {
             continue;
         }
         if role == "none" || role == "generic" || role == "InlineTextBox" {
+            continue;
+        }
+        if is_hidden_node(node) {
             continue;
         }
 
@@ -170,16 +239,16 @@ pub async fn get_accessibility_snapshot(cdp: &CdpClient) -> Result<String> {
 
             writeln!(output, "{line}").ok();
         }
-        // Structural element — context marker
-        else if STRUCTURAL_ROLES.contains(&role_lower.as_str()) {
+        // Structural element — context marker (skip in compact mode)
+        else if !compact && STRUCTURAL_ROLES.contains(&role_lower.as_str()) {
             if name.is_empty() {
                 writeln!(output, "--- {role_lower} ---").ok();
             } else {
                 writeln!(output, "--- {role_lower}: {name} ---").ok();
             }
         }
-        // Static text
-        else if role_lower == "statictext" && !name.is_empty() {
+        // Static text (skip in compact mode)
+        else if !compact && role_lower == "statictext" && !name.is_empty() {
             writeln!(output, "{name}").ok();
         }
 

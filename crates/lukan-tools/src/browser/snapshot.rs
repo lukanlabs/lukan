@@ -14,20 +14,26 @@ impl Tool for BrowserSnapshot {
     }
 
     fn description(&self) -> &str {
-        "Return the current page's accessibility snapshot. Interactive elements are numbered [1], [2], ... for use with BrowserClick and BrowserType."
+        "Return the current page's accessibility snapshot. Interactive elements are numbered [1], [2], ... for use with BrowserClick and BrowserType. Use compact mode to save tokens when you only need interactive elements."
     }
 
     fn input_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
-            "properties": {},
+            "properties": {
+                "compact": {
+                    "type": "boolean",
+                    "description": "If true, return only interactive elements (buttons, links, inputs, etc.) without static text or structural markers. Reduces output by ~50-70%. Default: false",
+                    "default": false
+                }
+            },
             "required": []
         })
     }
 
     async fn execute(
         &self,
-        _input: serde_json::Value,
+        input: serde_json::Value,
         _ctx: &ToolContext,
     ) -> anyhow::Result<ToolResult> {
         let manager = match get_manager() {
@@ -35,7 +41,12 @@ impl Tool for BrowserSnapshot {
             Err(e) => return Ok(*e),
         };
 
-        match manager.snapshot().await {
+        let compact = input
+            .get("compact")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        match manager.snapshot(compact).await {
             Ok(snapshot) => Ok(ToolResult::success(wrap_untrusted(&snapshot))),
             Err(e) => Ok(ToolResult::error(format!("Failed to get snapshot: {e}"))),
         }

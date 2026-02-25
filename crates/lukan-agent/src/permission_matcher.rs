@@ -43,6 +43,7 @@ const BROWSER_TOOLS: &[&str] = &[
     "BrowserTabs",
     "BrowserNewTab",
     "BrowserSwitchTab",
+    "BrowserSavePDF",
 ];
 
 /// Tools allowed in planner mode (read-only exploration + planner-specific)

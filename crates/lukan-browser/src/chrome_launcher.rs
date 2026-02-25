@@ -14,8 +14,6 @@ pub enum ProfileMode {
     Temp,
     /// Persistent profile in ~/.config/lukan/chrome-profile.
     Persistent,
-    /// Use the system Chrome profile (~/.config/google-chrome or macOS equivalent).
-    System,
     /// Use a custom path as the profile directory.
     Custom(PathBuf),
 }
@@ -134,20 +132,6 @@ pub async fn launch_chrome(opts: &ChromeOptions) -> Result<LaunchedChrome> {
             profile_dir = dir;
             temp_dir = None;
         }
-        ProfileMode::System => {
-            let dir = if cfg!(target_os = "macos") {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("/tmp"))
-                    .join("Library/Application Support/Google/Chrome")
-            } else {
-                dirs::config_dir()
-                    .unwrap_or_else(|| PathBuf::from("/tmp"))
-                    .join("google-chrome")
-            };
-            info!(path = %dir.display(), "Using system Chrome profile");
-            profile_dir = dir;
-            temp_dir = None;
-        }
         ProfileMode::Custom(path) => {
             std::fs::create_dir_all(path).ok();
             profile_dir = path.clone();
@@ -167,9 +151,6 @@ pub async fn launch_chrome(opts: &ChromeOptions) -> Result<LaunchedChrome> {
         "--disable-translate".to_string(),
     ];
 
-    // --no-sandbox is needed in containers and restricted environments
-    args.push("--no-sandbox".to_string());
-
     if !opts.visible {
         args.push("--headless=new".to_string());
         args.push("--disable-gpu".to_string());
@@ -183,23 +164,76 @@ pub async fn launch_chrome(opts: &ChromeOptions) -> Result<LaunchedChrome> {
         "Launching Chrome"
     );
 
-    let child = tokio::process::Command::new(&chrome_path)
+    let mut child = tokio::process::Command::new(&chrome_path)
         .args(&args)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .with_context(|| format!("Failed to launch Chrome: {}", chrome_path.display()))?;
 
     // Poll until Chrome's debugging endpoint is ready
     let cdp_url = format!("http://127.0.0.1:{port_str}");
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()?;
 
     loop {
         if tokio::time::Instant::now() > deadline {
-            bail!("Chrome did not start within 10 seconds");
+            // Collect stderr for diagnostics
+            let stderr_output = if let Some(mut stderr) = child.stderr.take() {
+                let mut buf = String::new();
+                use tokio::io::AsyncReadExt;
+                let _ =
+                    tokio::time::timeout(Duration::from_secs(1), stderr.read_to_string(&mut buf))
+                        .await;
+                buf
+            } else {
+                String::new()
+            };
+
+            let mut msg = format!("Chrome did not start within 15 seconds (port {port_str}).");
+            if !stderr_output.is_empty() {
+                // Show last few lines of stderr
+                let last_lines: String = stderr_output
+                    .lines()
+                    .rev()
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                msg.push_str(&format!("\nChrome stderr:\n{last_lines}"));
+            }
+            bail!("{msg}");
+        }
+
+        // Check if child process died
+        if let Some(status) = child.try_wait()? {
+            let stderr_output = if let Some(mut stderr) = child.stderr.take() {
+                let mut buf = String::new();
+                use tokio::io::AsyncReadExt;
+                let _ = stderr.read_to_string(&mut buf).await;
+                buf
+            } else {
+                String::new()
+            };
+
+            let mut msg = format!("Chrome exited with {status} before debugging port was ready.");
+            if !stderr_output.is_empty() {
+                let last_lines: String = stderr_output
+                    .lines()
+                    .rev()
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                msg.push_str(&format!("\n{last_lines}"));
+            }
+            bail!("{msg}");
         }
 
         match client.get(format!("{cdp_url}/json/version")).send().await {

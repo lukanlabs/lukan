@@ -37,6 +37,8 @@ pub struct BrowserConfig {
     pub profile: ProfileMode,
     /// Run Chrome in visible (headed) mode.
     pub visible: bool,
+    /// Directory for browser downloads (default: ~/Downloads/lukan/).
+    pub download_dir: Option<std::path::PathBuf>,
 }
 
 // ── BrowserManager singleton ───────────────────────────────────────────
@@ -126,7 +128,8 @@ impl BrowserManager {
         let client = CdpClient::connect(&cdp_url, Duration::from_secs(10)).await?;
 
         // Enable required domains
-        enable_domains(&client).await?;
+        let dl_dir = self.download_dir();
+        enable_domains(&client, &dl_dir).await?;
 
         state.client = Some(client);
         Ok(())
@@ -179,7 +182,8 @@ impl BrowserManager {
 
         // Connect to new target
         let client = CdpClient::connect(ws_url, Duration::from_secs(10)).await?;
-        enable_domains(&client).await?;
+        let dl_dir = self.download_dir();
+        enable_domains(&client, &dl_dir).await?;
         state.client = Some(client);
 
         debug!(ws_url = %ws_url, "Switched to tab");
@@ -214,11 +218,34 @@ impl BrowserManager {
     }
 
     /// Get the accessibility snapshot of the current page.
-    pub async fn snapshot(&self) -> Result<String> {
+    /// When `compact` is true, only interactive elements are returned.
+    pub async fn snapshot(&self, compact: bool) -> Result<String> {
         self.ensure_connected().await?;
         let state = self.state.lock().await;
         let client = state.client.as_ref().context("CDP client not connected")?;
-        ax_tree::get_accessibility_snapshot(client).await
+        ax_tree::get_accessibility_snapshot(client, compact).await
+    }
+
+    /// Get the download directory (creates it if needed).
+    pub fn download_dir(&self) -> std::path::PathBuf {
+        if let Some(ref dir) = self.config.download_dir {
+            dir.clone()
+        } else {
+            dirs::download_dir()
+                .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join("Downloads"))
+                .join("lukan")
+        }
+    }
+
+    /// Save raw bytes to the download directory, returning the full path.
+    pub fn save_to_downloads(&self, filename: &str, data: &[u8]) -> Result<std::path::PathBuf> {
+        let dir = self.download_dir();
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("Failed to create download dir: {}", dir.display()))?;
+        let path = dir.join(filename);
+        std::fs::write(&path, data)
+            .with_context(|| format!("Failed to write file: {}", path.display()))?;
+        Ok(path)
     }
 
     /// Disconnect from Chrome and kill the process if we launched it.
@@ -238,18 +265,31 @@ impl BrowserManager {
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /// Enable the CDP domains we need.
-async fn enable_domains(client: &CdpClient) -> Result<()> {
+async fn enable_domains(client: &CdpClient, download_dir: &std::path::Path) -> Result<()> {
+    // Ensure download dir exists
+    std::fs::create_dir_all(download_dir).ok();
+
     // Fire all enables concurrently
-    let (r1, r2, r3, r4) = tokio::join!(
+    let (r1, r2, r3, r4, _r5) = tokio::join!(
         client.send("Page.enable", json!({})),
         client.send("DOM.enable", json!({})),
         client.send("Accessibility.enable", json!({})),
         client.send("Runtime.enable", json!({})),
+        // Auto-accept downloads to our directory (avoids native Save dialog)
+        client.send(
+            "Browser.setDownloadBehavior",
+            json!({
+                "behavior": "allowAndName",
+                "downloadPath": download_dir.to_string_lossy(),
+                "eventsEnabled": true,
+            }),
+        ),
     );
     r1.context("Page.enable failed")?;
     r2.context("DOM.enable failed")?;
     r3.context("Accessibility.enable failed")?;
     r4.context("Runtime.enable failed")?;
+    // Download behavior is best-effort — not all Chrome versions support it
     Ok(())
 }
 

@@ -104,7 +104,7 @@ impl Tool for BrowserSwitchTab {
 
         // Get snapshot
         let snapshot = manager
-            .snapshot()
+            .snapshot(false)
             .await
             .unwrap_or_else(|e| format!("(snapshot unavailable: {e})"));
 

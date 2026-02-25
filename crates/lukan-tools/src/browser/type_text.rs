@@ -181,13 +181,16 @@ impl Tool for BrowserType {
 
         // Get updated snapshot
         let snapshot = manager
-            .snapshot()
+            .snapshot(false)
             .await
             .unwrap_or_else(|e| format!("(snapshot unavailable: {e})"));
 
+        let submit_note = if submit { " and submitted" } else { "" };
         Ok(ToolResult::success(format!(
-            "Typed \"{}\" into [{ref_num}] ({} \"{}\")\n\n{}",
-            text, entry.role, entry.name, wrap_untrusted(&snapshot)
+            "Typed \"{text}\" into [{ref_num}] ({} \"{}\"){submit_note}\n\n{}",
+            entry.role,
+            entry.name,
+            wrap_untrusted(&snapshot)
         )))
     }
 }

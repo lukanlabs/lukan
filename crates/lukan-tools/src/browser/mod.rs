@@ -4,6 +4,7 @@ mod click;
 mod evaluate;
 mod navigate;
 mod new_tab;
+mod save_pdf;
 mod screenshot;
 mod snapshot;
 mod switch_tab;
@@ -23,6 +24,7 @@ pub fn register_browser_tools(registry: &mut ToolRegistry) {
     registry.register(Box::new(click::BrowserClick));
     registry.register(Box::new(type_text::BrowserType));
     registry.register(Box::new(evaluate::BrowserEvaluate));
+    registry.register(Box::new(save_pdf::BrowserSavePDF));
     registry.register(Box::new(tabs::BrowserTabs));
     registry.register(Box::new(new_tab::BrowserNewTab));
     registry.register(Box::new(switch_tab::BrowserSwitchTab));

@@ -47,9 +47,9 @@ enum Commands {
         /// Open the desktop settings app (Tauri)
         #[arg(long)]
         desktop: bool,
-        /// Enable browser tools (auto-launches headless Chrome)
-        #[arg(long)]
-        browser: bool,
+        /// Enable browser tools: auto (default), chrome, edge, chromium
+        #[arg(long, value_name = "BROWSER", default_missing_value = "auto", num_args = 0..=1)]
+        browser: Option<String>,
         /// Connect to an existing Chrome DevTools Protocol endpoint
         #[arg(long, value_name = "URL")]
         browser_cdp: Option<String>,
@@ -196,13 +196,15 @@ async fn main() -> Result<()> {
                 if ui == "web" {
                     run_web(provider_override, model_override).await?;
                 } else {
-                    let browser_opts = if browser || browser_cdp.is_some() || browser_visible {
-                        Some(BrowserOpts {
-                            cdp_url: browser_cdp,
-                            allow_internal: browser_allow_internal,
-                            profile: browser_profile,
-                            visible: browser_visible,
-                        })
+                    let browser_opts =
+                        if browser.is_some() || browser_cdp.is_some() || browser_visible {
+                            Some(BrowserOpts {
+                                cdp_url: browser_cdp,
+                                allow_internal: browser_allow_internal,
+                                profile: browser_profile,
+                                visible: browser_visible,
+                                browser_name: browser.unwrap_or_else(|| "auto".to_string()),
+                            })
                     } else {
                         None
                     };
@@ -617,6 +619,8 @@ struct BrowserOpts {
     /// Profile mode string from CLI: "temp", "persistent", or a custom path.
     profile: String,
     visible: bool,
+    /// Browser name: "auto", "chrome", "edge", "chromium".
+    browser_name: String,
 }
 
 impl BrowserOpts {
@@ -659,6 +663,7 @@ async fn run_chat(
             profile: opts.profile_mode(),
             visible: opts.visible,
             download_dir: None,
+            browser_name: opts.browser_name.clone(),
         });
     }
 

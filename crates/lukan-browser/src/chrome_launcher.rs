@@ -18,7 +18,7 @@ pub enum ProfileMode {
     Custom(PathBuf),
 }
 
-/// Options for launching Chrome.
+/// Options for launching a Chromium-based browser.
 #[derive(Debug, Clone)]
 pub struct ChromeOptions {
     /// Which profile to use.
@@ -27,6 +27,8 @@ pub struct ChromeOptions {
     pub visible: bool,
     /// Remote debugging port.
     pub port: u16,
+    /// Browser name: "auto", "chrome", "edge", "chromium".
+    pub browser_name: String,
 }
 
 impl Default for ChromeOptions {
@@ -35,6 +37,7 @@ impl Default for ChromeOptions {
             profile: ProfileMode::default(),
             visible: false,
             port: 9222,
+            browser_name: "auto".to_string(),
         }
     }
 }
@@ -63,25 +66,81 @@ impl Drop for LaunchedChrome {
     }
 }
 
-/// Find a Chrome/Chromium binary on the system.
-pub fn find_chrome() -> Result<PathBuf> {
-    let candidates = if cfg!(target_os = "macos") {
-        vec![
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-        ]
-    } else {
-        vec![
-            "/usr/bin/google-chrome",
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/chromium",
-            "/usr/bin/chromium-browser",
-            "/snap/bin/chromium",
-        ]
-    };
+/// Browser candidates: (absolute paths, PATH names).
+fn browser_candidates(name: &str) -> (Vec<&'static str>, Vec<&'static str>) {
+    match name {
+        "chrome" => {
+            if cfg!(target_os = "macos") {
+                (
+                    vec![
+                        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+                    ],
+                    vec!["google-chrome", "google-chrome-stable"],
+                )
+            } else {
+                (
+                    vec![
+                        "/usr/bin/google-chrome",
+                        "/usr/bin/google-chrome-stable",
+                    ],
+                    vec!["google-chrome", "google-chrome-stable"],
+                )
+            }
+        }
+        "edge" => {
+            if cfg!(target_os = "macos") {
+                (
+                    vec!["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
+                    vec!["microsoft-edge", "microsoft-edge-stable"],
+                )
+            } else {
+                (
+                    vec![
+                        "/usr/bin/microsoft-edge",
+                        "/usr/bin/microsoft-edge-stable",
+                        "/opt/microsoft/msedge/msedge",
+                    ],
+                    vec!["microsoft-edge", "microsoft-edge-stable"],
+                )
+            }
+        }
+        "chromium" => {
+            if cfg!(target_os = "macos") {
+                (
+                    vec!["/Applications/Chromium.app/Contents/MacOS/Chromium"],
+                    vec!["chromium", "chromium-browser"],
+                )
+            } else {
+                (
+                    vec![
+                        "/usr/bin/chromium",
+                        "/usr/bin/chromium-browser",
+                        "/snap/bin/chromium",
+                    ],
+                    vec!["chromium", "chromium-browser"],
+                )
+            }
+        }
+        // "auto" or anything else — try all
+        _ => {
+            let (mut paths, mut names) = browser_candidates("chrome");
+            let (p2, n2) = browser_candidates("edge");
+            let (p3, n3) = browser_candidates("chromium");
+            paths.extend(p2);
+            paths.extend(p3);
+            names.extend(n2);
+            names.extend(n3);
+            (paths, names)
+        }
+    }
+}
 
-    for path in &candidates {
+/// Find a Chromium-based browser on the system.
+pub fn find_chrome(browser_name: &str) -> Result<PathBuf> {
+    let (paths, names) = browser_candidates(browser_name);
+
+    for path in &paths {
         let p = PathBuf::from(path);
         if p.exists() {
             return Ok(p);
@@ -89,28 +148,43 @@ pub fn find_chrome() -> Result<PathBuf> {
     }
 
     // Fallback: check PATH
-    for name in &[
-        "google-chrome",
-        "google-chrome-stable",
-        "chromium",
-        "chromium-browser",
-    ] {
+    for name in &names {
         if let Some(path) = which(name) {
             return Ok(path);
         }
     }
 
+    let label = if browser_name == "auto" {
+        "No Chromium-based browser found (Chrome, Edge, Chromium)"
+    } else {
+        "Browser not found"
+    };
+
     bail!(
-        "Chrome/Chromium not found. Install Chrome or provide a CDP URL with --browser-cdp.\n\
+        "{label}. Install one or provide a CDP URL with --browser-cdp.\n\
          Searched: {}",
-        candidates.join(", ")
+        paths.join(", ")
     )
 }
 
-/// Launch Chrome with remote debugging enabled.
+/// Launch a Chromium-based browser with remote debugging enabled.
 pub async fn launch_chrome(opts: &ChromeOptions) -> Result<LaunchedChrome> {
-    let chrome_path = find_chrome()?;
-    info!(path = %chrome_path.display(), "Found Chrome");
+    let chrome_path = find_chrome(&opts.browser_name)?;
+    // Derive a short label from the binary name for profile directories
+    let browser_label = chrome_path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .map(|f| {
+            if f.contains("edge") {
+                "edge"
+            } else if f.contains("chromium") {
+                "chromium"
+            } else {
+                "chrome"
+            }
+        })
+        .unwrap_or("chrome");
+    info!(path = %chrome_path.display(), browser = browser_label, "Using browser");
 
     let profile_dir;
     let temp_dir;
@@ -118,7 +192,7 @@ pub async fn launch_chrome(opts: &ChromeOptions) -> Result<LaunchedChrome> {
     match &opts.profile {
         ProfileMode::Temp => {
             let pid = std::process::id();
-            let dir = PathBuf::from(format!("/tmp/lukan-chrome-{pid}"));
+            let dir = PathBuf::from(format!("/tmp/lukan-{browser_label}-{pid}"));
             std::fs::create_dir_all(&dir).ok();
             profile_dir = dir.clone();
             temp_dir = Some(dir);
@@ -127,7 +201,7 @@ pub async fn launch_chrome(opts: &ChromeOptions) -> Result<LaunchedChrome> {
             let dir = dirs::config_dir()
                 .unwrap_or_else(|| PathBuf::from("/tmp"))
                 .join("lukan")
-                .join("chrome-profile");
+                .join(format!("{browser_label}-profile"));
             std::fs::create_dir_all(&dir).ok();
             profile_dir = dir;
             temp_dir = None;

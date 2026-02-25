@@ -39,6 +39,8 @@ pub struct BrowserConfig {
     pub visible: bool,
     /// Directory for browser downloads (default: ~/Downloads/lukan/).
     pub download_dir: Option<std::path::PathBuf>,
+    /// Browser name: "auto", "chrome", "edge", "chromium".
+    pub browser_name: String,
 }
 
 // ── BrowserManager singleton ───────────────────────────────────────────
@@ -107,11 +109,12 @@ impl BrowserManager {
         } else if let Some(ref chrome) = state.chrome {
             chrome.cdp_url.clone()
         } else {
-            // Auto-launch Chrome
-            info!("Auto-launching Chrome...");
+            // Auto-launch browser
+            info!("Auto-launching browser...");
             let opts = ChromeOptions {
                 profile: self.config.profile.clone(),
                 visible: self.config.visible,
+                browser_name: self.config.browser_name.clone(),
                 ..Default::default()
             };
             let chrome = chrome_launcher::launch_chrome(&opts).await?;

@@ -83,6 +83,7 @@ lukan-tui = { path = "crates/lukan-tui" }
 lukan-web = { path = "crates/lukan-web" }
 lukan-plugins = { path = "crates/lukan-plugins" }
 lukan-desktop = { path = "crates/lukan-desktop" }
+lukan-browser = { path = "crates/lukan-browser" }
 
 [package]
 name = "lukan"
@@ -115,5 +116,6 @@ regex.workspace = true
 futures.workspace = true
 libc.workspace = true
 chrono.workspace = true
+lukan-browser.workspace = true
 dialoguer = "0.11"
 console = "0.15"

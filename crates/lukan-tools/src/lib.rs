@@ -1,5 +1,6 @@
 mod bash;
 pub mod bg_processes;
+pub mod browser;
 mod edit_file;
 mod glob_tool;
 mod grep;
@@ -473,6 +474,26 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(Box::new(skills::LoadSkillTool));
     // Plugin-provided tools (scanned from installed plugins)
     plugin_tools::register_plugin_tools(&mut registry);
+    registry
+}
+
+/// Create a registry with all default tools plus browser tools.
+pub fn create_browser_registry() -> ToolRegistry {
+    let mut registry = create_default_registry();
+    browser::register_browser_tools(&mut registry);
+    registry
+}
+
+/// Create a browser-enabled registry configured with project permissions.
+pub fn create_configured_browser_registry(
+    permissions: &lukan_core::config::types::PermissionsConfig,
+) -> ToolRegistry {
+    let mut registry = create_browser_registry();
+    registry.set_sandbox(
+        permissions.os_sandbox,
+        vec![],
+        permissions.sensitive_patterns.clone(),
+    );
     registry
 }
 

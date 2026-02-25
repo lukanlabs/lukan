@@ -1,0 +1,18 @@
+[package]
+name = "lukan-browser"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+url.workspace = true
+dirs.workspace = true
+regex.workspace = true
+base64.workspace = true

@@ -70,6 +70,8 @@ pub struct AgentConfig {
     pub plan_review_rx: Option<mpsc::Receiver<PlanReviewResponse>>,
     /// Channel to receive planner question answers from the UI
     pub planner_answer_rx: Option<mpsc::Receiver<String>>,
+    /// Whether browser tools are enabled (auto-allow without asking)
+    pub browser_tools: bool,
 }
 
 /// Pending tool call accumulated from stream events
@@ -163,8 +165,11 @@ impl AgentLoop {
 
         let bg_signal = config.bg_signal.take();
         let allowed_paths = Self::expand_allowed_paths(config.allowed_paths.take());
-        let permission_matcher =
+        let mut permission_matcher =
             PermissionMatcher::new(config.permission_mode, &config.permissions);
+        if config.browser_tools {
+            permission_matcher.enable_browser_tools();
+        }
         let approval_rx = config.approval_rx;
         let plan_review_rx = config.plan_review_rx;
         let planner_answer_rx = config.planner_answer_rx;
@@ -230,8 +235,11 @@ impl AgentLoop {
 
         let bg_signal = config.bg_signal.take();
         let allowed_paths = Self::expand_allowed_paths(config.allowed_paths.take());
-        let permission_matcher =
+        let mut permission_matcher =
             PermissionMatcher::new(config.permission_mode, &config.permissions);
+        if config.browser_tools {
+            permission_matcher.enable_browser_tools();
+        }
         let approval_rx = config.approval_rx;
         let plan_review_rx = config.plan_review_rx;
         let planner_answer_rx = config.planner_answer_rx;
@@ -585,8 +593,7 @@ impl AgentLoop {
                 dynamic.push_str(&format!("- **{}**: {}\n", skill.folder, skill.description));
             }
             if !self.loaded_skills.is_empty() {
-                let mut list: Vec<&str> =
-                    self.loaded_skills.iter().map(|s| s.as_str()).collect();
+                let mut list: Vec<&str> = self.loaded_skills.iter().map(|s| s.as_str()).collect();
                 list.sort();
                 dynamic.push_str(&format!(
                     "\nAlready loaded (no need to reload): {}",
@@ -625,11 +632,16 @@ impl AgentLoop {
 
         // Inject pending system events as context before the user message
         if !self.pending_events.is_empty() {
-            let mut ctx = String::from("[SYSTEM EVENTS — the following occurred since your last interaction]\n");
+            let mut ctx = String::from(
+                "[SYSTEM EVENTS — the following occurred since your last interaction]\n",
+            );
             for ev in self.pending_events.drain(..) {
                 ctx.push_str(&format!(
                     "- [{}] ({}) {}: {}\n",
-                    ev.ts, ev.level.to_uppercase(), ev.source, ev.detail
+                    ev.ts,
+                    ev.level.to_uppercase(),
+                    ev.source,
+                    ev.detail
                 ));
             }
             self.history.add_user_message(&ctx);

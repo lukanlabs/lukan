@@ -47,6 +47,21 @@ enum Commands {
         /// Open the desktop settings app (Tauri)
         #[arg(long)]
         desktop: bool,
+        /// Enable browser tools (auto-launches headless Chrome)
+        #[arg(long)]
+        browser: bool,
+        /// Connect to an existing Chrome DevTools Protocol endpoint
+        #[arg(long, value_name = "URL")]
+        browser_cdp: Option<String>,
+        /// Allow browser navigation to private/internal IPs
+        #[arg(long)]
+        browser_allow_internal: bool,
+        /// Chrome profile: temp (default), persistent, system, or a custom path
+        #[arg(long, value_name = "MODE", default_value = "temp")]
+        browser_profile: String,
+        /// Run Chrome in visible (headed) mode
+        #[arg(long)]
+        browser_visible: bool,
     },
     /// Interactive setup wizard (provider, model, API keys)
     Setup,
@@ -167,6 +182,11 @@ async fn main() -> Result<()> {
             model,
             ui,
             desktop,
+            browser,
+            browser_cdp,
+            browser_allow_internal,
+            browser_profile,
+            browser_visible,
         }) => {
             if desktop {
                 run_desktop().await?;
@@ -176,14 +196,24 @@ async fn main() -> Result<()> {
                 if ui == "web" {
                     run_web(provider_override, model_override).await?;
                 } else {
-                    run_chat(provider_override, model_override).await?;
+                    let browser_opts = if browser || browser_cdp.is_some() || browser_visible {
+                        Some(BrowserOpts {
+                            cdp_url: browser_cdp,
+                            allow_internal: browser_allow_internal,
+                            profile: browser_profile,
+                            visible: browser_visible,
+                        })
+                    } else {
+                        None
+                    };
+                    run_chat(provider_override, model_override, browser_opts).await?;
                 }
             }
         }
         None => {
             let provider_override = cli.provider;
             let model_override = cli.model;
-            run_chat(provider_override, model_override).await?;
+            run_chat(provider_override, model_override, None).await?;
         }
     }
 
@@ -580,7 +610,31 @@ fn which_cmd_exists(cmd: &str) -> Option<std::path::PathBuf> {
     })
 }
 
-async fn run_chat(provider_override: Option<String>, model_override: Option<String>) -> Result<()> {
+/// Browser CLI options.
+struct BrowserOpts {
+    cdp_url: Option<String>,
+    allow_internal: bool,
+    /// Profile mode string from CLI: "temp", "persistent", "system", or a path.
+    profile: String,
+    visible: bool,
+}
+
+impl BrowserOpts {
+    fn profile_mode(&self) -> lukan_browser::ProfileMode {
+        match self.profile.as_str() {
+            "temp" => lukan_browser::ProfileMode::Temp,
+            "persistent" => lukan_browser::ProfileMode::Persistent,
+            "system" => lukan_browser::ProfileMode::System,
+            path => lukan_browser::ProfileMode::Custom(std::path::PathBuf::from(path)),
+        }
+    }
+}
+
+async fn run_chat(
+    provider_override: Option<String>,
+    model_override: Option<String>,
+    browser_opts: Option<BrowserOpts>,
+) -> Result<()> {
     // Load config
     let mut config = ConfigManager::load().await?;
 
@@ -593,6 +647,21 @@ async fn run_chat(provider_override: Option<String>, model_override: Option<Stri
         config.model = Some(m);
     }
 
+    // Initialize browser if requested
+    if let Some(opts) = &browser_opts {
+        let cdp_url = opts
+            .cdp_url
+            .clone()
+            .or_else(|| config.browser_cdp_url.clone());
+
+        lukan_browser::BrowserManager::init(lukan_browser::BrowserConfig {
+            cdp_url,
+            allow_internal: opts.allow_internal,
+            profile: opts.profile_mode(),
+            visible: opts.visible,
+        });
+    }
+
     // Load credentials
     let credentials = CredentialsManager::load().await?;
 
@@ -602,17 +671,26 @@ async fn run_chat(provider_override: Option<String>, model_override: Option<Stri
     };
 
     info!(
-        "Starting lukan with provider={}, model={}",
+        "Starting lukan with provider={}, model={}, browser={}",
         resolved.config.provider,
-        resolved.effective_model()
+        resolved.effective_model(),
+        browser_opts.is_some()
     );
 
     // Create provider
     let provider = create_provider(&resolved)?;
 
     // Run TUI
-    let app = App::new(provider, resolved);
+    let mut app = App::new(provider, resolved);
+    if browser_opts.is_some() {
+        app.enable_browser_tools();
+    }
     app.run().await?;
+
+    // Cleanup browser on exit
+    if let Some(manager) = lukan_browser::BrowserManager::get() {
+        manager.disconnect().await;
+    }
 
     Ok(())
 }

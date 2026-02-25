@@ -370,6 +370,7 @@ impl App {
             approval_rx: Some(approval_rx),
             plan_review_rx: Some(plan_review_rx),
             planner_answer_rx: Some(planner_answer_rx),
+            browser_tools: self.browser_tools,
         };
 
         match AgentLoop::new(config).await {
@@ -2281,6 +2282,7 @@ impl App {
             approval_rx: Some(approval_rx),
             plan_review_rx: Some(plan_review_rx),
             planner_answer_rx: Some(planner_answer_rx),
+            browser_tools: self.browser_tools,
         };
 
         match AgentLoop::load_session(config, &session_id).await {
@@ -3293,23 +3295,32 @@ const COMMANDS: &[(&str, &str)] = &[
 /// Build the system prompt, appending global and project memory if available.
 async fn build_system_prompt_with_opts(browser_tools: bool) -> SystemPrompt {
     const BASE: &str = include_str!("../../../prompts/base.txt");
-    let mut cached = vec![BASE.to_string()];
 
-    // Browser tools instructions
-    if browser_tools {
-        cached.push(
-            "## Browser Tools\n\n\
-             You have browser automation tools available. Chrome is already managed for you.\n\
-             - **NEVER** use Bash to launch or control Chrome. Use the Browser* tools instead.\n\
-             - Use `BrowserNavigate` to go to URLs, `BrowserClick` / `BrowserType` to interact with elements.\n\
-             - The accessibility snapshot numbers elements like [1], [2], etc. Pass these to BrowserClick/BrowserType.\n\
-             - Use `BrowserSnapshot` to refresh the page state, `BrowserScreenshot` for visual capture.\n\
-             - Use `BrowserEvaluate` for read-only JS expressions (no fetch, cookies, localStorage).\n\
-             - Use `BrowserTabs`, `BrowserNewTab`, `BrowserSwitchTab` to manage tabs.\n\
-             - When the user asks to \"open\" a website, use BrowserNavigate, not Bash."
-                .to_string(),
-        );
-    }
+    let base = if browser_tools {
+        format!(
+            "{BASE}\n\n\
+            ## Browser Tools (CRITICAL)\n\n\
+            You have a managed Chrome browser connected via CDP. \
+            You MUST use the Browser* tools for ALL browser interactions. \
+            NEVER use Bash to open Chrome, google-chrome, chromium, or any browser command.\n\n\
+            Available tools:\n\
+            - `BrowserNavigate` — go to a URL (use this when the user says \"open\", \"go to\", \"navigate to\", \"visit\")\n\
+            - `BrowserClick` — click an element by its [ref] number from the snapshot\n\
+            - `BrowserType` — type text into an input by its [ref] number\n\
+            - `BrowserSnapshot` — get the current page's accessibility tree with numbered elements\n\
+            - `BrowserScreenshot` — take a JPEG screenshot of the current page\n\
+            - `BrowserEvaluate` — run safe read-only JavaScript expressions\n\
+            - `BrowserTabs` — list open tabs\n\
+            - `BrowserNewTab` — open a new tab with a URL\n\
+            - `BrowserSwitchTab` — switch to a different tab by number\n\n\
+            Workflow: BrowserNavigate → read snapshot → BrowserClick/BrowserType → BrowserSnapshot to verify.\n\
+            The snapshot shows interactive elements as [1], [2], etc. Use these numbers with BrowserClick and BrowserType."
+        )
+    } else {
+        BASE.to_string()
+    };
+
+    let mut cached = vec![base];
 
     // Always load global memory if it exists
     let global_path = LukanPaths::global_memory_file();

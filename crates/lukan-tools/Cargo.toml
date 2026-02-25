@@ -27,3 +27,4 @@ rand.workspace = true
 open.workspace = true
 urlencoding.workspace = true
 toml.workspace = true
+lukan-browser.workspace = true

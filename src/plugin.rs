@@ -579,6 +579,7 @@ async fn plugin_start_foreground(
         approval_rx: None,
         plan_review_rx: None,
         planner_answer_rx: None,
+        browser_tools: false,
     };
 
     println!(

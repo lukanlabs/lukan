@@ -999,6 +999,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         approval_rx: Some(approval_rx),
         plan_review_rx: Some(plan_review_rx),
         planner_answer_rx: Some(planner_answer_rx),
+        browser_tools: false,
     };
 
     AgentLoop::new(agent_config).await
@@ -1059,6 +1060,7 @@ async fn create_agent_with_session(
         approval_rx: Some(approval_rx),
         plan_review_rx: Some(plan_review_rx),
         planner_answer_rx: Some(planner_answer_rx),
+        browser_tools: false,
     };
 
     AgentLoop::load_session(agent_config, session_id).await

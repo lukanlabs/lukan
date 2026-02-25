@@ -19,7 +19,31 @@ pub enum ToolVerdict {
 }
 
 /// Tools that are always safe (read-only or low-risk)
-const SAFE_TOOLS: &[&str] = &["ReadFile", "Grep", "Glob", "WebFetch", "TaskAdd", "TaskList", "TaskUpdate", "PlannerQuestion", "SubmitPlan", "LoadSkill"];
+const SAFE_TOOLS: &[&str] = &[
+    "ReadFile",
+    "Grep",
+    "Glob",
+    "WebFetch",
+    "TaskAdd",
+    "TaskList",
+    "TaskUpdate",
+    "PlannerQuestion",
+    "SubmitPlan",
+    "LoadSkill",
+];
+
+/// Browser tools — only treated as safe when browser mode is enabled
+const BROWSER_TOOLS: &[&str] = &[
+    "BrowserNavigate",
+    "BrowserSnapshot",
+    "BrowserScreenshot",
+    "BrowserClick",
+    "BrowserType",
+    "BrowserEvaluate",
+    "BrowserTabs",
+    "BrowserNewTab",
+    "BrowserSwitchTab",
+];
 
 /// Tools allowed in planner mode (read-only exploration + planner-specific)
 const PLANNER_WHITELIST: &[&str] = &[
@@ -41,6 +65,8 @@ pub struct PermissionMatcher {
     deny: Vec<PatternRule>,
     ask: Vec<PatternRule>,
     allow: Vec<PatternRule>,
+    /// When true, browser tools are treated as safe (auto-allow)
+    browser_tools: bool,
 }
 
 /// A parsed permission pattern rule
@@ -160,6 +186,7 @@ impl PermissionMatcher {
             deny: config.deny.iter().map(|p| PatternRule::parse(p)).collect(),
             ask: config.ask.iter().map(|p| PatternRule::parse(p)).collect(),
             allow: config.allow.iter().map(|p| PatternRule::parse(p)).collect(),
+            browser_tools: false,
         }
     }
 
@@ -197,6 +224,9 @@ impl PermissionMatcher {
                 if SAFE_TOOLS.contains(&tool_name) {
                     return ToolVerdict::Allow;
                 }
+                if self.browser_tools && BROWSER_TOOLS.contains(&tool_name) {
+                    return ToolVerdict::Allow;
+                }
                 ToolVerdict::Ask
             }
         }
@@ -210,6 +240,11 @@ impl PermissionMatcher {
     /// Update the permission mode at runtime
     pub fn set_mode(&mut self, mode: PermissionMode) {
         self.mode = mode;
+    }
+
+    /// Enable browser tools as safe (auto-allow without asking)
+    pub fn enable_browser_tools(&mut self) {
+        self.browser_tools = true;
     }
 
     /// Hot-add a parsed allow rule so the matcher immediately recognizes it

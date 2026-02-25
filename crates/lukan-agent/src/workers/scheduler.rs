@@ -363,6 +363,7 @@ async fn run_worker(
         approval_rx: None,
         plan_review_rx: None,
         planner_answer_rx: None,
+        browser_tools: false,
     };
 
     // Create agent and run

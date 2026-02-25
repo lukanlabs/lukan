@@ -56,7 +56,7 @@ enum Commands {
         /// Allow browser navigation to private/internal IPs
         #[arg(long)]
         browser_allow_internal: bool,
-        /// Chrome profile: temp (default), persistent, system, or a custom path
+        /// Chrome profile: temp (default), persistent, or a custom path
         #[arg(long, value_name = "MODE", default_value = "temp")]
         browser_profile: String,
         /// Run Chrome in visible (headed) mode
@@ -614,7 +614,7 @@ fn which_cmd_exists(cmd: &str) -> Option<std::path::PathBuf> {
 struct BrowserOpts {
     cdp_url: Option<String>,
     allow_internal: bool,
-    /// Profile mode string from CLI: "temp", "persistent", "system", or a path.
+    /// Profile mode string from CLI: "temp", "persistent", or a custom path.
     profile: String,
     visible: bool,
 }
@@ -624,7 +624,6 @@ impl BrowserOpts {
         match self.profile.as_str() {
             "temp" => lukan_browser::ProfileMode::Temp,
             "persistent" => lukan_browser::ProfileMode::Persistent,
-            "system" => lukan_browser::ProfileMode::System,
             path => lukan_browser::ProfileMode::Custom(std::path::PathBuf::from(path)),
         }
     }
@@ -659,6 +658,7 @@ async fn run_chat(
             allow_internal: opts.allow_internal,
             profile: opts.profile_mode(),
             visible: opts.visible,
+            download_dir: None,
         });
     }
 

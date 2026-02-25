@@ -16,6 +16,10 @@ pub struct StatusBarWidget<'a> {
     active_tool: Option<&'a str>,
     memory_active: bool,
     permission_mode: &'a str,
+    /// Optional view label (e.g. "Events") shown as a badge
+    view_label: Option<&'a str>,
+    /// Whether the Event Agent has unread messages (shown as badge in Main view)
+    event_unread: bool,
 }
 
 impl<'a> StatusBarWidget<'a> {
@@ -39,7 +43,19 @@ impl<'a> StatusBarWidget<'a> {
             active_tool,
             memory_active,
             permission_mode,
+            view_label: None,
+            event_unread: false,
         }
+    }
+
+    pub fn view_label(mut self, label: Option<&'a str>) -> Self {
+        self.view_label = label;
+        self
+    }
+
+    pub fn event_unread(mut self, unread: bool) -> Self {
+        self.event_unread = unread;
+        self
     }
 }
 
@@ -91,14 +107,36 @@ impl Widget for StatusBarWidget<'_> {
             Span::raw("")
         };
 
+        let view_indicator = if let Some(label) = self.view_label {
+            Span::styled(
+                format!(" [{label}] "),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("")
+        };
+
+        let unread_badge = if self.event_unread {
+            Span::styled(
+                " [Events!] ",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("")
+        };
+
         let quit_hint = Span::styled(" Ctrl+C quit ", Style::default().fg(Color::DarkGray));
 
         let line = Line::from(vec![
             status_indicator,
+            view_indicator,
             provider_info,
             tokens,
             mode_indicator,
             memory_indicator,
+            unread_badge,
             bash_hint,
             quit_hint,
         ]);

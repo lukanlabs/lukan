@@ -124,6 +124,11 @@ impl LukanPaths {
         Self::events_dir().join("pending.jsonl")
     }
 
+    /// Event history file: ~/.config/lukan/events/history.jsonl
+    pub fn events_history_file() -> PathBuf {
+        Self::events_dir().join("history.jsonl")
+    }
+
     /// Workers definition file: ~/.config/lukan/workers.json
     pub fn workers_file() -> PathBuf {
         Self::config_dir().join("workers.json")

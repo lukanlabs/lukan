@@ -197,6 +197,7 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
             "BrowserTabs",
             "BrowserNewTab",
             "BrowserSwitchTab",
+            "BrowserSavePDF",
         ],
     ),
 ];

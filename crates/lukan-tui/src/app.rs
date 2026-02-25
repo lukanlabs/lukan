@@ -28,15 +28,12 @@ use lukan_core::models::events::{
 };
 use lukan_core::models::sessions::SessionSummary;
 use lukan_providers::{Provider, SystemPrompt, create_provider};
-use lukan_tools::create_configured_registry;
+use lukan_tools::{create_configured_browser_registry, create_configured_registry};
 
 use chrono::Utc;
 
 use crate::event::{AppEvent, is_quit, spawn_event_reader};
 use crate::widgets::bg_picker::{BgEntry, BgPicker, BgPickerView, BgPickerWidget};
-use crate::widgets::worker_picker::{
-    RunEntry, WorkerEntry, WorkerPicker, WorkerPickerView, WorkerPickerWidget,
-};
 use crate::widgets::chat::{
     ChatMessage, ChatWidget, build_message_lines, physical_row_count, sanitize_for_display,
 };
@@ -44,6 +41,9 @@ use crate::widgets::input::{InputWidget, cursor_position, input_height};
 use crate::widgets::rewind_picker::{RewindEntry, RewindPicker, RewindPickerWidget, RewindView};
 use crate::widgets::status_bar::StatusBarWidget;
 use crate::widgets::task_panel::TaskPanelWidget;
+use crate::widgets::worker_picker::{
+    RunEntry, WorkerEntry, WorkerPicker, WorkerPickerView, WorkerPickerWidget,
+};
 
 /// Application state
 pub struct App {
@@ -128,6 +128,10 @@ pub struct App {
     toast_notifications: Vec<(String, Instant)>,
     /// Last time we polled pending.jsonl for system events
     last_event_poll: Instant,
+    /// Buffered system events waiting to be pushed to agent
+    event_buffer: Vec<(String, String, String)>,
+    /// Whether browser tools are enabled (--browser flag)
+    browser_tools: bool,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -255,7 +259,14 @@ impl App {
             worker_scheduler,
             toast_notifications: Vec::new(),
             last_event_poll: Instant::now(),
+            event_buffer: Vec::new(),
+            browser_tools: false,
         }
+    }
+
+    /// Enable browser tools for this session.
+    pub fn enable_browser_tools(&mut self) {
+        self.browser_tools = true;
     }
 
     /// Build the display text for the input widget.
@@ -302,7 +313,7 @@ impl App {
 
     /// Create a new AgentLoop with a fresh session
     async fn create_agent(&mut self) -> AgentLoop {
-        let system_prompt = build_system_prompt().await;
+        let system_prompt = build_system_prompt_with_opts(self.browser_tools).await;
 
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
 
@@ -339,9 +350,15 @@ impl App {
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
         self.planner_answer_tx = Some(planner_answer_tx);
 
+        let tools = if self.browser_tools {
+            create_configured_browser_registry(&permissions)
+        } else {
+            create_configured_registry(&permissions)
+        };
+
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),
-            tools: create_configured_registry(&permissions),
+            tools,
             system_prompt,
             cwd,
             provider_name: self.config.config.provider.to_string(),
@@ -397,9 +414,7 @@ impl App {
             .await
             .ok()
             .flatten();
-        let is_trusted = project_cfg
-            .as_ref()
-            .is_some_and(|(_, cfg)| cfg.trusted);
+        let is_trusted = project_cfg.as_ref().is_some_and(|(_, cfg)| cfg.trusted);
         if let Some((_, ref cfg)) = project_cfg {
             self.permission_mode = cfg.permission_mode.clone();
         }
@@ -436,7 +451,9 @@ impl App {
             } else {
                 0
             };
-            let chat_area_h = term_size.height.saturating_sub(cur_input_h + 2 + task_panel_h); // +2 = status bar + margin
+            let chat_area_h = term_size
+                .height
+                .saturating_sub(cur_input_h + 2 + task_panel_h); // +2 = status bar + margin
             if self.trust_prompt.is_none()
                 && self.approval_prompt.is_none()
                 && self.plan_review.is_none()
@@ -1656,6 +1673,9 @@ impl App {
                         self.session_id = Some(agent.session_id().to_string());
                         self.agent = Some(agent);
 
+                        // Flush any system events that arrived while agent was busy
+                        self.flush_event_buffer();
+
                         // Auto-submit queued message if one was set
                         if let Some(queued) = self.queued_message.take() {
                             self.input = queued;
@@ -1845,7 +1865,7 @@ impl App {
                 ));
             }
             if did_change && let Some(agent) = self.agent.as_mut() {
-                agent.reload_system_prompt(build_system_prompt().await);
+                agent.reload_system_prompt(build_system_prompt_with_opts(self.browser_tools).await);
             }
             return;
         }
@@ -1899,7 +1919,7 @@ impl App {
                 ));
             }
             if did_change && let Some(agent) = self.agent.as_mut() {
-                agent.reload_system_prompt(build_system_prompt().await);
+                agent.reload_system_prompt(build_system_prompt_with_opts(self.browser_tools).await);
             }
             return;
         }
@@ -2210,7 +2230,7 @@ impl App {
             return;
         }
 
-        let system_prompt = build_system_prompt().await;
+        let system_prompt = build_system_prompt_with_opts(self.browser_tools).await;
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
 
         let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
@@ -2241,9 +2261,15 @@ impl App {
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
         self.planner_answer_tx = Some(planner_answer_tx);
 
+        let tools = if self.browser_tools {
+            create_configured_browser_registry(&permissions)
+        } else {
+            create_configured_registry(&permissions)
+        };
+
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),
-            tools: create_configured_registry(&permissions),
+            tools,
             system_prompt,
             cwd,
             provider_name: self.config.config.provider.to_string(),
@@ -2658,6 +2684,7 @@ impl App {
 
     /// Poll `pending.jsonl` for new system events and show them as toasts.
     /// Reads and truncates the file so events are only shown once.
+    /// Events are buffered and flushed to the agent when it becomes available.
     fn poll_pending_events(&mut self) {
         let path = LukanPaths::pending_events_file();
         let content = match std::fs::read_to_string(&path) {
@@ -2672,15 +2699,39 @@ impl App {
                 continue;
             }
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                let source = val.get("source").and_then(|v| v.as_str()).unwrap_or("?");
-                let level = val.get("level").and_then(|v| v.as_str()).unwrap_or("info");
-                let detail = val.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+                let source = val
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let level = val
+                    .get("level")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("info")
+                    .to_string();
+                let detail = val
+                    .get("detail")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let msg = format!("[{}] {}: {}", level.to_uppercase(), source, detail);
                 self.toast_notifications.push((msg, Instant::now()));
-                // Also push into agent's pending events queue if agent is available
-                if let Some(ref mut agent) = self.agent {
-                    agent.push_event(source, level, detail);
-                }
+                // Buffer events — they'll be flushed to the agent when available
+                self.event_buffer.push((source, level, detail));
+            }
+        }
+        // Try to flush buffer to agent immediately if available
+        self.flush_event_buffer();
+    }
+
+    /// Flush buffered system events into the agent's pending queue.
+    fn flush_event_buffer(&mut self) {
+        if self.event_buffer.is_empty() {
+            return;
+        }
+        if let Some(ref mut agent) = self.agent {
+            for (source, level, detail) in self.event_buffer.drain(..) {
+                agent.push_event(&source, &level, &detail);
             }
         }
     }
@@ -2839,8 +2890,7 @@ impl App {
                 detail,
             } => {
                 let msg = format!("[{level}] {source}: {detail}");
-                self.toast_notifications
-                    .push((msg, Instant::now()));
+                self.toast_notifications.push((msg, Instant::now()));
             }
             _ => {}
         }
@@ -3241,9 +3291,25 @@ const COMMANDS: &[(&str, &str)] = &[
 // ── System Prompt Builder ─────────────────────────────────────────────────
 
 /// Build the system prompt, appending global and project memory if available.
-async fn build_system_prompt() -> SystemPrompt {
+async fn build_system_prompt_with_opts(browser_tools: bool) -> SystemPrompt {
     const BASE: &str = include_str!("../../../prompts/base.txt");
     let mut cached = vec![BASE.to_string()];
+
+    // Browser tools instructions
+    if browser_tools {
+        cached.push(
+            "## Browser Tools\n\n\
+             You have browser automation tools available. Chrome is already managed for you.\n\
+             - **NEVER** use Bash to launch or control Chrome. Use the Browser* tools instead.\n\
+             - Use `BrowserNavigate` to go to URLs, `BrowserClick` / `BrowserType` to interact with elements.\n\
+             - The accessibility snapshot numbers elements like [1], [2], etc. Pass these to BrowserClick/BrowserType.\n\
+             - Use `BrowserSnapshot` to refresh the page state, `BrowserScreenshot` for visual capture.\n\
+             - Use `BrowserEvaluate` for read-only JS expressions (no fetch, cookies, localStorage).\n\
+             - Use `BrowserTabs`, `BrowserNewTab`, `BrowserSwitchTab` to manage tabs.\n\
+             - When the user asks to \"open\" a website, use BrowserNavigate, not Bash."
+                .to_string(),
+        );
+    }
 
     // Always load global memory if it exists
     let global_path = LukanPaths::global_memory_file();
@@ -3294,6 +3360,10 @@ async fn build_system_prompt() -> SystemPrompt {
     );
 
     SystemPrompt::Structured { cached, dynamic }
+}
+
+async fn build_system_prompt() -> SystemPrompt {
+    build_system_prompt_with_opts(false).await
 }
 
 /// Filter available commands by the current input prefix.

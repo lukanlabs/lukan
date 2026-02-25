@@ -1242,18 +1242,9 @@ impl AgentLoop {
                             final_tasks.iter().map(|t| t.title.clone()).collect();
                         lukan_tools::tasks::create_tasks_from_plan(&cwd, &task_titles).await;
 
-                        // Switch mode from planner to auto
-                        self.permission_matcher.set_mode(PermissionMode::Auto);
-
-                        // Rebuild system prompt with new mode + tasks + plan
+                        // Keep current permission mode; user can cycle modes manually.
+                        // Rebuild system prompt with latest tasks + plan context.
                         self.rebuild_system_prompt().await;
-
-                        // Notify UI of mode change
-                        let _ = event_tx
-                            .send(StreamEvent::ModeChanged {
-                                mode: "auto".to_string(),
-                            })
-                            .await;
 
                         // Inject success tool result with instructions
                         let task_summary: String = task_titles
@@ -1263,7 +1254,7 @@ impl AgentLoop {
                             .collect::<Vec<_>>()
                             .join("\n");
                         let result_content = format!(
-                            "Plan accepted! {} tasks created. Mode switched to auto.\n\n\
+                            "Plan accepted! {} tasks created.\n\n\
                              Tasks:\n{}\n\n\
                              Start implementing task #1 now. Use TaskUpdate to mark tasks in_progress/done as you go.",
                             task_titles.len(),

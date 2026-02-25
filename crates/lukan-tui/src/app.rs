@@ -1293,9 +1293,15 @@ impl App {
                             }
                         }
                     };
+                    // Match chat content left padding so shimmer text aligns with messages
+                    let padded_shimmer = Rect {
+                        x: shimmer_area.x + 1,
+                        width: shimmer_area.width.saturating_sub(1),
+                        ..shimmer_area
+                    };
                     let line = ratatui::text::Line::from(shimmer_spans(label));
                     let paragraph = ratatui::widgets::Paragraph::new(line);
-                    frame.render_widget(paragraph, shimmer_area);
+                    frame.render_widget(paragraph, padded_shimmer);
                 }
 
                 // Queued message indicator

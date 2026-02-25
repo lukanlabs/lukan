@@ -118,6 +118,8 @@ pub struct AgentLoop {
     loaded_skills: HashSet<String>,
     /// Pending system events from plugins (injected into next turn)
     pending_events: Vec<PendingEvent>,
+    /// Tool names disabled at runtime by the TUI tool picker
+    disabled_tools: HashSet<String>,
 }
 
 /// A system event from a plugin, queued for injection into the agent context.
@@ -198,6 +200,7 @@ impl AgentLoop {
             available_skills,
             loaded_skills: HashSet::new(),
             pending_events: Vec::new(),
+            disabled_tools: HashSet::new(),
         })
     }
 
@@ -274,6 +277,7 @@ impl AgentLoop {
             available_skills,
             loaded_skills: HashSet::new(),
             pending_events: Vec::new(),
+            disabled_tools: HashSet::new(),
         })
     }
 
@@ -535,6 +539,11 @@ impl AgentLoop {
         &self.pending_events
     }
 
+    /// Set tools that should be excluded from tool definitions.
+    pub fn set_disabled_tools(&mut self, disabled: HashSet<String>) {
+        self.disabled_tools = disabled;
+    }
+
     /// Rebuild the system prompt based on current mode and plan state.
     /// Call this after mode changes (e.g. planner → auto on plan accept).
     pub async fn rebuild_system_prompt(&mut self) {
@@ -660,6 +669,8 @@ impl AgentLoop {
             if *self.permission_matcher.mode() == PermissionMode::Planner {
                 tool_defs.retain(|d| PLANNER_TOOL_WHITELIST.contains(&d.name.as_str()));
             }
+            // Also hide tools disabled at runtime by the TUI
+            tool_defs.retain(|d| !self.disabled_tools.contains(&d.name));
 
             let params = StreamParams {
                 system_prompt: self.system_prompt.clone(),

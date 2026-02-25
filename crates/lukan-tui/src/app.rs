@@ -9,7 +9,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Stdout, stdout};
 use std::sync::Arc;
 use std::time::Instant;
@@ -28,7 +28,7 @@ use lukan_core::models::events::{
 };
 use lukan_core::models::sessions::SessionSummary;
 use lukan_providers::{Provider, SystemPrompt, create_provider};
-use lukan_tools::{create_configured_browser_registry, create_configured_registry};
+use lukan_tools::{all_tool_names, create_configured_browser_registry, create_configured_registry};
 
 use chrono::Utc;
 
@@ -164,6 +164,10 @@ pub struct App {
     show_event_history: bool,
     /// Scroll offset for the event history overlay
     event_history_scroll: u16,
+    /// Runtime tool picker overlay state (Alt+P)
+    tool_picker: Option<ToolPicker>,
+    /// Persisted disabled tools applied to new turns
+    disabled_tools: HashSet<String>,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -201,6 +205,30 @@ struct SessionPicker {
     selected: usize,
     current_id: Option<String>,
 }
+
+struct ToolGroup {
+    name: String,
+    tools: Vec<String>,
+}
+
+struct ToolPicker {
+    groups: Vec<ToolGroup>,
+    selected: usize,
+    disabled: HashSet<String>,
+}
+
+const BROWSER_TOOLS: &[&str] = &[
+    "BrowserNavigate",
+    "BrowserSnapshot",
+    "BrowserScreenshot",
+    "BrowserClick",
+    "BrowserType",
+    "BrowserEvaluate",
+    "BrowserSavePDF",
+    "BrowserTabs",
+    "BrowserNewTab",
+    "BrowserSwitchTab",
+];
 
 /// Plan review overlay mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -306,12 +334,135 @@ impl App {
             event_agent_has_unread: false,
             show_event_history: false,
             event_history_scroll: 0,
+            tool_picker: None,
+            disabled_tools: HashSet::new(),
         }
     }
 
     /// Enable browser tools for this session.
     pub fn enable_browser_tools(&mut self) {
         self.browser_tools = true;
+    }
+
+    fn build_tool_groups(&self) -> Vec<ToolGroup> {
+        let mut groups: Vec<ToolGroup> = Vec::new();
+
+        let mut plugin_tool_names: HashSet<String> = HashSet::new();
+        let plugins_dir = LukanPaths::plugins_dir();
+        if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
+            let mut plugin_groups: Vec<ToolGroup> = Vec::new();
+            for entry in entries.flatten() {
+                let plugin_dir = entry.path();
+                if !plugin_dir.is_dir() {
+                    continue;
+                }
+                let plugin_name = match plugin_dir.file_name().and_then(|n| n.to_str()) {
+                    Some(name) => name.to_string(),
+                    None => continue,
+                };
+                let tools_path = plugin_dir.join("tools.json");
+                if !tools_path.exists() {
+                    continue;
+                }
+                let content = match std::fs::read_to_string(&tools_path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let parsed: serde_json::Value = match serde_json::from_str(&content) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let mut names: Vec<String> = parsed
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
+                    .map(|name| name.to_string())
+                    .collect();
+                names.sort();
+                names.dedup();
+                if names.is_empty() {
+                    continue;
+                }
+                plugin_tool_names.extend(names.iter().cloned());
+                plugin_groups.push(ToolGroup {
+                    name: plugin_name,
+                    tools: names,
+                });
+            }
+            plugin_groups.sort_by(|a, b| a.name.cmp(&b.name));
+            groups.extend(plugin_groups);
+        }
+
+        let browser_tools: HashSet<String> = BROWSER_TOOLS.iter().map(|t| (*t).to_string()).collect();
+        if self.browser_tools {
+            let mut browser: Vec<String> = BROWSER_TOOLS.iter().map(|t| (*t).to_string()).collect();
+            browser.sort();
+            if !browser.is_empty() {
+                groups.push(ToolGroup {
+                    name: "Browser".to_string(),
+                    tools: browser,
+                });
+            }
+        }
+
+        let mut core: Vec<String> = all_tool_names()
+            .into_iter()
+            .filter(|name| !plugin_tool_names.contains(name))
+            .filter(|name| !browser_tools.contains(name))
+            .collect();
+        core.sort();
+        if !core.is_empty() {
+            groups.push(ToolGroup {
+                name: "Core".to_string(),
+                tools: core,
+            });
+        }
+
+        groups.sort_by(|a, b| a.name.cmp(&b.name));
+        groups
+    }
+
+    fn tool_picker_tool_count(picker: &ToolPicker) -> usize {
+        picker.groups.iter().map(|g| g.tools.len()).sum()
+    }
+
+    fn tool_picker_selected_tool_name(picker: &ToolPicker) -> Option<String> {
+        let mut idx = 0usize;
+        for group in &picker.groups {
+            for tool in &group.tools {
+                if idx == picker.selected {
+                    return Some(tool.clone());
+                }
+                idx += 1;
+            }
+        }
+        None
+    }
+
+    fn open_tool_picker(&mut self) {
+        let groups = self.build_tool_groups();
+        let selected = 0usize;
+        self.tool_picker = Some(ToolPicker {
+            groups,
+            selected,
+            disabled: self.disabled_tools.clone(),
+        });
+        self.show_event_history = false;
+        self.force_redraw = true;
+    }
+
+    fn close_tool_picker(&mut self) {
+        if let Some(picker) = self.tool_picker.take() {
+            self.disabled_tools = picker.disabled;
+            if let Some(ref mut agent) = self.agent {
+                agent.set_disabled_tools(self.disabled_tools.clone());
+            }
+            if let Some(ref mut event_agent) = self.event_agent {
+                event_agent.set_disabled_tools(self.disabled_tools.clone());
+            }
+        }
+        self.force_redraw = true;
     }
 
     /// Build the display text for the input widget.
@@ -419,7 +570,10 @@ impl App {
         };
 
         match AgentLoop::new(config).await {
-            Ok(agent) => agent,
+            Ok(mut agent) => {
+                agent.set_disabled_tools(self.disabled_tools.clone());
+                agent
+            }
             Err(e) => {
                 // Fallback: if session creation fails, log error and panic
                 // This shouldn't happen in normal operation
@@ -472,7 +626,10 @@ impl App {
         };
 
         match AgentLoop::new(config).await {
-            Ok(agent) => agent,
+            Ok(mut agent) => {
+                agent.set_disabled_tools(self.disabled_tools.clone());
+                agent
+            }
             Err(e) => panic!("Failed to create event agent: {e}"),
         }
     }
@@ -623,6 +780,9 @@ impl App {
         if self.event_agent.is_none() {
             let agent = self.create_event_agent().await;
             self.event_agent = Some(agent);
+        }
+        if let Some(ref mut agent) = self.event_agent {
+            agent.set_disabled_tools(self.disabled_tools.clone());
         }
 
         // Flush buffered events into the agent
@@ -808,6 +968,9 @@ impl App {
             let agent = self.create_event_agent().await;
             self.event_agent = Some(agent);
         }
+        if let Some(ref mut agent) = self.event_agent {
+            agent.set_disabled_tools(self.disabled_tools.clone());
+        }
 
         // Flush any buffered events
         self.flush_event_buffer_to_event_agent();
@@ -917,6 +1080,7 @@ impl App {
                 && self.worker_picker.is_none()
                 && self.rewind_picker.is_none()
                 && self.memory_viewer.is_none()
+                && self.tool_picker.is_none()
             {
                 // Commit overflow for the active view only
                 let (msgs, committed_idx) = match self.active_view {
@@ -1211,6 +1375,8 @@ impl App {
                     || self.reasoning_picker.is_some()
                 {
                     InputWidget::new("↑↓ navigate · Enter select · ESC close", 0, false)
+                } else if self.tool_picker.is_some() {
+                    InputWidget::new("↑↓ navigate · Space toggle · Esc/Alt+P close", 0, false)
                 } else {
                     InputWidget::new(&di, dc, true)
                 };
@@ -1298,8 +1464,27 @@ impl App {
                     frame.render_widget(toast_paragraph, toast_area);
                 }
 
+                if let Some(ref picker) = self.tool_picker {
+                    let overlay_w = (chat_area.width * 80 / 100).max(30);
+                    let overlay_h = (chat_area.height * 70 / 100).max(8);
+                    let overlay_x = chat_area.x + (chat_area.width.saturating_sub(overlay_w)) / 2;
+                    let overlay_y = chat_area.y + (chat_area.height.saturating_sub(overlay_h)) / 2;
+                    let overlay_area = Rect {
+                        x: overlay_x,
+                        y: overlay_y,
+                        width: overlay_w,
+                        height: overlay_h,
+                    };
+                    Clear.render(overlay_area, frame.buffer_mut());
+                    let widget = ToolPickerWidget::new(picker);
+                    frame.render_widget(widget, overlay_area);
+                }
+
                 // Event history floating overlay (Alt+L in Event Agent view)
-                if self.active_view == ActiveView::EventAgent && self.show_event_history {
+                if self.active_view == ActiveView::EventAgent
+                    && self.show_event_history
+                    && self.tool_picker.is_none()
+                {
                     use ratatui::widgets::{Block, Borders, Wrap};
 
                     let events = Self::load_event_history(50);
@@ -1381,6 +1566,7 @@ impl App {
                     && self.worker_picker.is_none()
                     && self.session_picker.is_none()
                     && self.model_picker.is_none()
+                    && self.tool_picker.is_none()
                     && !self.show_event_history
                 {
                     let (cx, cy) = cursor_position(&di, dc, input_area);
@@ -1509,6 +1695,48 @@ impl App {
                                             let _ = tx.try_send(ApprovalResponse::DeniedAll);
                                         }
                                         self.force_redraw = true;
+                                    }
+                                    _ => {}
+                                }
+                            } else if self.tool_picker.is_some() {
+                                match key.code {
+                                    KeyCode::Up => {
+                                        if let Some(ref mut picker) = self.tool_picker
+                                            && picker.selected > 0
+                                        {
+                                            picker.selected -= 1;
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if let Some(ref mut picker) = self.tool_picker {
+                                            let total = Self::tool_picker_tool_count(picker);
+                                            if picker.selected + 1 < total {
+                                                picker.selected += 1;
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Char(' ') => {
+                                        if let Some(ref mut picker) = self.tool_picker
+                                            && let Some(tool_name) = Self::tool_picker_selected_tool_name(picker)
+                                        {
+                                            if picker.disabled.contains(&tool_name) {
+                                                picker.disabled.remove(&tool_name);
+                                            } else {
+                                                picker.disabled.insert(tool_name);
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Esc => {
+                                        self.close_tool_picker();
+                                    }
+                                    KeyCode::Char('p')
+                                        if key.modifiers
+                                            .contains(crossterm::event::KeyModifiers::ALT) =>
+                                    {
+                                        self.close_tool_picker();
+                                    }
+                                    KeyCode::Enter => {
+                                        // Block Enter while tool picker is open
                                     }
                                     _ => {}
                                 }
@@ -1953,6 +2181,17 @@ impl App {
                                     "system",
                                     "Sending current command to background...",
                                 ));
+                            } else if key.code == KeyCode::Char('p')
+                                && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
+                                && !self.is_streaming
+                                && !self.event_is_streaming
+                            {
+                                // Alt+P: toggle tool picker overlay
+                                if self.tool_picker.is_some() {
+                                    self.close_tool_picker();
+                                } else {
+                                    self.open_tool_picker();
+                                }
                             } else if key.code == KeyCode::Char('m')
                                 && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
                             {
@@ -2318,6 +2557,7 @@ impl App {
                         // Sync permission mode in case it was changed via
                         // Shift+Tab while the agent was running its turn
                         agent.set_permission_mode(self.permission_mode.clone());
+                        agent.set_disabled_tools(self.disabled_tools.clone());
                         self.session_id = Some(agent.session_id().to_string());
                         self.agent = Some(agent);
 
@@ -2341,7 +2581,8 @@ impl App {
                 && let Some(mut rx) = self.event_agent_return_rx.take()
             {
                 match rx.try_recv() {
-                    Ok(agent) => {
+                    Ok(mut agent) => {
+                        agent.set_disabled_tools(self.disabled_tools.clone());
                         self.event_agent = Some(agent);
                         // Flush any events that arrived while event agent was busy
                         self.flush_event_buffer_to_event_agent();
@@ -2808,6 +3049,9 @@ impl App {
 
         // Ensure agent exists (create new session if needed) and run the turn
         // We need to take the agent out to avoid borrow issues with self
+        if let Some(ref mut agent) = self.agent {
+            agent.set_disabled_tools(self.disabled_tools.clone());
+        }
         let agent = match self.agent.take() {
             Some(a) => a,
             None => self.create_agent().await,
@@ -2945,7 +3189,8 @@ impl App {
         };
 
         match AgentLoop::load_session(config, &session_id).await {
-            Ok(agent) => {
+            Ok(mut agent) => {
+                agent.set_disabled_tools(self.disabled_tools.clone());
                 // Rebuild UI messages from the loaded session
                 self.messages.clear();
                 self.committed_msg_idx = 0;
@@ -3870,7 +4115,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
  ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
- /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+E  Events    Alt+L  Event Log    Alt+M  Memory    Alt+T  Tasks    Shift+Tab  Mode    Ctrl+C  Quit"
+ /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+E  Events    Alt+L  Event Log    Alt+M  Memory    Alt+P  Tools    Alt+T  Tasks    Shift+Tab  Mode    Ctrl+C  Quit"
     )
 }
 
@@ -4638,6 +4883,90 @@ impl Widget for PlanReviewWidget<'_> {
         let paragraph = Paragraph::new(lines)
             .block(block)
             .wrap(Wrap { trim: false });
+        paragraph.render(area, buf);
+    }
+}
+
+// ── Tool Picker Widget ───────────────────────────────────────────────────
+
+struct ToolPickerWidget<'a> {
+    picker: &'a ToolPicker,
+}
+
+impl<'a> ToolPickerWidget<'a> {
+    fn new(picker: &'a ToolPicker) -> Self {
+        Self { picker }
+    }
+}
+
+impl Widget for ToolPickerWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use ratatui::widgets::{Block, Borders, Wrap};
+
+        Clear.render(area, buf);
+
+        let mut lines: Vec<Line<'_>> = Vec::new();
+        lines.push(Line::from(""));
+
+        let mut tool_row = 0usize;
+        let mut selected_line = 0usize;
+
+        for group in &self.picker.groups {
+            lines.push(Line::from(Span::styled(
+                format!(" ── {} ──", group.name),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+
+            for tool in &group.tools {
+                let is_selected = tool_row == self.picker.selected;
+                if is_selected {
+                    selected_line = lines.len();
+                }
+                let is_disabled = self.picker.disabled.contains(tool);
+                let pointer = if is_selected { "▸ " } else { "  " };
+                let checkbox = if is_disabled { "[ ]" } else { "[x]" };
+                let checkbox_style = if is_disabled {
+                    Style::default().fg(Color::Red)
+                } else {
+                    Style::default().fg(Color::Green)
+                };
+
+                lines.push(Line::from(vec![
+                    Span::styled(pointer.to_string(), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("{checkbox} "), checkbox_style),
+                    Span::styled(
+                        tool.clone(),
+                        if is_selected {
+                            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        },
+                    ),
+                ]));
+
+                tool_row += 1;
+            }
+            lines.push(Line::from(""));
+        }
+
+        let available_rows = area.height.saturating_sub(2) as usize;
+        let scroll_y = if selected_line >= available_rows {
+            (selected_line - available_rows + 1) as u16
+        } else {
+            0
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Tools (Alt+P) · Space toggle ")
+            .border_style(Style::default().fg(Color::Cyan))
+            .style(Style::default().bg(Color::Rgb(20, 20, 20)));
+
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_y, 0))
+            .style(Style::default().bg(Color::Rgb(20, 20, 20)));
         paragraph.render(area, buf);
     }
 }

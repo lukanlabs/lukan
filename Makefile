@@ -79,6 +79,9 @@ package-plugins: bundle-plugins
 	@# Docker Monitor plugin
 	@cd plugins/docker-monitor/dist && tar czf ../../../dist/plugins/lukan-plugin-docker-monitor.tar.gz .
 	@echo "  Packaged: lukan-plugin-docker-monitor.tar.gz"
+	@# Security Monitor plugin
+	@cd plugins/security-monitor/dist && tar czf ../../../dist/plugins/lukan-plugin-security-monitor.tar.gz .
+	@echo "  Packaged: lukan-plugin-security-monitor.tar.gz"
 
 ## release: Build binary + bundle plugins + generate checksums
 release: build bundle-plugins package-plugins

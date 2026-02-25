@@ -1,0 +1,55 @@
+[plugin]
+name = "security-monitor"
+version = "0.1.0"
+description = "Cybersecurity monitor — detects intrusions, brute force, suspicious processes, file tampering, and privilege escalation"
+plugin_type = "channel"
+protocol_version = 1
+alias = "security"
+
+[run]
+command = "bash"
+args = ["monitor.sh"]
+
+[config.watch_ssh]
+type = "bool"
+description = "Monitor SSH and authentication events (brute force, root login, unknown IPs)"
+
+[config.watch_firewall]
+type = "bool"
+description = "Monitor network connections and unexpected listening ports"
+
+[config.watch_files]
+type = "bool"
+description = "Monitor critical file integrity (/etc/passwd, /etc/shadow, sudoers, sshd_config, crontabs)"
+
+[config.watch_processes]
+type = "bool"
+description = "Monitor for suspicious processes (reverse shells, crypto miners, unexpected root processes)"
+
+[config.watch_sudo]
+type = "bool"
+description = "Monitor sudo/su usage and privilege escalation attempts"
+
+[config.watch_docker]
+type = "bool"
+description = "Monitor Docker containers for security issues (privileged, host mounts)"
+
+[config.trusted_users]
+type = "string[]"
+description = "Users whose normal logins are silently ignored (e.g. your username)"
+
+[config.trusted_ips]
+type = "string[]"
+description = "IPs whose SSH connections are silently ignored (e.g. your home IP)"
+
+[config.allowed_ports]
+type = "string[]"
+description = "Ports expected to be listening — others trigger alerts (e.g. 22,80,443,5432)"
+
+[config.ssh_fail_threshold]
+type = "number"
+description = "Failed SSH attempts from same IP before alerting (default: 5)"
+
+[config.scan_interval]
+type = "number"
+description = "Seconds between periodic scans for processes/ports/files (default: 30)"

@@ -48,6 +48,15 @@ source = "archive"
 [plugins.docker-monitor.assets.all]
 url = "https://get.lukan.ai/plugins/lukan-plugin-docker-monitor.tar.gz"
 
+[plugins.security-monitor]
+description = "Cybersecurity monitor — detects intrusions, brute force, suspicious processes, file tampering, privilege escalation"
+version = "0.1.0"
+plugin_type = "channel"
+source = "archive"
+
+[plugins.security-monitor.assets.all]
+url = "https://get.lukan.ai/plugins/lukan-plugin-security-monitor.tar.gz"
+
 # ── Native plugins (platform-specific) ─────────────────────────────────
 
 [plugins.whisper]

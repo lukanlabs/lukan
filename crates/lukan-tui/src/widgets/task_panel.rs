@@ -50,9 +50,7 @@ impl Widget for TaskPanelWidget<'_> {
                     Span::raw(format!("{icon} ")),
                     Span::styled(
                         format!("#{}", entry.id),
-                        Style::default()
-                            .fg(color)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
                         format!(" [{}]", entry.status.label()),

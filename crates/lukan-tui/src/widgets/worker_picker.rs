@@ -147,10 +147,7 @@ fn render_worker_list(picker: &WorkerPicker, area: Rect, buf: &mut Buffer) {
                 Color::DarkGray
             };
 
-            let last_run = entry
-                .last_run_status
-                .as_deref()
-                .unwrap_or("never run");
+            let last_run = entry.last_run_status.as_deref().unwrap_or("never run");
             let last_color = match last_run {
                 "success" => Color::Green,
                 "error" => Color::Red,

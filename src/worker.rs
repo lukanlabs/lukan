@@ -219,7 +219,10 @@ async fn interactive_runs(id: Option<String>) -> Result<()> {
 }
 
 fn print_run_detail(run: &lukan_core::workers::WorkerRun, worker_name: &str) {
-    println!("\n  ╭─ Run {} for '{}' ─────────────────", run.id, worker_name);
+    println!(
+        "\n  ╭─ Run {} for '{}' ─────────────────",
+        run.id, worker_name
+    );
     println!("  │ Status:    {}", run.status);
     println!("  │ Started:   {}", run.started_at);
     println!(

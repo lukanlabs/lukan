@@ -88,7 +88,11 @@ pub async fn discover_skills(cwd: &Path) -> Vec<SkillInfo> {
 
 /// Load the full content of a skill's SKILL.md by folder name.
 pub async fn load_skill_content(cwd: &Path, folder: &str) -> Option<String> {
-    let skill_path = cwd.join(".lukan").join("skills").join(folder).join("SKILL.md");
+    let skill_path = cwd
+        .join(".lukan")
+        .join("skills")
+        .join(folder)
+        .join("SKILL.md");
     tokio::fs::read_to_string(&skill_path).await.ok()
 }
 
@@ -150,7 +154,8 @@ mod tests {
 
     #[test]
     fn parses_valid_frontmatter() {
-        let content = "---\nname: Git Commits\ndescription: How to create proper git commits\n---\nBody here";
+        let content =
+            "---\nname: Git Commits\ndescription: How to create proper git commits\n---\nBody here";
         let (name, desc) = parse_frontmatter(content).unwrap();
         assert_eq!(name, "Git Commits");
         assert_eq!(desc, "How to create proper git commits");

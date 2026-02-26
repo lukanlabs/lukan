@@ -1,6 +1,8 @@
+pub mod browser;
 pub mod chat;
 pub mod config;
 pub mod credentials;
+pub mod files;
 pub mod memory;
 pub mod plugins;
 pub mod providers;

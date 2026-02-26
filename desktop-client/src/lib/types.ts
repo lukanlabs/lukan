@@ -104,6 +104,37 @@ export interface WebUiStatus {
 
 export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" | "providers" | "memory";
 
+// ── Workspace types ──────────────────────────────────────────────────
+
+export type WorkspaceMode = "agent" | "terminal";
+
+export type SidePanelId = "files" | "workers" | "sessions" | "browser";
+
+export interface BrowserStatus {
+  running: boolean;
+  cdpUrl?: string;
+  currentUrl?: string;
+}
+
+export interface BrowserTab {
+  id: string;
+  title: string;
+  url: string;
+  wsUrl: string;
+}
+
+export interface FileEntry {
+  name: string;
+  isDir: boolean;
+  size: number;
+  modified?: string;
+}
+
+export interface DirectoryListing {
+  path: string;
+  entries: FileEntry[];
+}
+
 // ── Terminal types ────────────────────────────────────────────────────
 
 export interface TerminalSessionInfo {

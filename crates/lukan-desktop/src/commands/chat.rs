@@ -1,10 +1,10 @@
 use lukan_agent::SessionManager;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::config::{ConfigManager, CredentialsManager, ResolvedConfig};
+use lukan_core::models::events::StreamEvent;
 use lukan_core::models::events::{
     ApprovalResponse, PlanReviewResponse, PlanTask, ToolApprovalRequest,
 };
-use lukan_core::models::events::StreamEvent;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
@@ -60,8 +60,13 @@ pub struct SessionSummaryJs {
 #[tauri::command]
 pub async fn initialize_chat(state: State<'_, ChatState>) -> Result<InitResponse, String> {
     let config = ConfigManager::load().await.map_err(|e| e.to_string())?;
-    let credentials = CredentialsManager::load().await.map_err(|e| e.to_string())?;
-    let resolved = ResolvedConfig { config, credentials };
+    let credentials = CredentialsManager::load()
+        .await
+        .map_err(|e| e.to_string())?;
+    let resolved = ResolvedConfig {
+        config,
+        credentials,
+    };
 
     let provider_name = resolved.config.provider.to_string();
     let model_name = resolved.effective_model();
@@ -205,7 +210,10 @@ pub async fn send_message(
                     },
                 };
 
-                let _ = app_handle.emit("turn-complete", serde_json::to_string(&complete).unwrap_or_default());
+                let _ = app_handle.emit(
+                    "turn-complete",
+                    serde_json::to_string(&complete).unwrap_or_default(),
+                );
 
                 // Put agent back
                 let chat_state = app_for_complete.state::<ChatState>();
@@ -290,8 +298,7 @@ pub async fn accept_plan(
     state: State<'_, ChatState>,
     tasks: Option<serde_json::Value>,
 ) -> Result<(), String> {
-    let modified_tasks: Option<Vec<PlanTask>> =
-        tasks.and_then(|v| serde_json::from_value(v).ok());
+    let modified_tasks: Option<Vec<PlanTask>> = tasks.and_then(|v| serde_json::from_value(v).ok());
     let tx = state.plan_review_tx.lock().await;
     if let Some(ref sender) = *tx {
         sender
@@ -303,10 +310,7 @@ pub async fn accept_plan(
 }
 
 #[tauri::command]
-pub async fn reject_plan(
-    state: State<'_, ChatState>,
-    feedback: String,
-) -> Result<(), String> {
+pub async fn reject_plan(state: State<'_, ChatState>, feedback: String) -> Result<(), String> {
     let tx = state.plan_review_tx.lock().await;
     if let Some(ref sender) = *tx {
         sender
@@ -318,16 +322,10 @@ pub async fn reject_plan(
 }
 
 #[tauri::command]
-pub async fn answer_question(
-    state: State<'_, ChatState>,
-    answer: String,
-) -> Result<(), String> {
+pub async fn answer_question(state: State<'_, ChatState>, answer: String) -> Result<(), String> {
     let tx = state.planner_answer_tx.lock().await;
     if let Some(ref sender) = *tx {
-        sender
-            .send(answer)
-            .await
-            .map_err(|e| e.to_string())?;
+        sender.send(answer).await.map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -351,10 +349,7 @@ pub async fn list_sessions() -> Result<Vec<SessionSummaryJs>, String> {
 }
 
 #[tauri::command]
-pub async fn load_session(
-    state: State<'_, ChatState>,
-    id: String,
-) -> Result<InitResponse, String> {
+pub async fn load_session(state: State<'_, ChatState>, id: String) -> Result<InitResponse, String> {
     // Save current session
     {
         let mut agent_lock = state.agent.lock().await;
@@ -364,10 +359,7 @@ pub async fn load_session(
     }
 
     let config_lock = state.config.lock().await;
-    let config = config_lock
-        .as_ref()
-        .ok_or("Chat not initialized")?
-        .clone();
+    let config = config_lock.as_ref().ok_or("Chat not initialized")?.clone();
     drop(config_lock);
 
     let agent = state
@@ -434,13 +426,9 @@ pub async fn new_session(state: State<'_, ChatState>) -> Result<InitResponse, St
 }
 
 #[tauri::command]
-pub async fn set_permission_mode(
-    state: State<'_, ChatState>,
-    mode: String,
-) -> Result<(), String> {
+pub async fn set_permission_mode(state: State<'_, ChatState>, mode: String) -> Result<(), String> {
     let parsed: PermissionMode =
-        serde_json::from_value(serde_json::Value::String(mode))
-            .unwrap_or(PermissionMode::Auto);
+        serde_json::from_value(serde_json::Value::String(mode)).unwrap_or(PermissionMode::Auto);
 
     *state.permission_mode.lock().await = parsed.clone();
 

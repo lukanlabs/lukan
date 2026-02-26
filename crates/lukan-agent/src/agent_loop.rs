@@ -477,6 +477,11 @@ impl AgentLoop {
         self.permission_matcher.add_allow_rule(pattern);
     }
 
+    /// Enable browser tools in the permission matcher (auto-allow without asking)
+    pub fn enable_browser_tools(&mut self) {
+        self.permission_matcher.enable_browser_tools();
+    }
+
     /// Get the current plan file name (if any)
     pub fn current_plan_file(&self) -> Option<&str> {
         self.current_plan_file.as_deref()

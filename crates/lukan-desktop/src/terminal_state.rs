@@ -109,8 +109,7 @@ impl TerminalState {
                 match std::io::Read::read(&mut reader, &mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let b64 =
-                            base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
                         let event = TerminalOutputEvent::Data { data: b64 };
                         if app_handle.emit(&event_name, &event).is_err() {
                             break;

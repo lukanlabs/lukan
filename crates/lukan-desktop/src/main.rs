@@ -97,6 +97,17 @@ fn main() {
             commands::memory::save_project_memory,
             commands::memory::is_project_memory_active,
             commands::memory::toggle_project_memory,
+            // Browser
+            commands::browser::browser_launch,
+            commands::browser::browser_status,
+            commands::browser::browser_navigate,
+            commands::browser::browser_screenshot,
+            commands::browser::browser_tabs,
+            commands::browser::browser_close,
+            // Files
+            commands::files::list_directory,
+            commands::files::open_in_editor,
+            commands::files::get_cwd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -16,6 +16,9 @@ import type {
   ToolApprovalRequest,
   TerminalSessionInfo,
   TerminalOutputEvent,
+  BrowserStatus,
+  BrowserTab,
+  DirectoryListing,
 } from "./types";
 
 // Config
@@ -119,6 +122,22 @@ export const onTerminalOutput = (
   cb: (event: TerminalOutputEvent) => void,
 ): Promise<UnlistenFn> =>
   listen<TerminalOutputEvent>(`terminal-output-${sessionId}`, (e) => cb(e.payload));
+
+// Browser
+export const browserLaunch = (visible?: boolean, profile?: string, port?: number) =>
+  invoke<BrowserStatus>("browser_launch", { visible, profile, port });
+export const browserStatus = () => invoke<BrowserStatus>("browser_status");
+export const browserNavigate = (url: string) => invoke<string>("browser_navigate", { url });
+export const browserScreenshot = () => invoke<string>("browser_screenshot");
+export const browserTabs = () => invoke<BrowserTab[]>("browser_tabs");
+export const browserClose = () => invoke<void>("browser_close");
+
+// Files
+export const listDirectory = (path?: string) =>
+  invoke<DirectoryListing>("list_directory", { path });
+export const openInEditor = (path: string, editor?: string) =>
+  invoke<void>("open_in_editor", { path, editor });
+export const getCwd = () => invoke<string>("get_cwd");
 
 // Event listeners
 export const onStreamEvent = (cb: (payload: string) => void): Promise<UnlistenFn> =>

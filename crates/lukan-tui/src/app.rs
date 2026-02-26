@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
+use lukan_agent::sub_agent::{SubAgentUpdate, get_all_sub_agents, subscribe_updates};
 use lukan_agent::{AgentConfig, AgentLoop, SessionManager, WorkerScheduler};
 use lukan_core::config::types::PermissionMode;
 use lukan_core::config::{
@@ -40,6 +41,9 @@ use crate::widgets::chat::{
 use crate::widgets::input::{InputWidget, cursor_position, input_height};
 use crate::widgets::rewind_picker::{RewindEntry, RewindPicker, RewindPickerWidget, RewindView};
 use crate::widgets::status_bar::StatusBarWidget;
+use crate::widgets::subagent_picker::{
+    SubAgentDisplayEntry, SubAgentPicker, SubAgentPickerView, SubAgentPickerWidget,
+};
 use crate::widgets::task_panel::TaskPanelWidget;
 use crate::widgets::worker_picker::{
     RunEntry, WorkerEntry, WorkerPicker, WorkerPickerView, WorkerPickerWidget,
@@ -85,6 +89,10 @@ pub struct App {
     /// Index of the first message NOT yet committed to the terminal scrollback.
     /// Messages before this index have already been pushed via `insert_before`.
     committed_msg_idx: usize,
+    /// Number of wrapped rows (from uncommitted messages + streaming) that have
+    /// already been pushed to terminal scrollback.  Resets to 0 when
+    /// `committed_msg_idx` advances past fully-scrolled messages.
+    viewport_scroll: u16,
     /// Selected index in the command palette (when typing `/`)
     cmd_palette_idx: usize,
     /// Reasoning effort picker state (shown after selecting a codex model)
@@ -99,6 +107,8 @@ pub struct App {
     bg_picker: Option<BgPicker>,
     /// Worker picker overlay state
     worker_picker: Option<WorkerPicker>,
+    /// SubAgent picker overlay state (Alt+S)
+    subagent_picker: Option<SubAgentPicker>,
     /// Rewind (checkpoint restore) picker state
     rewind_picker: Option<RewindPicker>,
     /// Memory viewer overlay content (shown via Alt+M)
@@ -162,6 +172,8 @@ pub struct App {
     event_output_tokens: u64,
     /// Committed message index for Event Agent scrollback
     event_committed_msg_idx: usize,
+    /// Row-level scroll for event agent viewport
+    event_viewport_scroll: u16,
     /// Whether the Event Agent has unread messages (badge)
     event_agent_has_unread: bool,
     /// Whether the event history floating overlay is visible (Alt+L)
@@ -307,6 +319,7 @@ impl App {
             active_tool: None,
             session_id: None,
             committed_msg_idx: 0,
+            viewport_scroll: 0,
             cmd_palette_idx: 0,
             reasoning_picker: None,
             force_redraw: false,
@@ -314,6 +327,7 @@ impl App {
             paste_info: None,
             bg_picker: None,
             worker_picker: None,
+            subagent_picker: None,
             rewind_picker: None,
             memory_viewer: None,
             trust_prompt: None,
@@ -346,6 +360,7 @@ impl App {
             event_input_tokens: 0,
             event_output_tokens: 0,
             event_committed_msg_idx: 0,
+            event_viewport_scroll: 0,
             event_agent_has_unread: false,
             show_event_history: false,
             event_history_scroll: 0,
@@ -1065,6 +1080,9 @@ impl App {
         self.worker_scheduler.start().await;
         let mut worker_notify_rx = self.worker_scheduler.subscribe();
 
+        // Subscribe to real-time sub-agent updates
+        let mut subagent_update_rx = subscribe_updates().await;
+
         // Welcome banner
         self.messages.push(ChatMessage::new(
             "banner",
@@ -1105,33 +1123,33 @@ impl App {
                 && self.session_picker.is_none()
                 && self.bg_picker.is_none()
                 && self.worker_picker.is_none()
+                && self.subagent_picker.is_none()
                 && self.rewind_picker.is_none()
                 && self.memory_viewer.is_none()
                 && self.tool_picker.is_none()
             {
-                // Commit overflow for the active view — include streaming text
-                // in the height calculation so commits happen gradually during
-                // streaming instead of all at once when streaming ends.
-                let (msgs, committed_idx, streaming) = match self.active_view {
+                let (msgs, committed_idx, streaming, vscroll) = match self.active_view {
                     ActiveView::Main => (
                         &self.messages,
                         &mut self.committed_msg_idx,
                         self.streaming_text.as_str(),
+                        &mut self.viewport_scroll,
                     ),
                     ActiveView::EventAgent => (
                         &self.event_messages,
                         &mut self.event_committed_msg_idx,
                         self.event_streaming_text.as_str(),
+                        &mut self.event_viewport_scroll,
                     ),
                 };
-                // Use padded width (chat area - 1 for left margin) to match
-                // the actual rendering width in ChatWidget.
-                commit_overflow(
+                let render_width = term_size.width.saturating_sub(1);
+                scroll_overflow(
                     msgs,
                     committed_idx,
+                    vscroll,
                     &mut terminal,
                     chat_area_h,
-                    term_size.width.saturating_sub(1),
+                    render_width,
                     streaming,
                 )?;
             }
@@ -1140,6 +1158,7 @@ impl App {
             let filtered_cmds = filtered_commands(&self.input);
             let bg_picker_active = self.bg_picker.is_some();
             let worker_picker_active = self.worker_picker.is_some();
+            let subagent_picker_active = self.subagent_picker.is_some();
             let rewind_picker_active = self.rewind_picker.is_some();
             let cmd_palette_active = !filtered_cmds.is_empty()
                 && !self.is_streaming
@@ -1148,6 +1167,7 @@ impl App {
                 && self.reasoning_picker.is_none()
                 && !bg_picker_active
                 && !worker_picker_active
+                && !subagent_picker_active
                 && !rewind_picker_active;
             let model_picker_active = self.model_picker.is_some() && self.session_picker.is_none();
             let reasoning_picker_active = self.reasoning_picker.is_some();
@@ -1256,6 +1276,9 @@ impl App {
                 } else if let Some(ref picker) = self.worker_picker {
                     let widget = WorkerPickerWidget::new(picker);
                     frame.render_widget(widget, chat_area);
+                } else if let Some(ref picker) = self.subagent_picker {
+                    let widget = SubAgentPickerWidget::new(picker);
+                    frame.render_widget(widget, chat_area);
                 } else if let Some(ref picker) = self.session_picker {
                     let widget = SessionPickerWidget::new(picker);
                     frame.render_widget(widget, chat_area);
@@ -1267,21 +1290,26 @@ impl App {
                         ..chat_area
                     };
                     // Show messages/streaming based on active view
-                    let (msgs, committed_idx, streaming) = match self.active_view {
+                    let (msgs, committed_idx, streaming, vscroll) = match self.active_view {
                         ActiveView::Main => (
                             &self.messages,
                             self.committed_msg_idx,
                             &self.streaming_text,
+                            self.viewport_scroll,
                         ),
                         ActiveView::EventAgent => (
                             &self.event_messages,
                             self.event_committed_msg_idx,
                             &self.event_streaming_text,
+                            self.event_viewport_scroll,
                         ),
                     };
+                    let has_scrollback = committed_idx > 0 || vscroll > 0;
                     let chat = ChatWidget::new(
                         &msgs[committed_idx..],
                         streaming,
+                        has_scrollback,
+                        vscroll,
                     );
                     frame.render_widget(chat, padded_chat);
                 }
@@ -1411,6 +1439,15 @@ impl App {
                             "↑↓ navigate · Enter detail · ESC back"
                         }
                         Some(WorkerPickerView::RunDetail) => "ESC back",
+                        None => "",
+                    };
+                    InputWidget::new(hint, 0, false)
+                } else if self.subagent_picker.is_some() {
+                    let hint = match self.subagent_picker.as_ref().map(|p| p.view) {
+                        Some(SubAgentPickerView::List) => {
+                            "↑↓ navigate · Enter view · ESC close"
+                        }
+                        Some(SubAgentPickerView::ChatDetail) => "↑↓ scroll · ESC back",
                         None => "",
                     };
                     InputWidget::new(hint, 0, false)
@@ -1617,6 +1654,7 @@ impl App {
                     && self.rewind_picker.is_none()
                     && self.bg_picker.is_none()
                     && self.worker_picker.is_none()
+                    && self.subagent_picker.is_none()
                     && self.session_picker.is_none()
                     && self.model_picker.is_none()
                     && self.tool_picker.is_none()
@@ -2089,6 +2127,78 @@ impl App {
                                     }
                                     _ => {}
                                 }
+                            } else if self.subagent_picker.is_some() {
+                                // SubAgent picker mode
+                                match key.code {
+                                    KeyCode::Up => {
+                                        if let Some(ref mut picker) = self.subagent_picker {
+                                            match picker.view {
+                                                SubAgentPickerView::List => {
+                                                    if picker.selected > 0 {
+                                                        picker.selected -= 1;
+                                                    }
+                                                }
+                                                SubAgentPickerView::ChatDetail => {
+                                                    // Up = scroll back (increase offset from bottom)
+                                                    picker.scroll_offset = picker.scroll_offset.saturating_add(3);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if let Some(ref mut picker) = self.subagent_picker {
+                                            match picker.view {
+                                                SubAgentPickerView::List => {
+                                                    if picker.selected + 1 < picker.entries.len() {
+                                                        picker.selected += 1;
+                                                    }
+                                                }
+                                                SubAgentPickerView::ChatDetail => {
+                                                    // Down = scroll forward (decrease offset toward bottom)
+                                                    picker.scroll_offset = picker.scroll_offset.saturating_sub(3);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        if let Some(ref mut picker) = self.subagent_picker
+                                            && picker.view == SubAgentPickerView::List
+                                            && let Some(entry) = picker.selected_entry()
+                                        {
+                                            let entry_id = entry.id.clone();
+                                            // Fetch fresh data
+                                            let agents = get_all_sub_agents().await;
+                                            if let Some(agent) = agents.iter().find(|a| a.id == entry_id) {
+                                                picker.detail_id = agent.id.clone();
+                                                picker.detail_status = format!("{}", agent.status);
+                                                picker.detail_turns = format!("{}/{}", agent.turns, agent.max_turns);
+                                                picker.detail_tokens = format!("{}in/{}out tokens", agent.input_tokens, agent.output_tokens);
+                                                picker.detail_error = agent.error.clone();
+                                                // Convert SubAgentChatMsg to ChatMessage for rendering
+                                                picker.detail_messages = agent.chat_messages
+                                                    .iter()
+                                                    .map(|m| ChatMessage::new(&m.role, &m.content))
+                                                    .collect();
+                                                picker.scroll_offset = 0;
+                                                picker.view = SubAgentPickerView::ChatDetail;
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Esc => {
+                                        if let Some(ref mut picker) = self.subagent_picker {
+                                            match picker.view {
+                                                SubAgentPickerView::ChatDetail => {
+                                                    picker.view = SubAgentPickerView::List;
+                                                }
+                                                SubAgentPickerView::List => {
+                                                    self.subagent_picker = None;
+                                                    self.force_redraw = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
                             } else if self.reasoning_picker.is_some() {
                                 // Reasoning effort picker mode
                                 match key.code {
@@ -2288,6 +2398,54 @@ impl App {
                                         .into_iter()
                                         .filter(|t| t.status != lukan_tools::tasks::TaskStatus::Done)
                                         .collect();
+                                }
+                            } else if key.code == KeyCode::Char('s')
+                                && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
+                            {
+                                // Alt+S: toggle subagent picker
+                                if self.subagent_picker.is_some() {
+                                    self.subagent_picker = None;
+                                    self.force_redraw = true;
+                                } else {
+                                    let agents = get_all_sub_agents().await;
+                                    if agents.is_empty() {
+                                        self.messages.push(ChatMessage::new(
+                                            "system",
+                                            "No subagents running.",
+                                        ));
+                                    } else {
+                                        let entries: Vec<SubAgentDisplayEntry> = agents
+                                            .iter()
+                                            .map(|a| {
+                                                let elapsed = if a.status == lukan_agent::sub_agent::SubAgentStatus::Running {
+                                                    let secs = chrono::Utc::now()
+                                                        .signed_duration_since(a.started_at)
+                                                        .num_seconds();
+                                                    format!("{secs}s running")
+                                                } else {
+                                                    a.completed_at
+                                                        .map(|c| {
+                                                            let secs = c.signed_duration_since(a.started_at).num_seconds();
+                                                            format!("{secs}s")
+                                                        })
+                                                        .unwrap_or_else(|| "?".to_string())
+                                                };
+                                                let task_preview = if a.task.len() > 60 {
+                                                    format!("{}...", &a.task[..57])
+                                                } else {
+                                                    a.task.clone()
+                                                };
+                                                SubAgentDisplayEntry {
+                                                    id: a.id.clone(),
+                                                    task: task_preview,
+                                                    status: format!("{}", a.status),
+                                                    turns: format!("{}/{}", a.turns, a.max_turns),
+                                                    elapsed,
+                                                }
+                                            })
+                                            .collect();
+                                        self.subagent_picker = Some(SubAgentPicker::new(entries));
+                                    }
                                 }
                             } else if key.code == KeyCode::Char('e')
                                 && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
@@ -2585,6 +2743,9 @@ impl App {
                         Instant::now(),
                     ));
                 }
+                Some(update) = subagent_update_rx.recv() => {
+                    self.handle_subagent_update(update);
+                }
             }
 
             // Auto-refresh task panel after task tool events
@@ -2698,6 +2859,7 @@ impl App {
         if text == "/clear" {
             self.messages.clear();
             self.committed_msg_idx = 0;
+            self.viewport_scroll = 0;
             self.input_tokens = 0;
             self.output_tokens = 0;
             self.cache_read_tokens = 0;
@@ -3255,6 +3417,7 @@ impl App {
                 // Rebuild UI messages from the loaded session
                 self.messages.clear();
                 self.committed_msg_idx = 0;
+                self.viewport_scroll = 0;
 
                 // Reconstruct chat messages from agent history
                 let session = SessionManager::load(&session_id).await.ok().flatten();
@@ -3418,6 +3581,7 @@ impl App {
                 let restore_msg = self.messages.pop();
                 self.messages.clear();
                 self.committed_msg_idx = 0;
+                self.viewport_scroll = 0;
                 if let Some(msg) = restore_msg {
                     self.messages.push(msg);
                 }
@@ -3646,6 +3810,26 @@ impl App {
                 self.messages
                     .push(ChatMessage::new("system", format!("Failed to switch: {e}")));
             }
+        }
+    }
+
+    fn handle_subagent_update(&mut self, update: SubAgentUpdate) {
+        if let Some(ref mut picker) = self.subagent_picker
+            && picker.view == SubAgentPickerView::ChatDetail
+            && picker.detail_id == update.id
+        {
+            picker.detail_status = update.status;
+            picker.detail_turns = format!("{}/{}", update.turns, update.max_turns);
+            picker.detail_tokens = format!(
+                "{}in/{}out tokens",
+                update.input_tokens, update.output_tokens
+            );
+            picker.detail_error = update.error;
+            picker.detail_messages = update
+                .chat_messages
+                .iter()
+                .map(|m| ChatMessage::new(&m.role, &m.content))
+                .collect();
         }
     }
 
@@ -4139,86 +4323,80 @@ impl App {
     }
 }
 
-// ── Inline Viewport: commit overflow to scrollback ─────────────────────
+// ── Inline Viewport: row-level scroll to terminal scrollback ────────────
 
-/// Push completed messages that no longer fit in the chat area into the
-/// terminal's native scrollback via `insert_before`. Only whole messages
-/// are committed — streaming text is included in the height calculation
-/// but never pushed to scrollback itself.
-fn commit_overflow(
+/// Push overflowing rows to terminal scrollback and advance the message
+/// index past fully-scrolled messages.
+///
+/// Unlike the old message-level `commit_overflow`, this works at the ROW
+/// level: any content that exceeds the viewport (including parts of large
+/// messages or streaming text) gets pushed to the terminal's native
+/// scrollback via `insert_before`.  The caller's `viewport_scroll` tracks
+/// how many rows have already been pushed so we never duplicate content.
+fn scroll_overflow(
     messages: &[ChatMessage],
     committed_msg_idx: &mut usize,
+    viewport_scroll: &mut u16,
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     chat_area_h: u16,
     width: u16,
     streaming_text: &str,
 ) -> Result<()> {
-    if *committed_msg_idx >= messages.len() {
+    if *committed_msg_idx >= messages.len() && streaming_text.is_empty() {
         return Ok(());
     }
 
     let uncommitted = &messages[*committed_msg_idx..];
-    // Include streaming text in height calculation so commits happen
-    // gradually during streaming, not all at once when it ends.
     let all_lines = build_message_lines(uncommitted, streaming_text);
     let total_rows = physical_row_count(&all_lines, width);
 
     if total_rows <= chat_area_h {
+        // Everything fits — nothing to scroll
         return Ok(());
     }
 
-    // Find how many messages to commit so the remainder fits.
-    // Two invariants:
-    // 1. Never commit ALL messages when streaming_text is empty (ChatWidget
-    //    needs at least one message to render).
-    // 2. Never commit a message if doing so would leave the viewport less
-    //    than full — this prevents jarring "screen clear" jumps when a large
-    //    message is followed by a small one (e.g. big response + user msg).
-    let rows_to_free = total_rows - chat_area_h;
-    let mut rows_acc: u16 = 0;
-    let mut msgs_to_commit = 0;
-    let max_commit = if streaming_text.is_empty() {
-        uncommitted.len().saturating_sub(1)
-    } else {
-        uncommitted.len()
-    };
+    // How many rows should be above the viewport (in scrollback)?
+    let desired_scroll = total_rows - chat_area_h;
+    let new_rows = desired_scroll.saturating_sub(*viewport_scroll);
 
-    for msg in &uncommitted[..max_commit] {
-        if rows_acc >= rows_to_free {
-            break;
-        }
-        let msg_lines = build_message_lines(std::slice::from_ref(msg), "");
-        let msg_rows = physical_row_count(&msg_lines, width);
-        // Check: would committing this message leave too little content
-        // in the viewport?  If so, stop — ChatWidget will handle the
-        // overflow via its internal scroll.
-        let remaining_after = total_rows.saturating_sub(rows_acc + msg_rows);
-        if remaining_after < chat_area_h {
-            break;
-        }
-        rows_acc += msg_rows;
-        msgs_to_commit += 1;
-    }
-
-    if msgs_to_commit > 0 && rows_acc > 0 {
-        let commit_msgs = &messages[*committed_msg_idx..*committed_msg_idx + msgs_to_commit];
-        let commit_lines = build_message_lines(commit_msgs, "");
-        let commit_rows = physical_row_count(&commit_lines, width);
-
+    if new_rows > 0 {
         use ratatui::widgets::{Paragraph, Widget, Wrap};
-        terminal.insert_before(commit_rows, |buf| {
-            // Apply left margin to match the live chat padding (x + 1)
+        terminal.insert_before(new_rows, |buf| {
             let padded = Rect {
                 x: buf.area.x + 1,
                 width: buf.area.width.saturating_sub(1),
                 ..buf.area
             };
-            let p = Paragraph::new(commit_lines).wrap(Wrap { trim: false });
+            // Render starting from where we left off last time, into a
+            // buffer of exactly `new_rows` height — gives us the slice
+            // [viewport_scroll .. viewport_scroll + new_rows].
+            let p = Paragraph::new(all_lines)
+                .wrap(Wrap { trim: false })
+                .scroll((*viewport_scroll, 0));
             p.render(padded, buf);
         })?;
-
-        *committed_msg_idx += msgs_to_commit;
+        *viewport_scroll = desired_scroll;
     }
+
+    // GC: advance committed_msg_idx past messages whose rows are entirely
+    // in scrollback.  This avoids rebuilding their lines every frame.
+    let mut gc_rows: u16 = 0;
+    let mut gc_msgs: usize = 0;
+    for msg in uncommitted {
+        let msg_lines = build_message_lines(std::slice::from_ref(msg), "");
+        let msg_rows = physical_row_count(&msg_lines, width);
+        if gc_rows + msg_rows <= *viewport_scroll {
+            gc_rows += msg_rows;
+            gc_msgs += 1;
+        } else {
+            break;
+        }
+    }
+    if gc_msgs > 0 {
+        *committed_msg_idx += gc_msgs;
+        *viewport_scroll -= gc_rows;
+    }
+
     Ok(())
 }
 
@@ -4373,7 +4551,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
  ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
- /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+E  Events    Alt+L  Event Log    Alt+M  Memory    Alt+P  Tools    Alt+T  Tasks    Shift+Tab  Mode    Ctrl+C  Quit"
+ /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+E  Events    Alt+L  Event Log    Alt+M  Memory    Alt+P  Tools    Alt+S  Subagents    Alt+T  Tasks    Shift+Tab  Mode    Ctrl+C  Quit"
     )
 }
 

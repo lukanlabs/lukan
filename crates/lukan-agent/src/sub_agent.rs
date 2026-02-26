@@ -46,6 +46,19 @@ pub async fn configure(
 
 // ── Manager ───────────────────────────────────────────────────────────────
 
+/// Real-time update pushed from a running sub-agent to the TUI
+#[derive(Debug, Clone)]
+pub struct SubAgentUpdate {
+    pub id: String,
+    pub chat_messages: Vec<SubAgentChatMsg>,
+    pub status: String,
+    pub turns: usize,
+    pub max_turns: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub error: Option<String>,
+}
+
 struct SubAgentManager {
     entries: HashMap<String, SubAgentEntry>,
     provider: Option<Arc<dyn Provider>>,
@@ -55,6 +68,8 @@ struct SubAgentManager {
     model_name: Option<String>,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
     allowed_paths: Option<Vec<std::path::PathBuf>>,
+    /// Channel to push real-time updates to the TUI
+    update_tx: Option<mpsc::Sender<SubAgentUpdate>>,
 }
 
 impl SubAgentManager {
@@ -68,8 +83,25 @@ impl SubAgentManager {
             model_name: None,
             sandbox: None,
             allowed_paths: None,
+            update_tx: None,
         }
     }
+}
+
+/// Subscribe to real-time sub-agent updates. Returns a receiver.
+/// Only one subscriber at a time (the TUI).
+pub async fn subscribe_updates() -> mpsc::Receiver<SubAgentUpdate> {
+    let (tx, rx) = mpsc::channel(64);
+    let mut mgr = MANAGER.write().await;
+    mgr.update_tx = Some(tx);
+    rx
+}
+
+/// A chat message from the sub-agent conversation (for spectator view)
+#[derive(Debug, Clone)]
+pub struct SubAgentChatMsg {
+    pub role: String,
+    pub content: String,
 }
 
 /// Tracks a sub-agent's lifecycle
@@ -86,6 +118,8 @@ pub struct SubAgentEntry {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub error: Option<String>,
+    /// Full chat conversation for the spectator view
+    pub chat_messages: Vec<SubAgentChatMsg>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +185,7 @@ async fn spawn_sub_agent(
         input_tokens: 0,
         output_tokens: 0,
         error: None,
+        chat_messages: Vec::new(),
     };
 
     {
@@ -192,6 +227,12 @@ async fn run_sub_agent(
     let mut history = MessageHistory::new();
     history.add_user_message(&task);
 
+    // Get the update channel sender (if TUI is subscribed)
+    let update_tx = {
+        let mgr = MANAGER.read().await;
+        mgr.update_tx.clone()
+    };
+
     // Create tools but remove SubAgent/SubAgentResult to prevent recursion
     let tools = create_default_registry();
     // Tools we want to remove (they call themselves)
@@ -204,6 +245,12 @@ async fn run_sub_agent(
 
     let mut turns = 0;
     let mut text_output = String::new();
+    let mut chat_messages: Vec<SubAgentChatMsg> = Vec::new();
+    // Add the initial user task as the first chat message
+    chat_messages.push(SubAgentChatMsg {
+        role: "user".to_string(),
+        content: task.clone(),
+    });
     let mut total_input = 0u64;
     let mut total_output = 0u64;
     let mut final_status = SubAgentStatus::Completed;
@@ -278,6 +325,19 @@ async fn run_sub_agent(
         // Accumulate text output
         if !text_content.is_empty() {
             text_output.push_str(&text_content);
+            chat_messages.push(SubAgentChatMsg {
+                role: "assistant".to_string(),
+                content: text_content.clone(),
+            });
+        }
+
+        // Log tool calls as chat messages
+        for (_tool_id, name, input) in &pending_tools {
+            let arg = get_display_arg(name, input);
+            chat_messages.push(SubAgentChatMsg {
+                role: "tool_call".to_string(),
+                content: format!("● {name}({arg})"),
+            });
         }
 
         // Build assistant blocks
@@ -309,9 +369,24 @@ async fn run_sub_agent(
             if let Some(entry) = mgr.entries.get_mut(&id) {
                 entry.turns = turns;
                 entry.text_output = text_output.clone();
+                entry.chat_messages = chat_messages.clone();
                 entry.input_tokens = total_input;
                 entry.output_tokens = total_output;
             }
+        }
+
+        // Push real-time update to TUI
+        if let Some(ref tx) = update_tx {
+            let _ = tx.try_send(SubAgentUpdate {
+                id: id.clone(),
+                chat_messages: chat_messages.clone(),
+                status: "running".to_string(),
+                turns,
+                max_turns,
+                input_tokens: total_input,
+                output_tokens: total_output,
+                error: None,
+            });
         }
 
         if stop_reason != StopReason::ToolUse || pending_tools.is_empty() {
@@ -353,13 +428,43 @@ async fn run_sub_agent(
                 Ok(r) => r,
                 Err(e) => ToolResult::error(format!("Join error: {e}")),
             };
-            let (tool_id, _, _) = &pending_tools[i];
+            let (tool_id, tool_name, _) = &pending_tools[i];
+
+            // Log tool result as chat message
+            let summary = summarize_result(tool_name, &result.content, result.is_error);
+            chat_messages.push(SubAgentChatMsg {
+                role: "tool_result".to_string(),
+                content: format!("  ⎿  {summary}"),
+            });
+
             result_blocks.push(lukan_core::models::messages::ContentBlock::ToolResult {
                 tool_use_id: tool_id.clone(),
                 content: result.content.clone(),
                 is_error: if result.is_error { Some(true) } else { None },
                 diff: result.diff,
                 image: result.image,
+            });
+        }
+
+        // Update chat messages after tool results
+        {
+            let mut mgr = MANAGER.write().await;
+            if let Some(entry) = mgr.entries.get_mut(&id) {
+                entry.chat_messages = chat_messages.clone();
+            }
+        }
+
+        // Push tool results update to TUI
+        if let Some(ref tx) = update_tx {
+            let _ = tx.try_send(SubAgentUpdate {
+                id: id.clone(),
+                chat_messages: chat_messages.clone(),
+                status: "running".to_string(),
+                turns,
+                max_turns,
+                input_tokens: total_input,
+                output_tokens: total_output,
+                error: None,
             });
         }
 
@@ -372,6 +477,7 @@ async fn run_sub_agent(
     }
 
     // Finalize
+    let final_status_str = format!("{final_status}");
     {
         let mut mgr = MANAGER.write().await;
         if let Some(entry) = mgr.entries.get_mut(&id) {
@@ -379,10 +485,25 @@ async fn run_sub_agent(
             entry.completed_at = Some(Utc::now());
             entry.turns = turns;
             entry.text_output = text_output;
+            entry.chat_messages = chat_messages.clone();
             entry.input_tokens = total_input;
             entry.output_tokens = total_output;
-            entry.error = final_error;
+            entry.error = final_error.clone();
         }
+    }
+
+    // Push final update to TUI
+    if let Some(ref tx) = update_tx {
+        let _ = tx.try_send(SubAgentUpdate {
+            id: id.clone(),
+            chat_messages,
+            status: final_status_str,
+            turns,
+            max_turns,
+            input_tokens: total_input,
+            output_tokens: total_output,
+            error: final_error,
+        });
     }
 
     info!(id, turns, "Sub-agent completed");

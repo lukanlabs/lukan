@@ -5,5 +5,6 @@ pub mod markdown;
 pub mod rewind_picker;
 pub mod shimmer;
 pub mod status_bar;
+pub mod subagent_picker;
 pub mod task_panel;
 pub mod worker_picker;

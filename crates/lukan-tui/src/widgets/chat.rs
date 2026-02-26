@@ -252,13 +252,25 @@ pub fn physical_row_count(lines: &[Line], width: u16) -> u16 {
 pub struct ChatWidget<'a> {
     messages: &'a [ChatMessage],
     streaming_text: &'a str,
+    /// Whether older content has been pushed to terminal scrollback.
+    has_scrollback: bool,
+    /// Rows already pushed to scrollback from current uncommitted content.
+    /// ChatWidget skips these rows so they don't render twice.
+    scroll_offset: u16,
 }
 
 impl<'a> ChatWidget<'a> {
-    pub fn new(messages: &'a [ChatMessage], streaming_text: &'a str) -> Self {
+    pub fn new(
+        messages: &'a [ChatMessage],
+        streaming_text: &'a str,
+        has_scrollback: bool,
+        scroll_offset: u16,
+    ) -> Self {
         Self {
             messages,
             streaming_text,
+            has_scrollback,
+            scroll_offset,
         }
     }
 }
@@ -271,20 +283,27 @@ impl Widget for ChatWidget<'_> {
         Clear.render(area, buf);
 
         let lines = build_message_lines(self.messages, self.streaming_text);
-
-        // Always anchor content to the BOTTOM of the viewport (near the input).
-        // This ensures the latest text is always visible near the input line.
         let total_rows = physical_row_count(&lines, area.width);
 
-        if total_rows >= area.height {
-            // Content exceeds area: scroll to show the bottom
-            let scroll_offset = total_rows - area.height;
+        if self.scroll_offset > 0 {
+            // Some rows are already in scrollback — skip them
             let paragraph = Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
-                .scroll((scroll_offset, 0));
+                .scroll((self.scroll_offset, 0));
+            paragraph.render(area, buf);
+        } else if total_rows > area.height {
+            // Overflow not yet pushed to scrollback (edge case / first frame)
+            let skip = total_rows - area.height;
+            let paragraph = Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((skip, 0));
+            paragraph.render(area, buf);
+        } else if self.has_scrollback {
+            // Content fits AND there's scrollback above: render from the TOP
+            let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
             paragraph.render(area, buf);
         } else {
-            // Content fits: render at the bottom of the area (blank space on top)
+            // Content fits, no scrollback: bottom-anchor near the input line
             let top_padding = area.height - total_rows;
             let bottom_area = Rect {
                 y: area.y + top_padding,

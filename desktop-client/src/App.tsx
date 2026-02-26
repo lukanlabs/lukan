@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ToastProvider } from "./components/ui/Toast";
+import { useState, useEffect } from "react";
+import { ToastProvider, useToast } from "./components/ui/Toast";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { Toolbar } from "./components/workspace/Toolbar";
 import { ActivityBar } from "./components/workspace/ActivityBar";
@@ -7,6 +7,26 @@ import { SidePanel } from "./components/workspace/SidePanel";
 import { MainArea } from "./components/workspace/MainArea";
 import { SettingsOverlay } from "./components/workspace/SettingsOverlay";
 import { useBrowser } from "./hooks/useBrowser";
+import { onWorkerNotification } from "./lib/tauri";
+
+/** Inner component that can use useToast (must be inside ToastProvider) */
+function WorkerNotificationListener() {
+  const { toast } = useToast();
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onWorkerNotification((payload) => {
+      try {
+        const notif = JSON.parse(payload);
+        const type = notif.status === "success" ? "success" : "error";
+        toast(type, `Worker '${notif.workerName}': ${notif.summary?.slice(0, 120) ?? notif.status}`);
+      } catch {
+        // ignore
+      }
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, [toast]);
+  return null;
+}
 
 export default function App() {
   const workspace = useWorkspace();
@@ -32,6 +52,7 @@ export default function App() {
 
   return (
     <ToastProvider>
+      <WorkerNotificationListener />
       <div className={`workspace-grid ${!workspace.sidePanel ? "sidebar-collapsed" : ""}`}>
         <Toolbar
           mode={workspace.mode}

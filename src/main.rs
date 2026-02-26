@@ -7,6 +7,7 @@ use lukan_plugins::PluginManager;
 use lukan_providers::create_provider;
 use lukan_tui::app::App;
 
+mod daemon;
 mod models;
 mod plugin;
 mod plugin_config;
@@ -106,6 +107,11 @@ enum Commands {
         #[command(subcommand)]
         command: worker::WorkerCommands,
     },
+    /// Worker daemon (background scheduler)
+    Daemon {
+        #[command(subcommand)]
+        command: daemon::DaemonCommands,
+    },
     /// Catch-all for plugin aliases (e.g. `lukan wa ...`)
     #[command(external_subcommand)]
     External(Vec<String>),
@@ -180,6 +186,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Worker { command }) => {
             worker::handle_worker_command(command).await?;
+        }
+        Some(Commands::Daemon { command }) => {
+            daemon::handle_daemon_command(command).await?;
         }
         Some(Commands::External(args)) => {
             dispatch_alias_command(&args).await?;
@@ -467,6 +476,9 @@ fn parse_logs_flags(args: &[String]) -> (bool, String) {
 // ── Existing command handlers ────────────────────────────────────────
 
 async fn run_web(provider_override: Option<String>, model_override: Option<String>) -> Result<()> {
+    // Ensure worker daemon is running
+    daemon::ensure_daemon_running();
+
     // Load config
     let mut config = ConfigManager::load().await?;
 
@@ -498,6 +510,9 @@ async fn run_web(provider_override: Option<String>, model_override: Option<Strin
 }
 
 async fn run_desktop() -> Result<()> {
+    // Ensure worker daemon is running
+    daemon::ensure_daemon_running();
+
     // Desktop requires a graphical display (X11 or Wayland)
     let has_display = std::env::var("DISPLAY").is_ok_and(|v| !v.is_empty())
         || std::env::var("WAYLAND_DISPLAY").is_ok_and(|v| !v.is_empty());
@@ -648,6 +663,9 @@ async fn run_chat(
     browser_opts: Option<BrowserOpts>,
     continue_session: bool,
 ) -> Result<()> {
+    // Ensure worker daemon is running
+    daemon::ensure_daemon_running();
+
     // Load config
     let mut config = ConfigManager::load().await?;
 

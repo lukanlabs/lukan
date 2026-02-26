@@ -1,11 +1,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use lukan_agent::{AgentLoop, WorkerScheduler};
+use lukan_agent::{AgentLoop, WorkerNotification};
 use lukan_core::config::ResolvedConfig;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse};
-use tokio::sync::Mutex;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, broadcast, mpsc};
 
 /// Shared application state for the web server
 pub struct AppState {
@@ -25,8 +24,6 @@ pub struct AppState {
     pub provider_name: Mutex<String>,
     /// Current model name
     pub model_name: Mutex<String>,
-    /// Worker scheduler
-    pub worker_scheduler: WorkerScheduler,
     /// Connection ID counter
     connection_counter: AtomicUsize,
     /// Current permission mode
@@ -37,6 +34,8 @@ pub struct AppState {
     pub plan_review_tx: Mutex<Option<mpsc::Sender<PlanReviewResponse>>>,
     /// Sender half of the planner answer channel
     pub planner_answer_tx: Mutex<Option<mpsc::Sender<String>>>,
+    /// Broadcast channel for worker notifications from the daemon
+    pub notification_tx: broadcast::Sender<WorkerNotification>,
 }
 
 impl AppState {
@@ -53,8 +52,7 @@ impl AppState {
 
         let provider_name = resolved.config.provider.to_string();
         let model_name = resolved.effective_model();
-
-        let worker_scheduler = WorkerScheduler::new(resolved.clone());
+        let (notification_tx, _) = broadcast::channel(64);
 
         Self {
             agent: Mutex::new(None),
@@ -65,12 +63,12 @@ impl AppState {
             token_ttl_ms,
             provider_name: Mutex::new(provider_name),
             model_name: Mutex::new(model_name),
-            worker_scheduler,
             connection_counter: AtomicUsize::new(1),
             permission_mode: Mutex::new(PermissionMode::Auto),
             approval_tx: Mutex::new(None),
             plan_review_tx: Mutex::new(None),
             planner_answer_tx: Mutex::new(None),
+            notification_tx,
         }
     }
 

@@ -129,6 +129,22 @@ impl LukanPaths {
         Self::events_dir().join("history.jsonl")
     }
 
+    /// Worker daemon PID file: ~/.config/lukan/daemon.pid
+    pub fn daemon_pid_file() -> PathBuf {
+        Self::config_dir().join("daemon.pid")
+    }
+
+    /// Worker daemon log file: ~/.config/lukan/daemon.log
+    pub fn daemon_log_file() -> PathBuf {
+        Self::config_dir().join("daemon.log")
+    }
+
+    /// Worker notification file: ~/.config/lukan/worker_notifications.jsonl
+    /// The daemon appends one JSON line per worker run completion.
+    pub fn worker_notifications_file() -> PathBuf {
+        Self::config_dir().join("worker_notifications.jsonl")
+    }
+
     /// Workers definition file: ~/.config/lukan/workers.json
     pub fn workers_file() -> PathBuf {
         Self::config_dir().join("workers.json")

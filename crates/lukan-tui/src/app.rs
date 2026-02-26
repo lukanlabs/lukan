@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use lukan_agent::sub_agent::{SubAgentUpdate, get_all_sub_agents, subscribe_updates};
-use lukan_agent::{AgentConfig, AgentLoop, SessionManager, WorkerScheduler};
+use lukan_agent::{AgentConfig, AgentLoop, NotificationWatcher, SessionManager};
 use lukan_core::config::types::PermissionMode;
 use lukan_core::config::{
     ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig,
@@ -28,6 +28,7 @@ use lukan_core::models::events::{
     ToolApprovalRequest,
 };
 use lukan_core::models::sessions::SessionSummary;
+use lukan_core::workers::WorkerManager;
 use lukan_providers::{Provider, SystemPrompt, create_provider};
 use lukan_tools::{all_tool_names, create_configured_browser_registry, create_configured_registry};
 
@@ -146,10 +147,10 @@ pub struct App {
     task_panel_entries: Vec<lukan_tools::tasks::TaskEntry>,
     /// Flag to trigger task panel refresh after task tool events
     task_panel_needs_refresh: bool,
-    /// Worker scheduler for autonomous background agents
-    worker_scheduler: WorkerScheduler,
     /// Toast notifications (message, created_at) — auto-expire after a few seconds
     toast_notifications: Vec<(String, Instant)>,
+    /// Watcher for worker daemon notifications (JSONL file)
+    notification_watcher: NotificationWatcher,
     /// Last time we polled pending.jsonl for system events
     last_event_poll: Instant,
     /// Buffered system events waiting to be pushed to agent
@@ -308,7 +309,6 @@ impl App {
     pub fn new(provider: Box<dyn Provider>, config: ResolvedConfig) -> Self {
         let provider = Arc::from(provider);
         let (bg_signal_tx, bg_signal_rx) = watch::channel(());
-        let worker_scheduler = WorkerScheduler::new(config.clone());
 
         Self {
             messages: Vec::new(),
@@ -358,8 +358,8 @@ impl App {
             task_panel_visible: false,
             task_panel_entries: Vec::new(),
             task_panel_needs_refresh: false,
-            worker_scheduler,
             toast_notifications: Vec::new(),
+            notification_watcher: NotificationWatcher::new(),
             last_event_poll: Instant::now(),
             event_buffer: Vec::new(),
             browser_tools: false,
@@ -1154,10 +1154,6 @@ impl App {
                 selected: 0,
             });
         }
-
-        // Start worker scheduler and subscribe to notifications
-        self.worker_scheduler.start().await;
-        let mut worker_notify_rx = self.worker_scheduler.subscribe();
 
         // Subscribe to real-time sub-agent updates
         let mut subagent_update_rx = subscribe_updates().await;
@@ -2298,9 +2294,7 @@ impl App {
                                                     if let Some(entry) = picker.selected_worker() {
                                                         let worker_id = entry.id.clone();
                                                         let worker_name = entry.name.clone();
-                                                        match self
-                                                            .worker_scheduler
-                                                            .get_worker_detail(&worker_id)
+                                                        match WorkerManager::get_detail(&worker_id)
                                                             .await
                                                         {
                                                             Ok(Some(detail)) => {
@@ -2343,9 +2337,7 @@ impl App {
                                                         let run_status = run.status.clone();
                                                         let worker_id =
                                                             picker.selected_worker_id.clone();
-                                                        match self
-                                                            .worker_scheduler
-                                                            .get_worker_run_detail(
+                                                        match WorkerManager::get_run(
                                                                 &worker_id,
                                                                 &run_id,
                                                             )
@@ -3062,6 +3054,12 @@ impl App {
                             // Expire old toast notifications (5 seconds)
                             self.toast_notifications
                                 .retain(|(_, created)| created.elapsed().as_secs() < 5);
+                            // Poll worker daemon notifications
+                            for notif in self.notification_watcher.poll().await {
+                                let icon = if notif.status == "success" { "✓" } else { "✗" };
+                                let msg = format!("{icon} Worker '{}': {}", notif.worker_name, notif.summary);
+                                self.toast_notifications.push((msg, Instant::now()));
+                            }
                             // Poll pending.jsonl for new system events (every 3 seconds)
                             if self.last_event_poll.elapsed().as_secs() >= 3 {
                                 self.last_event_poll = Instant::now();
@@ -3078,15 +3076,6 @@ impl App {
                 }
                 Some(event_stream_event) = event_agent_rx.recv() => {
                     self.handle_event_agent_stream_event(event_stream_event);
-                }
-                Ok(notification) = worker_notify_rx.recv() => {
-                    self.toast_notifications.push((
-                        format!(
-                            "Worker '{}' {} — {}",
-                            notification.worker_name, notification.status, notification.summary
-                        ),
-                        Instant::now(),
-                    ));
                 }
                 Some(update) = subagent_update_rx.recv() => {
                     self.handle_subagent_update(update);
@@ -3169,9 +3158,6 @@ impl App {
         if let Some(modal) = self.terminal_modal.take() {
             modal.close();
         }
-
-        // Stop worker scheduler
-        self.worker_scheduler.stop();
 
         // Clean up background processes before exiting
         lukan_tools::bg_processes::cleanup_all();
@@ -3408,7 +3394,7 @@ impl App {
 
         // Handle /workers — open worker picker overlay
         if text == "/workers" {
-            match self.worker_scheduler.list_workers().await {
+            match WorkerManager::get_summaries().await {
                 Ok(workers) => {
                     if workers.is_empty() {
                         self.messages

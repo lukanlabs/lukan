@@ -24,6 +24,7 @@ import {
   toggleWorker,
   getWorkerDetail,
   getWorkerRun,
+  onWorkerNotification,
 } from "../../../lib/tauri";
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -110,12 +111,15 @@ export function WorkersPanel() {
   const [detail, setDetail] = useState<WorkerDetail | null>(null);
   const [runDetail, setRunDetail] = useState<WorkerRun | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadWorkers = useCallback(async () => {
     try {
+      setError(null);
       setWorkers(await listWorkers());
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error("Failed to load workers:", e);
+      setError(String(e));
     } finally {
       setLoading(false);
     }
@@ -125,10 +129,22 @@ export function WorkersPanel() {
     loadWorkers();
   }, [loadWorkers]);
 
+  // Refresh worker list when a worker run completes
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onWorkerNotification(() => {
+      loadWorkers();
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, [loadWorkers]);
+
   // Load detail when navigating to detail view
   useEffect(() => {
     if (view.kind === "detail") {
-      getWorkerDetail(view.id).then(setDetail).catch(() => setDetail(null));
+      getWorkerDetail(view.id).then(setDetail).catch((e) => {
+        console.error("Failed to load worker detail:", e);
+        setDetail(null);
+      });
     }
   }, [view]);
 
@@ -137,43 +153,62 @@ export function WorkersPanel() {
     if (view.kind === "run") {
       getWorkerRun(view.workerId, view.runId)
         .then(setRunDetail)
-        .catch(() => setRunDetail(null));
+        .catch((e) => {
+          console.error("Failed to load worker run:", e);
+          setRunDetail(null);
+        });
     }
   }, [view]);
 
   const handleCreate = async (input: WorkerCreateInput) => {
     try {
+      setError(null);
       await createWorker(input);
       await loadWorkers();
       setView({ kind: "list" });
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error("Failed to create worker:", e);
+      setError(String(e));
     }
   };
 
   const handleToggle = async (id: string, enabled: boolean) => {
+    // Optimistic UI update
+    setWorkers((prev) =>
+      prev.map((w) => (w.id === id ? { ...w, enabled } : w))
+    );
+    if (detail && detail.id === id) {
+      setDetail({ ...detail, enabled });
+    }
     try {
-      await toggleWorker(id, enabled);
+      setError(null);
+      const result = await toggleWorker(id, enabled);
+      console.log("toggle_worker result:", result.id, "enabled:", result.enabled);
+      // Reload from server to confirm
       await loadWorkers();
-      // Refresh detail view if we're viewing this worker
       if (view.kind === "detail" && view.id === id) {
         const d = await getWorkerDetail(id);
         setDetail(d);
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error("Failed to toggle worker:", e);
+      setError(String(e));
+      // Revert optimistic update
+      await loadWorkers();
     }
   };
 
   const handleDelete = async (id: string) => {
     try {
+      setError(null);
       await deleteWorker(id);
       await loadWorkers();
       if (view.kind === "detail" && view.id === id) {
         setView({ kind: "list" });
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error("Failed to delete worker:", e);
+      setError(String(e));
     }
   };
 
@@ -191,6 +226,11 @@ export function WorkersPanel() {
     if (workers.length === 0) {
       return (
         <div style={{ textAlign: "center", padding: 24 }}>
+          {error && (
+            <div style={{ fontSize: 10, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)", borderRadius: 4, padding: "4px 8px", marginBottom: 8, textAlign: "left" }}>
+              {error}
+            </div>
+          )}
           <Timer size={20} style={{ color: "var(--text-muted)", marginBottom: 8 }} />
           <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 4 }}>
             No workers configured
@@ -221,6 +261,12 @@ export function WorkersPanel() {
 
     return (
       <div>
+        {/* Error banner */}
+        {error && (
+          <div style={{ fontSize: 10, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)", borderRadius: 4, padding: "4px 8px", margin: "4px 8px" }}>
+            {error}
+          </div>
+        )}
         {/* Header with add button */}
         <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 8px" }}>
           <button

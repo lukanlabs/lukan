@@ -164,3 +164,5 @@ export const onStreamEvent = (cb: (payload: string) => void): Promise<UnlistenFn
   listen<string>("stream-event", (e) => cb(e.payload));
 export const onTurnComplete = (cb: (payload: string) => void): Promise<UnlistenFn> =>
   listen<string>("turn-complete", (e) => cb(e.payload));
+export const onWorkerNotification = (cb: (payload: string) => void): Promise<UnlistenFn> =>
+  listen<string>("worker-notification", (e) => cb(e.payload));

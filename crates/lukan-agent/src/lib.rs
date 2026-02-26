@@ -10,4 +10,4 @@ pub use agent_loop::{AgentConfig, AgentLoop};
 pub use message_history::MessageHistory;
 pub use permission_matcher::{PermissionMatcher, ToolVerdict, generate_allow_pattern};
 pub use session_manager::SessionManager;
-pub use workers::{WorkerNotification, WorkerScheduler};
+pub use workers::{NotificationWatcher, WorkerNotification, WorkerScheduler};

@@ -35,6 +35,30 @@ pub struct WorkerNotification {
     pub summary: String,
 }
 
+/// Key fields used to detect when a worker needs rescheduling
+#[derive(Clone, PartialEq)]
+struct WorkerSnapshot {
+    enabled: bool,
+    schedule: String,
+    prompt: String,
+    tools: Option<Vec<String>>,
+    provider: Option<String>,
+    model: Option<String>,
+}
+
+impl From<&WorkerDefinition> for WorkerSnapshot {
+    fn from(w: &WorkerDefinition) -> Self {
+        Self {
+            enabled: w.enabled,
+            schedule: w.schedule.clone(),
+            prompt: w.prompt.clone(),
+            tools: w.tools.clone(),
+            provider: w.provider.clone(),
+            model: w.model.clone(),
+        }
+    }
+}
+
 /// Scheduler that manages worker timers and execution
 pub struct WorkerScheduler {
     config: Mutex<ResolvedConfig>,
@@ -43,6 +67,8 @@ pub struct WorkerScheduler {
     cancel_token: CancellationToken,
     notify_tx: broadcast::Sender<WorkerNotification>,
     started: AtomicBool,
+    /// Last-known worker state for diffing during reload
+    known_state: Mutex<HashMap<String, WorkerSnapshot>>,
 }
 
 impl WorkerScheduler {
@@ -55,6 +81,7 @@ impl WorkerScheduler {
             cancel_token: CancellationToken::new(),
             notify_tx,
             started: AtomicBool::new(false),
+            known_state: Mutex::new(HashMap::new()),
         }
     }
 
@@ -76,19 +103,88 @@ impl WorkerScheduler {
         }
         match WorkerManager::list().await {
             Ok(workers) => {
-                for worker in workers {
+                let mut known = self.known_state.lock().await;
+                for worker in &workers {
+                    known.insert(worker.id.clone(), WorkerSnapshot::from(worker));
                     if worker.enabled {
-                        self.schedule_worker(&worker).await;
+                        self.schedule_worker(worker).await;
                     }
                 }
-                info!(
-                    count = self.timers.lock().await.len(),
-                    "Worker scheduler started"
-                );
+                let count = self.timers.lock().await.len();
+                info!(count, "Worker scheduler started");
             }
             Err(e) => {
                 error!(error = %e, "Failed to load workers on scheduler start");
             }
+        }
+    }
+
+    /// Reload workers from disk and reconcile timers.
+    /// Called periodically by the daemon to pick up external changes.
+    pub async fn reload(&self) {
+        let workers = match WorkerManager::list().await {
+            Ok(w) => w,
+            Err(e) => {
+                error!(error = %e, "Failed to reload workers");
+                return;
+            }
+        };
+
+        let new_map: HashMap<String, &WorkerDefinition> =
+            workers.iter().map(|w| (w.id.clone(), w)).collect();
+
+        let mut known = self.known_state.lock().await;
+        let mut timers = self.timers.lock().await;
+
+        // Cancel timers for removed or newly-disabled workers
+        let timer_ids: Vec<String> = timers.keys().cloned().collect();
+        for id in &timer_ids {
+            let should_cancel = match new_map.get(id) {
+                None => true,                  // removed
+                Some(w) if !w.enabled => true, // disabled
+                _ => false,
+            };
+            if should_cancel && let Some(handle) = timers.remove(id) {
+                handle.abort();
+                debug!(worker_id = %id, "Cancelled timer (reload)");
+            }
+        }
+
+        // Collect workers that need (re)scheduling
+        let mut to_schedule: Vec<WorkerDefinition> = Vec::new();
+        for w in &workers {
+            if !w.enabled {
+                // Ensure known_state reflects disabled state
+                known.insert(w.id.clone(), WorkerSnapshot::from(w));
+                continue;
+            }
+
+            let snap = WorkerSnapshot::from(w);
+            let needs_schedule = match known.get(&w.id) {
+                None => true, // New worker
+                Some(old) => *old != snap,
+            };
+
+            if needs_schedule {
+                // Cancel old timer if present
+                if let Some(handle) = timers.remove(&w.id) {
+                    handle.abort();
+                }
+                to_schedule.push(w.clone());
+            }
+            known.insert(w.id.clone(), snap);
+        }
+
+        // Remove known entries for workers no longer in the file
+        known.retain(|id, _| new_map.contains_key(id));
+
+        // Drop locks before scheduling (schedule_worker acquires timers lock)
+        drop(timers);
+        drop(known);
+
+        for w in &to_schedule {
+            self.schedule_worker(w).await;
+            debug!(worker_id = %w.id, "Rescheduled worker (reload)");
         }
     }
 

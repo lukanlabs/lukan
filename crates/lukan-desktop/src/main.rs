@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use tauri::Emitter;
+
 mod commands;
 mod state;
 mod terminal_state;
@@ -32,6 +34,27 @@ fn main() {
     tauri::Builder::default()
         .manage(state::ChatState::default())
         .manage(terminal_state::TerminalState::default())
+        .setup(|app| {
+            // Spawn background task to poll worker notifications and emit Tauri events
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use lukan_agent::NotificationWatcher;
+                let mut watcher = NotificationWatcher::new();
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    for notif in watcher.poll().await {
+                        let payload = serde_json::json!({
+                            "workerId": notif.worker_id,
+                            "workerName": notif.worker_name,
+                            "status": notif.status,
+                            "summary": notif.summary,
+                        });
+                        let _ = handle.emit("worker-notification", payload.to_string());
+                    }
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // Config
             commands::config::get_config,

@@ -18,7 +18,10 @@ pub async fn create_worker(input: WorkerCreateInput) -> Result<WorkerDefinition,
 }
 
 #[tauri::command]
-pub async fn update_worker(id: String, patch: WorkerUpdateInput) -> Result<WorkerDefinition, String> {
+pub async fn update_worker(
+    id: String,
+    patch: WorkerUpdateInput,
+) -> Result<WorkerDefinition, String> {
     WorkerManager::update(&id, patch)
         .await
         .map_err(|e| e.to_string())?
@@ -27,9 +30,7 @@ pub async fn update_worker(id: String, patch: WorkerUpdateInput) -> Result<Worke
 
 #[tauri::command]
 pub async fn delete_worker(id: String) -> Result<bool, String> {
-    WorkerManager::delete(&id)
-        .await
-        .map_err(|e| e.to_string())
+    WorkerManager::delete(&id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

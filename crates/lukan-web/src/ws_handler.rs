@@ -13,6 +13,7 @@ use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
 use lukan_core::config::LukanPaths;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse, PlanTask, StreamEvent};
+use lukan_core::workers::WorkerManager;
 use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::create_configured_registry;
 
@@ -37,6 +38,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>) {
     use futures::StreamExt;
 
     let mut authenticated = !state.auth_required();
+    let mut notify_rx = state.notification_tx.subscribe();
 
     // If auth required, send auth_required message
     if !authenticated {
@@ -49,104 +51,99 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>) {
         send_init(&state, &mut ws_tx).await;
     }
 
-    // Subscribe to worker notifications
-    let mut worker_notify_rx = state.worker_scheduler.subscribe();
-
-    // Message loop: listen to both WebSocket messages and worker notifications
+    // Message loop
     loop {
-        tokio::select! {
+        let msg = tokio::select! {
             ws_msg = ws_rx.next() => {
-                let msg = match ws_msg {
+                match ws_msg {
                     Some(Ok(msg)) => msg,
                     Some(Err(_)) | None => break,
-                };
-                let text = match msg {
-                    Message::Text(t) => t.to_string(),
-                    Message::Close(_) => break,
-                    _ => continue,
-                };
-
-                let client_msg: ClientMessage = match serde_json::from_str(&text) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        warn!(conn_id, error = %e, "Invalid client message");
-                        send_json(
-                            &mut ws_tx,
-                            &ServerMessage::Error {
-                                error: format!("Invalid message: {e}"),
-                            },
-                        )
-                        .await;
-                        continue;
-                    }
-                };
-
-                // Handle auth messages before checking authentication
-                match &client_msg {
-                    ClientMessage::Auth { token } => {
-                        if state.verify_token(token) {
-                            authenticated = true;
-                            let new_token =
-                                crate::auth::create_auth_token(&state.auth_secret, state.token_ttl_ms);
-                            send_json(&mut ws_tx, &ServerMessage::AuthOk { token: new_token }).await;
-                            send_init(&state, &mut ws_tx).await;
-                        } else {
-                            send_json(
-                                &mut ws_tx,
-                                &ServerMessage::AuthError {
-                                    error: "Invalid or expired token".to_string(),
-                                },
-                            )
-                            .await;
-                        }
-                        continue;
-                    }
-                    ClientMessage::AuthLogin { password } => {
-                        match state.validate_password(password) {
-                            Some(token) => {
-                                authenticated = true;
-                                send_json(&mut ws_tx, &ServerMessage::AuthOk { token }).await;
-                                send_init(&state, &mut ws_tx).await;
-                            }
-                            None => {
-                                send_json(
-                                    &mut ws_tx,
-                                    &ServerMessage::AuthError {
-                                        error: "Invalid password".to_string(),
-                                    },
-                                )
-                                .await;
-                            }
-                        }
-                        continue;
-                    }
-                    _ => {}
                 }
-
-                // Gate all other messages behind authentication
-                if !authenticated {
-                    send_json(&mut ws_tx, &ServerMessage::AuthRequired).await;
-                    continue;
-                }
-
-                // Dispatch authenticated messages
-                dispatch_message(client_msg, conn_id, &state, &mut ws_tx).await;
             }
-            Ok(notification) = worker_notify_rx.recv() => {
+            Ok(notif) = notify_rx.recv() => {
                 if authenticated {
+                    let msg = ServerMessage::WorkerNotification {
+                        worker_id: notif.worker_id,
+                        worker_name: notif.worker_name,
+                        status: notif.status,
+                        summary: notif.summary,
+                    };
+                    send_json(&mut ws_tx, &msg).await;
+                }
+                continue;
+            }
+        };
+        let text = match msg {
+            Message::Text(t) => t.to_string(),
+            Message::Close(_) => break,
+            _ => continue,
+        };
+
+        let client_msg: ClientMessage = match serde_json::from_str(&text) {
+            Ok(m) => m,
+            Err(e) => {
+                warn!(conn_id, error = %e, "Invalid client message");
+                send_json(
+                    &mut ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Invalid message: {e}"),
+                    },
+                )
+                .await;
+                continue;
+            }
+        };
+
+        // Handle auth messages before checking authentication
+        match &client_msg {
+            ClientMessage::Auth { token } => {
+                if state.verify_token(token) {
+                    authenticated = true;
+                    let new_token =
+                        crate::auth::create_auth_token(&state.auth_secret, state.token_ttl_ms);
+                    send_json(&mut ws_tx, &ServerMessage::AuthOk { token: new_token }).await;
+                    send_init(&state, &mut ws_tx).await;
+                } else {
                     send_json(
                         &mut ws_tx,
-                        &ServerMessage::WorkerNotification {
-                            worker_id: notification.worker_id,
-                            worker_name: notification.worker_name,
-                            status: notification.status,
-                            summary: notification.summary,
+                        &ServerMessage::AuthError {
+                            error: "Invalid or expired token".to_string(),
                         },
                     )
                     .await;
                 }
+                continue;
             }
+            ClientMessage::AuthLogin { password } => {
+                match state.validate_password(password) {
+                    Some(token) => {
+                        authenticated = true;
+                        send_json(&mut ws_tx, &ServerMessage::AuthOk { token }).await;
+                        send_init(&state, &mut ws_tx).await;
+                    }
+                    None => {
+                        send_json(
+                            &mut ws_tx,
+                            &ServerMessage::AuthError {
+                                error: "Invalid password".to_string(),
+                            },
+                        )
+                        .await;
+                    }
+                }
+                continue;
+            }
+            _ => {}
         }
+
+        // Gate all other messages behind authentication
+        if !authenticated {
+            send_json(&mut ws_tx, &ServerMessage::AuthRequired).await;
+            continue;
+        }
+
+        // Dispatch authenticated messages
+        dispatch_message(client_msg, conn_id, &state, &mut ws_tx).await;
     }
 
     // On disconnect: release processing lock if owned, save session
@@ -335,7 +332,7 @@ async fn dispatch_message(
             send_json(ws_tx, &ServerMessage::SubAgentsUpdate { agents: vec![] }).await;
         }
 
-        ClientMessage::ListWorkers => match state.worker_scheduler.list_workers().await {
+        ClientMessage::ListWorkers => match WorkerManager::get_summaries().await {
             Ok(workers) => {
                 send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
             }
@@ -350,29 +347,27 @@ async fn dispatch_message(
             }
         },
 
-        ClientMessage::CreateWorker { worker } => {
-            match state.worker_scheduler.create_worker(worker).await {
-                Ok(_) => {
-                    if let Ok(workers) = state.worker_scheduler.list_workers().await {
-                        send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
-                    }
-                }
-                Err(e) => {
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::Error {
-                            error: format!("Failed to create worker: {e}"),
-                        },
-                    )
-                    .await;
+        ClientMessage::CreateWorker { worker } => match WorkerManager::create(worker).await {
+            Ok(_) => {
+                if let Ok(workers) = WorkerManager::get_summaries().await {
+                    send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
                 }
             }
-        }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to create worker: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
 
         ClientMessage::UpdateWorker { id, patch } => {
-            match state.worker_scheduler.update_worker(&id, patch).await {
+            match WorkerManager::update(&id, patch).await {
                 Ok(Some(_)) => {
-                    if let Ok(workers) = state.worker_scheduler.list_workers().await {
+                    if let Ok(workers) = WorkerManager::get_summaries().await {
                         send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
                     }
                 }
@@ -397,38 +392,46 @@ async fn dispatch_message(
             }
         }
 
-        ClientMessage::DeleteWorker { id } => {
-            match state.worker_scheduler.delete_worker(&id).await {
-                Ok(true) => {
-                    if let Ok(workers) = state.worker_scheduler.list_workers().await {
-                        send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
-                    }
-                }
-                Ok(false) => {
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::Error {
-                            error: format!("Worker not found: {id}"),
-                        },
-                    )
-                    .await;
-                }
-                Err(e) => {
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::Error {
-                            error: format!("Failed to delete worker: {e}"),
-                        },
-                    )
-                    .await;
+        ClientMessage::DeleteWorker { id } => match WorkerManager::delete(&id).await {
+            Ok(true) => {
+                if let Ok(workers) = WorkerManager::get_summaries().await {
+                    send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
                 }
             }
-        }
+            Ok(false) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Worker not found: {id}"),
+                    },
+                )
+                .await;
+            }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to delete worker: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
 
         ClientMessage::ToggleWorker { id, enabled } => {
-            match state.worker_scheduler.toggle_worker(&id, enabled).await {
+            let patch = lukan_core::workers::WorkerUpdateInput {
+                enabled: Some(enabled),
+                name: None,
+                schedule: None,
+                prompt: None,
+                tools: None,
+                provider: None,
+                model: None,
+                notify: None,
+            };
+            match WorkerManager::update(&id, patch).await {
                 Ok(Some(_)) => {
-                    if let Ok(workers) = state.worker_scheduler.list_workers().await {
+                    if let Ok(workers) = WorkerManager::get_summaries().await {
                         send_json(ws_tx, &ServerMessage::WorkersUpdate { workers }).await;
                     }
                 }
@@ -453,38 +456,32 @@ async fn dispatch_message(
             }
         }
 
-        ClientMessage::GetWorkerDetail { id } => {
-            match state.worker_scheduler.get_worker_detail(&id).await {
-                Ok(Some(detail)) => {
-                    send_json(ws_tx, &ServerMessage::WorkerDetail { worker: detail }).await;
-                }
-                Ok(None) => {
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::Error {
-                            error: format!("Worker not found: {id}"),
-                        },
-                    )
-                    .await;
-                }
-                Err(e) => {
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::Error {
-                            error: format!("Failed to get worker detail: {e}"),
-                        },
-                    )
-                    .await;
-                }
+        ClientMessage::GetWorkerDetail { id } => match WorkerManager::get_detail(&id).await {
+            Ok(Some(detail)) => {
+                send_json(ws_tx, &ServerMessage::WorkerDetail { worker: detail }).await;
             }
-        }
+            Ok(None) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Worker not found: {id}"),
+                    },
+                )
+                .await;
+            }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to get worker detail: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
 
         ClientMessage::GetWorkerRunDetail { worker_id, run_id } => {
-            match state
-                .worker_scheduler
-                .get_worker_run_detail(&worker_id, &run_id)
-                .await
-            {
+            match WorkerManager::get_run(&worker_id, &run_id).await {
                 Ok(Some(run)) => {
                     send_json(ws_tx, &ServerMessage::WorkerRunDetail { run }).await;
                 }

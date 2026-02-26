@@ -45,9 +45,12 @@ use crate::widgets::subagent_picker::{
     SubAgentDisplayEntry, SubAgentPicker, SubAgentPickerView, SubAgentPickerWidget,
 };
 use crate::widgets::task_panel::TaskPanelWidget;
+use crate::widgets::terminal::TerminalWidget;
 use crate::widgets::worker_picker::{
     RunEntry, WorkerEntry, WorkerPicker, WorkerPickerView, WorkerPickerWidget,
 };
+
+use crate::terminal_modal::TerminalModal;
 
 /// Which view the TUI is currently showing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +193,14 @@ pub struct App {
     disabled_tools: HashSet<String>,
     /// Auto-load the most recent session on startup (--continue flag)
     continue_session: bool,
+    /// Embedded interactive terminal modal (F9)
+    terminal_modal: Option<TerminalModal>,
+    /// Whether the terminal modal overlay is visible (false = minimized)
+    terminal_visible: bool,
+    /// Whether mouse capture is currently enabled (for terminal selection)
+    mouse_capture_enabled: bool,
+    /// Cached inner area of the terminal overlay (set during render, used for mouse hit-testing)
+    terminal_overlay_inner: Option<ratatui::layout::Rect>,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -370,6 +381,10 @@ impl App {
             tool_picker: None,
             disabled_tools: HashSet::new(),
             continue_session: false,
+            terminal_modal: None,
+            terminal_visible: false,
+            mouse_capture_enabled: false,
+            terminal_overlay_inner: None,
         }
     }
 
@@ -1049,6 +1064,56 @@ impl App {
         });
     }
 
+    /// Enable or disable mouse capture based on terminal modal visibility.
+    fn sync_mouse_capture(&mut self, enabled: bool) {
+        if enabled && !self.mouse_capture_enabled {
+            let _ = stdout().execute(crossterm::event::EnableMouseCapture);
+            self.mouse_capture_enabled = true;
+        } else if !enabled && self.mouse_capture_enabled {
+            let _ = stdout().execute(crossterm::event::DisableMouseCapture);
+            self.mouse_capture_enabled = false;
+        }
+    }
+
+    /// Copy text to system clipboard via xclip.
+    /// Copy text to both PRIMARY and CLIPBOARD X11 selections.
+    fn copy_to_clipboard(text: &str) {
+        use std::process::{Command, Stdio};
+        // Copy to both selections so middle-click paste and Ctrl+V both work
+        for selection in ["clipboard", "primary"] {
+            if let Ok(mut child) = Command::new("xclip")
+                .args(["-selection", selection])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                // Must take() stdin to close the pipe, otherwise xclip waits for EOF forever
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = std::io::Write::write_all(&mut stdin, text.as_bytes());
+                }
+                // stdin is dropped here → pipe closed → xclip reads EOF and sets selection
+                let _ = child.wait();
+            } else if let Ok(mut child) = Command::new("xsel")
+                .arg(if selection == "primary" {
+                    "--primary"
+                } else {
+                    "--clipboard"
+                })
+                .arg("--input")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = std::io::Write::write_all(&mut stdin, text.as_bytes());
+                }
+                let _ = child.wait();
+            }
+        }
+    }
+
     pub async fn run(mut self) -> Result<()> {
         // Ensure cursor starts at column 0 before creating the inline viewport,
         // otherwise the first rendered line inherits the shell prompt's column offset.
@@ -1161,6 +1226,16 @@ impl App {
             let chat_area_h = term_size
                 .height
                 .saturating_sub(cur_input_h + 2 + task_panel_h + shimmer_h + queued_h);
+
+            // Sync terminal PTY size with actual overlay inner dimensions
+            if let Some(ref mut modal) = self.terminal_modal {
+                let overlay_w = (term_size.width * 90 / 100).max(20);
+                let overlay_h = (chat_area_h * 85 / 100).max(10);
+                let inner_cols = overlay_w.saturating_sub(2);
+                let inner_rows = overlay_h.saturating_sub(2);
+                modal.resize(inner_cols, inner_rows);
+            }
+
             if self.trust_prompt.is_none()
                 && self.approval_prompt.is_none()
                 && self.plan_review.is_none()
@@ -1172,6 +1247,7 @@ impl App {
                 && self.rewind_picker.is_none()
                 && self.memory_viewer.is_none()
                 && self.tool_picker.is_none()
+                && !self.terminal_visible
             {
                 let (msgs, committed_idx, streaming, vscroll) = match self.active_view {
                     ActiveView::Main => (
@@ -1702,6 +1778,32 @@ impl App {
                     frame.render_widget(paragraph, overlay_area);
                 }
 
+                // Embedded terminal overlay (F9) — only when visible
+                if self.terminal_visible
+                    && let Some(ref modal) = self.terminal_modal
+                {
+                    let overlay_w = (chat_area.width * 90 / 100).max(20);
+                    let overlay_h = (chat_area.height * 85 / 100).max(10);
+                    let overlay_x = chat_area.x + (chat_area.width.saturating_sub(overlay_w)) / 2;
+                    let overlay_y = chat_area.y + (chat_area.height.saturating_sub(overlay_h)) / 2;
+                    let overlay_area = Rect {
+                        x: overlay_x,
+                        y: overlay_y,
+                        width: overlay_w,
+                        height: overlay_h,
+                    };
+                    let widget = TerminalWidget::new(modal.screen(), modal.has_exited())
+                        .with_selection(modal.selection.as_ref());
+                    frame.render_widget(widget, overlay_area);
+                    // Cache inner area for mouse hit-testing (border = 1 on each side)
+                    self.terminal_overlay_inner = Some(Rect {
+                        x: overlay_x + 1,
+                        y: overlay_y + 1,
+                        width: overlay_w.saturating_sub(2),
+                        height: overlay_h.saturating_sub(2),
+                    });
+                }
+
                 // Set cursor position only when not in picker/overlay
                 if self.trust_prompt.is_none()
                     && self.approval_prompt.is_none()
@@ -1716,6 +1818,7 @@ impl App {
                     && self.model_picker.is_none()
                     && self.tool_picker.is_none()
                     && !self.show_event_history
+                    && !self.terminal_visible
                 {
                     let (cx, cy) = cursor_position(&di, dc, input_area);
                     frame.set_cursor_position((cx, cy));
@@ -1727,6 +1830,112 @@ impl App {
                 Some(event) = event_rx.recv() => {
                     match event {
                         AppEvent::Key(key) => {
+                            // Ctrl+Shift+F9: close and kill the terminal
+                            if key.code == KeyCode::F(9)
+                                && key
+                                    .modifiers
+                                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                                && key
+                                    .modifiers
+                                    .contains(crossterm::event::KeyModifiers::SHIFT)
+                            {
+                                if let Some(modal) = self.terminal_modal.take() {
+                                    modal.close();
+                                }
+                                self.terminal_visible = false;
+                                self.sync_mouse_capture(false);
+                                self.terminal_overlay_inner = None;
+                                self.force_redraw = true;
+                                continue;
+                            }
+
+                            // F9: minimize/restore terminal (or open new one)
+                            // If the shell has exited, F9 closes it completely.
+                            if key.code == KeyCode::F(9) {
+                                if let Some(ref modal) = self.terminal_modal {
+                                    if modal.has_exited() {
+                                        // Shell exited — close completely
+                                        if let Some(modal) = self.terminal_modal.take() {
+                                            modal.close();
+                                        }
+                                        self.terminal_visible = false;
+                                        self.sync_mouse_capture(false);
+                                        self.terminal_overlay_inner = None;
+                                    } else {
+                                        // Toggle visibility (minimize / restore)
+                                        self.terminal_visible = !self.terminal_visible;
+                                        self.sync_mouse_capture(self.terminal_visible);
+                                    }
+                                } else {
+                                    // No terminal yet — open with approximate inner size
+                                    // (will be corrected on next frame via resize sync)
+                                    let term_size =
+                                        crossterm::terminal::size().unwrap_or((80, 24));
+                                    let approx_chat_h = term_size.1.saturating_sub(5);
+                                    let overlay_w = (term_size.0 * 90 / 100).max(20);
+                                    let overlay_h = (approx_chat_h * 85 / 100).max(10);
+                                    let inner_cols = overlay_w.saturating_sub(2);
+                                    let inner_rows = overlay_h.saturating_sub(2);
+                                    match TerminalModal::open(inner_cols, inner_rows) {
+                                        Ok(modal) => {
+                                            self.terminal_modal = Some(modal);
+                                            self.terminal_visible = true;
+                                            self.sync_mouse_capture(true);
+                                        }
+                                        Err(e) => {
+                                            self.toast_notifications.push((
+                                                format!("Failed to open terminal: {e}"),
+                                                Instant::now(),
+                                            ));
+                                        }
+                                    }
+                                }
+                                self.force_redraw = true;
+                                continue;
+                            }
+
+                            // When terminal modal is visible, handle scroll or forward to PTY
+                            if self.terminal_visible
+                                && let Some(ref mut modal) = self.terminal_modal
+                            {
+                                let ctrl = key
+                                    .modifiers
+                                    .contains(crossterm::event::KeyModifiers::CONTROL);
+                                match key.code {
+                                    // Ctrl+Up: scroll up 1 line
+                                    KeyCode::Up if ctrl => {
+                                        modal.screen_mut().scroll_up(1);
+                                    }
+                                    // Ctrl+Down: scroll down 1 line
+                                    KeyCode::Down if ctrl => {
+                                        modal.screen_mut().scroll_down(1);
+                                    }
+                                    // Ctrl+PageUp: scroll up half page
+                                    KeyCode::PageUp if ctrl => {
+                                        let half = (modal.screen().size().0 / 2).max(1) as usize;
+                                        modal.screen_mut().scroll_up(half);
+                                    }
+                                    // Ctrl+PageDown: scroll down half page
+                                    KeyCode::PageDown if ctrl => {
+                                        let half = (modal.screen().size().0 / 2).max(1) as usize;
+                                        modal.screen_mut().scroll_down(half);
+                                    }
+                                    _ => {
+                                        // Any other key snaps to live view and forwards to PTY
+                                        if modal.screen().scroll_offset > 0 {
+                                            modal.screen_mut().snap_to_bottom();
+                                        }
+                                        // Clear selection on any keypress
+                                        modal.clear_selection();
+                                        modal.send_key(&key);
+                                    }
+                                }
+                                // Drain PTY output immediately so screen stays in sync
+                                // (without this, rapid key repeats starve the Tick handler)
+                                modal.process_output();
+                                continue;
+                            }
+
                             if self.trust_prompt.is_some() {
                                 // Trust prompt overlay
                                 match key.code {
@@ -2763,7 +2972,12 @@ impl App {
                             }
                         }
                         AppEvent::Paste(text) => {
-                            if !self.is_streaming
+                            // Forward paste to terminal modal if visible
+                            if self.terminal_visible
+                                && let Some(ref mut modal) = self.terminal_modal
+                            {
+                                modal.send_paste(&text);
+                            } else if !self.is_streaming
                                 && self.session_picker.is_none()
                                 && self.model_picker.is_none()
                                 && self.reasoning_picker.is_none()
@@ -2779,8 +2993,68 @@ impl App {
                                 self.cmd_palette_idx = 0;
                             }
                         }
-                        AppEvent::Resize(_, _) => {}
+                        AppEvent::Resize(_, _) => {
+                            // Resize terminal modal if active
+                            if let Some(ref mut modal) = self.terminal_modal {
+                                let term_size = crossterm::terminal::size().unwrap_or((80, 24));
+                                let overlay_w = (term_size.0 * 90 / 100).max(20);
+                                let overlay_h = (term_size.1 * 85 / 100).max(10);
+                                let inner_cols = overlay_w.saturating_sub(2);
+                                let inner_rows = overlay_h.saturating_sub(2);
+                                modal.resize(inner_cols, inner_rows);
+                                self.force_redraw = true;
+                            }
+                        }
+                        AppEvent::Mouse(mouse) => {
+                            // Only handle mouse events when terminal modal is visible
+                            if self.terminal_visible
+                                && let Some(ref mut modal) = self.terminal_modal
+                                && let Some(inner) = self.terminal_overlay_inner
+                            {
+                                use crossterm::event::{MouseEventKind, MouseButton};
+                                let col = mouse.column;
+                                let row = mouse.row;
+                                // Check if mouse is within the terminal overlay inner area
+                                let inside = col >= inner.x
+                                    && col < inner.x + inner.width
+                                    && row >= inner.y
+                                    && row < inner.y + inner.height;
+                                if inside {
+                                    let rel_col = col - inner.x;
+                                    let rel_row = row - inner.y;
+                                    match mouse.kind {
+                                        MouseEventKind::Down(MouseButton::Left) => {
+                                            modal.start_selection(rel_row, rel_col);
+                                        }
+                                        MouseEventKind::Drag(MouseButton::Left) => {
+                                            modal.update_selection(rel_row, rel_col);
+                                        }
+                                        MouseEventKind::Up(MouseButton::Left) => {
+                                            modal.update_selection(rel_row, rel_col);
+                                            // Copy selected text to clipboard
+                                            if let Some(text) = modal.extract_selected_text() {
+                                                Self::copy_to_clipboard(&text);
+                                            }
+                                        }
+                                        MouseEventKind::ScrollUp => {
+                                            modal.screen_mut().scroll_up(3);
+                                        }
+                                        MouseEventKind::ScrollDown => {
+                                            modal.screen_mut().scroll_down(3);
+                                        }
+                                        _ => {}
+                                    }
+                                } else {
+                                    // Click outside modal clears selection
+                                    modal.clear_selection();
+                                }
+                            }
+                        }
                         AppEvent::Tick => {
+                            // Process terminal modal output (even when minimized)
+                            if let Some(ref mut modal) = self.terminal_modal {
+                                modal.process_output();
+                            }
                             // Auto-refresh bg_picker log view
                             if let Some(ref mut picker) = self.bg_picker {
                                 picker.refresh_log();
@@ -2891,12 +3165,21 @@ impl App {
             }
         }
 
+        // Close terminal modal if open
+        if let Some(modal) = self.terminal_modal.take() {
+            modal.close();
+        }
+
         // Stop worker scheduler
         self.worker_scheduler.stop();
 
         // Clean up background processes before exiting
         lukan_tools::bg_processes::cleanup_all();
 
+        // Disable mouse capture if it was enabled
+        if self.mouse_capture_enabled {
+            let _ = stdout().execute(crossterm::event::DisableMouseCapture);
+        }
         stdout().execute(crossterm::event::DisableBracketedPaste)?;
         disable_raw_mode()?;
         println!(); // new line so the shell prompt starts clean

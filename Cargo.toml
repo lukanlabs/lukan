@@ -68,6 +68,7 @@ sha2 = "0.10"
 open = "5"
 urlencoding = "2"
 toml = "0.8"
+portable-pty = "0.9"
 
 # Tauri (desktop UI)
 tauri = { version = "2", features = [] }

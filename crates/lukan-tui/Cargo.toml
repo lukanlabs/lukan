@@ -20,3 +20,5 @@ pulldown-cmark.workspace = true
 syntect.workspace = true
 similar.workspace = true
 tokio-util.workspace = true
+libc.workspace = true
+portable-pty.workspace = true

@@ -1,4 +1,6 @@
-use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent,
+};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -11,6 +13,8 @@ pub enum AppEvent {
     Paste(String),
     /// Terminal was resized
     Resize(u16, u16),
+    /// Mouse event
+    Mouse(MouseEvent),
     /// Tick for UI updates
     Tick,
 }
@@ -33,6 +37,11 @@ pub fn spawn_event_reader(tx: mpsc::UnboundedSender<AppEvent>) {
                     }
                     Ok(CrosstermEvent::Resize(w, h)) => {
                         if tx.send(AppEvent::Resize(w, h)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(CrosstermEvent::Mouse(mouse)) => {
+                        if tx.send(AppEvent::Mouse(mouse)).is_err() {
                             break;
                         }
                     }

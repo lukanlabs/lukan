@@ -19,6 +19,12 @@ import type {
   BrowserStatus,
   BrowserTab,
   DirectoryListing,
+  WorkerSummary,
+  WorkerDetail,
+  WorkerDefinition,
+  WorkerRun,
+  WorkerCreateInput,
+  WorkerUpdateInput,
 } from "./types";
 
 // Config
@@ -138,6 +144,20 @@ export const listDirectory = (path?: string) =>
 export const openInEditor = (path: string, editor?: string) =>
   invoke<void>("open_in_editor", { path, editor });
 export const getCwd = () => invoke<string>("get_cwd");
+
+// Workers
+export const listWorkers = () => invoke<WorkerSummary[]>("list_workers");
+export const createWorker = (input: WorkerCreateInput) =>
+  invoke<WorkerDefinition>("create_worker", { input });
+export const updateWorker = (id: string, patch: WorkerUpdateInput) =>
+  invoke<WorkerDefinition>("update_worker", { id, patch });
+export const deleteWorker = (id: string) => invoke<boolean>("delete_worker", { id });
+export const toggleWorker = (id: string, enabled: boolean) =>
+  invoke<WorkerDefinition>("toggle_worker", { id, enabled });
+export const getWorkerDetail = (id: string) =>
+  invoke<WorkerDetail>("get_worker_detail", { id });
+export const getWorkerRun = (workerId: string, runId: string) =>
+  invoke<WorkerRun>("get_worker_run", { workerId, runId });
 
 // Event listeners
 export const onStreamEvent = (cb: (payload: string) => void): Promise<UnlistenFn> =>

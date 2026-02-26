@@ -39,6 +39,7 @@ build:
 		cd desktop-client && bun install --frozen-lockfile 2>/dev/null || bun install && bun run build; \
 		echo "Forcing desktop crate rebuild (frontend changed)..."; \
 		cargo clean -p lukan-desktop 2>/dev/null || true; \
+		rm -rf target/release/build/lukan-desktop-* target/debug/build/lukan-desktop-* 2>/dev/null || true; \
 	fi
 	cargo build --release
 

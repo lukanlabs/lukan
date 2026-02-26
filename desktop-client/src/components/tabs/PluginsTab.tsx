@@ -40,6 +40,8 @@ import {
   Phone,
   Users,
   ChevronRight,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -481,17 +483,31 @@ function DetailView({
 
   return (
     <div style={{ animation: "fadeIn 0.15s ease-out" }}>
-      {/* Back */}
-      <button
-        onClick={onBack}
-        className="inline-flex items-center gap-1 text-xs mb-3 cursor-pointer border-none bg-transparent"
-        style={{ color: "var(--text-muted)", padding: 0 }}
-      >
-        <ArrowLeft size={12} />
-        Back
-      </button>
+      {/* Header with back + uninstall */}
+      <div className="flex items-center justify-between mb-1">
+        <button
+          onClick={onBack}
+          className="inline-flex items-center gap-1 text-xs cursor-pointer border-none bg-transparent"
+          style={{ color: "var(--text-muted)", padding: 0 }}
+        >
+          <ArrowLeft size={12} />
+          Back
+        </button>
+        <button
+          onClick={() => onAction("remove", plugin.name)}
+          disabled={actionLoading !== null}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none"
+          style={{
+            background: "rgba(220,38,38,0.12)", color: "#fb7185", border: "1px solid rgba(251,113,133,0.15)",
+            opacity: actionLoading !== null ? 0.4 : 1, pointerEvents: actionLoading !== null ? "none" : "auto",
+          }}
+        >
+          {actionLoading === "remove" ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
+          Uninstall
+        </button>
+      </div>
 
-      {/* Header */}
+      {/* Plugin info */}
       <div className="mb-4">
         <div className="flex items-center gap-2 flex-wrap mb-1">
           <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
@@ -516,10 +532,10 @@ function DetailView({
         )}
       </div>
 
-      {/* Action buttons */}
-      <div className="flex gap-1.5 flex-wrap mb-4">
-        {plugin.pluginType === "channel" && (
-          plugin.running ? (
+      {/* Action buttons (only for channel plugins) */}
+      {plugin.pluginType === "channel" && (
+        <div className="flex gap-1.5 flex-wrap mb-4">
+          {plugin.running ? (
             <>
               <ActionBtn
                 icon={actionLoading === "stop" ? <Loader2 size={11} className="animate-spin" /> : <Square size={11} />}
@@ -542,16 +558,9 @@ function DetailView({
               onClick={() => onAction("start", plugin.name)}
               disabled={actionLoading !== null}
             />
-          )
-        )}
-        <ActionBtn
-          icon={actionLoading === "remove" ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
-          label={actionLoading === "remove" ? "Removing..." : "Uninstall"}
-          onClick={() => onAction("remove", plugin.name)}
-          disabled={actionLoading !== null}
-          variant="danger"
-        />
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Commands */}
       {commands.length > 0 && (
@@ -560,6 +569,9 @@ function DetailView({
             {commands.map((cmd) => {
               const isAuth = cmd.name === "auth";
               const authed = isAuth && (plugin.name === "whatsapp" ? whatsappAuthed : !!config.accessToken);
+              const btnLabel = isAuth
+                ? (commandRunning === cmd.name ? "..." : authed ? "Re-authenticate" : "Authenticate")
+                : (commandRunning === cmd.name ? "..." : "Run");
               return (
                 <div key={cmd.name} className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -577,8 +589,8 @@ function DetailView({
                   </div>
                   <ActionBtn
                     icon={commandRunning === cmd.name ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
-                    label={commandRunning === cmd.name ? "..." : "Run"}
-                    onClick={() => onRunCommand(plugin.name, cmd.name)}
+                    label={btnLabel}
+                    onClick={() => isAuth && isWhatsapp ? onShowQr() : onRunCommand(plugin.name, cmd.name)}
                     disabled={commandRunning !== null}
                     small
                   />
@@ -716,10 +728,14 @@ function ActionBtn({ icon, label, onClick, disabled, variant, small }: {
 // Config Field
 // ===========================================================================
 
+const SENSITIVE_KEYS = /token|key|secret|password|credential|api.?key|access.?token|refresh.?token|client.?id|client.?secret/i;
+
 function ConfigField({ fieldKey, value, onSave }: { fieldKey: string; value: unknown; onSave: (v: string) => void }) {
   const displayValue = typeof value === "string" ? value : JSON.stringify(value);
   const [localValue, setLocalValue] = useState(displayValue);
   const [dirty, setDirty] = useState(false);
+  const isSensitive = SENSITIVE_KEYS.test(fieldKey);
+  const [visible, setVisible] = useState(!isSensitive);
 
   useEffect(() => {
     const next = typeof value === "string" ? value : JSON.stringify(value);
@@ -733,6 +749,7 @@ function ConfigField({ fieldKey, value, onSave }: { fieldKey: string; value: unk
         color: "var(--text-secondary)", background: "var(--bg-tertiary)", maxWidth: 120,
       }} title={fieldKey}>{fieldKey}</span>
       <input
+        type={visible ? "text" : "password"}
         value={localValue}
         onChange={(e) => { setLocalValue(e.target.value); setDirty(e.target.value !== displayValue); }}
         onBlur={() => { if (dirty) onSave(localValue); }}
@@ -740,6 +757,17 @@ function ConfigField({ fieldKey, value, onSave }: { fieldKey: string; value: unk
         className="flex-1 px-2 py-1 rounded-lg text-xs outline-none"
         style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
       />
+      {isSensitive && (
+        <button
+          type="button"
+          onClick={() => setVisible(!visible)}
+          className="shrink-0 p-1 rounded cursor-pointer border-none bg-transparent"
+          style={{ color: "var(--text-muted)" }}
+          title={visible ? "Hide" : "Show"}
+        >
+          {visible ? <EyeOff size={12} /> : <Eye size={12} />}
+        </button>
+      )}
     </div>
   );
 }

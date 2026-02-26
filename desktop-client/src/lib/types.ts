@@ -136,6 +136,72 @@ export interface DirectoryListing {
   entries: FileEntry[];
 }
 
+// ── Worker types ──────────────────────────────────────────────────────
+
+export interface WorkerDefinition {
+  id: string;
+  name: string;
+  schedule: string;
+  prompt: string;
+  tools?: string[];
+  provider?: string;
+  model?: string;
+  enabled: boolean;
+  notify?: string[];
+  createdAt: string;
+  lastRunAt?: string;
+  lastRunStatus?: string;
+}
+
+export interface WorkerRun {
+  id: string;
+  workerId: string;
+  startedAt: string;
+  completedAt?: string;
+  status: string;
+  output: string;
+  error?: string;
+  tokenUsage: WorkerTokenUsage;
+  turns: number;
+}
+
+export interface WorkerTokenUsage {
+  input: number;
+  output: number;
+  cacheCreation: number;
+  cacheRead: number;
+}
+
+export interface WorkerSummary extends WorkerDefinition {
+  recentRunStatus?: string;
+}
+
+export interface WorkerDetail extends WorkerSummary {
+  recentRuns: WorkerRun[];
+}
+
+export interface WorkerCreateInput {
+  name: string;
+  schedule: string;
+  prompt: string;
+  tools?: string[];
+  provider?: string;
+  model?: string;
+  enabled?: boolean;
+  notify?: string[];
+}
+
+export interface WorkerUpdateInput {
+  name?: string;
+  schedule?: string;
+  prompt?: string;
+  tools?: string[];
+  provider?: string;
+  model?: string;
+  enabled?: boolean;
+  notify?: string[];
+}
+
 // ── Terminal types ────────────────────────────────────────────────────
 
 export interface TerminalSessionInfo {

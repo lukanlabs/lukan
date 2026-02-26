@@ -104,6 +104,14 @@ fn main() {
             commands::browser::browser_screenshot,
             commands::browser::browser_tabs,
             commands::browser::browser_close,
+            // Workers
+            commands::workers::list_workers,
+            commands::workers::create_worker,
+            commands::workers::update_worker,
+            commands::workers::delete_worker,
+            commands::workers::toggle_worker,
+            commands::workers::get_worker_detail,
+            commands::workers::get_worker_run,
             // Files
             commands::files::list_directory,
             commands::files::open_in_editor,

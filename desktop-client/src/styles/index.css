@@ -717,9 +717,10 @@ select {
 
 .worker-entry .worker-info {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .worker-entry .worker-name {

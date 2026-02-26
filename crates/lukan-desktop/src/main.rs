@@ -2,6 +2,7 @@
 
 mod commands;
 mod state;
+mod terminal_state;
 
 fn main() {
     // Catch GTK/display initialization failures and exit with a friendly message
@@ -30,6 +31,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(state::ChatState::default())
+        .manage(terminal_state::TerminalState::default())
         .invoke_handler(tauri::generate_handler![
             // Config
             commands::config::get_config,
@@ -82,6 +84,12 @@ fn main() {
             commands::chat::load_session,
             commands::chat::new_session,
             commands::chat::set_permission_mode,
+            // Terminal
+            commands::terminal::terminal_create,
+            commands::terminal::terminal_input,
+            commands::terminal::terminal_resize,
+            commands::terminal::terminal_destroy,
+            commands::terminal::terminal_list,
             // Memory
             commands::memory::get_global_memory,
             commands::memory::save_global_memory,

@@ -7,11 +7,17 @@ import {
   testProvider,
 } from "../../lib/tauri";
 import { useToast } from "../ui/Toast";
-import Button from "../ui/Button";
-import Input from "../ui/Input";
-import Card from "../ui/Card";
-import Badge from "../ui/Badge";
-import { Eye, EyeOff, Zap, Shield, CheckCircle, XCircle } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  Zap,
+  Shield,
+  CheckCircle,
+  XCircle,
+  Loader2,
+  Save,
+  KeyRound,
+} from "lucide-react";
 
 interface ProviderEntry {
   provider: string;
@@ -30,13 +36,13 @@ const PROVIDERS: ProviderEntry[] = [
   { provider: "openai-compatible", field: "openaiCompatibleApiKey", label: "OpenAI Compatible", envVar: "OPENAI_COMPATIBLE_API_KEY" },
 ];
 
-type TestResult = { status: "success"; message: string } | { status: "error"; message: string } | null;
+type TestResult = { status: "success" | "error"; message: string } | null;
 
 export default function CredentialsTab() {
   const { toast } = useToast();
   const [creds, setCreds] = useState<Credentials | null>(null);
   const [statuses, setStatuses] = useState<ProviderStatus[]>([]);
-  const [selectedProvider, setSelectedProvider] = useState<string>(PROVIDERS[0].provider);
+  const [selectedProvider, setSelectedProvider] = useState(PROVIDERS[0].provider);
   const [visible, setVisible] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult>(null);
@@ -44,26 +50,21 @@ export default function CredentialsTab() {
 
   useEffect(() => {
     Promise.all([getCredentials(), getProviderStatus()])
-      .then(([c, s]) => {
-        setCreds(c);
-        setStatuses(s);
-      })
+      .then(([c, s]) => { setCreds(c); setStatuses(s); })
       .catch((e) => toast("error", `Failed to load: ${e}`));
   }, []);
 
-  // Reset visibility and test result when switching providers
   useEffect(() => {
     setVisible(false);
     setTestResult(null);
   }, [selectedProvider]);
 
-  const getStatus = (provider: string) =>
-    statuses.find((s) => s.name === provider);
-
+  const getStatus = (provider: string) => statuses.find((s) => s.name === provider);
   const configuredCount = statuses.filter((s) => s.configured).length;
 
   const selected = PROVIDERS.find((p) => p.provider === selectedProvider)!;
   const selectedStatus = getStatus(selected.provider);
+  const currentValue = creds ? ((creds[selected.field] as string) ?? "") : "";
 
   const handleSave = async () => {
     if (!creds) return;
@@ -95,128 +96,68 @@ export default function CredentialsTab() {
 
   if (!creds) {
     return (
-      <div
-        style={{
-          color: "var(--text-muted)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100%",
-          gap: "8px",
-        }}
-      >
-        <Shield size={16} />
-        Loading credentials...
+      <div className="flex items-center justify-center h-64 gap-2" style={{ color: "#52525b" }}>
+        <Loader2 size={16} className="animate-spin" />
+        <span className="text-sm">Loading credentials...</span>
       </div>
     );
   }
 
-  const currentValue = (creds[selected.field] as string) ?? "";
-
   return (
-    <div style={{ animation: "fadeIn 0.3s ease-out" }}>
+    <div style={{ animation: "fadeIn 0.25s ease-out" }}>
       {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: "24px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <Shield size={20} style={{ color: "var(--text-secondary)" }} />
-          <h2
-            style={{
-              color: "var(--text-primary)",
-              fontSize: "18px",
-              fontWeight: 700,
-              letterSpacing: "-0.01em",
-              margin: 0,
-            }}
-          >
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h2 className="text-lg font-bold tracking-tight" style={{ color: "#fafafa" }}>
             API Credentials
           </h2>
-          <Badge variant={configuredCount > 0 ? "success" : "neutral"}>
+          <p className="text-xs mt-1" style={{ color: "#52525b" }}>
             {configuredCount} of {PROVIDERS.length} providers configured
-          </Badge>
+          </p>
         </div>
       </div>
 
       {/* Two-column layout */}
-      <div style={{ display: "flex", gap: "20px", minHeight: "420px" }}>
-        {/* Left column: provider list */}
-        <div
-          style={{
-            width: "240px",
-            flexShrink: 0,
-            display: "flex",
-            flexDirection: "column",
-            gap: "4px",
-          }}
-        >
+      <div className="flex gap-4" style={{ minHeight: "460px" }}>
+        {/* Left: Provider list */}
+        <div className="flex flex-col gap-0.5" style={{ width: "220px", flexShrink: 0 }}>
           {PROVIDERS.map(({ provider, label }) => {
             const status = getStatus(provider);
             const isActive = provider === selectedProvider;
+            const isConfigured = status?.configured;
 
             return (
               <button
                 key={provider}
                 onClick={() => setSelectedProvider(provider)}
+                className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-left text-[13px] cursor-pointer border-none transition-all"
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "8px",
-                  padding: "10px 14px",
-                  borderRadius: "12px",
-                  border: isActive ? "1px solid var(--border-hover)" : "1px solid transparent",
-                  background: isActive
-                    ? "linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%)"
-                    : "transparent",
-                  color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  fontSize: "13px",
+                  background: isActive ? "rgba(63, 63, 70, 0.25)" : "transparent",
+                  color: isActive ? "#fafafa" : "#a1a1aa",
                   fontWeight: isActive ? 600 : 400,
-                  transition: "all 180ms ease",
                 }}
                 onMouseEnter={(e) => {
                   if (!isActive) {
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                    e.currentTarget.style.color = "var(--text-primary)";
+                    e.currentTarget.style.background = "rgba(39, 39, 42, 0.4)";
+                    e.currentTarget.style.color = "#fafafa";
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (!isActive) {
                     e.currentTarget.style.background = "transparent";
-                    e.currentTarget.style.color = "var(--text-secondary)";
+                    e.currentTarget.style.color = "#a1a1aa";
                   }
                 }}
               >
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {label}
-                </span>
-                {status?.configured ? (
+                <span className="truncate">{label}</span>
+                {isConfigured ? (
                   <span
-                    style={{
-                      width: "6px",
-                      height: "6px",
-                      borderRadius: "50%",
-                      background: "var(--success)",
-                      boxShadow: "0 0 6px var(--success)",
-                      flexShrink: 0,
-                    }}
+                    className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                    style={{ background: "#4ade80", boxShadow: "0 0 6px rgba(74,222,128,0.4)" }}
                   />
                 ) : (
-                  <span
-                    style={{
-                      fontSize: "10px",
-                      color: "var(--text-muted)",
-                      flexShrink: 0,
-                    }}
-                  >
-                    not set
+                  <span className="text-[10px] flex-shrink-0" style={{ color: "#3f3f46" }}>
+                    --
                   </span>
                 )}
               </button>
@@ -224,168 +165,187 @@ export default function CredentialsTab() {
           })}
         </div>
 
-        {/* Right column: provider detail */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Card>
-            {/* Provider heading */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                marginBottom: "20px",
-              }}
-            >
-              <h3
-                style={{
-                  color: "var(--text-primary)",
-                  fontSize: "16px",
-                  fontWeight: 600,
-                  margin: 0,
-                  letterSpacing: "-0.01em",
-                }}
-              >
+        {/* Right: Provider detail */}
+        <div
+          className="flex-1 min-w-0 rounded-xl overflow-hidden"
+          style={{
+            background: "rgba(15, 15, 15, 0.8)",
+            border: "1px solid rgba(63, 63, 70, 0.3)",
+          }}
+        >
+          {/* Detail header */}
+          <div
+            className="flex items-center justify-between px-5 py-3.5"
+            style={{
+              borderBottom: "1px solid rgba(63, 63, 70, 0.2)",
+              background: "rgba(24, 24, 27, 0.4)",
+            }}
+          >
+            <div className="flex items-center gap-2.5">
+              <span style={{ color: "#71717a" }}><KeyRound size={15} /></span>
+              <h3 className="text-[13px] font-semibold" style={{ color: "#fafafa" }}>
                 {selected.label}
               </h3>
-              <Badge variant={selectedStatus?.configured ? "success" : "neutral"}>
-                {selectedStatus?.configured ? "Configured" : "Not set"}
-              </Badge>
+              <span
+                className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                style={{
+                  background: selectedStatus?.configured
+                    ? "rgba(74,222,128,0.1)"
+                    : "rgba(255,255,255,0.04)",
+                  color: selectedStatus?.configured ? "#4ade80" : "#52525b",
+                  border: selectedStatus?.configured
+                    ? "1px solid rgba(74,222,128,0.2)"
+                    : "1px solid rgba(63,63,70,0.3)",
+                }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{
+                    background: selectedStatus?.configured ? "#4ade80" : "#3f3f46",
+                  }}
+                />
+                {selectedStatus?.configured ? "Active" : "Not set"}
+              </span>
             </div>
+          </div>
 
-            {/* API Key input */}
-            <div style={{ marginBottom: "8px" }}>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: "8px" }}>
-                <div style={{ flex: 1 }}>
-                  <Input
-                    label="API Key"
-                    type={visible ? "text" : "password"}
-                    value={currentValue}
-                    placeholder="Enter API key..."
-                    onChange={(e) =>
-                      setCreds({ ...creds, [selected.field]: e.target.value || undefined })
-                    }
-                  />
-                </div>
+          {/* Detail body */}
+          <div className="p-5 flex flex-col gap-5">
+            {/* API Key field */}
+            <div className="flex flex-col gap-1.5">
+              <label
+                className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider"
+                style={{ color: "#71717a" }}
+              >
+                <Shield size={10} />
+                API Key
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type={visible ? "text" : "password"}
+                  value={currentValue}
+                  placeholder="Enter API key..."
+                  onChange={(e) =>
+                    setCreds({ ...creds, [selected.field]: e.target.value || undefined })
+                  }
+                  className="flex-1 px-3 py-2 rounded-lg text-sm outline-none transition-all font-mono"
+                  style={{
+                    background: "rgba(24, 24, 27, 0.8)",
+                    border: "1px solid rgba(63, 63, 70, 0.4)",
+                    color: "#fafafa",
+                    letterSpacing: visible ? "0" : "0.15em",
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = "rgba(113, 113, 122, 0.6)";
+                    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(113, 113, 122, 0.1)";
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = "rgba(63, 63, 70, 0.4)";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                />
                 <button
                   onClick={() => setVisible(!visible)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: "38px",
-                    height: "38px",
-                    borderRadius: "12px",
-                    border: "none",
-                    background: "transparent",
-                    color: "var(--text-muted)",
-                    cursor: "pointer",
-                    transition: "all 150ms ease",
-                    flexShrink: 0,
-                  }}
+                  className="flex items-center justify-center w-9 h-9 rounded-lg border-none cursor-pointer transition-all flex-shrink-0"
+                  style={{ background: "transparent", color: "#52525b" }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                    e.currentTarget.style.color = "var(--text-primary)";
+                    e.currentTarget.style.background = "rgba(39, 39, 42, 0.5)";
+                    e.currentTarget.style.color = "#fafafa";
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = "transparent";
-                    e.currentTarget.style.color = "var(--text-muted)";
+                    e.currentTarget.style.color = "#52525b";
                   }}
-                  title={visible ? "Hide API key" : "Show API key"}
+                  title={visible ? "Hide" : "Show"}
                 >
-                  {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+                  {visible ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>
+              {selected.envVar ? (
+                <span className="text-[11px]" style={{ color: "#3f3f46" }}>
+                  Env fallback:{" "}
+                  <code
+                    className="px-1.5 py-0.5 rounded text-[10px] font-mono"
+                    style={{ background: "rgba(24,24,27,0.8)", color: "#71717a" }}
+                  >
+                    {selected.envVar}
+                  </code>
+                </span>
+              ) : (
+                <span className="text-[11px]" style={{ color: "#3f3f46" }}>
+                  No environment variable fallback.
+                </span>
+              )}
             </div>
-
-            {/* Env var hint */}
-            {selected.envVar ? (
-              <p
-                style={{
-                  color: "var(--text-muted)",
-                  fontSize: "12px",
-                  margin: "0 0 24px 0",
-                  lineHeight: 1.4,
-                }}
-              >
-                Also reads from{" "}
-                <code
-                  style={{
-                    background: "var(--bg-tertiary)",
-                    padding: "2px 6px",
-                    borderRadius: "4px",
-                    fontSize: "11px",
-                    fontFamily: "monospace",
-                    color: "var(--text-secondary)",
-                  }}
-                >
-                  {selected.envVar}
-                </code>
-              </p>
-            ) : (
-              <p
-                style={{
-                  color: "var(--text-muted)",
-                  fontSize: "12px",
-                  margin: "0 0 24px 0",
-                  lineHeight: 1.4,
-                }}
-              >
-                No environment variable fallback for this provider.
-              </p>
-            )}
 
             {/* Test result */}
             {testResult && (
               <div
+                className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg text-[12px]"
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  padding: "10px 14px",
-                  borderRadius: "10px",
-                  marginBottom: "20px",
-                  fontSize: "13px",
-                  background:
-                    testResult.status === "success"
-                      ? "var(--success-dim)"
-                      : "var(--danger-dim)",
-                  color:
-                    testResult.status === "success"
-                      ? "var(--success)"
-                      : "var(--danger)",
-                  border:
-                    testResult.status === "success"
-                      ? "1px solid rgba(74,222,128,0.15)"
-                      : "1px solid rgba(251,113,133,0.15)",
+                  background: testResult.status === "success"
+                    ? "rgba(74,222,128,0.08)"
+                    : "rgba(251,113,133,0.08)",
+                  color: testResult.status === "success" ? "#4ade80" : "#fb7185",
+                  border: testResult.status === "success"
+                    ? "1px solid rgba(74,222,128,0.15)"
+                    : "1px solid rgba(251,113,133,0.15)",
+                  animation: "fadeIn 0.2s ease-out",
                 }}
               >
-                {testResult.status === "success" ? (
-                  <CheckCircle size={15} style={{ flexShrink: 0 }} />
-                ) : (
-                  <XCircle size={15} style={{ flexShrink: 0 }} />
-                )}
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {testResult.message}
-                </span>
+                {testResult.status === "success"
+                  ? <CheckCircle size={14} className="flex-shrink-0" />
+                  : <XCircle size={14} className="flex-shrink-0" />}
+                <span className="truncate">{testResult.message}</span>
               </div>
             )}
 
             {/* Actions */}
-            <div style={{ display: "flex", gap: "10px" }}>
-              <Button
-                variant="ghost"
-                size="sm"
+            <div className="flex items-center gap-2 pt-1">
+              <button
                 onClick={handleTest}
                 disabled={testing || !selectedStatus?.configured}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none transition-all"
+                style={{
+                  background: "transparent",
+                  color: testing || !selectedStatus?.configured ? "#3f3f46" : "#a1a1aa",
+                  border: "1px solid rgba(63, 63, 70, 0.3)",
+                  opacity: testing || !selectedStatus?.configured ? 0.5 : 1,
+                  pointerEvents: testing || !selectedStatus?.configured ? "none" : "auto",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(39, 39, 42, 0.4)";
+                  e.currentTarget.style.color = "#fafafa";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.color = "#a1a1aa";
+                }}
               >
-                <Zap size={14} />
-                {testing ? "Testing..." : "Test Connection"}
-              </Button>
-              <Button onClick={handleSave} disabled={saving} size="sm">
+                {testing ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
+                {testing ? "Testing..." : "Test"}
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border-none transition-all"
+                style={{
+                  background: saving ? "rgba(250,250,250,0.05)" : "#fafafa",
+                  color: saving ? "#71717a" : "#09090b",
+                  opacity: saving ? 0.6 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  if (!saving) e.currentTarget.style.background = "#ffffff";
+                }}
+                onMouseLeave={(e) => {
+                  if (!saving) e.currentTarget.style.background = "#fafafa";
+                }}
+              >
+                <Save size={12} />
                 {saving ? "Saving..." : "Save"}
-              </Button>
+              </button>
             </div>
-          </Card>
+          </div>
         </div>
       </div>
     </div>

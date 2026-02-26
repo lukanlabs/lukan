@@ -102,7 +102,20 @@ export interface WebUiStatus {
   port: number;
 }
 
-export type TabId = "chat" | "config" | "credentials" | "plugins" | "providers" | "memory";
+export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" | "providers" | "memory";
+
+// ── Terminal types ────────────────────────────────────────────────────
+
+export interface TerminalSessionInfo {
+  id: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalOutputEvent {
+  type: "data" | "exited";
+  data?: string; // base64 for "data" type
+}
 
 // ── Chat types ───────────────────────────────────────────────────────
 

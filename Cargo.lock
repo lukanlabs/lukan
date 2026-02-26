@@ -2289,6 +2289,7 @@ name = "lukan-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "libc",
  "lukan-agent",
@@ -2296,11 +2297,13 @@ dependencies = [
  "lukan-plugins",
  "lukan-providers",
  "lukan-tools",
+ "portable-pty",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

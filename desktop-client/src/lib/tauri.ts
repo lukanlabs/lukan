@@ -14,6 +14,8 @@ import type {
   InitResponse,
   SessionSummary,
   ToolApprovalRequest,
+  TerminalSessionInfo,
+  TerminalOutputEvent,
 } from "./types";
 
 // Config
@@ -101,6 +103,22 @@ export const loadSession = (id: string) => invoke<InitResponse>("load_session", 
 export const newSession = () => invoke<InitResponse>("new_session");
 export const setPermissionMode = (mode: string) =>
   invoke<void>("set_permission_mode", { mode });
+
+// Terminal
+export const terminalCreate = (cwd?: string, cols?: number, rows?: number) =>
+  invoke<TerminalSessionInfo>("terminal_create", { cwd, cols, rows });
+export const terminalInput = (sessionId: string, data: string) =>
+  invoke<void>("terminal_input", { sessionId, data });
+export const terminalResize = (sessionId: string, cols: number, rows: number) =>
+  invoke<void>("terminal_resize", { sessionId, cols, rows });
+export const terminalDestroy = (sessionId: string) =>
+  invoke<void>("terminal_destroy", { sessionId });
+export const terminalList = () => invoke<TerminalSessionInfo[]>("terminal_list");
+export const onTerminalOutput = (
+  sessionId: string,
+  cb: (event: TerminalOutputEvent) => void,
+): Promise<UnlistenFn> =>
+  listen<TerminalOutputEvent>(`terminal-output-${sessionId}`, (e) => cb(e.payload));
 
 // Event listeners
 export const onStreamEvent = (cb: (payload: string) => void): Promise<UnlistenFn> =>

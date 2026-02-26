@@ -32,8 +32,12 @@ PLATFORM := $(OS)-$(ARCH)
 
 all: build
 
-## build: Build release binary for current platform
+## build: Build release binary for current platform (includes desktop frontend)
 build:
+	@if [ -d desktop-client ]; then \
+		echo "Building desktop frontend..."; \
+		cd desktop-client && bun install --frozen-lockfile 2>/dev/null || bun install && bun run build; \
+	fi
 	cargo build --release
 
 ## build-debug: Build debug binary

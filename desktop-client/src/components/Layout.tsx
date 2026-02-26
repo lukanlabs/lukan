@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { TabId } from "../lib/types";
 import logoUrl from "../assets/logo.png";
 import {
+  MessageSquare,
   Settings,
   KeyRound,
   Puzzle,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 
 const tabs: { id: TabId; label: string; desc: string; icon: ReactNode }[] = [
+  { id: "chat", label: "Chat", desc: "AI Assistant", icon: <MessageSquare size={18} /> },
   { id: "config", label: "Config", desc: "LLM & general", icon: <Settings size={18} /> },
   { id: "credentials", label: "Credentials", desc: "API keys", icon: <KeyRound size={18} /> },
   { id: "plugins", label: "Plugins", desc: "Extensions", icon: <Puzzle size={18} /> },
@@ -136,7 +138,7 @@ export default function Layout({ activeTab, onTabChange, children }: LayoutProps
 
       {/* Content */}
       <main
-        className="flex-1 overflow-y-auto p-10"
+        className={`flex-1 flex flex-col min-h-0 ${activeTab !== "chat" ? "overflow-y-auto p-10" : ""}`}
         style={{
           background: "var(--bg-base)",
           animation: "fadeIn 0.25s ease-out",

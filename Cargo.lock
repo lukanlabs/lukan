@@ -2289,10 +2289,13 @@ name = "lukan-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "libc",
+ "lukan-agent",
  "lukan-core",
  "lukan-plugins",
  "lukan-providers",
+ "lukan-tools",
  "serde",
  "serde_json",
  "tauri",

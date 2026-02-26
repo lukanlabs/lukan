@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod config;
 pub mod credentials;
 pub mod memory;

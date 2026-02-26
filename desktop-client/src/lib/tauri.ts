@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppConfig,
   Credentials,
@@ -10,6 +11,9 @@ import type {
   WhatsAppGroup,
   PluginCommand,
   WebUiStatus,
+  InitResponse,
+  SessionSummary,
+  ToolApprovalRequest,
 } from "./types";
 
 // Config
@@ -78,3 +82,28 @@ export const toggleProjectMemory = (path: string, active: boolean) =>
 export const getWebUiStatus = () => invoke<WebUiStatus>("get_web_ui_status");
 export const startWebUi = (port: number) => invoke<void>("start_web_ui", { port });
 export const stopWebUi = () => invoke<void>("stop_web_ui");
+
+// Chat
+export const initializeChat = () => invoke<InitResponse>("initialize_chat");
+export const sendMessage = (content: string) => invoke<void>("send_message", { content });
+export const cancelStream = () => invoke<void>("cancel_stream");
+export const approveTools = (approvedIds: string[]) =>
+  invoke<void>("approve_tools", { approvedIds });
+export const alwaysAllowTools = (approvedIds: string[], tools: ToolApprovalRequest[]) =>
+  invoke<void>("always_allow_tools", { approvedIds, tools });
+export const denyAllTools = () => invoke<void>("deny_all_tools");
+export const acceptPlan = (tasks?: Array<{ title: string; detail: string }>) =>
+  invoke<void>("accept_plan", { tasks });
+export const rejectPlan = (feedback: string) => invoke<void>("reject_plan", { feedback });
+export const answerQuestion = (answer: string) => invoke<void>("answer_question", { answer });
+export const listSessions = () => invoke<SessionSummary[]>("list_sessions");
+export const loadSession = (id: string) => invoke<InitResponse>("load_session", { id });
+export const newSession = () => invoke<InitResponse>("new_session");
+export const setPermissionMode = (mode: string) =>
+  invoke<void>("set_permission_mode", { mode });
+
+// Event listeners
+export const onStreamEvent = (cb: (payload: string) => void): Promise<UnlistenFn> =>
+  listen<string>("stream-event", (e) => cb(e.payload));
+export const onTurnComplete = (cb: (payload: string) => void): Promise<UnlistenFn> =>
+  listen<string>("turn-complete", (e) => cb(e.payload));

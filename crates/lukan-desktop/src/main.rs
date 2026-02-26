@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod state;
 
 fn main() {
     // Catch GTK/display initialization failures and exit with a friendly message
@@ -28,6 +29,7 @@ fn main() {
     }));
 
     tauri::Builder::default()
+        .manage(state::ChatState::default())
         .invoke_handler(tauri::generate_handler![
             // Config
             commands::config::get_config,
@@ -66,6 +68,20 @@ fn main() {
             commands::providers::set_active_provider,
             commands::providers::add_model,
             commands::providers::set_provider_models,
+            // Chat
+            commands::chat::initialize_chat,
+            commands::chat::send_message,
+            commands::chat::cancel_stream,
+            commands::chat::approve_tools,
+            commands::chat::always_allow_tools,
+            commands::chat::deny_all_tools,
+            commands::chat::accept_plan,
+            commands::chat::reject_plan,
+            commands::chat::answer_question,
+            commands::chat::list_sessions,
+            commands::chat::load_session,
+            commands::chat::new_session,
+            commands::chat::set_permission_mode,
             // Memory
             commands::memory::get_global_memory,
             commands::memory::save_global_memory,

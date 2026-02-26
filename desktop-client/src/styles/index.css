@@ -170,3 +170,151 @@ select {
 .animate-pulse-subtle {
   animation: pulse-subtle 2s ease-in-out infinite;
 }
+
+/* ── Chat animations ─────────────────────────────────────────────── */
+
+@keyframes messageIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-message-in {
+  animation: messageIn 0.25s ease-out;
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.2s ease-out;
+}
+
+.animate-slide-in {
+  animation: slideIn 0.2s ease-out;
+}
+
+/* ── Typing dots ─────────────────────────────────────────────────── */
+
+.typing-dot:nth-child(1) { animation: pulse-subtle 1.4s ease-in-out infinite; }
+.typing-dot:nth-child(2) { animation: pulse-subtle 1.4s ease-in-out 0.2s infinite; }
+.typing-dot:nth-child(3) { animation: pulse-subtle 1.4s ease-in-out 0.4s infinite; }
+
+/* ── Diff view ───────────────────────────────────────────────────── */
+
+.diff-add {
+  background: rgba(74, 222, 128, 0.08);
+  color: #4ade80;
+}
+
+.diff-remove {
+  background: rgba(251, 113, 133, 0.08);
+  color: #fb7185;
+}
+
+.diff-hunk {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.05);
+}
+
+.diff-meta {
+  color: #52525b;
+}
+
+/* ── Prose / markdown typography ─────────────────────────────────── */
+
+.prose-chat {
+  color: var(--text-primary);
+  line-height: 1.65;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3,
+.prose-chat h4 {
+  font-weight: 600;
+  color: #fafafa;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+
+.prose-chat h1 { font-size: 1.25em; }
+.prose-chat h2 { font-size: 1.125em; }
+.prose-chat h3 { font-size: 1em; }
+.prose-chat h4 { font-size: 0.875em; }
+
+.prose-chat p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.prose-chat p:first-child {
+  margin-top: 0;
+}
+
+.prose-chat p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-chat ul,
+.prose-chat ol {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  padding-left: 1.5em;
+}
+
+.prose-chat ul { list-style-type: disc; }
+.prose-chat ol { list-style-type: decimal; }
+
+.prose-chat li {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+.prose-chat strong {
+  font-weight: 600;
+  color: #fafafa;
+}
+
+.prose-chat em {
+  font-style: italic;
+}
+
+.prose-chat hr {
+  border: none;
+  border-top: 1px solid rgba(60, 60, 60, 0.4);
+  margin: 1em 0;
+}
+
+.prose-chat pre {
+  margin: 0;
+}
+
+/* Smooth scrolling in chat */
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* Tool card expand/collapse transition */
+.tool-card-content {
+  overflow: hidden;
+  transition: max-height 0.2s ease-out;
+}

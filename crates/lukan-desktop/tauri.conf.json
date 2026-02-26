@@ -9,9 +9,9 @@
   "app": {
     "windows": [
       {
-        "title": "Lukan Settings",
-        "width": 1100,
-        "height": 750,
+        "title": "Lukan",
+        "width": 1300,
+        "height": 850,
         "resizable": true,
         "center": true
       }

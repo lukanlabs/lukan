@@ -102,4 +102,130 @@ export interface WebUiStatus {
   port: number;
 }
 
-export type TabId = "config" | "credentials" | "plugins" | "providers" | "memory";
+export type TabId = "chat" | "config" | "credentials" | "plugins" | "providers" | "memory";
+
+// ── Chat types ───────────────────────────────────────────────────────
+
+export type PermissionMode = "manual" | "auto" | "skip" | "planner";
+
+// Message types
+export interface TextBlock {
+  type: "text";
+  text: string;
+}
+
+export interface ThinkingBlock {
+  type: "thinking";
+  text: string;
+}
+
+export interface ToolUseBlock {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface ToolResultBlock {
+  type: "tool_result";
+  toolUseId: string;
+  content: string;
+  isError?: boolean;
+  diff?: string;
+  image?: string;
+}
+
+export interface ImageBlock {
+  type: "image";
+  source: "base64" | "url";
+  data: string;
+  mediaType?: string;
+}
+
+export type ContentBlock =
+  | TextBlock
+  | ThinkingBlock
+  | ToolUseBlock
+  | ToolResultBlock
+  | ImageBlock;
+
+export interface Message {
+  role: "user" | "assistant" | "tool";
+  content: string | ContentBlock[];
+  toolCallId?: string;
+  name?: string;
+}
+
+// Stream events (mirrors Rust StreamEvent serde output)
+export interface ToolApprovalRequest {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "error";
+
+export type StreamEvent =
+  | { type: "message_start" }
+  | { type: "text_delta"; text: string }
+  | { type: "thinking_delta"; text: string }
+  | { type: "tool_use_start"; id: string; name: string }
+  | { type: "tool_use_delta"; input: string }
+  | { type: "tool_use_end"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_progress"; id: string; name: string; content: string }
+  | { type: "tool_result"; id: string; name: string; content: string; isError?: boolean; diff?: string; image?: string }
+  | { type: "approval_required"; tools: ToolApprovalRequest[] }
+  | { type: "planner_question"; id: string; questions: PlannerQuestion[] }
+  | { type: "plan_review"; id: string; title: string; plan: string; tasks: PlanTask[] }
+  | { type: "usage"; inputTokens: number; outputTokens: number; cacheCreationTokens?: number; cacheReadTokens?: number }
+  | { type: "message_end"; stopReason: StopReason }
+  | { type: "mode_changed"; mode: string }
+  | { type: "error"; error: string };
+
+export interface PlannerQuestion {
+  header: string;
+  question: string;
+  options: Array<{ label: string; description?: string }>;
+  multiSelect: boolean;
+}
+
+export interface PlanTask {
+  title: string;
+  detail: string;
+}
+
+// Session types
+export interface SessionSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  firstUserMessage: string;
+  lastUserMessage: string;
+  model: string;
+}
+
+// Init response from backend
+export interface InitResponse {
+  sessionId: string;
+  messages: Message[];
+  providerName: string;
+  modelName: string;
+  permissionMode: string;
+  tokenUsage: TokenUsage;
+  contextSize: number;
+}
+
+export interface TokenUsage {
+  input: number;
+  output: number;
+  cacheCreation: number | null;
+  cacheRead: number | null;
+}
+
+export interface TurnComplete {
+  messages: Message[];
+  contextSize: number;
+  tokenUsage: TokenUsage;
+}

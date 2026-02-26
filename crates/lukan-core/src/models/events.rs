@@ -151,6 +151,9 @@ pub enum StreamEvent {
         level: String,
         detail: String,
     },
+
+    /// A queued user message was injected mid-turn
+    QueuedMessageInjected { text: String },
 }
 
 /// A tool call that needs user approval

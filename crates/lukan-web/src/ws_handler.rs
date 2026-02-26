@@ -609,7 +609,7 @@ async fn handle_send_message(
 
     // Spawn the agent turn
     let agent_handle = tokio::spawn(async move {
-        let result = agent.run_turn(&content_owned, event_tx, None).await;
+        let result = agent.run_turn(&content_owned, event_tx, None, None).await;
         (agent, result)
     });
 

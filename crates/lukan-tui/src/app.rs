@@ -135,8 +135,8 @@ pub struct App {
     planner_question: Option<PlannerQuestionState>,
     /// Sender to respond to planner questions
     planner_answer_tx: Option<mpsc::Sender<String>>,
-    /// Message queued by the user while the agent was streaming
-    queued_message: Option<String>,
+    /// Messages queued by the user while the agent was streaming (shared with agent)
+    queued_messages: Arc<std::sync::Mutex<Vec<String>>>,
     /// Whether the task panel is visible (toggled with Alt+T)
     task_panel_visible: bool,
     /// Cached task entries for the task panel
@@ -188,6 +188,8 @@ pub struct App {
     tool_picker: Option<ToolPicker>,
     /// Persisted disabled tools applied to new turns
     disabled_tools: HashSet<String>,
+    /// Auto-load the most recent session on startup (--continue flag)
+    continue_session: bool,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -341,7 +343,7 @@ impl App {
             plan_review_tx: None,
             planner_question: None,
             planner_answer_tx: None,
-            queued_message: None,
+            queued_messages: Arc::new(std::sync::Mutex::new(Vec::new())),
             task_panel_visible: false,
             task_panel_entries: Vec::new(),
             task_panel_needs_refresh: false,
@@ -367,7 +369,13 @@ impl App {
             turn_text_msg_idx: None,
             tool_picker: None,
             disabled_tools: HashSet::new(),
+            continue_session: false,
         }
+    }
+
+    /// Mark this app to auto-load the most recent session on startup.
+    pub fn set_continue_session(&mut self) {
+        self.continue_session = true;
     }
 
     /// Enable browser tools for this session.
@@ -848,7 +856,10 @@ impl App {
         tokio::spawn(async move {
             let prompt = "New system events have arrived. Analyze them, investigate the root cause, \
                  and take simple corrective action if safe. Report your findings.";
-            if let Err(e) = agent.run_turn(prompt, event_agent_tx.clone(), None).await {
+            if let Err(e) = agent
+                .run_turn(prompt, event_agent_tx.clone(), None, None)
+                .await
+            {
                 error!("Event agent error: {e}");
                 let _ = event_agent_tx
                     .send(StreamEvent::Error {
@@ -1023,7 +1034,10 @@ impl App {
 
         let mut agent = agent;
         tokio::spawn(async move {
-            if let Err(e) = agent.run_turn(&text, event_agent_tx.clone(), None).await {
+            if let Err(e) = agent
+                .run_turn(&text, event_agent_tx.clone(), None, None)
+                .await
+            {
                 error!("Event agent error: {e}");
                 let _ = event_agent_tx
                     .send(StreamEvent::Error {
@@ -1089,6 +1103,33 @@ impl App {
             build_welcome_banner(self.provider.name(), &self.config.effective_model()),
         ));
 
+        // Auto-load most recent session if --continue was passed
+        if self.continue_session
+            && let Ok(sessions) = SessionManager::list().await
+        {
+            if let Some(most_recent) = sessions.first() {
+                let session_id = most_recent.id.clone();
+                // Temporarily set a session picker so load_selected_session works
+                self.session_picker = Some(SessionPicker {
+                    sessions,
+                    selected: 0,
+                    current_id: None,
+                });
+                self.load_selected_session(0).await;
+                self.session_picker = None;
+                self.force_redraw = true;
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Resumed session {session_id}"),
+                ));
+            } else {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "No previous sessions to continue.",
+                ));
+            }
+        }
+
         loop {
             // Push overflow messages into the terminal scrollback
             // (skip when session picker is open — insert_before shifts the
@@ -1112,7 +1153,11 @@ impl App {
                 ActiveView::EventAgent => self.event_is_streaming,
             };
             let shimmer_h: u16 = if view_streaming { 1 } else { 0 };
-            let queued_h: u16 = if self.queued_message.is_some() { 1 } else { 0 };
+            let queued_h: u16 = if !self.queued_messages.lock().unwrap().is_empty() {
+                1
+            } else {
+                0
+            };
             let chat_area_h = term_size
                 .height
                 .saturating_sub(cur_input_h + 2 + task_panel_h + shimmer_h + queued_h);
@@ -1206,7 +1251,7 @@ impl App {
                 let shimmer_h: u16 = if view_is_streaming { 1 } else { 0 };
 
                 // Queued message indicator: 1 row when a message is queued
-                let queued_h: u16 = if self.queued_message.is_some() { 1 } else { 0 };
+                let queued_h: u16 = self.queued_messages.lock().unwrap().len() as u16;
 
                 // Dynamic layout: palette below input, above status bar
                 // margin_h adds a 1-row gap between chat content and shimmer/input
@@ -1370,27 +1415,39 @@ impl App {
                     frame.render_widget(paragraph, padded_shimmer);
                 }
 
-                // Queued message indicator
-                if let Some(ref queued) = self.queued_message {
-                    let max_chars = queued_area.width.saturating_sub(12) as usize;
-                    let preview: String = if queued.chars().count() > max_chars {
-                        let truncated: String = queued.chars().take(max_chars.saturating_sub(1)).collect();
-                        format!("{truncated}…")
-                    } else {
-                        queued.clone()
-                    };
-                    let line = ratatui::text::Line::from(vec![
-                        ratatui::text::Span::styled(
-                            "↳ queued: ",
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        ratatui::text::Span::styled(
-                            preview,
-                            Style::default().fg(Color::Yellow),
-                        ),
-                    ]);
-                    let paragraph = ratatui::widgets::Paragraph::new(line);
-                    frame.render_widget(paragraph, queued_area);
+                // Queued message indicator (one line per queued message)
+                {
+                    let queue = self.queued_messages.lock().unwrap();
+                    if !queue.is_empty() {
+                        let lines: Vec<ratatui::text::Line> = queue
+                            .iter()
+                            .enumerate()
+                            .map(|(i, msg)| {
+                                let label = format!("↳ queued {}: ", i + 1);
+                                let max_chars =
+                                    queued_area.width.saturating_sub(label.len() as u16) as usize;
+                                let preview: String = if msg.chars().count() > max_chars {
+                                    let truncated: String =
+                                        msg.chars().take(max_chars.saturating_sub(1)).collect();
+                                    format!("{truncated}…")
+                                } else {
+                                    msg.clone()
+                                };
+                                ratatui::text::Line::from(vec![
+                                    ratatui::text::Span::styled(
+                                        label,
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
+                                    ratatui::text::Span::styled(
+                                        preview,
+                                        Style::default().fg(Color::Yellow),
+                                    ),
+                                ])
+                            })
+                            .collect();
+                        let paragraph = ratatui::widgets::Paragraph::new(lines);
+                        frame.render_widget(paragraph, queued_area);
+                    }
                 }
 
                 // Input — show paste preview + typed-after text when available
@@ -2304,10 +2361,10 @@ impl App {
                             } else if key.code == KeyCode::Esc
                                 && self.is_streaming
                             {
-                                // ESC during streaming: clear queued message first,
+                                // ESC during streaming: clear queued messages first,
                                 // second ESC cancels the agent turn
-                                if self.queued_message.is_some() {
-                                    self.queued_message = None;
+                                if !self.queued_messages.lock().unwrap().is_empty() {
+                                    self.queued_messages.lock().unwrap().clear();
                                 } else {
                                     if let Some(token) = self.cancel_token.take() {
                                         token.cancel();
@@ -2327,12 +2384,26 @@ impl App {
                             } else if key.code == KeyCode::Enter
                                 && self.is_streaming
                             {
-                                // Enter during streaming: queue the message
+                                // Enter during streaming: queue the message (supports multiple)
                                 if !self.input.trim().is_empty() {
-                                    self.queued_message = Some(self.input.trim().to_string());
+                                    self.queued_messages.lock().unwrap().push(self.input.trim().to_string());
                                     self.input.clear();
                                     self.cursor_pos = 0;
                                     self.paste_info = None;
+                                }
+                            } else if key.code == KeyCode::Up
+                                && self.is_streaming
+                            {
+                                // Up during streaming: dequeue messages back into input (each on its own line)
+                                let drained: Vec<String> = self.queued_messages.lock().unwrap().drain(..).collect();
+                                if !drained.is_empty() {
+                                    let existing = self.input.trim().to_string();
+                                    if existing.is_empty() {
+                                        self.input = drained.join("\n");
+                                    } else {
+                                        self.input = format!("{}\n{}", drained.join("\n"), existing);
+                                    }
+                                    self.cursor_pos = self.input.len();
                                 }
                             } else if key.code == KeyCode::Char('b')
                                 && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
@@ -2780,9 +2851,11 @@ impl App {
                         self.session_id = Some(agent.session_id().to_string());
                         self.agent = Some(agent);
 
-                        // Auto-submit queued message if one was set
-                        if let Some(queued) = self.queued_message.take() {
-                            self.input = queued;
+                        // Auto-submit any remaining queued messages as a new turn
+                        let remaining: Vec<String> =
+                            self.queued_messages.lock().unwrap().drain(..).collect();
+                        if !remaining.is_empty() {
+                            self.input = remaining.join("\n");
                             self.cursor_pos = self.input.len();
                             self.submit_message(agent_tx.clone()).await;
                         }
@@ -3291,9 +3364,10 @@ impl App {
         self.agent_return_rx = Some(return_rx);
 
         let mut agent = agent;
+        let queued = self.queued_messages.clone();
         tokio::spawn(async move {
             if let Err(e) = agent
-                .run_turn(&text, agent_tx.clone(), Some(cancel_token))
+                .run_turn(&text, agent_tx.clone(), Some(cancel_token), Some(queued))
                 .await
             {
                 error!("Agent loop error: {e}");
@@ -4037,7 +4111,7 @@ impl App {
                 self.messages
                     .push(ChatMessage::new("assistant", format!("Error: {error}")));
                 self.is_streaming = false;
-                self.queued_message = None;
+                self.queued_messages.lock().unwrap().clear();
             }
             StreamEvent::ExploreProgress { id, activity, .. } => {
                 // activity already contains full formatted content:
@@ -4067,6 +4141,14 @@ impl App {
             } => {
                 let msg = format!("[{level}] {source}: {detail}");
                 self.toast_notifications.push((msg, Instant::now()));
+            }
+            StreamEvent::QueuedMessageInjected { text } => {
+                // Flush any partial streaming text before inserting the user message
+                if !self.streaming_text.is_empty() {
+                    let content = std::mem::take(&mut self.streaming_text);
+                    self.messages.push(ChatMessage::new("assistant", content));
+                }
+                self.messages.push(ChatMessage::new("user", &text));
             }
             _ => {}
         }

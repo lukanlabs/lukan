@@ -31,22 +31,33 @@ pub fn input_height(text: &str, area_width: u16, max_lines: u16) -> u16 {
     if text.is_empty() {
         return 3;
     }
-    let display_w = UnicodeWidthStr::width(text);
-    let lines = display_w.div_ceil(inner);
-    let lines = (lines as u16).clamp(1, max_lines);
+    let mut total_lines: usize = 0;
+    for line in text.split('\n') {
+        let display_w = UnicodeWidthStr::width(line);
+        total_lines += display_w.div_ceil(inner).max(1);
+    }
+    let lines = (total_lines as u16).clamp(1, max_lines);
     lines + 2
 }
 
-/// Calculate the (x, y) cursor position inside the input area, accounting for wrapping.
+/// Calculate the (x, y) cursor position inside the input area, accounting for wrapping and newlines.
 /// `text` is the full input, `byte_pos` is the byte offset of the cursor.
 /// Returns (cursor_x, cursor_y) in absolute terminal coordinates.
 pub fn cursor_position(text: &str, byte_pos: usize, area: Rect) -> (u16, u16) {
     let inner_w = area.width.saturating_sub(2).max(1) as usize;
-    // Display width of text before cursor
     let before = &text[..byte_pos.min(text.len())];
-    let col_total = UnicodeWidthStr::width(before);
-    let row = col_total / inner_w;
-    let col = col_total % inner_w;
+    let mut row: usize = 0;
+    let mut col: usize = 0;
+    for (i, line) in before.split('\n').enumerate() {
+        let w = UnicodeWidthStr::width(line);
+        if i > 0 {
+            // newline: start a new visual row
+            row += 1;
+        }
+        // account for wrapping within this line
+        row += w / inner_w;
+        col = w % inner_w;
+    }
     (area.x + 1 + col as u16, area.y + 1 + row as u16)
 }
 
@@ -69,13 +80,13 @@ impl Widget for InputWidget<'_> {
             .border_style(Style::default().fg(border_color))
             .title(title);
 
-        let display_text = if self.text.is_empty() {
-            Line::from(Span::styled(
+        let display_text: Vec<Line> = if self.text.is_empty() {
+            vec![Line::from(Span::styled(
                 "Type a message...",
                 Style::default().fg(Color::DarkGray),
-            ))
+            ))]
         } else {
-            Line::from(self.text)
+            self.text.split('\n').map(Line::from).collect()
         };
 
         let paragraph = Paragraph::new(display_text)

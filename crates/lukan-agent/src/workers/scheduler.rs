@@ -374,7 +374,7 @@ async fn run_worker(
 
             let prompt_owned = prompt.to_string();
             let agent_handle = tokio::spawn(async move {
-                let result = agent.run_turn(&prompt_owned, event_tx, None).await;
+                let result = agent.run_turn(&prompt_owned, event_tx, None, None).await;
                 (agent, result)
             });
 

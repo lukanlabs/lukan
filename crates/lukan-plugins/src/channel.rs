@@ -257,7 +257,7 @@ async fn collect_agent_response(agent: &mut AgentLoop, message: &str, max_len: u
 
     // run_turn takes ownership of event_tx. When it returns, the sender drops,
     // so recv().await will return None once all buffered events are consumed.
-    let turn_result = agent.run_turn(message, event_tx, None).await;
+    let turn_result = agent.run_turn(message, event_tx, None, None).await;
 
     if let Err(e) = turn_result {
         error!("Agent turn error: {e}");

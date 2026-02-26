@@ -640,6 +640,7 @@ impl AgentLoop {
         user_message: &str,
         event_tx: mpsc::Sender<StreamEvent>,
         cancel: Option<CancellationToken>,
+        queued: Option<Arc<std::sync::Mutex<Vec<String>>>>,
     ) -> Result<()> {
         // Capture message index *before* adding the user message.
         // This is the truncation point used by restore_checkpoint().
@@ -799,8 +800,21 @@ impl AgentLoop {
                 self.history.add_assistant_blocks(blocks);
             }
 
-            // If no tool calls, we're done
+            // If no tool calls, we're done — unless queued messages are waiting
             if stop_reason != StopReason::ToolUse || pending_tools.is_empty() {
+                if let Some(ref queue) = queued {
+                    let messages: Vec<String> = queue.lock().unwrap().drain(..).collect();
+                    if !messages.is_empty() {
+                        let injected = messages.join("\n");
+                        let _ = event_tx
+                            .send(StreamEvent::QueuedMessageInjected {
+                                text: injected.clone(),
+                            })
+                            .await;
+                        self.history.add_user_message(&injected);
+                        continue;
+                    }
+                }
                 debug!(
                     stop_reason = ?stop_reason,
                     "Turn complete, no tool calls"
@@ -1028,6 +1042,20 @@ impl AgentLoop {
                 tool_call_id: None,
                 name: None,
             });
+
+            // Inject queued messages after tool results so the LLM sees them
+            if let Some(ref queue) = queued {
+                let messages: Vec<String> = queue.lock().unwrap().drain(..).collect();
+                if !messages.is_empty() {
+                    let injected = messages.join("\n");
+                    let _ = event_tx
+                        .send(StreamEvent::QueuedMessageInjected {
+                            text: injected.clone(),
+                        })
+                        .await;
+                    self.history.add_user_message(&injected);
+                }
+            }
 
             // Loop continues — LLM will see the tool results and decide next action
         }

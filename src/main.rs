@@ -29,6 +29,10 @@ struct Cli {
     /// Override the model
     #[arg(long, short)]
     model: Option<String>,
+
+    /// Continue the most recent chat session
+    #[arg(long, short = 'c')]
+    r#continue: bool,
 }
 
 #[derive(Subcommand)]
@@ -41,6 +45,9 @@ enum Commands {
         /// Override the model
         #[arg(long, short)]
         model: Option<String>,
+        /// Continue the most recent chat session
+        #[arg(long, short = 'c')]
+        r#continue: bool,
         /// UI mode: tui (default) or web
         #[arg(long, default_value = "tui")]
         ui: String,
@@ -180,6 +187,7 @@ async fn main() -> Result<()> {
         Some(Commands::Chat {
             provider,
             model,
+            r#continue: continue_session,
             ui,
             desktop,
             browser,
@@ -193,6 +201,7 @@ async fn main() -> Result<()> {
             } else {
                 let provider_override = provider.or(cli.provider);
                 let model_override = model.or(cli.model);
+                let do_continue = continue_session || cli.r#continue;
                 if ui == "web" {
                     run_web(provider_override, model_override).await?;
                 } else {
@@ -208,14 +217,14 @@ async fn main() -> Result<()> {
                         } else {
                             None
                         };
-                    run_chat(provider_override, model_override, browser_opts).await?;
+                    run_chat(provider_override, model_override, browser_opts, do_continue).await?;
                 }
             }
         }
         None => {
             let provider_override = cli.provider;
             let model_override = cli.model;
-            run_chat(provider_override, model_override, None).await?;
+            run_chat(provider_override, model_override, None, cli.r#continue).await?;
         }
     }
 
@@ -637,6 +646,7 @@ async fn run_chat(
     provider_override: Option<String>,
     model_override: Option<String>,
     browser_opts: Option<BrowserOpts>,
+    continue_session: bool,
 ) -> Result<()> {
     // Load config
     let mut config = ConfigManager::load().await?;
@@ -689,6 +699,9 @@ async fn run_chat(
     let mut app = App::new(provider, resolved);
     if browser_opts.is_some() {
         app.enable_browser_tools();
+    }
+    if continue_session {
+        app.set_continue_session();
     }
     app.run().await?;
 

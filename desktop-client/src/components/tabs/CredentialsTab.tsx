@@ -118,9 +118,9 @@ export default function CredentialsTab() {
       </div>
 
       {/* Two-column layout */}
-      <div className="flex gap-4" style={{ minHeight: "460px" }}>
+      <div className="creds-layout flex gap-4" style={{ minHeight: "460px" }}>
         {/* Left: Provider list */}
-        <div className="flex flex-col gap-0.5" style={{ width: "220px", flexShrink: 0 }}>
+        <div className="creds-providers flex flex-col gap-0.5" style={{ width: "220px", flexShrink: 0 }}>
           {PROVIDERS.map(({ provider, label }) => {
             const status = getStatus(provider);
             const isActive = provider === selectedProvider;

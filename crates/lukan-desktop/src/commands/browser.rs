@@ -35,9 +35,13 @@ pub async fn browser_launch(
     profile: Option<String>,
     port: Option<u16>,
 ) -> Result<BrowserStatusResponse, String> {
-    // If already initialized, just return status
-    if BrowserManager::get().is_some() {
-        return browser_status().await;
+    // If already initialized and still active, just return status
+    if let Some(manager) = BrowserManager::get() {
+        if manager.is_active().await {
+            return browser_status().await;
+        }
+        // Was disconnected — reactivate so ensure_connected() can auto-launch
+        manager.reactivate().await;
     }
 
     let profile_mode = match profile.as_deref() {
@@ -103,7 +107,7 @@ pub async fn browser_launch(
     browser_status().await
 }
 
-/// Get browser status.
+/// Get browser status without triggering auto-connect/auto-launch.
 #[tauri::command]
 pub async fn browser_status() -> Result<BrowserStatusResponse, String> {
     let Some(manager) = BrowserManager::get() else {
@@ -114,7 +118,16 @@ pub async fn browser_status() -> Result<BrowserStatusResponse, String> {
         });
     };
 
-    // Try to get current URL
+    // Check if browser is active without auto-connecting
+    if !manager.is_active().await {
+        return Ok(BrowserStatusResponse {
+            running: false,
+            cdp_url: None,
+            current_url: None,
+        });
+    }
+
+    // Browser is active — safe to query via CDP
     let current_url = match manager
         .send_cdp(
             "Runtime.evaluate",

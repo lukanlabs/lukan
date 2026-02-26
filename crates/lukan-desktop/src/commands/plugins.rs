@@ -43,12 +43,12 @@ fn is_plugin_running(name: &str) -> bool {
 /// Find the lukan CLI binary (next to lukan-desktop, or in PATH).
 fn find_lukan_bin() -> Result<std::path::PathBuf, String> {
     // 1. Next to our own binary
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join("lukan");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join("lukan");
+        if candidate.exists() {
+            return Ok(candidate);
         }
     }
 

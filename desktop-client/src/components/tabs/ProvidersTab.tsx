@@ -8,10 +8,15 @@ import {
   getProviderStatus,
 } from "../../lib/tauri";
 import { useToast } from "../ui/Toast";
-import Button from "../ui/Button";
-import Card from "../ui/Card";
-import Badge from "../ui/Badge";
-import { Check, RefreshCw, ArrowLeft, Star, Cpu } from "lucide-react";
+import {
+  Check,
+  RefreshCw,
+  ArrowLeft,
+  Star,
+  Cpu,
+  ChevronRight,
+  Loader2,
+} from "lucide-react";
 
 export default function ProvidersTab() {
   const { toast } = useToast();
@@ -48,6 +53,8 @@ export default function ProvidersTab() {
       await refresh();
       const label = modelId ? `${providerName} / ${modelId}` : providerName;
       toast("success", `Active provider set to ${label}`);
+      // Notify chat to reload with new provider/model
+      window.dispatchEvent(new Event("provider-changed"));
     } catch (e) {
       toast("error", `${e}`);
     } finally {
@@ -61,7 +68,7 @@ export default function ProvidersTab() {
     try {
       const models = await fetchProviderModels(providerName);
       setFetchedModels((prev) => ({ ...prev, [providerName]: models }));
-      toast("success", `Fetched ${models.length} models from ${providerName}`);
+      toast("success", `Fetched ${models.length} models`);
     } catch (e) {
       const msg = `${e}`;
       setFetchError(msg);
@@ -71,10 +78,6 @@ export default function ProvidersTab() {
     }
   };
 
-  const handleSelectModel = async (providerName: string, modelId: string) => {
-    await handleSetActive(providerName, modelId);
-  };
-
   // ── Detail View ──────────────────────────────────────────────
 
   if (selected && selectedProvider) {
@@ -82,138 +85,113 @@ export default function ProvidersTab() {
     const models = fetchedModels[selectedProvider] ?? [];
 
     return (
-      <div className="max-w-3xl" style={{ animation: "fadeIn 0.3s ease-out" }}>
-        {/* Back button */}
+      <div style={{ animation: "fadeIn 0.15s ease-out" }}>
         <button
-          onClick={() => {
-            setSelectedProvider(null);
-            setFetchError(null);
-          }}
-          className="inline-flex items-center gap-1.5 text-sm font-medium mb-6 cursor-pointer border-none bg-transparent"
-          style={{
-            color: "var(--text-secondary)",
-            transition: "var(--transition-base)",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = "var(--text-primary)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = "var(--text-secondary)";
-          }}
+          onClick={() => { setSelectedProvider(null); setFetchError(null); }}
+          className="inline-flex items-center gap-1 text-xs mb-4 cursor-pointer border-none bg-transparent"
+          style={{ color: "var(--text-muted)", padding: 0 }}
         >
-          <ArrowLeft size={14} />
-          Providers
+          <ArrowLeft size={12} />
+          Back
         </button>
 
         {/* Provider heading */}
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-1.5">
-            <h2
-              className="text-xl font-bold tracking-tight"
-              style={{ color: "var(--text-primary)" }}
-            >
-              {selected.name}
-            </h2>
-            {isActive && (
-              <Badge variant="success">
-                <Check size={10} className="mr-0.5" />
-                Active
-              </Badge>
-            )}
-          </div>
-          <span
-            className="text-xs font-mono"
-            style={{ color: "var(--text-muted)" }}
-          >
-            Default model: {selected.defaultModel}
+        <div className="flex items-center gap-2 mb-1">
+          <Cpu size={13} style={{ color: "var(--text-muted)" }} />
+          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+            {selected.name}
           </span>
+          {isActive && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{
+              background: "rgba(74,222,128,0.12)", color: "#4ade80",
+            }}>Active</span>
+          )}
           {selectedStatus && (
-            <div className="mt-2">
-              <Badge variant={selectedStatus.configured ? "success" : "warning"}>
-                {selectedStatus.configured ? "Configured" : "Not configured"}
-              </Badge>
-            </div>
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{
+              background: selectedStatus.configured ? "rgba(74,222,128,0.08)" : "rgba(251,191,36,0.08)",
+              color: selectedStatus.configured ? "#4ade80" : "#fbbf24",
+            }}>
+              {selectedStatus.configured ? "Configured" : "Not configured"}
+            </span>
           )}
         </div>
+        <span className="text-[11px] font-mono block mb-4" style={{ color: "var(--text-muted)" }}>
+          Default: {selected.defaultModel}
+        </span>
 
-        {/* Action buttons */}
-        <div className="flex gap-3 mb-6">
+        {/* Actions */}
+        <div className="flex gap-2 mb-4">
           {!isActive && (
-            <Button
+            <button
               onClick={() => handleSetActive(selected.name)}
               disabled={setting}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
+              style={{
+                background: "#fafafa", color: "#09090b",
+                opacity: setting ? 0.5 : 1,
+                pointerEvents: setting ? "none" : "auto",
+              }}
             >
-              <Star size={14} />
-              {setting ? "Setting..." : "Set as Active Provider"}
-            </Button>
+              <Star size={11} />
+              {setting ? "Setting..." : "Set Active"}
+            </button>
           )}
-          <Button
-            variant="secondary"
+          <button
             onClick={() => handleFetchModels(selectedProvider)}
             disabled={fetching}
-          >
-            <RefreshCw size={14} className={fetching ? "animate-spin" : ""} />
-            {fetching ? "Fetching..." : "Fetch Available Models"}
-          </Button>
-        </div>
-
-        {/* Fetch error */}
-        {fetchError && (
-          <div
-            className="rounded-xl px-4 py-3 mb-6 text-sm"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
             style={{
-              background: "var(--danger-dim)",
-              border: "1px solid rgba(251,113,133,0.2)",
-              color: "var(--danger)",
+              background: "var(--bg-tertiary)", color: "var(--text-primary)",
+              border: "1px solid var(--border)",
+              opacity: fetching ? 0.5 : 1,
+              pointerEvents: fetching ? "none" : "auto",
             }}
           >
-            <span className="font-semibold">Failed to fetch models.</span>{" "}
-            Make sure credentials are configured for this provider first, then try again.
+            <RefreshCw size={11} className={fetching ? "animate-spin" : ""} />
+            {fetching ? "Fetching..." : "Fetch Models"}
+          </button>
+        </div>
+
+        {/* Error */}
+        {fetchError && (
+          <div className="text-xs px-3 py-2 rounded-lg mb-3" style={{
+            background: "rgba(251,113,133,0.08)", color: "#fb7185",
+            border: "1px solid rgba(251,113,133,0.15)",
+          }}>
+            Failed to fetch. Check credentials first.
           </div>
         )}
 
-        {/* Fetched models list */}
+        {/* Models list */}
         {models.length > 0 && (
-          <Card>
-            <h4
-              className="text-[11px] font-bold uppercase tracking-[0.1em] mb-3"
-              style={{ color: "var(--text-muted)" }}
-            >
-              <Cpu size={12} className="inline mr-1.5 align-[-2px]" />
-              Available Models ({models.length})
-            </h4>
-            <div
-              className="flex flex-col gap-1 overflow-y-auto rounded-xl"
-              style={{ maxHeight: "400px" }}
-            >
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-wider block mb-2" style={{ color: "var(--text-muted)" }}>
+              Models ({models.length})
+            </span>
+            <div className="flex flex-col gap-px rounded-lg overflow-hidden" style={{
+              border: "1px solid var(--border)", maxHeight: 320, overflowY: "auto",
+            }}>
               {models.map((model) => (
                 <div
                   key={model.id}
-                  className="flex items-center justify-between px-3 py-2.5 rounded-lg text-xs cursor-pointer transition-all"
-                  style={{
-                    background: "var(--bg-base)",
-                    transitionDuration: "120ms",
-                  }}
-                  onClick={() => handleSelectModel(selectedProvider, model.id)}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                    e.currentTarget.style.boxShadow = "inset 3px 0 0 #fafafa";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "var(--bg-base)";
-                    e.currentTarget.style.boxShadow = "none";
-                  }}
+                  className="flex items-center justify-between px-3 py-2 text-xs cursor-pointer"
+                  style={{ background: "var(--bg-secondary)" }}
+                  onClick={() => handleSetActive(selectedProvider, model.id)}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-secondary)"; }}
                 >
-                  <span className="font-mono" style={{ color: "var(--text-primary)" }}>
+                  <span className="font-mono truncate" style={{ color: "var(--text-primary)" }}>
                     {model.id}
                   </span>
                   {model.name !== model.id && (
-                    <span style={{ color: "var(--text-muted)" }}>{model.name}</span>
+                    <span className="text-[10px] ml-2 shrink-0" style={{ color: "var(--text-muted)" }}>
+                      {model.name}
+                    </span>
                   )}
                 </div>
               ))}
             </div>
-          </Card>
+          </div>
         )}
       </div>
     );
@@ -222,125 +200,74 @@ export default function ProvidersTab() {
   // ── Master View ──────────────────────────────────────────────
 
   return (
-    <div className="max-w-3xl" style={{ animation: "fadeIn 0.3s ease-out" }}>
-      {/* Header */}
-      <div className="mb-8">
-        <h2
-          className="text-xl font-bold tracking-tight"
-          style={{ color: "var(--text-primary)" }}
-        >
-          Providers &amp; Models
-        </h2>
-        <p className="text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-          Browse providers, fetch model catalogs, and set your active provider.
-        </p>
+    <div style={{ animation: "fadeIn 0.15s ease-out" }}>
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+          Providers
+        </span>
       </div>
 
-      {/* Active provider highlight card */}
+      {/* Active provider pill */}
       {activeProvider && (
-        <div
-          className="rounded-2xl p-5 mb-8"
-          style={{
-            background: "linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%)",
-            border: "1px solid rgba(255,255,255,0.12)",
-            boxShadow: "0 0 24px rgba(255,255,255,0.04), var(--shadow-sm)",
-          }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <Star size={14} style={{ color: "#a1a1aa" }} />
-            <span
-              className="text-[11px] font-bold uppercase tracking-[0.1em]"
-              style={{ color: "#a1a1aa" }}
-            >
-              Active Provider
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span
-              className="text-base font-semibold"
-              style={{ color: "var(--text-primary)" }}
-            >
-              {activeProvider.name}
-            </span>
-            <span
-              className="text-xs font-mono px-2 py-0.5 rounded-md"
-              style={{
-                color: "var(--text-muted)",
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid var(--border)",
-              }}
-            >
-              {activeProvider.defaultModel}
-            </span>
-          </div>
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg mb-4" style={{
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(255,255,255,0.08)",
+        }}>
+          <Star size={12} style={{ color: "var(--text-muted)" }} />
+          <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+            {activeProvider.name}
+          </span>
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{
+            color: "var(--text-muted)", background: "rgba(255,255,255,0.04)",
+            border: "1px solid var(--border)",
+          }}>
+            {activeProvider.currentModel || activeProvider.defaultModel}
+          </span>
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded ml-auto" style={{
+            background: "rgba(74,222,128,0.12)", color: "#4ade80",
+          }}>Active</span>
         </div>
       )}
 
       {/* Provider list */}
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
         {providers.map((provider) => {
           const status = statuses.find((s) => s.name === provider.name);
           return (
             <div
               key={provider.name}
-              className="rounded-2xl p-5 cursor-pointer transition-all"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer"
               style={{
-                background: provider.active
-                  ? "linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%)"
-                  : "linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%)",
-                border: provider.active
-                  ? "1px solid rgba(255,255,255,0.12)"
-                  : "1px solid var(--border)",
-                boxShadow: "var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.03)",
-                transitionDuration: "180ms",
+                background: provider.active ? "rgba(255,255,255,0.03)" : "transparent",
+                transition: "background 120ms",
               }}
               onClick={() => setSelectedProvider(provider.name)}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = "var(--border-hover)";
-                e.currentTarget.style.transform = "translateY(-1px)";
-                e.currentTarget.style.boxShadow =
-                  "0 4px 12px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.03)";
-              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = provider.active
-                  ? "rgba(255,255,255,0.12)"
-                  : "var(--border)";
-                e.currentTarget.style.transform = "";
-                e.currentTarget.style.boxShadow =
-                  "var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.03)";
+                e.currentTarget.style.background = provider.active ? "rgba(255,255,255,0.03)" : "transparent";
               }}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <Cpu size={14} style={{ color: "var(--text-muted)" }} />
-                  <span
-                    className="font-semibold text-sm"
-                    style={{ color: "var(--text-primary)" }}
-                  >
+              <Cpu size={13} style={{ color: "var(--text-muted)" }} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
                     {provider.name}
                   </span>
                   {provider.active && (
-                    <Badge variant="success">
-                      <Check size={10} className="mr-0.5" />
-                      Active
-                    </Badge>
+                    <Check size={10} style={{ color: "#4ade80" }} />
                   )}
                 </div>
-                <div className="flex items-center gap-2.5">
-                  {status && (
-                    <Badge variant={status.configured ? "success" : "warning"}>
-                      {status.configured ? "Configured" : "Not configured"}
-                    </Badge>
-                  )}
-                </div>
-              </div>
-              <div className="mt-2 ml-[26px]">
-                <span
-                  className="text-xs font-mono"
-                  style={{ color: "var(--text-muted)" }}
-                >
+                <span className="text-[10px] font-mono block truncate" style={{ color: "var(--text-muted)" }}>
                   {provider.defaultModel}
                 </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {status && (
+                  <span className="w-1.5 h-1.5 rounded-full" style={{
+                    background: status.configured ? "#4ade80" : "#fbbf24",
+                  }} />
+                )}
+                <ChevronRight size={12} style={{ color: "var(--text-muted)" }} />
               </div>
             </div>
           );

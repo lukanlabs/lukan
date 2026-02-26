@@ -626,7 +626,9 @@ select {
 .settings-overlay-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px;
+  position: relative;
 }
 
 /* ── File browser entries ───────────────────────────────────────── */
@@ -743,6 +745,122 @@ select {
 .worker-badge.stopped {
   background: rgba(100, 100, 100, 0.2);
   color: var(--text-muted);
+}
+
+/* ── Settings overlay tab overrides ──────────────────────────────── */
+/* ConfigTab, CredentialsTab, MemoryTab were designed for full-page — compact for 480px */
+
+.settings-overlay-content .max-w-2xl,
+.settings-overlay-content .max-w-3xl {
+  max-width: 100%;
+}
+
+/* Stack 2-col grids into single column (ConfigTab) */
+.settings-overlay-content .grid-cols-2 {
+  grid-template-columns: 1fr;
+}
+
+/* Tighter spacing */
+.settings-overlay-content h2.text-lg,
+.settings-overlay-content h2.text-xl {
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.settings-overlay-content .text-base {
+  font-size: 13px;
+}
+
+.settings-overlay-content .text-xl {
+  font-size: 14px;
+}
+
+.settings-overlay-content .text-lg {
+  font-size: 13px;
+}
+
+.settings-overlay-content .mb-8 {
+  margin-bottom: 16px;
+}
+
+.settings-overlay-content .mb-6 {
+  margin-bottom: 12px;
+}
+
+.settings-overlay-content .mb-10 {
+  margin-bottom: 16px;
+}
+
+.settings-overlay-content .gap-4 {
+  gap: 10px;
+}
+
+.settings-overlay-content .py-20 {
+  padding-top: 32px;
+  padding-bottom: 32px;
+}
+
+.settings-overlay-content .py-16 {
+  padding-top: 24px;
+  padding-bottom: 24px;
+}
+
+.settings-overlay-content .p-5 {
+  padding: 12px;
+}
+
+.settings-overlay-content .px-5 {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+/* Credentials tab: stack provider list + detail vertically */
+.settings-overlay-content .creds-layout {
+  flex-direction: column;
+  min-height: auto !important;
+}
+
+.settings-overlay-content .creds-providers {
+  width: 100% !important;
+  flex-direction: row !important;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.settings-overlay-content .creds-providers > button {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* Cards: tighter padding + radius */
+.settings-overlay-content .rounded-2xl {
+  border-radius: 10px;
+}
+
+.settings-overlay-content .rounded-2xl.p-5,
+.settings-overlay-content .rounded-2xl.p-6 {
+  padding: 12px;
+}
+
+/* Memory tab: smaller text areas */
+.settings-overlay-content .min-h-\[350px\] {
+  min-height: 200px;
+}
+
+/* Memory tab: project path input — allow wrapping */
+.settings-overlay-content .project-path-form {
+  flex-wrap: wrap;
+}
+
+/* Sub-navigation pills — compact (MemoryTab) */
+.settings-overlay-content .rounded-full.mb-6 {
+  margin-bottom: 12px;
+}
+
+.settings-overlay-content .rounded-full .text-sm {
+  font-size: 12px;
+  padding: 4px 10px;
 }
 
 /* ── xterm.js overrides ──────────────────────────────────────────── */

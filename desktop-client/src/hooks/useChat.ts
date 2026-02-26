@@ -308,6 +308,33 @@ export function useChat() {
     };
   }, [handleStreamEvent, handleTurnComplete]);
 
+  // Listen for provider/model changes from Toolbar or ProvidersTab
+  useEffect(() => {
+    const handleProviderChanged = async () => {
+      try {
+        const init = await api.initializeChat();
+        setState((s) => ({
+          ...s,
+          providerName: init.providerName,
+          modelName: init.modelName,
+          // If agent was cleared (provider changed), reset session state
+          ...(init.sessionId === "" ? {
+            sessionId: "",
+            messages: [],
+            streamingBlocks: [],
+            toolImages: {},
+            tokenUsage: { input: 0, output: 0, cacheCreation: null, cacheRead: null },
+            contextSize: 0,
+          } : {}),
+        }));
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener("provider-changed", handleProviderChanged);
+    return () => window.removeEventListener("provider-changed", handleProviderChanged);
+  }, []);
+
   // ── Actions ──────────────────────────────────────────────────────
 
   const sendMessage = useCallback((content: string) => {

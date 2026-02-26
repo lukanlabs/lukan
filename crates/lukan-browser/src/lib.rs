@@ -56,6 +56,9 @@ struct BrowserState {
     client: Option<CdpClient>,
     chrome: Option<LaunchedChrome>,
     http_base: Option<String>,
+    /// Set to `false` by `disconnect()` to prevent `ensure_connected()` from
+    /// auto-launching Chrome.  Re-set to `true` by `reactivate()`.
+    active: bool,
 }
 
 impl BrowserManager {
@@ -71,6 +74,7 @@ impl BrowserManager {
                 client: None,
                 chrome: None,
                 http_base: None,
+                active: true,
             }),
         });
 
@@ -90,9 +94,27 @@ impl BrowserManager {
         bail!("Use send_cdp() / call methods directly instead");
     }
 
+    /// Check if the browser is active (not shut down) without auto-connecting.
+    pub async fn is_active(&self) -> bool {
+        let state = self.state.lock().await;
+        state.active && (state.chrome.is_some() || state.client.is_some())
+    }
+
+    /// Re-activate after a `disconnect()` so the next `ensure_connected()`
+    /// will auto-launch again.
+    pub async fn reactivate(&self) {
+        let mut state = self.state.lock().await;
+        state.active = true;
+    }
+
     /// Ensure we have a connected CDP client, connecting/launching as needed.
     async fn ensure_connected(&self) -> Result<()> {
         let mut state = self.state.lock().await;
+
+        // Don't auto-launch if explicitly shut down
+        if !state.active {
+            bail!("Browser was shut down. Call reactivate() or re-launch.");
+        }
 
         // Check if already connected
         if let Some(ref client) = state.client {
@@ -252,6 +274,7 @@ impl BrowserManager {
     }
 
     /// Disconnect from Chrome and kill the process if we launched it.
+    /// Sets `active = false` to prevent `ensure_connected()` from auto-relaunching.
     pub async fn disconnect(&self) {
         let mut state = self.state.lock().await;
         if let Some(ref client) = state.client {
@@ -262,6 +285,7 @@ impl BrowserManager {
             chrome.kill();
         }
         state.chrome = None;
+        state.active = false;
     }
 }
 

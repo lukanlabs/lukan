@@ -76,14 +76,24 @@ export function useBrowser() {
     }
   }, []);
 
-  // Poll status when running
+  // Initial status check on mount
   useEffect(() => {
     refreshStatus();
-    pollRef.current = setInterval(refreshStatus, 5000);
+  }, [refreshStatus]);
+
+  // Only poll while browser is running
+  useEffect(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    if (status.running) {
+      pollRef.current = setInterval(refreshStatus, 5000);
+    }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [refreshStatus]);
+  }, [status.running, refreshStatus]);
 
   return {
     status,

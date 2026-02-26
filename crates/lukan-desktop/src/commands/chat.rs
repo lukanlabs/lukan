@@ -71,6 +71,20 @@ pub async fn initialize_chat(state: State<'_, ChatState>) -> Result<InitResponse
     let provider_name = resolved.config.provider.to_string();
     let model_name = resolved.effective_model();
 
+    // If provider or model changed, save current session and clear agent
+    // so it gets lazily recreated with the new provider on next message.
+    {
+        let old_provider = state.provider_name.lock().await.clone();
+        let old_model = state.model_name.lock().await.clone();
+        if !old_provider.is_empty() && (old_provider != provider_name || old_model != model_name) {
+            let mut agent_lock = state.agent.lock().await;
+            if let Some(ref mut agent) = *agent_lock {
+                let _ = agent.save_session_public().await;
+            }
+            *agent_lock = None;
+        }
+    }
+
     *state.provider_name.lock().await = provider_name.clone();
     *state.model_name.lock().await = model_name.clone();
     *state.config.lock().await = Some(resolved.clone());

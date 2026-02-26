@@ -7,6 +7,8 @@ pub struct ProviderInfo {
     pub name: String,
     pub default_model: String,
     pub active: bool,
+    /// The currently configured model (if set), stripped of provider prefix.
+    pub current_model: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -30,12 +32,18 @@ pub async fn list_providers() -> Result<Vec<ProviderInfo>, String> {
         ProviderName::OpenaiCompatible,
     ];
 
+    let current_model = config.model.clone();
     Ok(providers
         .iter()
         .map(|p| ProviderInfo {
             name: p.to_string(),
             default_model: p.default_model().to_string(),
             active: config.provider == *p,
+            current_model: if config.provider == *p {
+                current_model.clone()
+            } else {
+                None
+            },
         })
         .collect())
 }
@@ -54,8 +62,13 @@ pub async fn fetch_provider_models(provider: String) -> Result<Vec<FetchedModel>
     let creds = CredentialsManager::load()
         .await
         .map_err(|e| e.to_string())?;
-    let api_key = CredentialsManager::get_api_key(&creds, &provider_name)
-        .ok_or_else(|| format!("No API key configured for {provider}"))?;
+    let api_key = CredentialsManager::get_api_key(&creds, &provider_name);
+
+    // OpenAI-compatible doesn't require an API key (local servers)
+    if api_key.is_none() && provider_name != ProviderName::OpenaiCompatible {
+        return Err(format!("No API key configured for {provider}"));
+    }
+    let api_key = api_key.unwrap_or_default();
 
     match provider_name {
         ProviderName::Anthropic => {
@@ -106,6 +119,29 @@ pub async fn fetch_provider_models(provider: String) -> Result<Vec<FetchedModel>
                 })
                 .collect())
         }
+        ProviderName::OpenaiCompatible => {
+            let config = lukan_core::config::ConfigManager::load()
+                .await
+                .map_err(|e| e.to_string())?;
+            let base_url = config
+                .openai_compatible_base_url
+                .as_ref()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| {
+                    "No base URL configured for openai-compatible. Set it in Config > OpenAI Compatible.".to_string()
+                })?;
+            let models =
+                lukan_providers::openai_compat::fetch_openai_compatible_models(base_url, &api_key)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            Ok(models
+                .into_iter()
+                .map(|id| FetchedModel {
+                    name: id.clone(),
+                    id,
+                })
+                .collect())
+        }
         _ => Ok(vec![FetchedModel {
             id: provider_name.default_model().to_string(),
             name: provider_name.default_model().to_string(),
@@ -119,7 +155,15 @@ pub async fn set_active_provider(provider: String, model: Option<String>) -> Res
 
     config.provider = serde_json::from_value(serde_json::Value::String(provider.clone()))
         .map_err(|_| format!("Invalid provider: {provider}"))?;
-    config.model = model;
+
+    // Models from getModels() are stored as "provider:model_id" — strip the prefix
+    config.model = model.map(|m| {
+        if let Some((_prefix, raw)) = m.split_once(':') {
+            raw.to_string()
+        } else {
+            m
+        }
+    });
 
     ConfigManager::save(&config)
         .await

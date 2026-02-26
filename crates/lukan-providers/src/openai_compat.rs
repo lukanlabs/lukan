@@ -76,6 +76,57 @@ pub fn normalize_base_url(url: &str) -> String {
     trimmed.to_string()
 }
 
+/// Model info returned from the /models endpoint.
+#[derive(Debug, Deserialize)]
+struct OpenAiModelEntry {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiModelsResponse {
+    data: Option<Vec<OpenAiModelEntry>>,
+}
+
+/// Fetch available models from an OpenAI-compatible `/models` endpoint.
+pub async fn fetch_openai_compatible_models(base_url: &str, api_key: &str) -> Result<Vec<String>> {
+    let base = normalize_base_url(base_url);
+    let url = format!("{}/models", base.trim_end_matches('/'));
+
+    let client = Client::new();
+    let mut req = client
+        .get(&url)
+        .header("accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15));
+
+    if !api_key.is_empty() {
+        req = req.header("authorization", format!("Bearer {api_key}"));
+    }
+
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("Failed to connect to {url}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("OpenAI-compatible models API error: {status} {body}");
+    }
+
+    let data: OpenAiModelsResponse = resp
+        .json()
+        .await
+        .context("Failed to parse models response")?;
+    let models = data
+        .data
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+
+    Ok(models)
+}
+
 /// Configuration for an OpenAI-compatible provider.
 pub struct OpenAiCompatConfig {
     pub base_url: String,

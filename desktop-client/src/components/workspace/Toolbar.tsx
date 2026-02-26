@@ -51,9 +51,13 @@ export function Toolbar({
 
   const handleSelectModel = async (provider: string, model: string) => {
     try {
-      await setActiveProvider(provider, model);
+      // Models from getModels() are stored as "provider:model_id" — strip prefix
+      const modelId = model.includes(":") ? model.substring(model.indexOf(":") + 1) : model;
+      await setActiveProvider(provider, modelId);
       setShowModelMenu(false);
       await loadProviders();
+      // Notify chat to reload with new provider/model
+      window.dispatchEvent(new Event("provider-changed"));
     } catch {
       // Ignore
     }
@@ -101,7 +105,7 @@ export function Toolbar({
         >
           <span>
             {activeProvider
-              ? `${activeProvider.name}:${activeProvider.defaultModel}`
+              ? `${activeProvider.name}:${activeProvider.currentModel || activeProvider.defaultModel}`
               : "No provider"}
           </span>
           <ChevronDown size={12} />
@@ -131,73 +135,72 @@ export function Toolbar({
                 boxShadow: "var(--shadow-lg)",
               }}
             >
-              {providers.map((p) => (
-                <div key={p.name}>
-                  <div
-                    style={{
-                      padding: "4px 8px",
-                      fontSize: 10,
-                      color: "var(--text-muted)",
-                      textTransform: "uppercase",
-                      letterSpacing: 0.5,
-                    }}
-                  >
-                    {p.name}
-                  </div>
-                  {models
-                    .filter((m) => {
-                      // Show all models under their provider
-                      // If we can't determine which provider a model belongs to, show under active
-                      return p.active;
-                    })
-                    .map((m) => (
+              {providers.map((p) => {
+                const prefix = `${p.name}:`;
+                const providerModels = models.filter((m) => m.startsWith(prefix));
+                const currentModel = p.currentModel || p.defaultModel;
+                // Skip providers with no models unless they're active
+                if (providerModels.length === 0 && !p.active) return null;
+                return (
+                  <div key={p.name}>
+                    <div
+                      style={{
+                        padding: "4px 8px",
+                        fontSize: 10,
+                        color: "var(--text-muted)",
+                        textTransform: "uppercase",
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      {p.name}
+                    </div>
+                    {providerModels.map((m) => {
+                      const modelId = m.substring(prefix.length);
+                      const isSelected = p.active && modelId === currentModel;
+                      return (
+                        <button
+                          key={m}
+                          onClick={() => handleSelectModel(p.name, m)}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            padding: "6px 12px",
+                            fontSize: 12,
+                            fontFamily: "var(--font-mono)",
+                            color: isSelected ? "var(--text-primary)" : "var(--text-secondary)",
+                            background: isSelected ? "var(--bg-active)" : "transparent",
+                            border: "none",
+                            borderRadius: 4,
+                            textAlign: "left",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {modelId}
+                        </button>
+                      );
+                    })}
+                    {providerModels.length === 0 && (
                       <button
-                        key={m}
-                        onClick={() => handleSelectModel(p.name, m)}
+                        onClick={() => handleSelectModel(p.name, p.defaultModel)}
                         style={{
                           display: "block",
                           width: "100%",
                           padding: "6px 12px",
                           fontSize: 12,
-                          fontFamily: "var(--font-mono)",
-                          color:
-                            p.active && m === p.defaultModel
-                              ? "var(--text-primary)"
-                              : "var(--text-secondary)",
-                          background:
-                            p.active && m === p.defaultModel
-                              ? "var(--bg-active)"
-                              : "transparent",
+                          color: "var(--text-secondary)",
+                          background: "transparent",
                           border: "none",
                           borderRadius: 4,
                           textAlign: "left",
                           cursor: "pointer",
                         }}
                       >
-                        {m}
+                        {p.defaultModel}
                       </button>
-                    ))}
-                  {!p.active && (
-                    <button
-                      onClick={() => handleSelectModel(p.name, p.defaultModel)}
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        padding: "6px 12px",
-                        fontSize: 12,
-                        color: "var(--text-secondary)",
-                        background: "transparent",
-                        border: "none",
-                        borderRadius: 4,
-                        textAlign: "left",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {p.defaultModel}
-                    </button>
-                  )}
-                </div>
-              ))}
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </>
         )}

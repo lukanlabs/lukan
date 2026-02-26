@@ -20,11 +20,6 @@ import {
 } from "../../lib/tauri";
 import QRCode from "qrcode";
 import { useToast } from "../ui/Toast";
-import Button from "../ui/Button";
-import Input from "../ui/Input";
-import Card from "../ui/Card";
-import Badge from "../ui/Badge";
-import Select from "../ui/Select";
 import {
   Check,
   Play,
@@ -44,25 +39,23 @@ import {
   Plus,
   Phone,
   Users,
+  ChevronRight,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
-// Master-Detail Plugins Tab
+// Main Component
 // ---------------------------------------------------------------------------
 
 export default function PluginsTab() {
   const { toast } = useToast();
 
-  // --- shared state --------------------------------------------------------
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [selectedPlugin, setSelectedPlugin] = useState<string | null>(null);
   const [showRegistry, setShowRegistry] = useState(false);
 
-  // --- master view state ---------------------------------------------------
   const [localPath, setLocalPath] = useState("");
   const [installingLocal, setInstallingLocal] = useState(false);
 
-  // --- detail view state ---------------------------------------------------
   const [actionLoading, setActionLoading] = useState<"start" | "stop" | "restart" | "remove" | null>(null);
   const [pluginConfig, setPluginConfig] = useState<Record<string, unknown>>({});
   const [pluginLogs, setPluginLogs] = useState("");
@@ -71,16 +64,13 @@ export default function PluginsTab() {
   const [commandRunning, setCommandRunning] = useState<string | null>(null);
   const [commandOutput, setCommandOutput] = useState<string | null>(null);
 
-  // --- WhatsApp auth state -------------------------------------------------
   const [whatsappAuthed, setWhatsappAuthed] = useState(false);
 
-  // --- QR state ------------------------------------------------------------
   const [showQr, setShowQr] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [qrLinked, setQrLinked] = useState(false);
 
-  // Poll for auth completion while QR modal is showing
   useEffect(() => {
     if (!showQr || !qrDataUrl || qrLinked) return;
     let cancelled = false;
@@ -88,7 +78,6 @@ export default function PluginsTab() {
       try {
         const qr = await getWhatsappQr();
         if (!cancelled && !qr) {
-          // QR file gone = connector connected successfully
           setQrLinked(true);
           toast("success", "WhatsApp linked successfully!");
         }
@@ -97,16 +86,11 @@ export default function PluginsTab() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [showQr, qrDataUrl, qrLinked, toast]);
 
-  // --- registry state ------------------------------------------------------
   const [remotePlugins, setRemotePlugins] = useState<RemotePlugin[]>([]);
   const [registryLoading, setRegistryLoading] = useState(false);
   const [installingRemote, setInstallingRemote] = useState<string | null>(null);
 
-  // --- QR: no polling, just read the file ---------------------------------
-
-  // -------------------------------------------------------------------------
-  // Data fetching
-  // -------------------------------------------------------------------------
+  // ── Data fetching ──
 
   const refreshPlugins = useCallback(async () => {
     try {
@@ -117,42 +101,31 @@ export default function PluginsTab() {
     }
   }, [toast]);
 
-  useEffect(() => {
-    refreshPlugins();
-  }, [refreshPlugins]);
+  useEffect(() => { refreshPlugins(); }, [refreshPlugins]);
 
-  // When a plugin is selected, load its config, logs, and commands
-  const loadPluginDetail = useCallback(
-    async (name: string) => {
-      try {
-        const [cfg, logs, cmds] = await Promise.all([
-          getPluginConfig(name),
-          getPluginLogs(name, 200),
-          getPluginCommands(name).catch(() => [] as PluginCommand[]),
-        ]);
-        setPluginConfig(cfg);
-        setPluginLogs(logs);
-        setPluginCommands(cmds);
-
-        // Check WhatsApp auth status if this is the whatsapp plugin
-        if (name === "whatsapp") {
-          const authed = await checkWhatsappAuth().catch(() => false);
-          setWhatsappAuthed(authed);
-        }
-      } catch (e) {
-        toast("error", `Failed to load plugin details: ${e}`);
+  const loadPluginDetail = useCallback(async (name: string) => {
+    try {
+      const [cfg, logs, cmds] = await Promise.all([
+        getPluginConfig(name),
+        getPluginLogs(name, 200),
+        getPluginCommands(name).catch(() => [] as PluginCommand[]),
+      ]);
+      setPluginConfig(cfg);
+      setPluginLogs(logs);
+      setPluginCommands(cmds);
+      if (name === "whatsapp") {
+        const authed = await checkWhatsappAuth().catch(() => false);
+        setWhatsappAuthed(authed);
       }
-    },
-    [toast],
-  );
+    } catch (e) {
+      toast("error", `Failed to load plugin details: ${e}`);
+    }
+  }, [toast]);
 
-  const selectPlugin = useCallback(
-    (name: string) => {
-      setSelectedPlugin(name);
-      loadPluginDetail(name);
-    },
-    [loadPluginDetail],
-  );
+  const selectPlugin = useCallback((name: string) => {
+    setSelectedPlugin(name);
+    loadPluginDetail(name);
+  }, [loadPluginDetail]);
 
   const goBack = useCallback(() => {
     setSelectedPlugin(null);
@@ -165,9 +138,7 @@ export default function PluginsTab() {
     setWhatsappAuthed(false);
   }, []);
 
-  // -------------------------------------------------------------------------
-  // Handlers - master
-  // -------------------------------------------------------------------------
+  // ── Handlers ──
 
   const handleInstallLocal = async () => {
     const path = localPath.trim();
@@ -185,48 +156,19 @@ export default function PluginsTab() {
     }
   };
 
-  // -------------------------------------------------------------------------
-  // Handlers - detail
-  // -------------------------------------------------------------------------
-
-  const handleStart = async (name: string) => {
-    setActionLoading("start");
+  const handleAction = async (action: "start" | "stop" | "restart" | "remove", name: string) => {
+    setActionLoading(action);
     try {
-      await startPlugin(name);
-      toast("success", `Plugin '${name}' started`);
+      if (action === "start") await startPlugin(name);
+      else if (action === "stop") await stopPlugin(name);
+      else if (action === "restart") await restartPlugin(name);
+      else if (action === "remove") { await removePlugin(name); await refreshPlugins(); goBack(); return; }
+      toast("success", `Plugin '${name}' ${action === "restart" ? "restarted" : action + "ed"}`);
       await refreshPlugins();
-      // Auto-refresh logs after start
-      await handleRefreshLogs(name);
+      const logs = await getPluginLogs(name, 200);
+      setPluginLogs(logs);
     } catch (e) {
-      toast("error", `Failed to start plugin: ${e}`);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleStop = async (name: string) => {
-    setActionLoading("stop");
-    try {
-      await stopPlugin(name);
-      toast("success", `Plugin '${name}' stopped`);
-      await refreshPlugins();
-      await handleRefreshLogs(name);
-    } catch (e) {
-      toast("error", `Failed to stop plugin: ${e}`);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleRestart = async (name: string) => {
-    setActionLoading("restart");
-    try {
-      await restartPlugin(name);
-      toast("success", `Plugin '${name}' restarted`);
-      await refreshPlugins();
-      await handleRefreshLogs(name);
-    } catch (e) {
-      toast("error", `Failed to restart plugin: ${e}`);
+      toast("error", `Failed to ${action} plugin: ${e}`);
     } finally {
       setActionLoading(null);
     }
@@ -240,11 +182,7 @@ export default function PluginsTab() {
     try {
       const qrStr = await getWhatsappQr();
       if (qrStr) {
-        const url = await QRCode.toDataURL(qrStr, {
-          width: 320,
-          margin: 2,
-          color: { dark: "#000000", light: "#ffffff" },
-        });
+        const url = await QRCode.toDataURL(qrStr, { width: 256, margin: 2, color: { dark: "#000000", light: "#ffffff" } });
         setQrDataUrl(url);
       }
     } catch (e) {
@@ -254,29 +192,9 @@ export default function PluginsTab() {
     }
   };
 
-  const handleRemove = async (name: string) => {
-    setActionLoading("remove");
-    try {
-      await removePlugin(name);
-      toast("success", `Plugin '${name}' removed`);
-      await refreshPlugins();
-      goBack();
-    } catch (e) {
-      toast("error", `Failed to remove plugin: ${e}`);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
   const handleConfigSave = async (pluginName: string, key: string, value: string) => {
     try {
-      const parsed = (() => {
-        try {
-          return JSON.parse(value);
-        } catch {
-          return value;
-        }
-      })();
+      const parsed = (() => { try { return JSON.parse(value); } catch { return value; } })();
       await setPluginConfigField(pluginName, key, parsed);
       const cfg = await getPluginConfig(pluginName);
       setPluginConfig(cfg);
@@ -303,11 +221,8 @@ export default function PluginsTab() {
     setCommandOutput(null);
     try {
       const output = await runPluginCommand(pluginName, command);
-      if (output && output.trim()) {
-        setCommandOutput(output.trim());
-      }
+      if (output?.trim()) setCommandOutput(output.trim());
       toast("success", `Command '${command}' completed`);
-      // Refresh config in case auth saved tokens
       const cfg = await getPluginConfig(pluginName);
       setPluginConfig(cfg);
     } catch (e) {
@@ -316,10 +231,6 @@ export default function PluginsTab() {
       setCommandRunning(null);
     }
   };
-
-  // -------------------------------------------------------------------------
-  // Handlers - registry
-  // -------------------------------------------------------------------------
 
   const openRegistry = async () => {
     setShowRegistry(true);
@@ -338,7 +249,7 @@ export default function PluginsTab() {
     setInstallingRemote(name);
     try {
       const installed = await installRemotePlugin(name);
-      toast("success", `Plugin '${installed}' installed from registry`);
+      toast("success", `Plugin '${installed}' installed`);
       await refreshPlugins();
       const remotes = await listRemotePlugins();
       setRemotePlugins(remotes);
@@ -349,20 +260,12 @@ export default function PluginsTab() {
     }
   };
 
-  // -------------------------------------------------------------------------
-  // Resolve selected plugin from the list
-  // -------------------------------------------------------------------------
+  const activePlugin = selectedPlugin ? plugins.find((p) => p.name === selectedPlugin) ?? null : null;
 
-  const activePlugin = selectedPlugin
-    ? plugins.find((p) => p.name === selectedPlugin) ?? null
-    : null;
-
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
+  // ── Render ──
 
   return (
-    <div className={selectedPlugin && activePlugin ? "max-w-5xl" : "max-w-3xl"} style={{ animation: "fadeIn 0.3s ease-out" }}>
+    <div style={{ animation: "fadeIn 0.15s ease-out" }}>
       {selectedPlugin && activePlugin ? (
         <DetailView
           plugin={activePlugin}
@@ -375,10 +278,7 @@ export default function PluginsTab() {
           commandOutput={commandOutput}
           whatsappAuthed={whatsappAuthed}
           onBack={goBack}
-          onStart={handleStart}
-          onStop={handleStop}
-          onRestart={handleRestart}
-          onRemove={handleRemove}
+          onAction={handleAction}
           onConfigSave={handleConfigSave}
           onRefreshLogs={handleRefreshLogs}
           onShowQr={handleShowQr}
@@ -396,99 +296,18 @@ export default function PluginsTab() {
         />
       )}
 
-      {/* QR modal overlay */}
+      {/* QR Modal */}
       {showQr && (
-        <div
-          className="fixed inset-0 flex items-center justify-center z-50"
-          style={{
-            background: "rgba(0,0,0,0.75)",
-            backdropFilter: "blur(8px)",
-            animation: "fadeIn 0.2s ease-out",
-          }}
-          onClick={() => setShowQr(false)}
-        >
-          <div
-            className="rounded-2xl p-8 flex flex-col items-center gap-5"
-            style={{
-              background: "rgba(20, 20, 20, 0.98)",
-              border: "1px solid var(--border)",
-              boxShadow: "var(--shadow-lg)",
-              animation: "scaleIn 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {qrLinked ? (
-              <>
-                <div
-                  className="flex items-center justify-center"
-                  style={{
-                    width: 80,
-                    height: 80,
-                    borderRadius: "50%",
-                    background: "rgba(74, 222, 128, 0.15)",
-                    border: "2px solid rgba(74, 222, 128, 0.4)",
-                  }}
-                >
-                  <Check size={40} style={{ color: "#4ade80" }} />
-                </div>
-                <h3 className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>
-                  WhatsApp Linked!
-                </h3>
-                <p className="text-sm text-center" style={{ color: "var(--text-secondary)", maxWidth: 280 }}>
-                  Your WhatsApp account has been successfully connected.
-                </p>
-                <Button onClick={() => { setShowQr(false); refreshPlugins(); }}>
-                  Done
-                </Button>
-              </>
-            ) : (
-              <>
-                <div className="flex items-center gap-2">
-                  <QrCode size={18} style={{ color: "var(--text-secondary)" }} />
-                  <h3 className="text-base font-bold" style={{ color: "var(--text-primary)" }}>
-                    Scan QR Code
-                  </h3>
-                </div>
-                <p className="text-xs text-center" style={{ color: "var(--text-muted)", maxWidth: 280 }}>
-                  Open WhatsApp on your phone, go to Settings &gt; Linked Devices, and scan this code.
-                </p>
-                {qrLoading ? (
-                  <div className="flex items-center justify-center" style={{ width: 320, height: 320 }}>
-                    <Loader2 size={32} className="animate-spin" style={{ color: "var(--text-muted)" }} />
-                  </div>
-                ) : qrDataUrl ? (
-                  <img
-                    src={qrDataUrl}
-                    alt="WhatsApp QR Code"
-                    style={{ width: 320, height: 320, borderRadius: 12, imageRendering: "pixelated" }}
-                  />
-                ) : (
-                  <div
-                    className="flex items-center justify-center text-sm text-center"
-                    style={{
-                      width: 320,
-                      height: 200,
-                      color: "var(--text-muted)",
-                      background: "var(--bg-tertiary)",
-                      borderRadius: 12,
-                      border: "1px dashed var(--border)",
-                      padding: 24,
-                    }}
-                  >
-                    No QR code available. Make sure the plugin is running and waiting for authentication.
-                  </div>
-                )}
-                <Button variant="secondary" onClick={() => setShowQr(false)}>
-                  <X size={14} />
-                  Close
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
+        <QrModal
+          qrDataUrl={qrDataUrl}
+          qrLoading={qrLoading}
+          qrLinked={qrLinked}
+          onClose={() => setShowQr(false)}
+          onDone={() => { setShowQr(false); refreshPlugins(); }}
+        />
       )}
 
-      {/* Registry modal overlay */}
+      {/* Registry Modal */}
       {showRegistry && (
         <RegistryModal
           remotePlugins={remotePlugins}
@@ -510,172 +329,118 @@ interface MasterViewProps {
   plugins: PluginInfo[];
   localPath: string;
   installingLocal: boolean;
-  onLocalPathChange: (value: string) => void;
+  onLocalPathChange: (v: string) => void;
   onInstallLocal: () => void;
   onSelectPlugin: (name: string) => void;
   onOpenRegistry: () => void;
 }
 
 function MasterView({
-  plugins,
-  localPath,
-  installingLocal,
-  onLocalPathChange,
-  onInstallLocal,
-  onSelectPlugin,
-  onOpenRegistry,
+  plugins, localPath, installingLocal,
+  onLocalPathChange, onInstallLocal, onSelectPlugin, onOpenRegistry,
 }: MasterViewProps) {
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between mb-10">
-        <div className="flex items-center gap-3">
-          <div>
-            <h2
-              className="text-xl font-bold tracking-tight"
-              style={{ color: "var(--text-primary)" }}
-            >
-              Plugins
-            </h2>
-            <p className="text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              Install, configure, and manage agent plugins.
-            </p>
-          </div>
-          <Badge variant="neutral">{plugins.length} installed</Badge>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+            Plugins
+          </span>
+          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{
+            background: "rgba(255,255,255,0.05)", color: "var(--text-muted)",
+            border: "1px solid var(--border)",
+          }}>{plugins.length}</span>
         </div>
-        <Button variant="secondary" onClick={onOpenRegistry}>
-          <Download size={14} />
-          Install from Registry
-        </Button>
+        <button
+          onClick={onOpenRegistry}
+          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
+          style={{ background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border)" }}
+        >
+          <Download size={11} />
+          Registry
+        </button>
       </div>
 
-      {/* Install from local path */}
-      <Card className="mb-6">
-        <h4
-          className="text-[11px] font-bold uppercase tracking-[0.1em] mb-3"
-          style={{ color: "var(--text-muted)" }}
+      {/* Install local */}
+      <div className="flex gap-2 mb-4">
+        <input
+          value={localPath}
+          placeholder="/path/to/plugin"
+          onChange={(e) => onLocalPathChange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") onInstallLocal(); }}
+          className="flex-1 px-2.5 py-1.5 rounded-lg text-xs outline-none"
+          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+        />
+        <button
+          onClick={onInstallLocal}
+          disabled={installingLocal || !localPath.trim()}
+          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none shrink-0"
+          style={{
+            background: "#fafafa", color: "#09090b",
+            opacity: installingLocal || !localPath.trim() ? 0.4 : 1,
+            pointerEvents: installingLocal || !localPath.trim() ? "none" : "auto",
+          }}
         >
-          Install from local path
-        </h4>
-        <div className="flex items-end gap-3">
-          <div className="flex-1">
-            <Input
-              value={localPath}
-              placeholder="/path/to/plugin"
-              onChange={(e) => onLocalPathChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") onInstallLocal();
-              }}
-            />
-          </div>
-          <Button onClick={onInstallLocal} disabled={installingLocal || !localPath.trim()}>
-            {installingLocal ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <FolderOpen size={14} />
-            )}
-            {installingLocal ? "Installing..." : "Install"}
-          </Button>
-        </div>
-      </Card>
+          {installingLocal ? <Loader2 size={11} className="animate-spin" /> : <FolderOpen size={11} />}
+          Install
+        </button>
+      </div>
 
       {/* Plugin list */}
       {plugins.length === 0 ? (
-        <div
-          className="text-center py-20 rounded-2xl"
-          style={{
-            color: "var(--text-muted)",
-            background: "var(--surface-glass)",
-            border: "1px dashed var(--border)",
-          }}
-        >
-          <Package size={36} style={{ margin: "0 auto 12px", opacity: 0.4 }} />
-          <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
-            No plugins installed
-          </p>
-          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-            Browse the registry to get started.
-          </p>
+        <div className="text-center py-10 rounded-lg" style={{
+          color: "var(--text-muted)", border: "1px dashed var(--border)",
+        }}>
+          <Package size={24} style={{ margin: "0 auto 8px", opacity: 0.3 }} />
+          <p className="text-xs">No plugins installed</p>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
           {plugins.map((plugin) => (
-            <PluginCard
+            <div
               key={plugin.name}
-              plugin={plugin}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer"
+              style={{ background: "transparent", transition: "background 120ms" }}
               onClick={() => onSelectPlugin(plugin.name)}
-            />
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            >
+              <Package size={13} style={{ color: "var(--text-muted)" }} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+                    {plugin.name}
+                  </span>
+                  <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
+                    v{plugin.version}
+                  </span>
+                  {plugin.alias && (
+                    <span className="text-[10px] px-1 rounded" style={{
+                      background: "rgba(255,255,255,0.05)", color: "var(--text-muted)",
+                    }}>{plugin.alias}</span>
+                  )}
+                </div>
+                {plugin.description && (
+                  <span className="text-[10px] block truncate" style={{ color: "var(--text-muted)" }}>
+                    {plugin.description}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {plugin.pluginType === "channel" && (
+                  <span className="w-1.5 h-1.5 rounded-full" style={{
+                    background: plugin.running ? "#4ade80" : "var(--text-muted)",
+                    boxShadow: plugin.running ? "0 0 6px rgba(74,222,128,0.4)" : "none",
+                  }} />
+                )}
+                <ChevronRight size={12} style={{ color: "var(--text-muted)" }} />
+              </div>
+            </div>
           ))}
         </div>
       )}
     </>
-  );
-}
-
-// ===========================================================================
-// Plugin Card (master list item)
-// ===========================================================================
-
-interface PluginCardProps {
-  plugin: PluginInfo;
-  onClick: () => void;
-}
-
-function PluginCard({ plugin, onClick }: PluginCardProps) {
-  return (
-    <div
-      className="rounded-2xl p-5 cursor-pointer transition-all"
-      style={{
-        background:
-          "linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%)",
-        border: "1px solid var(--border)",
-        boxShadow: "var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.03)",
-        transitionDuration: "180ms",
-      }}
-      onClick={onClick}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--border-hover)";
-        e.currentTarget.style.boxShadow =
-          "var(--shadow-md), inset 0 1px 0 rgba(255,255,255,0.05)";
-        e.currentTarget.style.transform = "translateY(-1px)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--border)";
-        e.currentTarget.style.boxShadow =
-          "var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.03)";
-        e.currentTarget.style.transform = "";
-      }}
-    >
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span
-              className="font-semibold text-sm"
-              style={{ color: "var(--text-primary)" }}
-            >
-              {plugin.name}
-            </span>
-            <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>
-              v{plugin.version}
-            </span>
-            {plugin.alias && <Badge variant="neutral">{plugin.alias}</Badge>}
-          </div>
-          {plugin.description && (
-            <p
-              className="text-xs mt-1.5 leading-relaxed"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              {plugin.description}
-            </p>
-          )}
-        </div>
-        {plugin.pluginType === "channel" && (
-          <Badge variant={plugin.running ? "success" : "neutral"}>
-            {plugin.running ? "Running" : "Stopped"}
-          </Badge>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -694,10 +459,7 @@ interface DetailViewProps {
   commandOutput: string | null;
   whatsappAuthed: boolean;
   onBack: () => void;
-  onStart: (name: string) => void;
-  onStop: (name: string) => void;
-  onRestart: (name: string) => void;
-  onRemove: (name: string) => void;
+  onAction: (action: "start" | "stop" | "restart" | "remove", name: string) => void;
   onConfigSave: (pluginName: string, key: string, value: string) => void;
   onRefreshLogs: (name: string) => void;
   onShowQr: () => void;
@@ -705,341 +467,285 @@ interface DetailViewProps {
 }
 
 function DetailView({
-  plugin,
-  config,
-  logs,
-  actionLoading,
-  logsRefreshing,
-  commands,
-  commandRunning,
-  commandOutput,
-  whatsappAuthed,
-  onBack,
-  onStart,
-  onStop,
-  onRestart,
-  onRemove,
-  onConfigSave,
-  onRefreshLogs,
-  onShowQr,
-  onRunCommand,
+  plugin, config, logs, actionLoading, logsRefreshing,
+  commands, commandRunning, commandOutput, whatsappAuthed,
+  onBack, onAction, onConfigSave, onRefreshLogs, onShowQr, onRunCommand,
 }: DetailViewProps) {
   const logsEndRef = useRef<HTMLPreElement>(null);
-
-  // Auto-scroll logs to bottom on refresh
   useEffect(() => {
-    if (logsEndRef.current) {
-      logsEndRef.current.scrollTop = logsEndRef.current.scrollHeight;
-    }
+    if (logsEndRef.current) logsEndRef.current.scrollTop = logsEndRef.current.scrollHeight;
   }, [logs]);
 
   const configKeys = Object.keys(config);
-  const hasConfig = configKeys.length > 0;
+  const isWhatsapp = plugin.name.includes("whatsapp");
 
   return (
-    <div style={{ animation: "fadeIn 0.2s ease-out" }}>
-      {/* Back button */}
+    <div style={{ animation: "fadeIn 0.15s ease-out" }}>
+      {/* Back */}
       <button
-        className="inline-flex items-center gap-1.5 px-0 py-1 mb-6 text-sm font-medium cursor-pointer border-none bg-transparent transition-all"
-        style={{ color: "var(--text-muted)", transitionDuration: "150ms" }}
         onClick={onBack}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.color = "var(--text-primary)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.color = "var(--text-muted)";
-        }}
+        className="inline-flex items-center gap-1 text-xs mb-3 cursor-pointer border-none bg-transparent"
+        style={{ color: "var(--text-muted)", padding: 0 }}
       >
-        <ArrowLeft size={16} />
-        Plugins
+        <ArrowLeft size={12} />
+        Back
       </button>
 
-      {/* Plugin header */}
-      <div className="mb-8">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2.5 flex-wrap mb-2">
-              <h2
-                className="text-xl font-bold tracking-tight"
-                style={{ color: "var(--text-primary)" }}
-              >
-                {plugin.name}
-              </h2>
-              <span className="text-sm font-mono" style={{ color: "var(--text-muted)" }}>
-                v{plugin.version}
-              </span>
-              <Badge variant="neutral">{plugin.pluginType}</Badge>
-              {plugin.alias && <Badge variant="neutral">{plugin.alias}</Badge>}
-              {plugin.pluginType === "channel" && (
-                <Badge variant={plugin.running ? "success" : "neutral"}>
-                  {plugin.running ? "Running" : "Stopped"}
-                </Badge>
-              )}
-            </div>
-            {plugin.description && (
-              <p
-                className="text-sm leading-relaxed"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                {plugin.description}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {plugin.pluginType === "channel" && (
-              plugin.running ? (
-                <>
-                  <Button
-                    size="sm"
-                    onClick={() => onStop(plugin.name)}
-                    disabled={actionLoading !== null}
-                  >
-                    {actionLoading === "stop" ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <Square size={12} />
-                    )}
-                    {actionLoading === "stop" ? "Stopping..." : "Stop"}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => onRestart(plugin.name)}
-                    disabled={actionLoading !== null}
-                  >
-                    {actionLoading === "restart" ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <RotateCw size={12} />
-                    )}
-                    {actionLoading === "restart" ? "Restarting..." : "Restart"}
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  size="sm"
-                  onClick={() => onStart(plugin.name)}
-                  disabled={actionLoading !== null}
-                >
-                  {actionLoading === "start" ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    <Play size={12} />
-                  )}
-                  {actionLoading === "start" ? "Starting..." : "Start"}
-                </Button>
-              )
-            )}
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => onRemove(plugin.name)}
-              disabled={actionLoading !== null}
-            >
-              {actionLoading === "remove" ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <Trash2 size={12} />
-              )}
-              {actionLoading === "remove" ? "Uninstalling..." : "Uninstall"}
-            </Button>
-          </div>
+      {/* Header */}
+      <div className="mb-4">
+        <div className="flex items-center gap-2 flex-wrap mb-1">
+          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+            {plugin.name}
+          </span>
+          <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
+            v{plugin.version}
+          </span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{
+            background: "rgba(255,255,255,0.05)", color: "var(--text-muted)",
+            border: "1px solid var(--border)",
+          }}>{plugin.pluginType}</span>
+          {plugin.pluginType === "channel" && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{
+              background: plugin.running ? "rgba(74,222,128,0.12)" : "rgba(255,255,255,0.05)",
+              color: plugin.running ? "#4ade80" : "var(--text-muted)",
+            }}>{plugin.running ? "Running" : "Stopped"}</span>
+          )}
         </div>
+        {plugin.description && (
+          <p className="text-[11px]" style={{ color: "var(--text-secondary)" }}>{plugin.description}</p>
+        )}
       </div>
 
-      {/* Plugin commands (auth, etc.) */}
+      {/* Action buttons */}
+      <div className="flex gap-1.5 flex-wrap mb-4">
+        {plugin.pluginType === "channel" && (
+          plugin.running ? (
+            <>
+              <ActionBtn
+                icon={actionLoading === "stop" ? <Loader2 size={11} className="animate-spin" /> : <Square size={11} />}
+                label={actionLoading === "stop" ? "Stopping..." : "Stop"}
+                onClick={() => onAction("stop", plugin.name)}
+                disabled={actionLoading !== null}
+              />
+              <ActionBtn
+                icon={actionLoading === "restart" ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
+                label={actionLoading === "restart" ? "Restarting..." : "Restart"}
+                onClick={() => onAction("restart", plugin.name)}
+                disabled={actionLoading !== null}
+                variant="secondary"
+              />
+            </>
+          ) : (
+            <ActionBtn
+              icon={actionLoading === "start" ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+              label={actionLoading === "start" ? "Starting..." : "Start"}
+              onClick={() => onAction("start", plugin.name)}
+              disabled={actionLoading !== null}
+            />
+          )
+        )}
+        <ActionBtn
+          icon={actionLoading === "remove" ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+          label={actionLoading === "remove" ? "Removing..." : "Uninstall"}
+          onClick={() => onAction("remove", plugin.name)}
+          disabled={actionLoading !== null}
+          variant="danger"
+        />
+      </div>
+
+      {/* Commands */}
       {commands.length > 0 && (
-        <Card className="mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Settings2 size={14} style={{ color: "var(--text-muted)" }} />
-            <h3
-              className="text-[11px] font-bold uppercase tracking-[0.1em]"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Commands
-            </h3>
-          </div>
-          <div className="flex flex-col gap-3">
+        <Section icon={<Settings2 size={12} />} title="Commands">
+          <div className="flex flex-col gap-2">
             {commands.map((cmd) => {
               const isAuth = cmd.name === "auth";
-              const isAuthenticated = isAuth && (
-                plugin.name === "whatsapp"
-                  ? whatsappAuthed
-                  : !!config.accessToken
-              );
+              const authed = isAuth && (plugin.name === "whatsapp" ? whatsappAuthed : !!config.accessToken);
               return (
-                <div key={cmd.name} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div>
-                      <span
-                        className="text-sm font-medium"
-                        style={{ color: "var(--text-primary)" }}
-                      >
-                        {cmd.name}
-                      </span>
-                      {cmd.description && (
-                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-                          {cmd.description}
-                        </p>
-                      )}
-                    </div>
+                <div key={cmd.name} className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+                      {cmd.name}
+                    </span>
                     {isAuth && (
-                      <Badge variant={isAuthenticated ? "success" : "neutral"}>
-                        {isAuthenticated ? "Authenticated" : "Not authenticated"}
-                      </Badge>
+                      <span className="text-[10px] ml-1.5 font-medium" style={{
+                        color: authed ? "#4ade80" : "var(--text-muted)",
+                      }}>{authed ? "authenticated" : "not authenticated"}</span>
+                    )}
+                    {cmd.description && (
+                      <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>{cmd.description}</p>
                     )}
                   </div>
-                  <Button
-                    size="sm"
-                    variant={isAuth && isAuthenticated ? "secondary" : "primary"}
+                  <ActionBtn
+                    icon={commandRunning === cmd.name ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
+                    label={commandRunning === cmd.name ? "..." : "Run"}
                     onClick={() => onRunCommand(plugin.name, cmd.name)}
                     disabled={commandRunning !== null}
-                  >
-                    {commandRunning === cmd.name ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <Play size={12} />
-                    )}
-                    {commandRunning === cmd.name
-                      ? "Running..."
-                      : isAuth && isAuthenticated
-                        ? "Re-authenticate"
-                        : "Run"}
-                  </Button>
+                    small
+                  />
                 </div>
               );
             })}
           </div>
           {commandOutput && (
-            <pre
-              className="text-xs mt-4 p-3 rounded-xl overflow-auto"
-              style={{
-                background: "var(--bg-tertiary)",
-                color: "var(--text-secondary)",
-                border: "1px solid var(--border)",
-                maxHeight: 200,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {commandOutput}
-            </pre>
+            <pre className="text-[10px] mt-2 p-2 rounded-lg overflow-auto" style={{
+              background: "var(--bg-base)", color: "var(--text-secondary)",
+              border: "1px solid var(--border)", maxHeight: 120,
+              whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}>{commandOutput}</pre>
           )}
-        </Card>
+        </Section>
       )}
 
       {/* WhatsApp QR section */}
-      {plugin.name.includes("whatsapp") && (
-        <Card className="mb-6">
+      {isWhatsapp && (
+        <Section icon={<QrCode size={12} />} title="WhatsApp Auth">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <QrCode size={14} style={{ color: "var(--text-secondary)" }} />
-              <h3
-                className="text-[11px] font-bold uppercase tracking-[0.1em]"
-                style={{ color: "var(--text-muted)" }}
-              >
-                WhatsApp Authentication
-              </h3>
-            </div>
-            <Button onClick={onShowQr}>
-              <QrCode size={14} />
-              View QR Code
-            </Button>
+            <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
+              Start plugin, then scan QR.
+            </span>
+            <ActionBtn icon={<QrCode size={11} />} label="View QR" onClick={onShowQr} />
           </div>
-          <p className="text-xs mt-2" style={{ color: "var(--text-secondary)" }}>
-            Start the plugin, then click "View QR Code" to scan with your phone.
-          </p>
-        </Card>
+        </Section>
       )}
 
-      {/* Configuration section */}
-      {hasConfig && (
-        plugin.name.includes("whatsapp") ? (
-          <WhatsAppConfigSection
+      {/* Configuration */}
+      {configKeys.length > 0 && (
+        isWhatsapp ? (
+          <WhatsAppConfig
             pluginName={plugin.name}
             config={config}
             running={plugin.running}
             onConfigSave={onConfigSave}
           />
         ) : (
-          <Card className="mb-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Settings2 size={14} style={{ color: "var(--text-muted)" }} />
-              <h3
-                className="text-[11px] font-bold uppercase tracking-[0.1em]"
-                style={{ color: "var(--text-muted)" }}
-              >
-                Configuration
-              </h3>
-            </div>
-            <div className="flex flex-col gap-3">
+          <Section icon={<Settings2 size={12} />} title="Configuration">
+            <div className="flex flex-col gap-2">
               {configKeys.map((key) => (
-                <ConfigField
-                  key={key}
-                  fieldKey={key}
-                  value={config[key]}
-                  onSave={(value) => onConfigSave(plugin.name, key, value)}
-                />
+                <ConfigField key={key} fieldKey={key} value={config[key]} onSave={(v) => onConfigSave(plugin.name, key, v)} />
               ))}
             </div>
-          </Card>
+          </Section>
         )
       )}
 
-      {/* Logs section (only for channel plugins that can run) */}
+      {/* Logs */}
       {plugin.pluginType === "channel" && (
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <ScrollText size={14} style={{ color: "var(--text-muted)" }} />
-              <h3
-                className="text-[11px] font-bold uppercase tracking-[0.1em]"
-                style={{ color: "var(--text-muted)" }}
-              >
-                Logs
-              </h3>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
+        <Section
+          icon={<ScrollText size={12} />}
+          title="Logs"
+          action={
+            <button
               onClick={() => onRefreshLogs(plugin.name)}
               disabled={logsRefreshing}
+              className="inline-flex items-center gap-1 text-[10px] cursor-pointer border-none bg-transparent"
+              style={{ color: "var(--text-muted)", opacity: logsRefreshing ? 0.5 : 1 }}
             >
-              <RefreshCw
-                size={12}
-                className={logsRefreshing ? "animate-spin" : ""}
-              />
+              <RefreshCw size={10} className={logsRefreshing ? "animate-spin" : ""} />
               Refresh
-            </Button>
-          </div>
+            </button>
+          }
+        >
           <pre
             ref={logsEndRef}
-            className="text-xs p-4 rounded-xl overflow-auto"
+            className="text-[10px] p-3 rounded-lg overflow-auto"
             style={{
-              fontFamily:
-                "'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', monospace",
-              minHeight: "300px",
-              maxHeight: "500px",
-              width: "100%",
-              background: "var(--bg-base)",
-              color: "var(--text-secondary)",
+              fontFamily: "'JetBrains Mono', monospace",
+              minHeight: 120, maxHeight: 250, width: "100%",
+              background: "var(--bg-base)", color: "var(--text-secondary)",
               border: "1px solid var(--border)",
-              boxShadow: "inset 0 2px 4px rgba(0,0,0,0.2)",
-              lineHeight: "1.6",
-              whiteSpace: "pre",
-              margin: 0,
+              lineHeight: 1.5, whiteSpace: "pre", margin: 0,
             }}
-          >
-            {logs || "No logs available"}
-          </pre>
-        </Card>
+          >{logs || "No logs available"}</pre>
+        </Section>
       )}
     </div>
   );
 }
 
 // ===========================================================================
-// WhatsApp Config Section
+// Section wrapper
+// ===========================================================================
+
+function Section({ icon, title, action, children }: {
+  icon: React.ReactNode; title: string; action?: React.ReactNode; children: React.ReactNode;
+}) {
+  return (
+    <div className="mb-3 p-3 rounded-lg" style={{ background: "rgba(20,20,20,0.9)", border: "1px solid var(--border)" }}>
+      <div className="flex items-center justify-between mb-2.5">
+        <div className="flex items-center gap-1.5">
+          <span style={{ color: "var(--text-muted)" }}>{icon}</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+            {title}
+          </span>
+        </div>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ===========================================================================
+// Action button
+// ===========================================================================
+
+function ActionBtn({ icon, label, onClick, disabled, variant, small }: {
+  icon: React.ReactNode; label: string; onClick: () => void;
+  disabled?: boolean; variant?: "secondary" | "danger"; small?: boolean;
+}) {
+  const base: React.CSSProperties = variant === "danger"
+    ? { background: "rgba(220,38,38,0.12)", color: "#fb7185", border: "1px solid rgba(251,113,133,0.15)" }
+    : variant === "secondary"
+      ? { background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border)" }
+      : { background: "#fafafa", color: "#09090b" };
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center gap-1 ${small ? "px-1.5 py-0.5 text-[10px]" : "px-2.5 py-1.5 text-xs"} rounded-lg font-medium cursor-pointer border-none`}
+      style={{ ...base, opacity: disabled ? 0.4 : 1, pointerEvents: disabled ? "none" : "auto" }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+// ===========================================================================
+// Config Field
+// ===========================================================================
+
+function ConfigField({ fieldKey, value, onSave }: { fieldKey: string; value: unknown; onSave: (v: string) => void }) {
+  const displayValue = typeof value === "string" ? value : JSON.stringify(value);
+  const [localValue, setLocalValue] = useState(displayValue);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    const next = typeof value === "string" ? value : JSON.stringify(value);
+    setLocalValue(next);
+    setDirty(false);
+  }, [value]);
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] font-mono shrink-0 px-2 py-1 rounded truncate" style={{
+        color: "var(--text-secondary)", background: "var(--bg-tertiary)", maxWidth: 120,
+      }} title={fieldKey}>{fieldKey}</span>
+      <input
+        value={localValue}
+        onChange={(e) => { setLocalValue(e.target.value); setDirty(e.target.value !== displayValue); }}
+        onBlur={() => { if (dirty) onSave(localValue); }}
+        onKeyDown={(e) => { if (e.key === "Enter" && dirty) onSave(localValue); }}
+        className="flex-1 px-2 py-1 rounded-lg text-xs outline-none"
+        style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+      />
+    </div>
+  );
+}
+
+// ===========================================================================
+// WhatsApp Config
 // ===========================================================================
 
 const WHATSAPP_MANAGED_KEYS = ["bridgeUrl", "prefix", "whitelist", "allowedGroups", "transcriptionBackend", "whisperUrl"];
@@ -1065,41 +771,26 @@ const COUNTRY_CODES: { value: string; label: string; code: string }[] = [
   { value: "58", label: "Venezuela (+58)", code: "+58" },
 ];
 
-// Sorted by longest prefix first for correct matching
 const COUNTRY_CODE_PREFIXES = COUNTRY_CODES
   .map((c) => ({ prefix: c.value, display: c.code }))
   .sort((a, b) => b.prefix.length - a.prefix.length);
 
 function formatPhoneNumber(num: string): string {
   for (const { prefix, display } of COUNTRY_CODE_PREFIXES) {
-    if (num.startsWith(prefix)) {
-      return `${display} ${num.slice(prefix.length)}`;
-    }
+    if (num.startsWith(prefix)) return `${display} ${num.slice(prefix.length)}`;
   }
   return `+${num}`;
 }
 
-interface WhatsAppConfigSectionProps {
-  pluginName: string;
-  config: Record<string, unknown>;
-  running: boolean;
+function WhatsAppConfig({ pluginName, config, running, onConfigSave }: {
+  pluginName: string; config: Record<string, unknown>; running: boolean;
   onConfigSave: (pluginName: string, key: string, value: string) => void;
-}
-
-function WhatsAppConfigSection({
-  pluginName,
-  config,
-  running,
-  onConfigSave,
-}: WhatsAppConfigSectionProps) {
+}) {
   const { toast } = useToast();
-
-  // --- Bridge URL state ---
   const bridgeUrl = (config.bridgeUrl as string) ?? "";
   const [localBridgeUrl, setLocalBridgeUrl] = useState(bridgeUrl);
   useEffect(() => setLocalBridgeUrl((config.bridgeUrl as string) ?? ""), [config.bridgeUrl]);
 
-  // --- Prefix state ---
   const prefixValue = config.prefix;
   const prefixStr = prefixValue === null || prefixValue === undefined ? "" : String(prefixValue);
   const [localPrefix, setLocalPrefix] = useState(prefixStr);
@@ -1108,32 +799,22 @@ function WhatsAppConfigSection({
     setLocalPrefix(v === null || v === undefined ? "" : String(v));
   }, [config.prefix]);
 
-  // --- Groups state ---
   const [groups, setGroups] = useState<WhatsAppGroup[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [groupsFetched, setGroupsFetched] = useState(false);
-  const allowedGroups: string[] = Array.isArray(config.allowedGroups)
-    ? (config.allowedGroups as string[])
-    : [];
+  const allowedGroups: string[] = Array.isArray(config.allowedGroups) ? (config.allowedGroups as string[]) : [];
 
-  // --- Whitelist state ---
-  const whitelist: string[] = Array.isArray(config.whitelist)
-    ? (config.whitelist as string[])
-    : [];
+  const whitelist: string[] = Array.isArray(config.whitelist) ? (config.whitelist as string[]) : [];
   const [showAddPhone, setShowAddPhone] = useState(false);
   const [phoneCountry, setPhoneCountry] = useState("54");
   const [phoneNumber, setPhoneNumber] = useState("");
 
-  // --- Transcription state ---
   const transcriptionBackend = (config.transcriptionBackend as string) ?? "openai";
   const whisperUrl = (config.whisperUrl as string) ?? "http://localhost:8787";
   const [localWhisperUrl, setLocalWhisperUrl] = useState(whisperUrl);
   useEffect(() => setLocalWhisperUrl((config.whisperUrl as string) ?? "http://localhost:8787"), [config.whisperUrl]);
 
-  // --- Helpers ---
-  const saveField = (key: string, value: unknown) => {
-    onConfigSave(pluginName, key, JSON.stringify(value));
-  };
+  const saveField = (key: string, value: unknown) => onConfigSave(pluginName, key, JSON.stringify(value));
 
   const handleFetchGroups = async () => {
     setGroupsLoading(true);
@@ -1141,9 +822,7 @@ function WhatsAppConfigSection({
       const result = await fetchWhatsappGroups(pluginName);
       setGroups(result);
       setGroupsFetched(true);
-      if (result.length === 0) {
-        toast("info", "No groups found. Is the connector running?");
-      }
+      if (result.length === 0) toast("info", "No groups found.");
     } catch (e) {
       toast("error", `Failed to fetch groups: ${e}`);
     } finally {
@@ -1162,201 +841,117 @@ function WhatsAppConfigSection({
     const digits = phoneNumber.replace(/\D/g, "");
     if (!digits) return;
     const full = phoneCountry + digits;
-    if (whitelist.includes(full)) {
-      toast("info", "This number is already in the whitelist");
-      return;
-    }
+    if (whitelist.includes(full)) { toast("info", "Already in whitelist"); return; }
     saveField("whitelist", [...whitelist, full]);
     setPhoneNumber("");
     setShowAddPhone(false);
   };
 
-  const handleRemovePhone = (num: string) => {
-    saveField("whitelist", whitelist.filter((n) => n !== num));
-  };
+  const handleRemovePhone = (num: string) => saveField("whitelist", whitelist.filter((n) => n !== num));
 
-  // Remaining config keys (not managed by custom UI)
-  const remainingKeys = Object.keys(config).filter(
-    (k) => !WHATSAPP_MANAGED_KEYS.includes(k),
-  );
+  const remainingKeys = Object.keys(config).filter((k) => !WHATSAPP_MANAGED_KEYS.includes(k));
 
   return (
     <>
       {/* Bridge URL */}
-      <Card className="mb-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Settings2 size={14} style={{ color: "var(--text-muted)" }} />
-          <h3
-            className="text-[11px] font-bold uppercase tracking-[0.1em]"
-            style={{ color: "var(--text-muted)" }}
-          >
-            Bridge URL
-          </h3>
-        </div>
-        <Input
+      <Section icon={<Settings2 size={12} />} title="Bridge URL">
+        <input
           value={localBridgeUrl}
           placeholder="http://localhost:3000"
           onChange={(e) => setLocalBridgeUrl(e.target.value)}
-          onBlur={() => {
-            if (localBridgeUrl !== bridgeUrl) {
-              saveField("bridgeUrl", localBridgeUrl);
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && localBridgeUrl !== bridgeUrl) {
-              saveField("bridgeUrl", localBridgeUrl);
-            }
-          }}
+          onBlur={() => { if (localBridgeUrl !== bridgeUrl) saveField("bridgeUrl", localBridgeUrl); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && localBridgeUrl !== bridgeUrl) saveField("bridgeUrl", localBridgeUrl); }}
+          className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none"
+          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
         />
-      </Card>
+      </Section>
 
       {/* Prefix */}
-      <Card className="mb-6">
-        <div className="flex items-center gap-2 mb-3">
-          <Settings2 size={14} style={{ color: "var(--text-muted)" }} />
-          <h3
-            className="text-[11px] font-bold uppercase tracking-[0.1em]"
-            style={{ color: "var(--text-muted)" }}
-          >
-            Prefix
-          </h3>
-        </div>
-        <Input
+      <Section icon={<Settings2 size={12} />} title="Prefix">
+        <input
           value={localPrefix}
-          placeholder="No prefix (all messages processed)"
+          placeholder="No prefix (all messages)"
           onChange={(e) => setLocalPrefix(e.target.value)}
           onBlur={() => {
             const next = localPrefix.trim() || null;
             const prev = config.prefix === undefined ? null : config.prefix;
-            if (next !== prev) {
-              saveField("prefix", next);
-            }
+            if (next !== prev) saveField("prefix", next);
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               const next = localPrefix.trim() || null;
               const prev = config.prefix === undefined ? null : config.prefix;
-              if (next !== prev) {
-                saveField("prefix", next);
-              }
+              if (next !== prev) saveField("prefix", next);
             }
           }}
+          className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none"
+          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
         />
-        <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
-          When set, only messages starting with this prefix will be processed.
+        <p className="text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+          Only messages starting with this prefix will be processed.
         </p>
-      </Card>
+      </Section>
 
-      {/* Transcription Backend */}
-      <Card className="mb-6">
-        <div className="flex items-center gap-2 mb-3">
-          <Settings2 size={14} style={{ color: "var(--text-muted)" }} />
-          <h3
-            className="text-[11px] font-bold uppercase tracking-[0.1em]"
-            style={{ color: "var(--text-muted)" }}
-          >
-            Audio Transcription
-          </h3>
-        </div>
-        <Select
-          label="Backend"
+      {/* Transcription */}
+      <Section icon={<Settings2 size={12} />} title="Audio Transcription">
+        <select
           value={transcriptionBackend}
           onChange={(e) => saveField("transcriptionBackend", e.target.value)}
-          options={[
-            { value: "openai", label: "OpenAI API" },
-            { value: "local", label: "Local (whisper.cpp)" },
-          ]}
-        />
+          className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none appearance-none"
+          style={{
+            background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
+            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+            backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center", paddingRight: "2rem",
+          }}
+        >
+          <option value="openai">OpenAI API</option>
+          <option value="local">Local (whisper.cpp)</option>
+        </select>
         {transcriptionBackend === "local" && (
-          <div className="mt-3">
-            <Input
-              label="Whisper Server URL"
+          <div className="mt-2">
+            <input
               value={localWhisperUrl}
               placeholder="http://localhost:8787"
               onChange={(e) => setLocalWhisperUrl(e.target.value)}
-              onBlur={() => {
-                if (localWhisperUrl !== whisperUrl) {
-                  saveField("whisperUrl", localWhisperUrl);
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && localWhisperUrl !== whisperUrl) {
-                  saveField("whisperUrl", localWhisperUrl);
-                }
-              }}
+              onBlur={() => { if (localWhisperUrl !== whisperUrl) saveField("whisperUrl", localWhisperUrl); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && localWhisperUrl !== whisperUrl) saveField("whisperUrl", localWhisperUrl); }}
+              className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none"
+              style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
             />
-            <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
-              URL of the local whisper.cpp server. The whisper plugin auto-starts if installed.
-            </p>
           </div>
         )}
-        {transcriptionBackend === "openai" && (
-          <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
-            Uses OpenAI Whisper API. Requires OPENAI_API_KEY in credentials.
-          </p>
-        )}
-      </Card>
+      </Section>
 
       {/* Allowed Groups */}
-      <Card className="mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Users size={14} style={{ color: "var(--text-muted)" }} />
-            <h3
-              className="text-[11px] font-bold uppercase tracking-[0.1em]"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Allowed Groups
-            </h3>
-            {allowedGroups.length > 0 && (
-              <Badge variant="neutral">{allowedGroups.length} selected</Badge>
-            )}
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
+      <Section
+        icon={<Users size={12} />}
+        title={`Groups${allowedGroups.length ? ` (${allowedGroups.length})` : ""}`}
+        action={
+          <button
             onClick={handleFetchGroups}
             disabled={!running || groupsLoading}
+            className="inline-flex items-center gap-1 text-[10px] cursor-pointer border-none bg-transparent"
+            style={{ color: "var(--text-muted)", opacity: !running || groupsLoading ? 0.4 : 1 }}
           >
-            {groupsLoading ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <RefreshCw size={12} />
-            )}
-            {groupsLoading ? "Fetching..." : "Fetch Groups"}
-          </Button>
-        </div>
+            {groupsLoading ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+            Fetch
+          </button>
+        }
+      >
         {!running && !groupsFetched && (
-          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Start the plugin to fetch available groups.
-          </p>
-        )}
-        {groupsFetched && groups.length === 0 && (
-          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            No groups found. Make sure the WhatsApp connector is running and authenticated.
-          </p>
+          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>Start plugin to fetch groups.</p>
         )}
         {groups.length > 0 && (
-          <div
-            className="flex flex-col gap-1 rounded-xl overflow-auto"
-            style={{
-              maxHeight: 280,
-              background: "var(--bg-base)",
-              border: "1px solid var(--border)",
-              padding: 4,
-            }}
-          >
+          <div className="flex flex-col gap-px rounded-lg overflow-auto" style={{
+            maxHeight: 180, border: "1px solid var(--border)",
+          }}>
             {groups.map((group) => (
               <label
                 key={group.id}
-                className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all"
-                style={{ transitionDuration: "120ms" }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                }}
+                className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer text-xs"
+                style={{ background: "var(--bg-secondary)" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-secondary)"; }}
               >
                 <input
                   type="checkbox"
@@ -1364,234 +959,178 @@ function WhatsAppConfigSection({
                   onChange={() => handleToggleGroup(group.id)}
                   style={{ accentColor: "#a1a1aa" }}
                 />
-                <div className="flex-1 min-w-0">
-                  <span
-                    className="text-sm font-medium block truncate"
-                    style={{ color: "var(--text-primary)" }}
-                  >
-                    {group.subject}
-                  </span>
-                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    {group.participants != null ? `${group.participants} members` : "group"}
-                  </span>
-                </div>
-                <span
-                  className="text-xs font-mono shrink-0"
-                  style={{ color: "var(--text-muted)", opacity: 0.6 }}
-                >
-                  {group.id.length > 24 ? group.id.slice(0, 24) + "..." : group.id}
-                </span>
+                <span className="truncate" style={{ color: "var(--text-primary)" }}>{group.subject}</span>
               </label>
             ))}
           </div>
         )}
-      </Card>
+      </Section>
 
-      {/* Whitelist (Phone Numbers) */}
-      <Card className="mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Phone size={14} style={{ color: "var(--text-muted)" }} />
-            <h3
-              className="text-[11px] font-bold uppercase tracking-[0.1em]"
+      {/* Whitelist */}
+      <Section
+        icon={<Phone size={12} />}
+        title={`Whitelist${whitelist.length ? ` (${whitelist.length})` : ""}`}
+        action={
+          !showAddPhone ? (
+            <button
+              onClick={() => setShowAddPhone(true)}
+              className="inline-flex items-center gap-1 text-[10px] cursor-pointer border-none bg-transparent"
               style={{ color: "var(--text-muted)" }}
             >
-              Whitelist
-            </h3>
-            {whitelist.length > 0 && (
-              <Badge variant="neutral">{whitelist.length}</Badge>
-            )}
-          </div>
-          {!showAddPhone && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowAddPhone(true)}
-            >
-              <Plus size={12} />
-              Add Phone Number
-            </Button>
-          )}
-        </div>
-
-        {/* Phone chips */}
+              <Plus size={10} />
+              Add
+            </button>
+          ) : undefined
+        }
+      >
         {whitelist.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-3">
+          <div className="flex flex-wrap gap-1 mb-2">
             {whitelist.map((num) => (
-              <span
-                key={num}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono"
-                style={{
-                  background: "var(--bg-tertiary)",
-                  border: "1px solid var(--border)",
-                  color: "var(--text-primary)",
-                }}
-              >
+              <span key={num} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono" style={{
+                background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
+              }}>
                 {formatPhoneNumber(num)}
                 <button
-                  className="inline-flex items-center justify-center rounded cursor-pointer border-none p-0 transition-all"
-                  style={{
-                    background: "transparent",
-                    color: "var(--text-muted)",
-                    width: 16,
-                    height: 16,
-                    transitionDuration: "120ms",
-                  }}
+                  className="inline-flex border-none bg-transparent cursor-pointer p-0"
+                  style={{ color: "var(--text-muted)" }}
                   onClick={() => handleRemovePhone(num)}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.color = "var(--danger)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.color = "var(--text-muted)";
-                  }}
                 >
-                  <X size={12} />
+                  <X size={10} />
                 </button>
               </span>
             ))}
           </div>
         )}
-
         {whitelist.length === 0 && !showAddPhone && (
-          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            No phone numbers in the whitelist. All numbers are allowed.
-          </p>
+          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>No numbers. All allowed.</p>
         )}
-
-        {/* Add phone form */}
         {showAddPhone && (
-          <div
-            className="flex items-end gap-2 p-3 rounded-xl"
-            style={{
-              background: "var(--bg-base)",
-              border: "1px solid var(--border)",
-            }}
-          >
-            <div style={{ width: 180 }}>
-              <Select
-                options={COUNTRY_CODES.map((c) => ({
-                  value: c.value,
-                  label: c.label,
-                }))}
-                value={phoneCountry}
-                onChange={(e) => setPhoneCountry(e.target.value)}
-              />
-            </div>
-            <div className="flex-1">
-              <Input
+          <div className="flex flex-wrap gap-1.5 p-2 rounded-lg" style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}>
+            <select
+              value={phoneCountry}
+              onChange={(e) => setPhoneCountry(e.target.value)}
+              className="px-2 py-1 rounded text-[10px] outline-none appearance-none"
+              style={{
+                background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
+                width: "100%",
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+                backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center", paddingRight: "2rem",
+              }}
+            >
+              {COUNTRY_CODES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+            <div className="flex gap-1.5 w-full">
+              <input
                 value={phoneNumber}
                 placeholder="Phone number"
                 onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ""))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleAddPhone();
-                  if (e.key === "Escape") setShowAddPhone(false);
-                }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleAddPhone(); if (e.key === "Escape") setShowAddPhone(false); }}
+                className="flex-1 px-2 py-1 rounded text-[10px] outline-none"
+                style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
               />
+              <button
+                onClick={handleAddPhone}
+                disabled={!phoneNumber.trim()}
+                className="inline-flex items-center gap-0.5 px-2 py-1 rounded text-[10px] font-medium cursor-pointer border-none"
+                style={{ background: "#fafafa", color: "#09090b", opacity: !phoneNumber.trim() ? 0.4 : 1 }}
+              >
+                <Plus size={10} /> Add
+              </button>
+              <button
+                onClick={() => { setShowAddPhone(false); setPhoneNumber(""); }}
+                className="px-2 py-1 rounded text-[10px] cursor-pointer border-none"
+                style={{ background: "transparent", color: "var(--text-muted)" }}
+              >
+                Cancel
+              </button>
             </div>
-            <Button size="sm" onClick={handleAddPhone} disabled={!phoneNumber.trim()}>
-              <Plus size={12} />
-              Add
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setShowAddPhone(false);
-                setPhoneNumber("");
-              }}
-            >
-              Cancel
-            </Button>
           </div>
         )}
-      </Card>
+      </Section>
 
-      {/* Remaining config fields */}
+      {/* Remaining config */}
       {remainingKeys.length > 0 && (
-        <Card className="mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Settings2 size={14} style={{ color: "var(--text-muted)" }} />
-            <h3
-              className="text-[11px] font-bold uppercase tracking-[0.1em]"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Other Settings
-            </h3>
-          </div>
-          <div className="flex flex-col gap-3">
+        <Section icon={<Settings2 size={12} />} title="Other Settings">
+          <div className="flex flex-col gap-2">
             {remainingKeys.map((key) => (
-              <ConfigField
-                key={key}
-                fieldKey={key}
-                value={config[key]}
-                onSave={(value) => onConfigSave(pluginName, key, value)}
-              />
+              <ConfigField key={key} fieldKey={key} value={config[key]} onSave={(v) => onConfigSave(pluginName, key, v)} />
             ))}
           </div>
-        </Card>
+        </Section>
       )}
     </>
   );
 }
 
 // ===========================================================================
-// Config Field (editable key-value row)
+// QR Modal
 // ===========================================================================
 
-interface ConfigFieldProps {
-  fieldKey: string;
-  value: unknown;
-  onSave: (value: string) => void;
-}
-
-function ConfigField({ fieldKey, value, onSave }: ConfigFieldProps) {
-  const displayValue = typeof value === "string" ? value : JSON.stringify(value);
-  const [localValue, setLocalValue] = useState(displayValue);
-  const [dirty, setDirty] = useState(false);
-
-  // Sync from parent when config refreshes after a save
+function QrModal({ qrDataUrl, qrLoading, qrLinked, onClose, onDone }: {
+  qrDataUrl: string | null; qrLoading: boolean; qrLinked: boolean;
+  onClose: () => void; onDone: () => void;
+}) {
   useEffect(() => {
-    const next = typeof value === "string" ? value : JSON.stringify(value);
-    setLocalValue(next);
-    setDirty(false);
-  }, [value]);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setLocalValue(e.target.value);
-    setDirty(e.target.value !== displayValue);
-  };
-
-  const handleBlur = () => {
-    if (dirty) {
-      onSave(localValue);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && dirty) {
-      onSave(localValue);
-    }
-  };
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
 
   return (
-    <div className="flex items-center gap-3">
-      <span
-        className="text-xs font-mono w-40 shrink-0 px-2.5 py-1.5 rounded-lg truncate"
-        style={{
-          color: "var(--text-secondary)",
-          background: "var(--bg-tertiary)",
-        }}
-        title={fieldKey}
+    <div
+      className="fixed inset-0 flex items-center justify-center z-50"
+      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)" }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-xl p-5 flex flex-col items-center gap-3"
+        style={{ background: "rgba(20,20,20,0.98)", border: "1px solid var(--border)", maxWidth: 300 }}
+        onClick={(e) => e.stopPropagation()}
       >
-        {fieldKey}
-      </span>
-      <div className="flex-1">
-        <Input
-          value={localValue}
-          onChange={handleChange}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-        />
+        {qrLinked ? (
+          <>
+            <div className="flex items-center justify-center" style={{
+              width: 56, height: 56, borderRadius: "50%",
+              background: "rgba(74,222,128,0.15)", border: "2px solid rgba(74,222,128,0.4)",
+            }}>
+              <Check size={28} style={{ color: "#4ade80" }} />
+            </div>
+            <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Linked!</span>
+            <p className="text-[11px] text-center" style={{ color: "var(--text-secondary)" }}>
+              WhatsApp connected successfully.
+            </p>
+            <button onClick={onDone} className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
+              style={{ background: "#fafafa", color: "#09090b" }}>Done</button>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-1.5">
+              <QrCode size={14} style={{ color: "var(--text-secondary)" }} />
+              <span className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>Scan QR Code</span>
+            </div>
+            <p className="text-[10px] text-center" style={{ color: "var(--text-muted)" }}>
+              Open WhatsApp &gt; Settings &gt; Linked Devices
+            </p>
+            {qrLoading ? (
+              <div className="flex items-center justify-center" style={{ width: 220, height: 220 }}>
+                <Loader2 size={24} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+              </div>
+            ) : qrDataUrl ? (
+              <img src={qrDataUrl} alt="QR" style={{ width: 220, height: 220, borderRadius: 8, imageRendering: "pixelated" }} />
+            ) : (
+              <div className="flex items-center justify-center text-[10px] text-center" style={{
+                width: 220, height: 140, color: "var(--text-muted)", background: "var(--bg-tertiary)",
+                borderRadius: 8, border: "1px dashed var(--border)", padding: 16,
+              }}>
+                No QR available. Is the plugin running?
+              </div>
+            )}
+            <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs cursor-pointer"
+              style={{ background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border)" }}>
+              Close
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1601,26 +1140,12 @@ function ConfigField({ fieldKey, value, onSave }: ConfigFieldProps) {
 // Registry Modal
 // ===========================================================================
 
-interface RegistryModalProps {
-  remotePlugins: RemotePlugin[];
-  loading: boolean;
-  installingRemote: string | null;
-  onInstall: (name: string) => void;
-  onClose: () => void;
-}
-
-function RegistryModal({
-  remotePlugins,
-  loading,
-  installingRemote,
-  onInstall,
-  onClose,
-}: RegistryModalProps) {
-  // Close on Escape
+function RegistryModal({ remotePlugins, loading, installingRemote, onInstall, onClose }: {
+  remotePlugins: RemotePlugin[]; loading: boolean; installingRemote: string | null;
+  onInstall: (name: string) => void; onClose: () => void;
+}) {
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
@@ -1628,164 +1153,88 @@ function RegistryModal({
   return (
     <div
       className="fixed inset-0 flex items-center justify-center z-40"
-      style={{
-        background: "rgba(0,0,0,0.7)",
-        backdropFilter: "blur(8px)",
-        animation: "fadeIn 0.2s ease-out",
-      }}
+      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)" }}
       onClick={onClose}
     >
       <div
-        className="rounded-2xl p-6 w-[640px] max-h-[75vh] flex flex-col"
+        className="rounded-xl p-4 flex flex-col"
         style={{
-          background: "rgba(20, 20, 20, 0.98)",
-          border: "1px solid var(--border)",
-          boxShadow: "var(--shadow-lg)",
-          animation: "scaleIn 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+          background: "rgba(20,20,20,0.98)", border: "1px solid var(--border)",
+          width: "min(440px, 90vw)", maxHeight: "70vh",
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Modal header */}
-        <div className="flex items-center justify-between mb-5 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <h3
-              className="text-base font-bold"
-              style={{ color: "var(--text-primary)" }}
-            >
+        <div className="flex items-center justify-between mb-3 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
               Plugin Registry
-            </h3>
+            </span>
             {!loading && (
-              <Badge variant="neutral">{remotePlugins.length} available</Badge>
+              <span className="text-[10px] px-1.5 py-0.5 rounded" style={{
+                background: "rgba(255,255,255,0.05)", color: "var(--text-muted)",
+              }}>{remotePlugins.length}</span>
             )}
           </div>
           <button
-            className="p-1.5 rounded-xl cursor-pointer border-none transition-all"
-            style={{
-              background: "transparent",
-              color: "var(--text-muted)",
-              transitionDuration: "150ms",
-            }}
             onClick={onClose}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--bg-hover)";
-              e.currentTarget.style.color = "var(--text-primary)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.color = "var(--text-muted)";
-            }}
+            className="p-1 rounded cursor-pointer border-none"
+            style={{ background: "transparent", color: "var(--text-muted)" }}
           >
-            <X size={18} />
+            <X size={14} />
           </button>
         </div>
 
-        {/* Modal body */}
         <div className="overflow-y-auto flex-1">
           {loading ? (
-            <div
-              className="flex items-center justify-center gap-2 py-12"
-              style={{ color: "var(--text-muted)" }}
-            >
-              <Loader2 size={18} className="animate-spin" />
-              <span className="text-sm">Loading registry...</span>
+            <div className="flex items-center justify-center gap-2 py-8" style={{ color: "var(--text-muted)" }}>
+              <Loader2 size={14} className="animate-spin" />
+              <span className="text-xs">Loading...</span>
             </div>
           ) : remotePlugins.length === 0 ? (
-            <div
-              className="py-12 text-center text-sm"
-              style={{ color: "var(--text-muted)" }}
-            >
-              No plugins available in the registry.
+            <div className="py-8 text-center text-xs" style={{ color: "var(--text-muted)" }}>
+              No plugins available.
             </div>
           ) : (
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
               {remotePlugins.map((rp) => (
-                <RegistryPluginRow
+                <div
                   key={rp.name}
-                  plugin={rp}
-                  installing={installingRemote === rp.name}
-                  anyInstalling={installingRemote !== null}
-                  onInstall={onInstall}
-                />
+                  className="flex items-center justify-between px-3 py-2.5 rounded-lg"
+                  style={{ background: "var(--bg-secondary)", transition: "background 120ms" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-secondary)"; }}
+                >
+                  <div className="min-w-0 flex-1 mr-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{rp.name}</span>
+                      <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>v{rp.version}</span>
+                      {rp.installed && <Check size={10} style={{ color: "#4ade80" }} />}
+                    </div>
+                    {rp.description && (
+                      <p className="text-[10px] truncate" style={{ color: "var(--text-muted)" }}>{rp.description}</p>
+                    )}
+                  </div>
+                  {!rp.installed && rp.available && (
+                    <button
+                      onClick={() => onInstall(rp.name)}
+                      disabled={installingRemote !== null}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium cursor-pointer border-none shrink-0"
+                      style={{
+                        background: "#fafafa", color: "#09090b",
+                        opacity: installingRemote !== null ? 0.4 : 1,
+                        pointerEvents: installingRemote !== null ? "none" : "auto",
+                      }}
+                    >
+                      {installingRemote === rp.name ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
+                      Install
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ===========================================================================
-// Registry Plugin Row
-// ===========================================================================
-
-interface RegistryPluginRowProps {
-  plugin: RemotePlugin;
-  installing: boolean;
-  anyInstalling: boolean;
-  onInstall: (name: string) => void;
-}
-
-function RegistryPluginRow({
-  plugin,
-  installing,
-  anyInstalling,
-  onInstall,
-}: RegistryPluginRowProps) {
-  return (
-    <div
-      className="flex items-center justify-between p-4 rounded-xl transition-all"
-      style={{
-        background: "var(--surface-glass)",
-        border: "1px solid var(--border)",
-        transitionDuration: "150ms",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--border-hover)";
-        e.currentTarget.style.background = "rgba(255,255,255,0.05)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--border)";
-        e.currentTarget.style.background = "var(--surface-glass)";
-      }}
-    >
-      <div className="min-w-0 flex-1 mr-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span
-            className="font-semibold text-sm"
-            style={{ color: "var(--text-primary)" }}
-          >
-            {plugin.name}
-          </span>
-          <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>
-            v{plugin.version}
-          </span>
-          {plugin.installed && <Badge variant="success">Installed</Badge>}
-          {!plugin.available && <Badge variant="warning">Unavailable</Badge>}
-        </div>
-        {plugin.description && (
-          <p
-            className="text-xs mt-1 leading-relaxed"
-            style={{ color: "var(--text-secondary)" }}
-          >
-            {plugin.description}
-          </p>
-        )}
-      </div>
-      {!plugin.installed && plugin.available && (
-        <Button
-          size="sm"
-          onClick={() => onInstall(plugin.name)}
-          disabled={anyInstalling}
-        >
-          {installing ? (
-            <Loader2 size={12} className="animate-spin" />
-          ) : (
-            <Download size={12} />
-          )}
-          {installing ? "Installing..." : "Install"}
-        </Button>
-      )}
     </div>
   );
 }

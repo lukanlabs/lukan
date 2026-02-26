@@ -60,6 +60,7 @@ export interface ProviderInfo {
   name: string;
   defaultModel: string;
   active: boolean;
+  currentModel?: string;
 }
 
 export interface FetchedModel {

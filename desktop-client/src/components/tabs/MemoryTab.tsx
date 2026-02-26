@@ -215,7 +215,7 @@ export default function MemoryTab() {
             description="Scoped to a specific project directory."
           >
             {/* Project path input + Load button */}
-            <div className="flex items-end gap-3 mb-5">
+            <div className="project-path-form flex items-end gap-3 mb-5">
               <div className="flex-1">
                 <Input
                   label="Project Path"

@@ -160,12 +160,21 @@ pub struct ResolvedConfig {
 }
 
 impl ResolvedConfig {
-    /// Get the effective model (config override or provider default)
+    /// Get the effective model (config override or provider default).
+    /// Strips "provider:" prefix if present (models list stores entries as
+    /// "provider:model_id" and legacy configs may have saved the prefixed form).
     pub fn effective_model(&self) -> String {
-        self.config
+        let raw = self
+            .config
             .model
             .clone()
-            .unwrap_or_else(|| self.config.provider.default_model().to_string())
+            .unwrap_or_else(|| self.config.provider.default_model().to_string());
+        let prefix = format!("{}:", self.config.provider);
+        if raw.starts_with(&prefix) {
+            raw[prefix.len()..].to_string()
+        } else {
+            raw
+        }
     }
 }
 

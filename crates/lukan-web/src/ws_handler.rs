@@ -987,7 +987,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
 
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
-        tools: create_configured_registry(&permissions),
+        tools: create_configured_registry(&permissions, &allowed),
         system_prompt,
         cwd,
         provider_name,
@@ -1048,7 +1048,7 @@ async fn create_agent_with_session(
 
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
-        tools: create_configured_registry(&permissions),
+        tools: create_configured_registry(&permissions, &allowed),
         system_prompt,
         cwd,
         provider_name,

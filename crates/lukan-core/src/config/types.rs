@@ -173,6 +173,7 @@ impl ResolvedConfig {
 pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
     ("File ops", &["ReadFile", "WriteFile", "EditFile"]),
     ("Search", &["Grep", "Glob"]),
+    ("Agent", &["Explore", "SubAgent", "SubAgentResult"]),
     ("Execution", &["Bash"]),
     ("Web", &["WebFetch"]),
     (

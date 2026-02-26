@@ -115,7 +115,13 @@ impl Tool for BrowserSavePDF {
 
             let safe_title: String = title
                 .chars()
-                .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
                 .collect::<String>()
                 .trim()
                 .to_string();

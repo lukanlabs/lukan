@@ -12,6 +12,9 @@ pub struct StatusBarWidget<'a> {
     model: &'a str,
     input_tokens: u64,
     output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+    context_size: u64,
     is_streaming: bool,
     active_tool: Option<&'a str>,
     memory_active: bool,
@@ -29,6 +32,9 @@ impl<'a> StatusBarWidget<'a> {
         model: &'a str,
         input_tokens: u64,
         output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_creation_tokens: u64,
+        context_size: u64,
         is_streaming: bool,
         active_tool: Option<&'a str>,
         memory_active: bool,
@@ -39,6 +45,9 @@ impl<'a> StatusBarWidget<'a> {
             model,
             input_tokens,
             output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+            context_size,
             is_streaming,
             active_tool,
             memory_active,
@@ -77,8 +86,38 @@ impl Widget for StatusBarWidget<'_> {
             Style::default().fg(Color::DarkGray),
         );
 
+        // Context size with compaction threshold indicator
+        let ctx_color = if self.context_size >= 150_000 {
+            Color::Red
+        } else if self.context_size >= 100_000 {
+            Color::Yellow
+        } else {
+            Color::DarkGray
+        };
+        let ctx_text = if self.context_size > 0 {
+            format!(" ctx: {}k/150k", self.context_size / 1000)
+        } else {
+            String::new()
+        };
+        let context_span = Span::styled(ctx_text, Style::default().fg(ctx_color));
+
+        // Cache info
+        let cache_text = if self.cache_read_tokens > 0 || self.cache_creation_tokens > 0 {
+            let mut parts = Vec::new();
+            if self.cache_read_tokens > 0 {
+                parts.push(format!("{}k hit", self.cache_read_tokens / 1000));
+            }
+            if self.cache_creation_tokens > 0 {
+                parts.push(format!("{}k write", self.cache_creation_tokens / 1000));
+            }
+            format!(" cache: {}", parts.join(" "))
+        } else {
+            String::new()
+        };
+        let cache_span = Span::styled(cache_text, Style::default().fg(Color::DarkGray));
+
         let tokens = Span::styled(
-            format!(" tokens: {}↓ {}↑ ", self.input_tokens, self.output_tokens),
+            format!(" tokens: {}↓ {}↑", self.input_tokens, self.output_tokens),
             Style::default().fg(Color::DarkGray),
         );
 
@@ -133,6 +172,8 @@ impl Widget for StatusBarWidget<'_> {
             status_indicator,
             view_indicator,
             provider_info,
+            context_span,
+            cache_span,
             tokens,
             mode_indicator,
             memory_indicator,

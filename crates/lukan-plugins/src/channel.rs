@@ -91,7 +91,7 @@ impl PluginChannel {
             let cwd = std::env::current_dir().unwrap_or_default();
             load_permissions_sync(&cwd)
         };
-        let mut registry = lukan_tools::create_configured_registry(&permissions);
+        let mut registry = lukan_tools::create_configured_registry(&permissions, &[]);
         let refs: Vec<&str> = tools_list.iter().map(|s| s.as_str()).collect();
         registry.retain(&refs);
 

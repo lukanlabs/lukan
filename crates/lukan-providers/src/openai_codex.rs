@@ -386,11 +386,17 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                     if let Some(usage) = response.get("usage") {
                         let input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
                         let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
+                        // OpenAI returns cached tokens inside input_tokens_details
+                        let cached = usage
+                            .get("input_tokens_details")
+                            .and_then(|d| d.get("cached_tokens"))
+                            .and_then(|v| v.as_u64())
+                            .filter(|&v| v > 0);
                         tx.send(StreamEvent::Usage {
                             input_tokens,
                             output_tokens,
                             cache_creation_tokens: None,
-                            cache_read_tokens: None,
+                            cache_read_tokens: cached,
                         })
                         .await
                         .ok();

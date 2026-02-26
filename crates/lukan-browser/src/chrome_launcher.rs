@@ -80,10 +80,7 @@ fn browser_candidates(name: &str) -> (Vec<&'static str>, Vec<&'static str>) {
                 )
             } else {
                 (
-                    vec![
-                        "/usr/bin/google-chrome",
-                        "/usr/bin/google-chrome-stable",
-                    ],
+                    vec!["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"],
                     vec!["google-chrome", "google-chrome-stable"],
                 )
             }

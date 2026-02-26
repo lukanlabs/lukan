@@ -351,6 +351,7 @@ impl OpenAiCompatBase {
         let mut tool_calls: HashMap<u32, ToolCallAccum> = HashMap::new();
         let mut input_tokens: u64 = 0;
         let mut output_tokens: u64 = 0;
+        let mut cached_tokens: Option<u64> = None;
         let mut finish_reason: Option<String> = None;
 
         let mut stream = response.bytes_stream();
@@ -380,6 +381,10 @@ impl OpenAiCompatBase {
                         if let Some(usage) = chunk.usage {
                             input_tokens = usage.prompt_tokens.unwrap_or(0);
                             output_tokens = usage.completion_tokens.unwrap_or(0);
+                            cached_tokens = usage
+                                .prompt_tokens_details
+                                .and_then(|d| d.cached_tokens)
+                                .filter(|&v| v > 0);
                         }
 
                         let Some(choice) = chunk.choices.first() else {
@@ -508,7 +513,7 @@ impl OpenAiCompatBase {
             input_tokens,
             output_tokens,
             cache_creation_tokens: None,
-            cache_read_tokens: None,
+            cache_read_tokens: cached_tokens,
         })
         .await
         .ok();
@@ -581,4 +586,12 @@ struct OpenAiUsage {
     prompt_tokens: Option<u64>,
     #[serde(default)]
     completion_tokens: Option<u64>,
+    #[serde(default)]
+    prompt_tokens_details: Option<OpenAiPromptTokensDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiPromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u64>,
 }

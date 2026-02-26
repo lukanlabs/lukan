@@ -205,9 +205,9 @@ async fn main() -> Result<()> {
                                 visible: browser_visible,
                                 browser_name: browser.unwrap_or_else(|| "auto".to_string()),
                             })
-                    } else {
-                        None
-                    };
+                        } else {
+                            None
+                        };
                     run_chat(provider_override, model_override, browser_opts).await?;
                 }
             }

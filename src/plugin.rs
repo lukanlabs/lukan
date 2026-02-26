@@ -488,7 +488,7 @@ async fn plugin_start_foreground(
         .flatten()
         .map(|(_, cfg)| cfg.permissions)
         .unwrap_or_default();
-    let mut registry = create_configured_registry(&permissions);
+    let mut registry = create_configured_registry(&permissions, &[]);
     let plugin_config = plugin_config::load_plugin_config(name)
         .await
         .unwrap_or_default();

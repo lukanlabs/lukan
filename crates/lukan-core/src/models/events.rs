@@ -135,6 +135,16 @@ pub enum StreamEvent {
     /// An error occurred
     Error { error: String },
 
+    /// Progress update from a running Explore sub-agent
+    ExploreProgress {
+        id: String,
+        task: String,
+        tool_calls: u32,
+        tokens: u64,
+        elapsed_secs: u64,
+        activity: String,
+    },
+
     /// System event from a plugin (fire-and-forget notification)
     SystemNotification {
         source: String,

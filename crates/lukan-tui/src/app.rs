@@ -63,6 +63,10 @@ pub struct App {
     is_streaming: bool,
     input_tokens: u64,
     output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+    /// Context size of the last API call (= input_tokens of the latest turn)
+    context_size: u64,
     provider: Arc<dyn Provider>,
     config: ResolvedConfig,
     should_quit: bool,
@@ -164,6 +168,10 @@ pub struct App {
     show_event_history: bool,
     /// Scroll offset for the event history overlay
     event_history_scroll: u16,
+    /// Index of the first assistant text message in the current streaming turn.
+    /// Continuation text after tool calls is appended here instead of creating
+    /// a separate message (prevents mid-sentence splits).
+    turn_text_msg_idx: Option<usize>,
     /// Runtime tool picker overlay state (Alt+P)
     tool_picker: Option<ToolPicker>,
     /// Persisted disabled tools applied to new turns
@@ -261,10 +269,14 @@ struct PlannerQuestionState {
     id: String,
     questions: Vec<PlannerQuestionItem>,
     current_question: usize,
-    /// Selected option index per question
+    /// Selected option index per question (last index = custom input)
     selections: Vec<usize>,
     /// For multi-select: which options are toggled per question
     multi_selections: Vec<Vec<bool>>,
+    /// Whether we're in text-input mode for the custom response
+    editing_custom: bool,
+    /// Custom text input per question
+    custom_inputs: Vec<String>,
 }
 
 impl App {
@@ -282,6 +294,9 @@ impl App {
             is_streaming: false,
             input_tokens: 0,
             output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            context_size: 0,
             provider,
             config,
             should_quit: false,
@@ -334,6 +349,7 @@ impl App {
             event_agent_has_unread: false,
             show_event_history: false,
             event_history_scroll: 0,
+            turn_text_msg_idx: None,
             tool_picker: None,
             disabled_tools: HashSet::new(),
         }
@@ -394,7 +410,8 @@ impl App {
             groups.extend(plugin_groups);
         }
 
-        let browser_tools: HashSet<String> = BROWSER_TOOLS.iter().map(|t| (*t).to_string()).collect();
+        let browser_tools: HashSet<String> =
+            BROWSER_TOOLS.iter().map(|t| (*t).to_string()).collect();
         if self.browser_tools {
             let mut browser: Vec<String> = BROWSER_TOOLS.iter().map(|t| (*t).to_string()).collect();
             browser.sort();
@@ -547,9 +564,9 @@ impl App {
         self.planner_answer_tx = Some(planner_answer_tx);
 
         let tools = if self.browser_tools {
-            create_configured_browser_registry(&permissions)
+            create_configured_browser_registry(&permissions, &allowed)
         } else {
-            create_configured_registry(&permissions)
+            create_configured_registry(&permissions, &allowed)
         };
 
         let config = AgentConfig {
@@ -606,7 +623,7 @@ impl App {
             .map(|c| c.resolve_allowed_paths(&cwd))
             .unwrap_or_else(|| vec![cwd.clone()]);
 
-        let tools = create_configured_registry(&permissions);
+        let tools = create_configured_registry(&permissions, &allowed);
 
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),
@@ -844,10 +861,11 @@ impl App {
             }
             StreamEvent::ToolUseStart { name, .. } => {
                 self.event_active_tool = Some(name.clone());
-                if !self.event_streaming_text.is_empty() {
-                    let content = std::mem::take(&mut self.event_streaming_text);
+                let content = std::mem::take(&mut self.event_streaming_text);
+                let trimmed = content.trim_end().to_string();
+                if !trimmed.is_empty() {
                     self.event_messages
-                        .push(ChatMessage::new("assistant", content));
+                        .push(ChatMessage::new("assistant", trimmed));
                 }
             }
             StreamEvent::ToolUseEnd { id, name, input } => {
@@ -901,10 +919,11 @@ impl App {
                 self.event_output_tokens += output_tokens;
             }
             StreamEvent::MessageEnd { stop_reason } => {
-                if !self.event_streaming_text.is_empty() {
-                    let content = std::mem::take(&mut self.event_streaming_text);
+                let content = std::mem::take(&mut self.event_streaming_text);
+                let trimmed = content.trim_end().to_string();
+                if !trimmed.is_empty() {
                     self.event_messages
-                        .push(ChatMessage::new("assistant", content));
+                        .push(ChatMessage::new("assistant", trimmed));
                 }
                 if stop_reason != StopReason::ToolUse {
                     self.event_is_streaming = false;
@@ -1068,9 +1087,17 @@ impl App {
             } else {
                 0
             };
+            // Account for all fixed-height areas to match the actual Layout:
+            // status_bar(1) + margin(1) + shimmer(0|1) + queued(0|1)
+            let view_streaming = match self.active_view {
+                ActiveView::Main => self.is_streaming,
+                ActiveView::EventAgent => self.event_is_streaming,
+            };
+            let shimmer_h: u16 = if view_streaming { 1 } else { 0 };
+            let queued_h: u16 = if self.queued_message.is_some() { 1 } else { 0 };
             let chat_area_h = term_size
                 .height
-                .saturating_sub(cur_input_h + 2 + task_panel_h); // +2 = status bar + margin
+                .saturating_sub(cur_input_h + 2 + task_panel_h + shimmer_h + queued_h);
             if self.trust_prompt.is_none()
                 && self.approval_prompt.is_none()
                 && self.plan_review.is_none()
@@ -1082,19 +1109,30 @@ impl App {
                 && self.memory_viewer.is_none()
                 && self.tool_picker.is_none()
             {
-                // Commit overflow for the active view only
-                let (msgs, committed_idx) = match self.active_view {
-                    ActiveView::Main => (&self.messages, &mut self.committed_msg_idx),
-                    ActiveView::EventAgent => {
-                        (&self.event_messages, &mut self.event_committed_msg_idx)
-                    }
+                // Commit overflow for the active view — include streaming text
+                // in the height calculation so commits happen gradually during
+                // streaming instead of all at once when streaming ends.
+                let (msgs, committed_idx, streaming) = match self.active_view {
+                    ActiveView::Main => (
+                        &self.messages,
+                        &mut self.committed_msg_idx,
+                        self.streaming_text.as_str(),
+                    ),
+                    ActiveView::EventAgent => (
+                        &self.event_messages,
+                        &mut self.event_committed_msg_idx,
+                        self.event_streaming_text.as_str(),
+                    ),
                 };
+                // Use padded width (chat area - 1 for left margin) to match
+                // the actual rendering width in ChatWidget.
                 commit_overflow(
                     msgs,
                     committed_idx,
                     &mut terminal,
                     chat_area_h,
-                    term_size.width,
+                    term_size.width.saturating_sub(1),
+                    streaming,
                 )?;
             }
 
@@ -1404,16 +1442,22 @@ impl App {
                 let effective_model = self.config.effective_model();
                 let memory_active = LukanPaths::project_memory_active_file().exists();
                 let mode_str = self.permission_mode.to_string();
-                let (sb_tokens_in, sb_tokens_out, sb_streaming, sb_tool) = match self.active_view {
+                let (sb_tokens_in, sb_tokens_out, sb_cache_read, sb_cache_create, sb_ctx, sb_streaming, sb_tool) = match self.active_view {
                     ActiveView::Main => (
                         self.input_tokens,
                         self.output_tokens,
+                        self.cache_read_tokens,
+                        self.cache_creation_tokens,
+                        self.context_size,
                         self.is_streaming,
                         self.active_tool.as_deref(),
                     ),
                     ActiveView::EventAgent => (
                         self.event_input_tokens,
                         self.event_output_tokens,
+                        0,
+                        0,
+                        0,
                         self.event_is_streaming,
                         self.event_active_tool.as_deref(),
                     ),
@@ -1427,6 +1471,9 @@ impl App {
                     &effective_model,
                     sb_tokens_in,
                     sb_tokens_out,
+                    sb_cache_read,
+                    sb_cache_create,
+                    sb_ctx,
                     sb_streaming,
                     sb_tool,
                     memory_active,
@@ -2564,6 +2611,11 @@ impl App {
                         // Shift+Tab while the agent was running its turn
                         agent.set_permission_mode(self.permission_mode.clone());
                         agent.set_disabled_tools(self.disabled_tools.clone());
+                        // Sync token counters from agent state (important after /compact,
+                        // which resets tokens without emitting StreamEvent::Usage to UI).
+                        self.input_tokens = agent.input_tokens();
+                        self.output_tokens = agent.output_tokens();
+                        self.context_size = agent.last_context_size();
                         self.session_id = Some(agent.session_id().to_string());
                         self.agent = Some(agent);
 
@@ -2648,6 +2700,9 @@ impl App {
             self.committed_msg_idx = 0;
             self.input_tokens = 0;
             self.output_tokens = 0;
+            self.cache_read_tokens = 0;
+            self.cache_creation_tokens = 0;
+            self.context_size = 0;
             // Reset agent — a new session will be created on next message
             self.agent = None;
             self.session_id = None;
@@ -3172,9 +3227,9 @@ impl App {
         self.planner_answer_tx = Some(planner_answer_tx);
 
         let tools = if self.browser_tools {
-            create_configured_browser_registry(&permissions)
+            create_configured_browser_registry(&permissions, &allowed)
         } else {
-            create_configured_registry(&permissions)
+            create_configured_registry(&permissions, &allowed)
         };
 
         let config = AgentConfig {
@@ -3316,6 +3371,7 @@ impl App {
 
                 self.input_tokens = agent.input_tokens();
                 self.output_tokens = agent.output_tokens();
+                self.context_size = agent.last_context_size();
                 self.session_id = Some(agent.session_id().to_string());
                 self.agent = Some(agent);
 
@@ -3599,6 +3655,7 @@ impl App {
                 self.streaming_text.clear();
                 self.streaming_thinking.clear();
                 self.active_tool = None;
+                self.turn_text_msg_idx = None;
             }
             StreamEvent::TextDelta { text } => {
                 self.streaming_text.push_str(&text);
@@ -3607,11 +3664,24 @@ impl App {
                 self.streaming_thinking.push_str(&text);
             }
             StreamEvent::ToolUseStart { name, .. } => {
-                // Flush current text as a message before tool call
+                // Flush current text as a message before tool call.
+                // If we already flushed text earlier in this turn, append to
+                // the same message so mid-sentence splits don't occur.
                 self.active_tool = Some(name.clone());
-                if !self.streaming_text.is_empty() {
-                    let content = std::mem::take(&mut self.streaming_text);
-                    self.messages.push(ChatMessage::new("assistant", content));
+                let content = std::mem::take(&mut self.streaming_text);
+                let trimmed = content.trim_end().to_string();
+                if !trimmed.is_empty() {
+                    if let Some(idx) = self.turn_text_msg_idx {
+                        if idx < self.messages.len() && self.messages[idx].role == "assistant" {
+                            self.messages[idx].content.push_str(&trimmed);
+                        } else {
+                            self.messages.push(ChatMessage::new("assistant", trimmed));
+                            self.turn_text_msg_idx = Some(self.messages.len() - 1);
+                        }
+                    } else {
+                        self.messages.push(ChatMessage::new("assistant", trimmed));
+                        self.turn_text_msg_idx = Some(self.messages.len() - 1);
+                    }
                 }
             }
             StreamEvent::ToolUseEnd { id, name, input } => {
@@ -3651,31 +3721,73 @@ impl App {
             }
             StreamEvent::ToolResult {
                 id,
+                name,
                 content,
                 is_error,
                 diff,
                 ..
             } => {
                 self.active_tool = None;
-                let formatted = format_tool_result(&content, is_error.unwrap_or(false));
-                let insert_pos = self.tool_insert_position(&id);
-                let mut msg = ChatMessage::with_diff("tool_result", formatted, diff);
-                msg.tool_id = Some(id);
-                self.messages.insert(insert_pos, msg);
+                let is_err = is_error.unwrap_or(false);
+
+                // For compact tools (ReadFile, Grep, Glob): update the existing
+                // progress message in-place instead of adding a new line.
+                let compact = matches!(name.as_str(), "ReadFile" | "Grep" | "Glob")
+                    && !is_err
+                    && diff.is_none();
+
+                if compact {
+                    let summary = format_tool_result_named(&name, &content, false);
+                    // Find existing progress message for this tool_id and replace
+                    if let Some(pos) = self
+                        .messages
+                        .iter()
+                        .rposition(|m| m.role == "tool_result" && m.tool_id.as_deref() == Some(&id))
+                    {
+                        self.messages[pos].content = summary;
+                    } else {
+                        // No progress message found — insert normally
+                        let insert_pos = self.tool_insert_position(&id);
+                        let mut msg = ChatMessage::new("tool_result", summary);
+                        msg.tool_id = Some(id);
+                        self.messages.insert(insert_pos, msg);
+                    }
+                } else {
+                    let formatted = format_tool_result_named(&name, &content, is_err);
+                    let insert_pos = self.tool_insert_position(&id);
+                    let mut msg = ChatMessage::with_diff("tool_result", formatted, diff);
+                    msg.tool_id = Some(id);
+                    self.messages.insert(insert_pos, msg);
+                }
             }
             StreamEvent::Usage {
                 input_tokens,
                 output_tokens,
-                ..
+                cache_creation_tokens,
+                cache_read_tokens,
             } => {
                 self.input_tokens += input_tokens;
                 self.output_tokens += output_tokens;
+                self.cache_read_tokens += cache_read_tokens.unwrap_or(0);
+                self.cache_creation_tokens += cache_creation_tokens.unwrap_or(0);
+                // The input_tokens of the latest call IS the current context size
+                self.context_size = input_tokens;
             }
             StreamEvent::MessageEnd { stop_reason } => {
-                if !self.streaming_text.is_empty() {
-                    let content = std::mem::take(&mut self.streaming_text);
-                    self.messages.push(ChatMessage::new("assistant", content));
+                let content = std::mem::take(&mut self.streaming_text);
+                let trimmed = content.trim_end().to_string();
+                if !trimmed.is_empty() {
+                    if let Some(idx) = self.turn_text_msg_idx {
+                        if idx < self.messages.len() && self.messages[idx].role == "assistant" {
+                            self.messages[idx].content.push_str(&trimmed);
+                        } else {
+                            self.messages.push(ChatMessage::new("assistant", trimmed));
+                        }
+                    } else {
+                        self.messages.push(ChatMessage::new("assistant", trimmed));
+                    }
                 }
+                self.turn_text_msg_idx = None;
                 // When stop_reason is ToolUse, tools are about to execute —
                 // keep is_streaming=true so Alt+B works and the UI shows
                 // "streaming" status. ToolResult events will follow, and
@@ -3722,6 +3834,8 @@ impl App {
                     current_question: 0,
                     selections: vec![0; n],
                     multi_selections: multi_sels,
+                    editing_custom: false,
+                    custom_inputs: vec![String::new(); n],
                 });
             }
             StreamEvent::ModeChanged { mode } => {
@@ -3740,6 +3854,27 @@ impl App {
                     .push(ChatMessage::new("assistant", format!("Error: {error}")));
                 self.is_streaming = false;
                 self.queued_message = None;
+            }
+            StreamEvent::ExploreProgress { id, activity, .. } => {
+                // activity already contains full formatted content:
+                //   ⎿  Grep(pattern) → 15 results
+                //   ⎿  ReadFile(path)…
+                //   ⎿  5 tool uses · 12.3k tokens · 8s
+
+                // Find existing progress message for this explore ID
+                let existing = self
+                    .messages
+                    .iter()
+                    .rposition(|m| m.role == "tool_result" && m.tool_id.as_deref() == Some(&id));
+
+                if let Some(idx) = existing {
+                    self.messages[idx].content = activity;
+                } else {
+                    let insert_pos = self.tool_insert_position(&id);
+                    let mut msg = ChatMessage::new("tool_result", activity);
+                    msg.tool_id = Some(id);
+                    self.messages.insert(insert_pos, msg);
+                }
             }
             StreamEvent::SystemNotification {
                 source,
@@ -3854,7 +3989,39 @@ impl App {
         };
 
         let qi = state.current_question;
-        let q = &state.questions[qi];
+
+        // If we're in custom text editing mode, handle text input
+        if state.editing_custom {
+            match code {
+                KeyCode::Esc => {
+                    // Exit custom input mode, go back to option selection
+                    state.editing_custom = false;
+                }
+                KeyCode::Enter => {
+                    // Submit (same as normal Enter below)
+                    if let Some(state) = self.planner_question.take() {
+                        let answer_text = Self::build_planner_answers(&state);
+                        if let Some(ref tx) = self.planner_answer_tx {
+                            let _ = tx.try_send(answer_text);
+                        }
+                        self.force_redraw = true;
+                    }
+                    return;
+                }
+                KeyCode::Backspace => {
+                    state.custom_inputs[qi].pop();
+                }
+                KeyCode::Char(c) => {
+                    state.custom_inputs[qi].push(c);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // option_count includes the virtual "Custom response..." option
+        let option_count = state.questions[qi].options.len() + 1;
+        let custom_idx = option_count - 1; // last index = custom
 
         match code {
             KeyCode::Up => {
@@ -3863,12 +4030,15 @@ impl App {
                 }
             }
             KeyCode::Down => {
-                if state.selections[qi] + 1 < q.options.len() {
+                if state.selections[qi] + 1 < option_count {
                     state.selections[qi] += 1;
                 }
             }
             KeyCode::Char(' ') => {
-                if q.multi_select {
+                if state.selections[qi] == custom_idx {
+                    // Enter custom text editing mode
+                    state.editing_custom = true;
+                } else if state.questions[qi].multi_select {
                     let sel = state.selections[qi];
                     if sel < state.multi_selections[qi].len() {
                         state.multi_selections[qi][sel] = !state.multi_selections[qi][sel];
@@ -3876,50 +4046,31 @@ impl App {
                 }
             }
             KeyCode::Tab => {
-                // Next question
                 if state.current_question + 1 < state.questions.len() {
                     state.current_question += 1;
                 }
             }
             KeyCode::BackTab => {
-                // Previous question
                 if state.current_question > 0 {
                     state.current_question -= 1;
                 }
             }
             KeyCode::Enter => {
-                // Submit answers for all questions
-                if let Some(state) = self.planner_question.take() {
-                    let mut answers = Vec::new();
-                    for (i, q) in state.questions.iter().enumerate() {
-                        let answer = if q.multi_select {
-                            // Collect all selected options
-                            let selected: Vec<&str> = q
-                                .options
-                                .iter()
-                                .zip(state.multi_selections[i].iter())
-                                .filter(|(_, sel)| **sel)
-                                .map(|(opt, _)| opt.label.as_str())
-                                .collect();
-                            if selected.is_empty() {
-                                q.options[state.selections[i]].label.clone()
-                            } else {
-                                selected.join(", ")
-                            }
-                        } else {
-                            q.options[state.selections[i]].label.clone()
-                        };
-                        answers.push(format!("{}: {}", q.header, answer));
+                if state.selections[qi] == custom_idx && !state.editing_custom {
+                    // Enter custom text editing mode on Enter too
+                    state.editing_custom = true;
+                } else {
+                    // Submit answers for all questions
+                    if let Some(state) = self.planner_question.take() {
+                        let answer_text = Self::build_planner_answers(&state);
+                        if let Some(ref tx) = self.planner_answer_tx {
+                            let _ = tx.try_send(answer_text);
+                        }
+                        self.force_redraw = true;
                     }
-                    let answer_text = answers.join("\n");
-                    if let Some(ref tx) = self.planner_answer_tx {
-                        let _ = tx.try_send(answer_text);
-                    }
-                    self.force_redraw = true;
                 }
             }
             KeyCode::Esc => {
-                // Cancel — send empty answer
                 self.planner_question = None;
                 if let Some(ref tx) = self.planner_answer_tx {
                     let _ = tx.try_send("User cancelled the question.".to_string());
@@ -3928,6 +4079,40 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Build the answer text from planner question state
+    fn build_planner_answers(state: &PlannerQuestionState) -> String {
+        let mut answers = Vec::new();
+        for (i, q) in state.questions.iter().enumerate() {
+            let custom_idx = q.options.len();
+            let answer = if state.selections[i] == custom_idx {
+                // Custom input selected
+                let custom = state.custom_inputs[i].trim();
+                if custom.is_empty() {
+                    "(no response)".to_string()
+                } else {
+                    custom.to_string()
+                }
+            } else if q.multi_select {
+                let selected: Vec<&str> = q
+                    .options
+                    .iter()
+                    .zip(state.multi_selections[i].iter())
+                    .filter(|(_, sel)| **sel)
+                    .map(|(opt, _)| opt.label.as_str())
+                    .collect();
+                if selected.is_empty() {
+                    q.options[state.selections[i]].label.clone()
+                } else {
+                    selected.join(", ")
+                }
+            } else {
+                q.options[state.selections[i]].label.clone()
+            };
+            answers.push(format!("{}: {}", q.header, answer));
+        }
+        answers.join("\n")
     }
 
     /// Find the insertion position for a tool result: right after the
@@ -3958,37 +4143,60 @@ impl App {
 
 /// Push completed messages that no longer fit in the chat area into the
 /// terminal's native scrollback via `insert_before`. Only whole messages
-/// are committed — streaming text is never pushed.
+/// are committed — streaming text is included in the height calculation
+/// but never pushed to scrollback itself.
 fn commit_overflow(
     messages: &[ChatMessage],
     committed_msg_idx: &mut usize,
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     chat_area_h: u16,
     width: u16,
+    streaming_text: &str,
 ) -> Result<()> {
     if *committed_msg_idx >= messages.len() {
         return Ok(());
     }
 
     let uncommitted = &messages[*committed_msg_idx..];
-    let all_lines = build_message_lines(uncommitted, "");
+    // Include streaming text in height calculation so commits happen
+    // gradually during streaming, not all at once when it ends.
+    let all_lines = build_message_lines(uncommitted, streaming_text);
     let total_rows = physical_row_count(&all_lines, width);
 
     if total_rows <= chat_area_h {
         return Ok(());
     }
 
-    // Find how many messages to commit so the remainder fits
+    // Find how many messages to commit so the remainder fits.
+    // Two invariants:
+    // 1. Never commit ALL messages when streaming_text is empty (ChatWidget
+    //    needs at least one message to render).
+    // 2. Never commit a message if doing so would leave the viewport less
+    //    than full — this prevents jarring "screen clear" jumps when a large
+    //    message is followed by a small one (e.g. big response + user msg).
     let rows_to_free = total_rows - chat_area_h;
     let mut rows_acc: u16 = 0;
     let mut msgs_to_commit = 0;
+    let max_commit = if streaming_text.is_empty() {
+        uncommitted.len().saturating_sub(1)
+    } else {
+        uncommitted.len()
+    };
 
-    for msg in uncommitted {
+    for msg in &uncommitted[..max_commit] {
         if rows_acc >= rows_to_free {
             break;
         }
         let msg_lines = build_message_lines(std::slice::from_ref(msg), "");
-        rows_acc += physical_row_count(&msg_lines, width);
+        let msg_rows = physical_row_count(&msg_lines, width);
+        // Check: would committing this message leave too little content
+        // in the viewport?  If so, stop — ChatWidget will handle the
+        // overflow via its internal scroll.
+        let remaining_after = total_rows.saturating_sub(rows_acc + msg_rows);
+        if remaining_after < chat_area_h {
+            break;
+        }
+        rows_acc += msg_rows;
         msgs_to_commit += 1;
     }
 
@@ -3999,8 +4207,14 @@ fn commit_overflow(
 
         use ratatui::widgets::{Paragraph, Widget, Wrap};
         terminal.insert_before(commit_rows, |buf| {
+            // Apply left margin to match the live chat padding (x + 1)
+            let padded = Rect {
+                x: buf.area.x + 1,
+                width: buf.area.width.saturating_sub(1),
+                ..buf.area
+            };
             let p = Paragraph::new(commit_lines).wrap(Wrap { trim: false });
-            p.render(buf.area, buf);
+            p.render(padded, buf);
         })?;
 
         *committed_msg_idx += msgs_to_commit;
@@ -4071,6 +4285,14 @@ fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("?")
             .to_string(),
+        "Explore" | "SubAgent" => {
+            let task = input.get("task").and_then(|v| v.as_str()).unwrap_or("?");
+            if task.len() > 80 {
+                format!("{}…", &task[..80])
+            } else {
+                task.to_string()
+            }
+        }
         _ => {
             // Fallback: compact JSON
             let s = serde_json::to_string(input).unwrap_or_default();
@@ -4085,9 +4307,39 @@ fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
 
 // ── Tool Result Formatting ────────────────────────────────────────────────
 
+/// Format tool result with tool-aware compact summaries.
+/// ReadFile/Grep/Glob show a one-line summary instead of content.
+fn format_tool_result_named(name: &str, content: &str, is_error: bool) -> String {
+    if is_error {
+        return format_tool_result(content, true);
+    }
+    match name {
+        "ReadFile" => {
+            let line_count = content.lines().count();
+            format!("  ⎿  {line_count} lines")
+        }
+        "Grep" => {
+            if content == "No matches found." {
+                return "  ⎿  No matches found.".to_string();
+            }
+            let match_count = content.lines().filter(|l| !l.trim().is_empty()).count();
+            format!("  ⎿  {match_count} results")
+        }
+        "Glob" => {
+            if content.starts_with("No files") {
+                return format!("  ⎿  {content}");
+            }
+            let file_count = content.lines().filter(|l| !l.trim().is_empty()).count();
+            format!("  ⎿  {file_count} files")
+        }
+        _ => format_tool_result(content, false),
+    }
+}
+
 /// Format tool result with ⎿ prefix on each line, like Claude Code
 fn format_tool_result(content: &str, is_error: bool) -> String {
-    let lines: Vec<&str> = content.lines().collect();
+    // Filter out blank lines to avoid visual gaps from stderr/stdout interleaving
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
     if lines.is_empty() {
         return "  ⎿  (no output)".to_string();
     }
@@ -4140,7 +4392,10 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/gmemory", "global memory (show | add <text> | clear)"),
     ("/checkpoints", "rewind to a checkpoint"),
     ("/skills", "list available skills"),
-    ("/events", "Event Agent view (/events | clear) — Alt+L for event log"),
+    (
+        "/events",
+        "Event Agent view (/events | clear) — Alt+L for event log",
+    ),
     ("/workers", "browse workers and runs"),
     ("/exit", "quit lukan"),
 ];
@@ -4920,7 +5175,9 @@ impl Widget for ToolPickerWidget<'_> {
         for group in &self.picker.groups {
             lines.push(Line::from(Span::styled(
                 format!(" ── {} ──", group.name),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             )));
 
             for tool in &group.tools {
@@ -4943,7 +5200,9 @@ impl Widget for ToolPickerWidget<'_> {
                     Span::styled(
                         tool.clone(),
                         if is_selected {
-                            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::Gray)
                         },
@@ -5030,6 +5289,7 @@ impl Widget for PlannerQuestionWidget<'_> {
         lines.push(Line::from(""));
 
         // Options
+        let custom_idx = q.options.len(); // virtual "Custom response..." index
         for (i, opt) in q.options.iter().enumerate() {
             let is_selected = i == self.state.selections[qi];
             let is_checked = q.multi_select
@@ -5069,11 +5329,51 @@ impl Widget for PlannerQuestionWidget<'_> {
             }
         }
 
+        // "Custom response..." option (always last)
+        {
+            let is_selected = self.state.selections[qi] == custom_idx;
+            let pointer = if is_selected { "▸ " } else { "  " };
+            let radio = if is_selected { "(●) " } else { "( ) " };
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {pointer}"), style),
+                Span::styled(radio.to_string(), style),
+                Span::styled("Custom response...", style),
+            ]));
+        }
+
+        // Custom text input area (shown when editing_custom is active)
+        if self.state.editing_custom && self.state.selections[qi] == custom_idx {
+            lines.push(Line::from(""));
+            let input_text = &self.state.custom_inputs[qi];
+            let display = if input_text.is_empty() {
+                vec![Span::styled(
+                    "  Type your response here…",
+                    Style::default().fg(Color::DarkGray),
+                )]
+            } else {
+                vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(input_text.clone(), Style::default().fg(Color::White)),
+                    Span::styled("█", Style::default().fg(Color::Yellow)),
+                ]
+            };
+            lines.push(Line::from(display));
+        }
+
         lines.push(Line::from(""));
-        let hint = if self.state.questions.len() > 1 {
-            " ↑↓ select · Space toggle · Tab next · Enter confirm · Esc cancel"
+        let hint = if self.state.editing_custom {
+            " Type response · Enter submit · Esc back"
+        } else if self.state.questions.len() > 1 {
+            " ↑↓ select · Space/Enter choose · Tab next · Enter confirm · Esc cancel"
         } else {
-            " ↑↓ select · Space toggle · Enter confirm · Esc cancel"
+            " ↑↓ select · Space/Enter choose · Enter confirm · Esc cancel"
         };
         lines.push(Line::from(Span::styled(
             hint,

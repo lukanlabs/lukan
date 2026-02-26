@@ -328,7 +328,13 @@ async fn run_worker(
         .as_ref()
         .map(|c| c.permissions.clone())
         .unwrap_or_default();
-    let mut registry = create_configured_registry(&permissions);
+
+    let allowed = project_cfg
+        .as_ref()
+        .map(|c| c.resolve_allowed_paths(&cwd))
+        .unwrap_or_else(|| vec![cwd.clone()]);
+
+    let mut registry = create_configured_registry(&permissions, &allowed);
     if let Some(tool_names) = tools_filter {
         let refs: Vec<&str> = tool_names.iter().map(|s| s.as_str()).collect();
         registry.retain(&refs);
@@ -336,11 +342,6 @@ async fn run_worker(
 
     let provider_name = config.config.provider.to_string();
     let model_name = config.effective_model();
-
-    let allowed = project_cfg
-        .as_ref()
-        .map(|c| c.resolve_allowed_paths(&cwd))
-        .unwrap_or_else(|| vec![cwd.clone()]);
 
     let system_prompt = SystemPrompt::Text(
         "You are a scheduled worker agent. Execute the task described in the user message. \

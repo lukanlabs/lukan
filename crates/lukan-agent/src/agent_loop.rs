@@ -141,6 +141,9 @@ impl AgentLoop {
         config
             .tools
             .register(Box::new(crate::sub_agent::SubAgentResultTool));
+        config
+            .tools
+            .register(Box::new(crate::sub_agent::ExploreTool));
 
         // Build sandbox config for sub-agents from registry settings
         let sub_agent_sandbox = if config.tools.is_sandbox_enabled() {
@@ -213,6 +216,9 @@ impl AgentLoop {
         config
             .tools
             .register(Box::new(crate::sub_agent::SubAgentResultTool));
+        config
+            .tools
+            .register(Box::new(crate::sub_agent::ExploreTool));
 
         // Build sandbox config for sub-agents from registry settings
         let sub_agent_sandbox = if config.tools.is_sandbox_enabled() {
@@ -1638,6 +1644,8 @@ impl AgentLoop {
 
                 let ctx = ToolContext {
                     progress_tx: None,
+                    event_tx: Some(tx.clone()),
+                    tool_call_id: Some(id.clone()),
                     read_files,
                     cwd,
                     bg_signal,

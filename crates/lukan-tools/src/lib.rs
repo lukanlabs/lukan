@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use lukan_core::models::events::StreamEvent;
 use lukan_core::models::tools::{ToolDefinition, ToolResult};
 use tokio::sync::{Mutex, mpsc, watch};
 
@@ -25,6 +26,10 @@ use tokio::sync::{Mutex, mpsc, watch};
 pub struct ToolContext {
     /// Optional channel for progress updates
     pub progress_tx: Option<mpsc::Sender<String>>,
+    /// Optional channel to emit StreamEvent to the TUI (used by Explore tool)
+    pub event_tx: Option<mpsc::Sender<StreamEvent>>,
+    /// The tool_use ID assigned by the LLM for this call (used by Explore for progress)
+    pub tool_call_id: Option<String>,
     /// Tracks which files have been read (for write/edit guards)
     pub read_files: Arc<Mutex<HashSet<PathBuf>>>,
     /// Current working directory
@@ -237,6 +242,8 @@ mod tests {
     fn make_ctx(allowed: Option<Vec<&str>>) -> ToolContext {
         ToolContext {
             progress_tx: None,
+            event_tx: None,
+            tool_call_id: None,
             read_files: Arc::new(Mutex::new(HashSet::new())),
             cwd: PathBuf::from("/tmp"),
             bg_signal: None,
@@ -485,31 +492,38 @@ pub fn create_browser_registry() -> ToolRegistry {
 }
 
 /// Create a browser-enabled registry configured with project permissions.
+/// `allowed_dirs` are extra directories that should be writable inside the
+/// bwrap sandbox (from `allowedPaths` in `.lukan/config.json`).
 pub fn create_configured_browser_registry(
     permissions: &lukan_core::config::types::PermissionsConfig,
+    allowed_dirs: &[std::path::PathBuf],
 ) -> ToolRegistry {
     let mut registry = create_browser_registry();
     registry.set_sandbox(
         permissions.os_sandbox,
-        vec![],
+        allowed_dirs
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
         permissions.sensitive_patterns.clone(),
     );
     registry
 }
 
 /// Create a registry configured with project permissions.
-///
-/// This is the preferred entry point — it reads `os_sandbox` and
-/// `sensitive_patterns` from the given `PermissionsConfig` and
-/// applies them so that all file tools (ReadFile, Glob, Grep, etc.)
-/// enforce the sensitive-file restrictions.
+/// `allowed_dirs` are extra directories that should be writable inside the
+/// bwrap sandbox (from `allowedPaths` in `.lukan/config.json`).
 pub fn create_configured_registry(
     permissions: &lukan_core::config::types::PermissionsConfig,
+    allowed_dirs: &[std::path::PathBuf],
 ) -> ToolRegistry {
     let mut registry = create_default_registry();
     registry.set_sandbox(
         permissions.os_sandbox,
-        vec![], // allowed_dirs filled by caller if needed
+        allowed_dirs
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
         permissions.sensitive_patterns.clone(),
     );
     registry

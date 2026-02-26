@@ -237,14 +237,15 @@ pub fn build_message_lines(messages: &[ChatMessage], streaming_text: &str) -> Ve
 }
 
 /// Count physical rows that `lines` would occupy when wrapped at `width`.
-/// This must match what `Paragraph::new(lines).wrap(Wrap { trim: false })`
-/// actually renders.
+/// Uses ratatui's own `Paragraph::line_count` so the result exactly matches
+/// what `Paragraph::new(lines).wrap(Wrap { trim: false })` actually renders
+/// (including word-wrapping behaviour that can add extra rows).
 pub fn physical_row_count(lines: &[Line], width: u16) -> u16 {
-    let w = width.max(1) as usize;
-    lines
-        .iter()
-        .map(|l| l.width().max(1).div_ceil(w))
-        .sum::<usize>() as u16
+    if lines.is_empty() || width == 0 {
+        return 0;
+    }
+    let paragraph = Paragraph::new(lines.to_vec()).wrap(Wrap { trim: false });
+    paragraph.line_count(width) as u16
 }
 
 /// Widget that renders the chat history
@@ -271,9 +272,28 @@ impl Widget for ChatWidget<'_> {
 
         let lines = build_message_lines(self.messages, self.streaming_text);
 
-        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        // Always anchor content to the BOTTOM of the viewport (near the input).
+        // This ensures the latest text is always visible near the input line.
+        let total_rows = physical_row_count(&lines, area.width);
 
-        paragraph.render(area, buf);
+        if total_rows >= area.height {
+            // Content exceeds area: scroll to show the bottom
+            let scroll_offset = total_rows - area.height;
+            let paragraph = Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((scroll_offset, 0));
+            paragraph.render(area, buf);
+        } else {
+            // Content fits: render at the bottom of the area (blank space on top)
+            let top_padding = area.height - total_rows;
+            let bottom_area = Rect {
+                y: area.y + top_padding,
+                height: total_rows.max(1),
+                ..area
+            };
+            let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+            paragraph.render(bottom_area, buf);
+        }
     }
 }
 

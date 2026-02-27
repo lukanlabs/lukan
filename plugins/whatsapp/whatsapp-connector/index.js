@@ -216,6 +216,7 @@ async function startWhatsApp() {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       console.log(`[connector] Connection closed (code ${statusCode}), reconnect: ${shouldReconnect}`);
+      try { unlinkSync(QR_FILE); } catch {}
       broadcast({ type: "status", status: "disconnected" });
 
       if (shouldReconnect) {

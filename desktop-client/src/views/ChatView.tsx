@@ -109,8 +109,6 @@ export default function ChatView() {
   return (
     <div className="flex flex-1 flex-col min-h-0 bg-zinc-950">
       <StatusBar
-        providerName={chat.providerName}
-        modelName={chat.modelName}
         tokenUsage={chat.tokenUsage}
         contextSize={chat.contextSize}
         onNewSession={chat.newSession}

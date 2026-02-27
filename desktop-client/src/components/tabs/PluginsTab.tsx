@@ -73,18 +73,29 @@ export default function PluginsTab() {
   const [qrLoading, setQrLoading] = useState(false);
   const [qrLinked, setQrLinked] = useState(false);
 
+  const lastQrRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!showQr || !qrDataUrl || qrLinked) return;
+    if (!showQr || qrLinked) return;
     let cancelled = false;
-    const interval = setInterval(async () => {
+    const poll = async () => {
       try {
         const qr = await getWhatsappQr();
-        if (!cancelled && !qr) {
+        if (cancelled) return;
+        if (!qr && qrDataUrl) {
           setQrLinked(true);
           toast("success", "WhatsApp linked successfully!");
+        } else if (qr && qr !== lastQrRef.current) {
+          lastQrRef.current = qr;
+          const url = await QRCode.toDataURL(qr, { width: 256, margin: 2, color: { dark: "#000000", light: "#ffffff" } });
+          if (!cancelled) {
+            setQrDataUrl(url);
+            setQrLoading(false);
+          }
         }
       } catch {}
-    }, 3000);
+    };
+    poll();
+    const interval = setInterval(poll, 2000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [showQr, qrDataUrl, qrLinked, toast]);
 
@@ -176,22 +187,13 @@ export default function PluginsTab() {
     }
   };
 
-  const handleShowQr = async () => {
+  const handleShowQr = () => {
     setShowQr(true);
     setQrLoading(true);
     setQrDataUrl(null);
     setQrLinked(false);
-    try {
-      const qrStr = await getWhatsappQr();
-      if (qrStr) {
-        const url = await QRCode.toDataURL(qrStr, { width: 256, margin: 2, color: { dark: "#000000", light: "#ffffff" } });
-        setQrDataUrl(url);
-      }
-    } catch (e) {
-      toast("error", `Failed to get QR: ${e}`);
-    } finally {
-      setQrLoading(false);
-    }
+    lastQrRef.current = null;
+    // useEffect poll will pick up the QR and update qrDataUrl
   };
 
   const handleConfigSave = async (pluginName: string, key: string, value: string) => {

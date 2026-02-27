@@ -47,6 +47,10 @@ export function Toolbar({
     getWebUiStatus()
       .then((s) => setWebUiRunning(s.running))
       .catch(() => {});
+    // Reload when provider/model changes from settings or elsewhere
+    const onChanged = () => { loadProviders(); };
+    window.addEventListener("provider-changed", onChanged);
+    return () => window.removeEventListener("provider-changed", onChanged);
   }, [loadProviders]);
 
   const handleSelectModel = async (provider: string, model: string) => {

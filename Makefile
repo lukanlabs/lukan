@@ -122,9 +122,9 @@ upload: release
 	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
 		bunx wrangler r2 object put --remote $(R2_BUCKET)/$(BINARY_NAME)-desktop-$(PLATFORM) --file dist/$(BINARY_NAME)-desktop-$(PLATFORM); \
 	fi
-	bunx wrangler r2 object put --remote $(R2_BUCKET)/checksums.txt --file dist/checksums.txt
-	bunx wrangler r2 object put --remote $(R2_BUCKET)/latest --file dist/latest
-	bunx wrangler r2 object put --remote $(R2_BUCKET)/install.sh --file install.sh
+	bunx wrangler r2 object put --remote $(R2_BUCKET)/checksums.txt --file dist/checksums.txt --cache-control "public, max-age=60"
+	bunx wrangler r2 object put --remote $(R2_BUCKET)/latest --file dist/latest --cache-control "public, max-age=60"
+	bunx wrangler r2 object put --remote $(R2_BUCKET)/install.sh --file install.sh --cache-control "public, max-age=60"
 	@# Upload plugins
 	@for f in dist/plugins/*.tar.gz; do \
 		name=$$(basename $$f); \

@@ -99,6 +99,21 @@ bundle_docker_monitor() {
   ok "docker-monitor → dist/ (bash script, no deps)"
 }
 
+bundle_security_monitor() {
+  local src="$PLUGINS_DIR/security-monitor"
+  local dist="$src/dist"
+  info "Bundling security-monitor plugin..."
+
+  mkdir -p "$dist"
+
+  # Bash plugin — just copy files
+  cp "$src/plugin.toml" "$dist/"
+  cp "$src/monitor.sh" "$dist/"
+  chmod +x "$dist/monitor.sh"
+
+  ok "security-monitor → dist/ (bash script, no deps)"
+}
+
 # ── Main ──────────────────────────────────────────────────────────────
 
 TARGET="${1:-all}"
@@ -116,15 +131,19 @@ case "$TARGET" in
   docker-monitor|docker)
     bundle_docker_monitor
     ;;
+  security-monitor|security)
+    bundle_security_monitor
+    ;;
   all)
     bundle_whatsapp
     bundle_google_workspace
     bundle_gmail
     bundle_docker_monitor
+    bundle_security_monitor
     ;;
   *)
     err "Unknown plugin: $TARGET"
-    echo "Available: whatsapp, google-workspace, gmail, docker-monitor, all"
+    echo "Available: whatsapp, google-workspace, gmail, docker-monitor, security-monitor, all"
     exit 1
     ;;
 esac

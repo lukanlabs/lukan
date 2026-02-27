@@ -48,13 +48,22 @@ export default function ChatView() {
     const onNew = () => {
       chat.newSession();
     };
+    const onInjectEvent = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail;
+      if (text && !chat.isProcessing) {
+        setAutoScroll(true);
+        chat.sendMessage(text);
+      }
+    };
     window.addEventListener("load-session", onLoad);
     window.addEventListener("new-session", onNew);
+    window.addEventListener("inject-event", onInjectEvent);
     return () => {
       window.removeEventListener("load-session", onLoad);
       window.removeEventListener("new-session", onNew);
+      window.removeEventListener("inject-event", onInjectEvent);
     };
-  }, [chat.loadSession, chat.newSession]);
+  }, [chat.loadSession, chat.newSession, chat.sendMessage, chat.isProcessing]);
 
   // Auto-scroll to bottom on new content
   useEffect(() => {

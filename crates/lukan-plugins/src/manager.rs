@@ -29,6 +29,8 @@ pub struct PluginInfo {
     pub plugin_type: String,
     pub running: bool,
     pub alias: Option<String>,
+    /// Activity bar contribution from manifest (icon + label for sidebar)
+    pub activity_bar: Option<lukan_core::models::plugin::ActivityBarContribution>,
 }
 
 impl Default for PluginManager {
@@ -201,6 +203,7 @@ impl PluginManager {
                         plugin_type: manifest.plugin.plugin_type,
                         running: self.running.contains_key(&name),
                         alias: manifest.plugin.alias,
+                        activity_bar: manifest.plugin.activity_bar,
                     });
                 }
                 Err(e) => {
@@ -211,6 +214,7 @@ impl PluginManager {
                         plugin_type: "unknown".to_string(),
                         running: false,
                         alias: None,
+                        activity_bar: None,
                     });
                 }
             }

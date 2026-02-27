@@ -6,6 +6,10 @@ plugin_type = "channel"
 protocol_version = 1
 alias = "docker-monitor"
 
+[plugin.activity_bar]
+icon = "container"
+label = "Docker Events"
+
 [run]
 command = "bash"
 args = ["monitor.sh"]

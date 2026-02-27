@@ -607,7 +607,8 @@ monitor_processes() {
       done
     done < <(ps -eo pid,user,args --no-headers 2>/dev/null || true)
 
-    # Check for unexpected processes running as root with network listeners
+    # Check for root processes actually listening on a network socket
+    # Uses ss to verify the PID truly has a listening socket (avoids false positives)
     while IFS= read -r line; do
       local pid comm cmd
       pid=$(echo "$line" | awk '{print $1}')
@@ -618,18 +619,17 @@ monitor_processes() {
       [[ -n "${alerted_pids[$pid]+x}" ]] && continue
       is_lukan_pid "$pid" && continue
 
-      # Only alert on actual shell/interpreter binaries (match comm, not full cmdline)
-      # comm is the short process name, avoids false positives like "crashpad"
+      # Only alert on shell/interpreter binaries
       case "$comm" in
         bash|sh|dash|zsh|python|python3|perl|ruby|php|php-fpm)
-          # Check if it has listener flags in its arguments
-          if echo "$cmd" | grep -qE '\s-[a-zA-Z]*l|\blisten\b|\bLISTEN\b|\baccept\b|\b-p\s+[0-9]'; then
+          # Verify the process actually has a listening socket via ss
+          if ss -ltnp 2>/dev/null | grep -q "pid=${pid},"; then
             alerted_pids[$pid]=1
             send_event "error" "Root process with network listener (PID ${pid}, ${comm}): ${cmd}"
           fi
           ;;
       esac
-    done < <(ps -eo pid,comm,args --no-headers -u root 2>/dev/null || true)
+    done < <(ps -eo pid,comm,args --no-headers -U root 2>/dev/null || true)
 
     # Clean up alerted_pids for dead processes
     for pid in "${!alerted_pids[@]}"; do

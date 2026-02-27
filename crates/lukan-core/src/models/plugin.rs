@@ -237,6 +237,18 @@ pub struct PluginMeta {
     pub protocol_version: u32,
     /// CLI alias for this plugin (e.g. "wa" → `lukan wa ...`)
     pub alias: Option<String>,
+    /// Optional activity bar contribution (VS Code-style sidebar icon)
+    pub activity_bar: Option<ActivityBarContribution>,
+}
+
+/// Plugin contribution to the desktop activity bar (like VS Code extensions).
+/// Declared in plugin.toml as `[plugin.activity_bar]`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ActivityBarContribution {
+    /// Lucide icon name (e.g. "container", "shield-alert", "activity")
+    pub icon: String,
+    /// Label shown on hover
+    pub label: String,
 }
 
 fn default_plugin_type() -> String {

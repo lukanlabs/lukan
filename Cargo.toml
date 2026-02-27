@@ -15,7 +15,7 @@ futures = "0.3"
 async-trait = "0.1"
 
 # HTTP
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
 
 # Serde
 serde = { version = "1", features = ["derive"] }
@@ -69,6 +69,9 @@ open = "5"
 urlencoding = "2"
 toml = "0.8"
 portable-pty = "0.9"
+
+# Audio
+cpal = "0.15"
 
 # Tauri (desktop UI)
 tauri = { version = "2", features = [] }

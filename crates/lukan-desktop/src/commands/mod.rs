@@ -1,8 +1,10 @@
+pub mod audio;
 pub mod bg_processes;
 pub mod browser;
 pub mod chat;
 pub mod config;
 pub mod credentials;
+pub mod events;
 pub mod files;
 pub mod memory;
 pub mod plugins;

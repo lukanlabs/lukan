@@ -1,10 +1,18 @@
 use lukan_core::config::LukanPaths;
 use lukan_plugins::PluginManager;
+use reqwest::multipart;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 /// PID of the web UI process (0 = not running).
 static WEB_UI_PID: AtomicI32 = AtomicI32::new(0);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityBarDto {
+    pub icon: String,
+    pub label: String,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +23,7 @@ pub struct PluginInfoDto {
     pub plugin_type: String,
     pub running: bool,
     pub alias: Option<String>,
+    pub activity_bar: Option<ActivityBarDto>,
 }
 
 #[derive(Serialize)]
@@ -82,6 +91,10 @@ pub async fn list_plugins() -> Result<Vec<PluginInfoDto>, String> {
             description: p.description,
             plugin_type: p.plugin_type,
             alias: p.alias,
+            activity_bar: p.activity_bar.map(|ab| ActivityBarDto {
+                icon: ab.icon,
+                label: ab.label,
+            }),
         })
         .collect())
 }
@@ -585,4 +598,95 @@ pub async fn stop_web_ui() -> Result<(), String> {
 
     WEB_UI_PID.store(0, Ordering::Relaxed);
     Ok(())
+}
+
+// ── Whisper / Audio transcription ────────────────────────────────────
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WhisperStatusDto {
+    pub installed: bool,
+    pub running: bool,
+    pub port: u16,
+}
+
+/// Check whether the whisper plugin is installed and running, and return its port.
+#[tauri::command]
+pub async fn check_whisper_status() -> Result<WhisperStatusDto, String> {
+    let plugin_dir = LukanPaths::plugin_dir("whisper");
+    let installed = plugin_dir.join("plugin.toml").exists();
+
+    if !installed {
+        return Ok(WhisperStatusDto {
+            installed: false,
+            running: false,
+            port: 0,
+        });
+    }
+
+    let running = is_plugin_running("whisper");
+
+    // Read port from config (default 8787)
+    let port = read_whisper_port().await;
+
+    Ok(WhisperStatusDto {
+        installed,
+        running,
+        port,
+    })
+}
+
+/// Read the whisper plugin port from its config.json (default 8787).
+async fn read_whisper_port() -> u16 {
+    let config_path = LukanPaths::plugin_config("whisper");
+    if let Ok(content) = tokio::fs::read_to_string(&config_path).await
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(port) = json.get("port").and_then(|v| v.as_u64())
+    {
+        return port as u16;
+    }
+    8787
+}
+
+/// Transcribe audio by forwarding it to the local whisper HTTP server.
+/// Accepts raw audio bytes (webm/opus from the browser MediaRecorder).
+#[tauri::command]
+pub async fn transcribe_audio(audio: Vec<u8>) -> Result<String, String> {
+    // Verify whisper is running
+    if !is_plugin_running("whisper") {
+        return Err("Whisper plugin is not running".into());
+    }
+
+    let port = read_whisper_port().await;
+    let url = format!("http://127.0.0.1:{port}/v1/audio/transcriptions");
+
+    // Build multipart form with the audio file
+    let part = multipart::Part::bytes(audio)
+        .file_name("audio.webm")
+        .mime_str("audio/webm")
+        .map_err(|e| format!("Failed to build multipart: {e}"))?;
+
+    let form = multipart::Form::new().part("file", part);
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .multipart(form)
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .await
+        .map_err(|e| format!("Whisper request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Whisper server error {status}: {body}"));
+    }
+
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("Invalid response: {e}"))?;
+
+    json.get("text")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Whisper response missing 'text' field".into())
 }

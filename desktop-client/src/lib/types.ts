@@ -70,6 +70,11 @@ export interface FetchedModel {
   name: string;
 }
 
+export interface PluginActivityBar {
+  icon: string;
+  label: string;
+}
+
 export interface PluginInfo {
   name: string;
   version: string;
@@ -77,6 +82,7 @@ export interface PluginInfo {
   pluginType: string;
   running: boolean;
   alias?: string;
+  activityBar?: PluginActivityBar;
 }
 
 export interface RemotePlugin {
@@ -116,7 +122,14 @@ export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" |
 
 export type WorkspaceMode = "agent" | "terminal";
 
-export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes";
+export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes" | "events";
+
+export interface SystemEvent {
+  ts: string;
+  source: string;
+  level: string;
+  detail: string;
+}
 
 export interface BgProcessInfo {
   pid: number;

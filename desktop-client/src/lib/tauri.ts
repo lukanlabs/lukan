@@ -14,6 +14,7 @@ import type {
   WebUiStatus,
   InitResponse,
   SessionSummary,
+  SystemEvent,
   ToolApprovalRequest,
   TerminalSessionInfo,
   TerminalOutputEvent,
@@ -174,6 +175,28 @@ export const getWorkerDetail = (id: string) =>
   invoke<WorkerDetail>("get_worker_detail", { id });
 export const getWorkerRun = (workerId: string, runId: string) =>
   invoke<WorkerRun>("get_worker_run", { workerId, runId });
+
+// Events
+export const consumePendingEvents = () => invoke<SystemEvent[]>("consume_pending_events");
+export const getEventHistory = (count: number) => invoke<SystemEvent[]>("get_event_history", { count });
+export const clearEventHistory = (source?: string) => invoke<boolean>("clear_event_history", { source: source ?? null });
+
+// Whisper / Audio
+export interface WhisperStatus {
+  installed: boolean;
+  running: boolean;
+  port: number;
+}
+export const checkWhisperStatus = () => invoke<WhisperStatus>("check_whisper_status");
+export const transcribeAudio = (audio: number[]) =>
+  invoke<string>("transcribe_audio", { audio });
+
+// Audio recording (system-level via cpal)
+export const startRecording = () => invoke<void>("start_recording");
+export const stopRecording = () => invoke<number[]>("stop_recording");
+export const cancelRecording = () => invoke<void>("cancel_recording");
+export const isRecording = () => invoke<boolean>("is_recording");
+export const listAudioDevices = () => invoke<string[]>("list_audio_devices");
 
 // Event listeners
 export const onStreamEvent = (cb: (payload: string) => void): Promise<UnlistenFn> =>

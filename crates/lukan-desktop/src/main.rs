@@ -88,6 +88,8 @@ fn main() {
             commands::plugins::get_web_ui_status,
             commands::plugins::start_web_ui,
             commands::plugins::stop_web_ui,
+            commands::plugins::check_whisper_status,
+            commands::plugins::transcribe_audio,
             // Providers
             commands::providers::list_providers,
             commands::providers::get_models,
@@ -142,6 +144,16 @@ fn main() {
             commands::bg_processes::get_bg_process_log,
             commands::bg_processes::kill_bg_process,
             commands::bg_processes::send_to_background,
+            // Events
+            commands::events::consume_pending_events,
+            commands::events::get_event_history,
+            commands::events::clear_event_history,
+            // Audio recording
+            commands::audio::start_recording,
+            commands::audio::stop_recording,
+            commands::audio::cancel_recording,
+            commands::audio::is_recording,
+            commands::audio::list_audio_devices,
             // Files
             commands::files::list_directory,
             commands::files::open_in_editor,

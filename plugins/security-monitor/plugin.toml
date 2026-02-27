@@ -6,6 +6,10 @@ plugin_type = "channel"
 protocol_version = 1
 alias = "security"
 
+[plugin.activity_bar]
+icon = "shield-alert"
+label = "Security Events"
+
 [run]
 command = "bash"
 args = ["monitor.sh"]

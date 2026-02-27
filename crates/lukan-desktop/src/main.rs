@@ -61,6 +61,7 @@ fn main() {
             commands::config::save_config,
             commands::config::get_config_value,
             commands::config::set_config_value,
+            commands::config::list_tools,
             // Credentials
             commands::credentials::get_credentials,
             commands::credentials::save_credentials,

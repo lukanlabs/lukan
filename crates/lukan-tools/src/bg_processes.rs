@@ -112,6 +112,37 @@ pub fn kill_bg_process(pid: u32) -> bool {
     }
 }
 
+/// Forcefully kill a process group: SIGTERM → wait up to 500ms → SIGKILL.
+/// Used by the Bash tool to clean up child processes on cancellation.
+pub async fn kill_process_group_force(pid: u32) {
+    // Send SIGTERM to the process group
+    let pgid = -(pid as i32);
+    unsafe {
+        if libc::kill(pgid, libc::SIGTERM) != 0 {
+            // Fallback: try single PID
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+    }
+    debug!(pid, "Sent SIGTERM to process group (force kill)");
+
+    // Poll for up to 500ms
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        if !is_process_alive(pid) {
+            debug!(pid, "Process exited after SIGTERM");
+            return;
+        }
+    }
+
+    // Still alive — escalate to SIGKILL
+    warn!(pid, "Process still alive after 500ms, sending SIGKILL");
+    unsafe {
+        if libc::kill(pgid, libc::SIGKILL) != 0 {
+            libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
+}
+
 /// Wait for a background process to finish, polling every `poll_interval_ms`.
 /// Returns the log content when done, or None on timeout.
 pub async fn wait_bg_process(pid: u32, timeout_ms: u64) -> Option<String> {

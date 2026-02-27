@@ -1,5 +1,8 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use anyhow::Result;
 
 use lukan_agent::{AgentConfig, AgentLoop};
 use lukan_browser::BrowserManager;
@@ -10,6 +13,9 @@ use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::{create_configured_browser_registry, create_configured_registry};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
+type AgentTurnHandle = tokio::task::JoinHandle<(AgentLoop, Result<()>)>;
 
 /// Shared chat state managed via tauri::State
 pub struct ChatState {
@@ -22,6 +28,8 @@ pub struct ChatState {
     pub approval_tx: Mutex<Option<mpsc::Sender<ApprovalResponse>>>,
     pub plan_review_tx: Mutex<Option<mpsc::Sender<PlanReviewResponse>>>,
     pub planner_answer_tx: Mutex<Option<mpsc::Sender<String>>>,
+    pub cancel_token: Mutex<Option<CancellationToken>>,
+    pub agent_handle: Mutex<Option<AgentTurnHandle>>,
 }
 
 impl Default for ChatState {
@@ -36,6 +44,8 @@ impl Default for ChatState {
             approval_tx: Mutex::new(None),
             plan_review_tx: Mutex::new(None),
             planner_answer_tx: Mutex::new(None),
+            cancel_token: Mutex::new(None),
+            agent_handle: Mutex::new(None),
         }
     }
 }
@@ -103,7 +113,11 @@ impl ChatState {
             skip_session_save: false,
         };
 
-        AgentLoop::new(agent_config).await
+        let mut agent = AgentLoop::new(agent_config).await?;
+        if let Some(disabled) = &config.config.disabled_tools {
+            agent.set_disabled_tools(disabled.iter().cloned().collect::<HashSet<_>>());
+        }
+        Ok(agent)
     }
 
     /// Create an agent with a loaded session
@@ -169,7 +183,11 @@ impl ChatState {
             skip_session_save: false,
         };
 
-        AgentLoop::load_session(agent_config, session_id).await
+        let mut agent = AgentLoop::load_session(agent_config, session_id).await?;
+        if let Some(disabled) = &config.config.disabled_tools {
+            agent.set_disabled_tools(disabled.iter().cloned().collect::<HashSet<_>>());
+        }
+        Ok(agent)
     }
 }
 

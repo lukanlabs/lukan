@@ -9,7 +9,7 @@ import { MessageBubble } from "../components/chat/MessageBubble";
 import { StreamingText } from "../components/chat/StreamingText";
 import { ToolCallCard } from "../components/chat/ToolCallCard";
 import { ChatInput } from "../components/chat/ChatInput";
-import { ApprovalModal } from "../components/chat/ApprovalModal";
+import { InlineApproval } from "../components/chat/InlineApproval";
 import { PlanReviewer } from "../components/chat/PlanReviewer";
 import { QuestionPicker } from "../components/chat/QuestionPicker";
 
@@ -173,6 +173,16 @@ export default function ChatView() {
                             );
                           case "tool":
                             return <ToolCallCard key={block.id} tool={block.tool} />;
+                          case "approval":
+                            return (
+                              <InlineApproval
+                                key={block.id}
+                                tools={block.tools}
+                                onApprove={chat.approveTools}
+                                onAlwaysAllow={chat.alwaysAllowTools}
+                                onDenyAll={chat.denyAllTools}
+                              />
+                            );
                           default:
                             return null;
                         }
@@ -226,14 +236,6 @@ export default function ChatView() {
       </div>
 
       {/* Modals */}
-      {chat.pendingApproval && (
-        <ApprovalModal
-          tools={chat.pendingApproval.tools}
-          onApprove={chat.approveTools}
-          onDenyAll={chat.denyAllTools}
-        />
-      )}
-
       {chat.pendingPlanReview && (
         <PlanReviewer
           title={chat.pendingPlanReview.title}

@@ -8,6 +8,7 @@ use lukan_core::models::events::{
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::state::ChatState;
 
@@ -176,11 +177,20 @@ pub async fn send_message(
     let content_owned = content;
     let app_handle = app.clone();
 
+    // Create cancellation token so cancel_stream can signal the agent
+    let cancel_token = CancellationToken::new();
+    *state.cancel_token.lock().await = Some(cancel_token.clone());
+
     // Spawn agent turn
     let agent_handle = tokio::spawn(async move {
-        let result = agent.run_turn(&content_owned, event_tx, None, None).await;
+        let result = agent
+            .run_turn(&content_owned, event_tx, Some(cancel_token), None)
+            .await;
         (agent, result)
     });
+
+    // Store handle so cancel_stream can abort it
+    *state.agent_handle.lock().await = Some(agent_handle);
 
     // Spawn event forwarder
     let app_for_events = app.clone();
@@ -195,57 +205,68 @@ pub async fn send_message(
     // Spawn completion handler — use AppHandle to access state in spawned task
     let app_for_complete = app.clone();
     tokio::spawn(async move {
-        match agent_handle.await {
-            Ok((returned_agent, result)) => {
-                if let Err(e) = result {
+        // Take the handle from state (cancel_stream may have already taken it)
+        let handle = {
+            let chat_state = app_for_complete.state::<ChatState>();
+            chat_state.agent_handle.lock().await.take()
+        };
+
+        if let Some(handle) = handle {
+            match handle.await {
+                Ok((returned_agent, result)) => {
+                    if let Err(e) = result {
+                        let _ = app_handle.emit(
+                            "stream-event",
+                            serde_json::to_string(&serde_json::json!({
+                                "type": "error",
+                                "error": format!("Agent error: {e}")
+                            }))
+                            .unwrap_or_default(),
+                        );
+                    }
+
+                    let messages = returned_agent.messages_json();
+                    let context_size = returned_agent.last_context_size();
+                    let input_tokens = returned_agent.input_tokens();
+                    let output_tokens = returned_agent.output_tokens();
+
+                    let complete = TurnComplete {
+                        messages: serde_json::to_value(messages).unwrap_or_default(),
+                        context_size,
+                        token_usage: TokenUsage {
+                            input: input_tokens,
+                            output: output_tokens,
+                            cache_creation: None,
+                            cache_read: None,
+                        },
+                    };
+
                     let _ = app_handle.emit(
-                        "stream-event",
-                        serde_json::to_string(&serde_json::json!({
-                            "type": "error",
-                            "error": format!("Agent error: {e}")
-                        }))
-                        .unwrap_or_default(),
+                        "turn-complete",
+                        serde_json::to_string(&complete).unwrap_or_default(),
                     );
+
+                    // Put agent back
+                    let chat_state = app_for_complete.state::<ChatState>();
+                    *chat_state.agent.lock().await = Some(returned_agent);
                 }
-
-                let messages = returned_agent.messages_json();
-                let context_size = returned_agent.last_context_size();
-                let input_tokens = returned_agent.input_tokens();
-                let output_tokens = returned_agent.output_tokens();
-
-                let complete = TurnComplete {
-                    messages: serde_json::to_value(messages).unwrap_or_default(),
-                    context_size,
-                    token_usage: TokenUsage {
-                        input: input_tokens,
-                        output: output_tokens,
-                        cache_creation: None,
-                        cache_read: None,
-                    },
-                };
-
-                let _ = app_handle.emit(
-                    "turn-complete",
-                    serde_json::to_string(&complete).unwrap_or_default(),
-                );
-
-                // Put agent back
-                let chat_state = app_for_complete.state::<ChatState>();
-                *chat_state.agent.lock().await = Some(returned_agent);
-            }
-            Err(e) => {
-                let _ = app_handle.emit(
-                    "stream-event",
-                    serde_json::to_string(&serde_json::json!({
-                        "type": "error",
-                        "error": format!("Agent task failed: {e}")
-                    }))
-                    .unwrap_or_default(),
-                );
+                Err(e) => {
+                    if !e.is_cancelled() {
+                        let _ = app_handle.emit(
+                            "stream-event",
+                            serde_json::to_string(&serde_json::json!({
+                                "type": "error",
+                                "error": format!("Agent task failed: {e}")
+                            }))
+                            .unwrap_or_default(),
+                        );
+                    }
+                }
             }
         }
 
         let chat_state = app_for_complete.state::<ChatState>();
+        *chat_state.cancel_token.lock().await = None;
         *chat_state.is_processing.lock().await = false;
     });
 
@@ -254,9 +275,16 @@ pub async fn send_message(
 
 #[tauri::command]
 pub async fn cancel_stream(state: State<'_, ChatState>) -> Result<(), String> {
-    // Drop the agent to cancel — the event channel will close and the turn will abort
-    let mut agent_lock = state.agent.lock().await;
-    *agent_lock = None;
+    // Signal cancellation — the agent loop and Bash tool will react by aborting
+    if let Some(token) = state.cancel_token.lock().await.take() {
+        token.cancel();
+    }
+
+    // Abort the spawned agent task so the completion handler sees JoinError::Cancelled
+    if let Some(handle) = state.agent_handle.lock().await.take() {
+        handle.abort();
+    }
+
     *state.is_processing.lock().await = false;
     Ok(())
 }

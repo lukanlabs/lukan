@@ -2305,6 +2305,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+ "tokio-util",
  "uuid",
 ]
 
@@ -2385,6 +2386,7 @@ dependencies = [
  "sha2",
  "similar",
  "tokio",
+ "tokio-util",
  "toml 0.8.23",
  "tracing",
  "url",

@@ -201,14 +201,16 @@ impl Tool for BashTool {
             let log_path = bg_processes::log_file_path(child_pid);
             let drainer = OutputDrainer::start(child_pid, stdout_pipe, stderr_pipe, &log_path);
 
-            // Race: child.wait() vs Alt+B
+            // Race: child.wait() vs Alt+B vs cancellation
             enum RaceResult {
                 Finished(std::io::Result<std::process::ExitStatus>),
                 Timeout,
                 Background,
+                Cancelled,
             }
 
             let timeout_dur = std::time::Duration::from_millis(timeout_ms);
+            let cancel_token = ctx.cancel.clone();
             let race = tokio::select! {
                 res = tokio::time::timeout(timeout_dur, child.wait()) => {
                     match res {
@@ -217,6 +219,12 @@ impl Tool for BashTool {
                     }
                 }
                 _ = bg_signal.changed() => RaceResult::Background,
+                _ = async {
+                    match &cancel_token {
+                        Some(t) => t.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                } => RaceResult::Cancelled,
             };
 
             return match race {
@@ -242,6 +250,13 @@ impl Tool for BashTool {
                     Ok(ToolResult::error(format!(
                         "Command timed out after {timeout_ms}ms"
                     )))
+                }
+                RaceResult::Cancelled => {
+                    if child_pid > 0 {
+                        bg_processes::kill_process_group_force(child_pid).await;
+                    }
+                    let _ = tokio::fs::remove_file(&log_path).await;
+                    Ok(ToolResult::error("Cancelled by user."))
                 }
                 RaceResult::Background => {
                     if child_pid > 0 {
@@ -273,20 +288,34 @@ impl Tool for BashTool {
             };
         }
 
-        // No bg_signal — simple foreground with timeout (wait_with_output
-        // drains pipes internally, so no deadlock risk)
-        let result = tokio::time::timeout(
+        // No bg_signal — simple foreground with timeout + cancellation
+        let cancel_token = ctx.cancel.clone();
+        let timeout_fut = tokio::time::timeout(
             std::time::Duration::from_millis(timeout_ms),
             child.wait_with_output(),
-        )
-        .await;
+        );
 
-        match result {
-            Ok(Ok(output)) => build_foreground_result(output),
-            Ok(Err(e)) => Ok(ToolResult::error(format!("Failed to execute command: {e}"))),
-            Err(_) => Ok(ToolResult::error(format!(
-                "Command timed out after {timeout_ms}ms"
-            ))),
+        tokio::select! {
+            result = timeout_fut => {
+                match result {
+                    Ok(Ok(output)) => build_foreground_result(output),
+                    Ok(Err(e)) => Ok(ToolResult::error(format!("Failed to execute command: {e}"))),
+                    Err(_) => Ok(ToolResult::error(format!(
+                        "Command timed out after {timeout_ms}ms"
+                    ))),
+                }
+            }
+            _ = async {
+                match &cancel_token {
+                    Some(t) => t.cancelled().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if child_pid > 0 {
+                    bg_processes::kill_process_group_force(child_pid).await;
+                }
+                Ok(ToolResult::error("Cancelled by user."))
+            }
         }
     }
 }

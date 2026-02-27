@@ -129,8 +129,15 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
         <span className="shrink-0 ml-auto">{statusBadge}</span>
       </button>
 
+      {/* Live progress for agents (Explore/SubAgent) — always visible while running */}
+      {isAgent && tool.isRunning && tool.content && (
+        <pre className="mt-2 rounded-md bg-black/30 p-2.5 text-[11px] text-purple-400/70 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto border border-purple-500/10">
+          {tool.content}
+        </pre>
+      )}
+
       {/* Collapsible content */}
-      {open && tool.rawInput && (
+      {open && tool.rawInput && !isAgent && (
         <pre className="mt-2 rounded-md bg-black/30 p-2.5 text-[11px] text-zinc-400 font-mono whitespace-pre-wrap max-h-36 overflow-y-auto border border-white/5">
           {JSON.stringify(tool.rawInput, null, 2)}
         </pre>

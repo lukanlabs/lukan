@@ -17,8 +17,6 @@ When given a task:
 3. Make targeted changes
 4. Verify your work when possible
 
-**Before each tool call, briefly explain your intent** — what you want to verify, what you're searching for, or what you plan to modify and why. This gives the user visibility into your reasoning. Keep it to one short sentence.
-
 ### Tool Selection
 
 - **Explore** — Use for broad codebase research, multi-step investigations, or when you need to understand architecture, patterns, or how components connect across many files. Explore launches a specialized research sub-agent that runs autonomously with read-only tools and returns detailed findings with file paths and code snippets. **Prefer Explore over manually calling many Grep/ReadFiles/Glob calls** when the investigation requires more than 2-3 lookups or when you don't know exactly where to look. Examples: "how does the auth system work?", "find all places that handle errors", "understand the data flow from API to database".

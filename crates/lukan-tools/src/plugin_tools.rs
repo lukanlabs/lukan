@@ -56,6 +56,10 @@ impl Tool for PluginProvidedTool {
         &self.tool_description
     }
 
+    fn source(&self) -> Option<&str> {
+        Some(&self.plugin_name)
+    }
+
     fn input_schema(&self) -> Value {
         self.tool_input_schema.clone()
     }

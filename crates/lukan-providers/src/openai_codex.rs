@@ -325,11 +325,18 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                     .await
                     .ok();
                 } else {
-                    debug!("Discarded phantom text: {}", &phantom_buffer[..phantom_buffer.len().min(100)]);
+                    debug!("Discarded phantom text ({} chars): {}", phantom_buffer.len(), &phantom_buffer[..phantom_buffer.len().min(300)]);
                 }
                 phantom_buffer.clear();
                 phantom_suppressed = false;
             }
+
+            // Log every SSE event for debugging
+            debug!(
+                "SSE event: {} | data_keys: {:?}",
+                current_event,
+                data.as_object().map(|o| o.keys().collect::<Vec<_>>())
+            );
 
             match current_event.as_str() {
                 "response.output_item.added" => {
@@ -477,6 +484,7 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                 }
 
                 "response.completed" => {
+                    debug!("Stream completed. has_tool_calls={has_tool_calls}, phantom_suppressed={phantom_suppressed}, phantom_buffer_len={}", phantom_buffer.len());
                     let response = &data["response"];
 
                     // Usage
@@ -509,6 +517,7 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                 }
 
                 "response.failed" => {
+                    debug!("Stream FAILED: {}", serde_json::to_string_pretty(&data).unwrap_or_default());
                     let error_msg = data["response"]["error"]["message"]
                         .as_str()
                         .or_else(|| data["error"]["message"].as_str())
@@ -579,6 +588,8 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
         stop_reason = StopReason::ToolUse;
     }
 
+    debug!("Codex stream done: stop_reason={stop_reason:?}, has_tool_calls={has_tool_calls}, text_buffer_len={}, phantom_buffer_len={}", text_buffer.len(), phantom_buffer.len());
+
     tx.send(StreamEvent::MessageEnd { stop_reason }).await.ok();
 
     Ok(())
@@ -605,7 +616,12 @@ fn extract_phantom_tool_call(text: &str) -> Option<(String, Value)> {
     }
 
     // Extract JSON: find first '{' and match braces
-    let json_start = text.find('{')?;
+    let Some(json_start) = text.find('{') else {
+        // No JSON found — args are garbled. Emit tool call with empty input
+        // so the tool fails gracefully and the agent loop continues.
+        debug!("Phantom tool call '{tool_name}': no JSON args found, using empty input");
+        return Some((tool_name.to_string(), Value::Object(Default::default())));
+    };
     let json_text = &text[json_start..];
 
     // Find matching closing brace
@@ -626,7 +642,9 @@ fn extract_phantom_tool_call(text: &str) -> Option<(String, Value)> {
     }
 
     if end == 0 {
-        return None;
+        // Unclosed JSON — also use empty input
+        debug!("Phantom tool call '{tool_name}': unclosed JSON, using empty input");
+        return Some((tool_name.to_string(), Value::Object(Default::default())));
     }
 
     let input = parse_tool_input(&json_text[..end]);

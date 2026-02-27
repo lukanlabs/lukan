@@ -6,12 +6,14 @@ const CredentialsTab = lazy(() => import("../tabs/CredentialsTab"));
 const PluginsTab = lazy(() => import("../tabs/PluginsTab"));
 const ProvidersTab = lazy(() => import("../tabs/ProvidersTab"));
 const MemoryTab = lazy(() => import("../tabs/MemoryTab"));
+const ToolsTab = lazy(() => import("../tabs/ToolsTab"));
 
 const TABS = [
   { id: "config", label: "Config" },
   { id: "credentials", label: "Credentials" },
   { id: "plugins", label: "Plugins" },
   { id: "providers", label: "Providers" },
+  { id: "tools", label: "Tools" },
   { id: "memory", label: "Memory" },
 ] as const;
 
@@ -20,6 +22,7 @@ const TAB_COMPONENTS: Record<string, React.LazyExoticComponent<() => JSX.Element
   credentials: CredentialsTab,
   plugins: PluginsTab,
   providers: ProvidersTab,
+  tools: ToolsTab,
   memory: MemoryTab,
 };
 

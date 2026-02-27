@@ -87,6 +87,9 @@ pub struct AppConfig {
     /// CDP URL for browser tools (overrides auto-launch)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub browser_cdp_url: Option<String>,
+    /// Tools to disable (by name)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_tools: Option<Vec<String>>,
 }
 
 fn default_max_tokens() -> u32 {
@@ -114,6 +117,7 @@ impl Default for AppConfig {
             web_token_ttl: None,
             plugins: None,
             browser_cdp_url: None,
+            disabled_tools: None,
         }
     }
 }

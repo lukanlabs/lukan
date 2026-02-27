@@ -33,6 +33,7 @@ export const saveConfig = (config: AppConfig) => invoke<void>("save_config", { c
 export const getConfigValue = (key: string) => invoke<unknown | null>("get_config_value", { key });
 export const setConfigValue = (key: string, value: unknown) =>
   invoke<void>("set_config_value", { key, value });
+export const listTools = () => invoke<{ name: string; source: string | null }[]>("list_tools");
 
 // Credentials
 export const getCredentials = () => invoke<Credentials>("get_credentials");

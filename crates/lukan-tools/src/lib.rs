@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use lukan_core::models::events::StreamEvent;
 use lukan_core::models::tools::{ToolDefinition, ToolResult};
 use tokio::sync::{Mutex, mpsc, watch};
+use tokio_util::sync::CancellationToken;
 
 /// Context passed to every tool execution
 pub struct ToolContext {
@@ -40,6 +41,8 @@ pub struct ToolContext {
     pub sandbox: Option<sandbox::SandboxConfig>,
     /// Hard path restrictions — when set, only paths under these dirs are allowed
     pub allowed_paths: Option<Vec<PathBuf>>,
+    /// Cancellation token — when cancelled, long-running tools should abort
+    pub cancel: Option<CancellationToken>,
 }
 
 impl ToolContext {
@@ -124,6 +127,11 @@ pub trait Tool: Send + Sync {
 
     /// JSON Schema for the tool's input
     fn input_schema(&self) -> serde_json::Value;
+
+    /// Source plugin name, if this tool comes from a plugin
+    fn source(&self) -> Option<&str> {
+        None
+    }
 
     /// Execute the tool with parsed JSON input
     async fn execute(
@@ -249,6 +257,7 @@ mod tests {
             bg_signal: None,
             sandbox: None,
             allowed_paths: allowed.map(|v| v.into_iter().map(PathBuf::from).collect()),
+            cancel: None,
         }
     }
 
@@ -458,6 +467,29 @@ pub fn all_tool_names() -> Vec<String> {
     let mut names: Vec<String> = registry.tools.keys().cloned().collect();
     names.sort();
     names
+}
+
+/// Tool info with optional source plugin name.
+#[derive(serde::Serialize)]
+pub struct ToolInfo {
+    pub name: String,
+    /// Plugin name if provided by a plugin, null for built-in tools
+    pub source: Option<String>,
+}
+
+/// List all available tools with their source (plugin name or null for built-in).
+pub fn all_tool_info() -> Vec<ToolInfo> {
+    let registry = create_default_registry();
+    let mut tools: Vec<ToolInfo> = registry
+        .tools
+        .values()
+        .map(|t| ToolInfo {
+            name: t.name().to_string(),
+            source: t.source().map(|s| s.to_string()),
+        })
+        .collect();
+    tools.sort_by(|a, b| a.name.cmp(&b.name));
+    tools
 }
 
 /// Create a registry with all default tools

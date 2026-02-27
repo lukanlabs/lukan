@@ -37,7 +37,8 @@ export interface ToolStatus {
 export type StreamingBlock =
   | { type: "text"; id: string; text: string }
   | { type: "thinking"; id: string; text: string }
-  | { type: "tool"; id: string; tool: ToolStatus };
+  | { type: "tool"; id: string; tool: ToolStatus }
+  | { type: "approval"; id: string; tools: ToolApprovalRequest[] };
 
 export interface PendingApproval {
   tools: ToolApprovalRequest[];
@@ -100,6 +101,9 @@ export function useChat() {
   const blockIdCounter = useRef(0);
   const renderTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imageCacheRef = useRef<Record<string, string>>({});
+  // Pending text extracted before tool calls — gets prepended to the next text block
+  // so text split mid-word by tool calls merges back into one continuous block.
+  const pendingTextRef = useRef<string>("");
 
   // Batched render — accumulate fast deltas then flush at ~20fps
   const scheduleRender = useCallback(() => {
@@ -123,21 +127,39 @@ export function useChat() {
     (event: StreamEvent) => {
       switch (event.type) {
         case "message_start":
+          pendingTextRef.current = "";
           setState((s) => ({ ...s, isProcessing: true, error: null }));
           break;
 
-        case "text_delta":
-          appendTextDelta(blocksRef.current, event.text, () => `txt-${blockIdCounter.current++}`);
+        case "text_delta": {
+          // If there's pending text from before a tool call, prepend it
+          // so text split mid-word by tool calls merges back together.
+          const prefix = pendingTextRef.current;
+          if (prefix) {
+            pendingTextRef.current = "";
+            appendTextDelta(blocksRef.current, prefix + event.text, () => `txt-${blockIdCounter.current++}`);
+          } else {
+            appendTextDelta(blocksRef.current, event.text, () => `txt-${blockIdCounter.current++}`);
+          }
           scheduleRender();
           break;
+        }
 
         case "thinking_delta":
           appendThinkingDelta(blocksRef.current, event.text, () => `thk-${blockIdCounter.current++}`);
           scheduleRender();
           break;
 
-        case "tool_use_start":
+        case "tool_use_start": {
           flushRender();
+          // Extract the last text block and save it as pending text.
+          // When the next text_delta arrives after the tool, it will be
+          // prepended — merging text that was split mid-word by tool calls.
+          const lastBlock = blocksRef.current[blocksRef.current.length - 1];
+          if (lastBlock?.type === "text" && lastBlock.text) {
+            pendingTextRef.current += lastBlock.text;
+            blocksRef.current.pop();
+          }
           startTool(blocksRef.current, event.id, event.name, (tool) => ({
             type: "tool",
             id: event.id,
@@ -145,6 +167,7 @@ export function useChat() {
           }));
           setState((s) => ({ ...s, streamingBlocks: [...blocksRef.current] }));
           break;
+        }
 
         case "tool_use_end":
           setToolInput(blocksRef.current, event.id, event.input);
@@ -169,7 +192,25 @@ export function useChat() {
           scheduleRender();
           break;
 
+        case "explore_progress": {
+          // Replace (not accumulate) the Explore tool card content with latest activity
+          const exploreBlock = blocksRef.current.find(
+            (b): b is Extract<StreamingBlock, { type: "tool" }> => b.type === "tool" && b.tool.id === event.id,
+          );
+          if (exploreBlock) {
+            exploreBlock.tool = { ...exploreBlock.tool, content: event.activity };
+          }
+          scheduleRender();
+          break;
+        }
+
         case "approval_required":
+          blocksRef.current.push({
+            type: "approval",
+            id: `approval-${blockIdCounter.current++}`,
+            tools: event.tools,
+          } as StreamingBlock);
+          flushRender();
           setState((s) => ({ ...s, pendingApproval: { tools: event.tools } }));
           break;
 
@@ -212,6 +253,7 @@ export function useChat() {
         case "error":
           blocksRef.current = [];
           blockIdCounter.current = 0;
+          pendingTextRef.current = "";
           setState((s) => ({ ...s, error: event.error, isProcessing: false, streamingBlocks: [] }));
           break;
 
@@ -226,6 +268,7 @@ export function useChat() {
   const handleTurnComplete = useCallback((complete: TurnComplete) => {
     blocksRef.current = [];
     blockIdCounter.current = 0;
+    pendingTextRef.current = "";
     setState((s) => ({
       ...s,
       isProcessing: false,
@@ -355,15 +398,28 @@ export function useChat() {
     setState((s) => ({ ...s, isProcessing: false, streamingBlocks: [] }));
   }, []);
 
+  const clearApprovalBlocks = useCallback(() => {
+    blocksRef.current = blocksRef.current.filter((b) => b.type !== "approval");
+    flushRender();
+  }, [flushRender]);
+
   const approveTools = useCallback((approvedIds: string[]) => {
     api.approveTools(approvedIds).catch(() => {});
+    clearApprovalBlocks();
     setState((s) => ({ ...s, pendingApproval: null }));
-  }, []);
+  }, [clearApprovalBlocks]);
+
+  const alwaysAllowTools = useCallback((approvedIds: string[], tools: ToolApprovalRequest[]) => {
+    api.alwaysAllowTools(approvedIds, tools).catch(() => {});
+    clearApprovalBlocks();
+    setState((s) => ({ ...s, pendingApproval: null }));
+  }, [clearApprovalBlocks]);
 
   const denyAllTools = useCallback(() => {
     api.denyAllTools().catch(() => {});
+    clearApprovalBlocks();
     setState((s) => ({ ...s, pendingApproval: null }));
-  }, []);
+  }, [clearApprovalBlocks]);
 
   const answerQuestion = useCallback((answer: string) => {
     api.answerQuestion(answer).catch(() => {});
@@ -449,6 +505,7 @@ export function useChat() {
     sendMessage,
     abort,
     approveTools,
+    alwaysAllowTools,
     denyAllTools,
     answerQuestion,
     acceptPlan,

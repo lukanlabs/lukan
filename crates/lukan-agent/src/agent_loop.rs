@@ -854,14 +854,49 @@ impl AgentLoop {
                 continue;
             }
 
+            // ── Pre-validation: catch tools that will fail before asking approval ──
+            // EditFile requires the file to have been read first; reject early
+            // so the user isn't asked to approve a tool that will just error.
+            let read_files_snapshot = self.read_files.lock().await.clone();
+            let mut preflight_failed: Vec<(usize, lukan_core::models::tools::ToolResult)> =
+                Vec::new();
+            for (idx, tool) in pending_tools.iter().enumerate() {
+                if tool.name == "EditFile"
+                    && let Some(fp) = tool.input.get("file_path").and_then(|v| v.as_str())
+                {
+                    let path = std::path::PathBuf::from(fp);
+                    let path = if path.is_absolute() {
+                        path
+                    } else {
+                        self.cwd.join(&path)
+                    };
+                    if !read_files_snapshot.contains(&path) {
+                        preflight_failed.push((
+                            idx,
+                            lukan_core::models::tools::ToolResult::error(format!(
+                                "File has not been read yet. Use ReadFiles first: {fp}"
+                            )),
+                        ));
+                    }
+                }
+            }
+            // Remove preflight-failed tools from pending so they skip approval
+            let preflight_ids: std::collections::HashSet<usize> =
+                preflight_failed.iter().map(|(i, _)| *i).collect();
+
             // ── Permission check ─────────────────────────────────────────
             // Classify each pending tool as allowed, needs_approval, or denied
             let mut allowed_tools: Vec<&PendingToolCall> = Vec::new();
             let mut needs_approval: Vec<&PendingToolCall> = Vec::new();
             let mut denied_results: Vec<(usize, lukan_core::models::tools::ToolResult)> =
                 Vec::new();
+            // Start with preflight failures
+            denied_results.extend(preflight_failed);
 
             for (idx, tool) in pending_tools.iter().enumerate() {
+                if preflight_ids.contains(&idx) {
+                    continue;
+                }
                 match self.permission_matcher.verdict(&tool.name, &tool.input) {
                     ToolVerdict::Allow => allowed_tools.push(tool),
                     ToolVerdict::Ask => needs_approval.push(tool),
@@ -987,7 +1022,8 @@ impl AgentLoop {
             let executed_results = if allowed_tools.is_empty() {
                 vec![]
             } else {
-                self.execute_tools(&allowed_tools, &event_tx).await
+                self.execute_tools(&allowed_tools, &event_tx, cancel.as_ref())
+                    .await
             };
 
             // Merge executed + denied results in original order
@@ -1650,6 +1686,7 @@ impl AgentLoop {
         &self,
         tools: &[&PendingToolCall],
         event_tx: &mpsc::Sender<StreamEvent>,
+        cancel: Option<&CancellationToken>,
     ) -> Vec<lukan_core::models::tools::ToolResult> {
         let mut handles = Vec::new();
 
@@ -1675,6 +1712,7 @@ impl AgentLoop {
             let bg_signal = self.bg_signal.clone();
             let sandbox_cfg = sandbox_cfg.clone();
             let allowed_paths = self.allowed_paths.clone();
+            let cancel_token = cancel.cloned();
 
             handles.push(tokio::spawn(async move {
                 // Send progress start
@@ -1695,6 +1733,7 @@ impl AgentLoop {
                     bg_signal,
                     sandbox: sandbox_cfg.clone(),
                     allowed_paths,
+                    cancel: cancel_token,
                 };
 
                 match registry.execute(&name, input, &ctx).await {
@@ -1713,6 +1752,11 @@ impl AgentLoop {
         for handle in handles {
             match handle.await {
                 Ok(result) => results.push(result),
+                Err(e) if e.is_cancelled() => {
+                    results.push(lukan_core::models::tools::ToolResult::error(
+                        "Cancelled by user.".to_string(),
+                    ));
+                }
                 Err(e) => {
                     results.push(lukan_core::models::tools::ToolResult::error(format!(
                         "Task join error: {e}"
@@ -1720,7 +1764,6 @@ impl AgentLoop {
                 }
             }
         }
-
         results
     }
 }

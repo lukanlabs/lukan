@@ -17,6 +17,8 @@ export interface AppConfig {
   webPassword?: string;
   webTokenTtl?: number;
   plugins?: PluginsConfig;
+  browserCdpUrl?: string;
+  disabledTools?: string[];
 }
 
 export interface PluginsConfig {
@@ -284,6 +286,7 @@ export type StreamEvent =
   | { type: "tool_use_delta"; input: string }
   | { type: "tool_use_end"; id: string; name: string; input: Record<string, unknown> }
   | { type: "tool_progress"; id: string; name: string; content: string }
+  | { type: "explore_progress"; id: string; task: string; toolCalls: number; tokens: number; elapsedSecs: number; activity: string }
   | { type: "tool_result"; id: string; name: string; content: string; isError?: boolean; diff?: string; image?: string }
   | { type: "approval_required"; tools: ToolApprovalRequest[] }
   | { type: "planner_question"; id: string; questions: PlannerQuestion[] }

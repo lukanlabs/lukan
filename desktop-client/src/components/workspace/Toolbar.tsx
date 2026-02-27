@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Globe, Settings, ExternalLink, ChevronDown, Minus, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import logoUrl from "../../assets/logo.png";
+import logoTextUrl from "../../assets/lukan_text.png";
 import type { WorkspaceMode, ProviderInfo } from "../../lib/types";
 import {
   listProviders,
@@ -96,6 +97,7 @@ export function Toolbar({
       {/* Left: logo + mode toggle */}
       <div className="toolbar-section">
         <img src={logoUrl} alt="lukan" className="toolbar-logo" />
+        <img src={logoTextUrl} alt="lukan" style={{ height: 16, objectFit: "contain" }} />
         <div className="mode-toggle">
           <button
             className={mode === "agent" ? "active" : ""}

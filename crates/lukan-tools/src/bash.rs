@@ -1,5 +1,4 @@
-use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
@@ -10,16 +9,6 @@ use tracing::debug;
 
 use crate::bg_processes;
 use crate::{Tool, ToolContext};
-
-/// Cached result of setsid availability check.
-static SETSID_AVAILABLE: OnceLock<bool> = OnceLock::new();
-
-/// Check if `setsid` is available on this system.
-/// Used as a fallback when bwrap is not available, to detach the child process
-/// from the controlling terminal (prevents SSH/git from stealing tty input).
-fn is_setsid_available() -> bool {
-    *SETSID_AVAILABLE.get_or_init(|| Path::new("/usr/bin/setsid").exists())
-}
 
 const MAX_OUTPUT_BYTES: usize = 30_000;
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
@@ -153,30 +142,27 @@ impl Tool for BashTool {
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()?
-        } else if is_setsid_available() {
-            // Use setsid to create a new session -- detaches child from our
-            // controlling terminal so SSH/git can't open /dev/tty to steal input.
-            Command::new("setsid")
-                .arg("--wait")
-                .arg("bash")
-                .arg("-c")
-                .arg(command)
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .env("LUKAN_AGENT", "1")
-                .current_dir(&ctx.cwd)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?
         } else {
-            Command::new("bash")
-                .arg("-c")
+            // Create a new session via pre_exec(setsid) so the child bash
+            // becomes its own session leader AND process group leader (PGID =
+            // child PID). This means:
+            // 1. Detached from our controlling terminal (SSH/git can't steal tty)
+            // 2. kill(-child_pid, sig) correctly targets the entire process tree
+            let mut cmd = Command::new("bash");
+            cmd.arg("-c")
                 .arg(command)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("LUKAN_AGENT", "1")
                 .current_dir(&ctx.cwd)
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?
+                .stderr(std::process::Stdio::piped());
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+            cmd.spawn()?
         };
 
         let child_pid = child.id().unwrap_or(0);
@@ -268,7 +254,7 @@ impl Tool for BashTool {
                         });
 
                         let log_display = log_path.display().to_string();
-                        bg_processes::add_bg_process(child_pid, command_str, log_path);
+                        bg_processes::add_bg_process(child_pid, command_str, log_path, ctx.session_id.clone());
 
                         Ok(ToolResult::success(format!(
                             "The user pressed Alt+B to send this command to background. \
@@ -355,28 +341,22 @@ impl BashTool {
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()?
-        } else if is_setsid_available() {
-            Command::new("setsid")
-                .arg("--wait")
-                .arg("bash")
-                .arg("-c")
-                .arg(command)
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .env("LUKAN_AGENT", "1")
-                .current_dir(&ctx.cwd)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?
         } else {
-            Command::new("bash")
-                .arg("-c")
+            let mut cmd = Command::new("bash");
+            cmd.arg("-c")
                 .arg(command)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("LUKAN_AGENT", "1")
                 .current_dir(&ctx.cwd)
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?
+                .stderr(std::process::Stdio::piped());
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+            cmd.spawn()?
         };
 
         let pid = match child.id() {
@@ -400,7 +380,7 @@ impl BashTool {
 
         let log_display = log_file.display().to_string();
 
-        bg_processes::add_bg_process(pid, command.to_string(), log_file);
+        bg_processes::add_bg_process(pid, command.to_string(), log_file, ctx.session_id.clone());
 
         Ok(ToolResult::success(format!(
             "Background process started. PID: {pid}\n\

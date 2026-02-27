@@ -24,6 +24,17 @@ pub struct BgEntry {
     pub alive: bool,
 }
 
+impl From<lukan_tools::bg_processes::BgProcessSnapshot> for BgEntry {
+    fn from(s: lukan_tools::bg_processes::BgProcessSnapshot) -> Self {
+        Self {
+            pid: s.pid,
+            command: s.command,
+            started_at: s.started_at,
+            alive: s.status == lukan_tools::bg_processes::BgProcessStatus::Running,
+        }
+    }
+}
+
 /// Background process picker state
 pub struct BgPicker {
     pub entries: Vec<BgEntry>,
@@ -53,15 +64,7 @@ impl BgPicker {
     /// Refresh entries from the bg_processes tracker
     pub fn refresh(&mut self) {
         let processes = lukan_tools::bg_processes::get_bg_processes();
-        self.entries = processes
-            .into_iter()
-            .map(|(pid, command, started_at, alive)| BgEntry {
-                pid,
-                command,
-                started_at,
-                alive,
-            })
-            .collect();
+        self.entries = processes.into_iter().map(BgEntry::from).collect();
         // Clamp selection
         if self.selected >= self.entries.len() && !self.entries.is_empty() {
             self.selected = self.entries.len() - 1;

@@ -43,6 +43,8 @@ pub struct ToolContext {
     pub allowed_paths: Option<Vec<PathBuf>>,
     /// Cancellation token — when cancelled, long-running tools should abort
     pub cancel: Option<CancellationToken>,
+    /// Session ID for associating background processes with the chat session
+    pub session_id: Option<String>,
 }
 
 impl ToolContext {
@@ -258,6 +260,7 @@ mod tests {
             sandbox: None,
             allowed_paths: allowed.map(|v| v.into_iter().map(PathBuf::from).collect()),
             cancel: None,
+            session_id: None,
         }
     }
 

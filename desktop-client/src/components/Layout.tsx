@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { TabId } from "../lib/types";
 import logoUrl from "../assets/logo.png";
+import logoTextUrl from "../assets/lukan_text.png";
 import {
   MessageSquare,
   TerminalSquare,
@@ -51,12 +52,7 @@ export default function Layout({ activeTab, onTabChange, children }: LayoutProps
               <img src={logoUrl} alt="lukan" className="h-5 w-5" />
             </div>
             <div>
-              <h1
-                className="text-sm font-semibold"
-                style={{ color: "#fafafa" }}
-              >
-                lukan
-              </h1>
+              <img src={logoTextUrl} alt="lukan" style={{ height: 14, objectFit: "contain" }} />
               <p
                 className="text-[10px]"
                 style={{ color: "#52525b" }}

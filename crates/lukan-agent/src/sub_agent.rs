@@ -415,6 +415,7 @@ async fn run_sub_agent(
                     sandbox: sandbox_cfg,
                     allowed_paths: ap,
                     cancel: None,
+                    session_id: None,
                 };
                 match reg.execute(&n, inp, &ctx).await {
                     Ok(r) => r,
@@ -987,6 +988,7 @@ pub async fn run_explore(
                         sandbox: sandbox_cfg,
                         allowed_paths: ap,
                         cancel: None,
+                        session_id: None,
                     };
                     match reg.execute(&n, inp, &ctx).await {
                         Ok(r) => r,

@@ -11,6 +11,11 @@ pub struct BgProcess {
     pub command: String,
     pub started_at: DateTime<Utc>,
     pub log_file: PathBuf,
+    pub session_id: Option<String>,
+    /// When the process was detected as no longer alive
+    pub exited_at: Option<DateTime<Utc>>,
+    /// Whether the process was explicitly killed via kill_bg_process
+    pub killed: bool,
 }
 
 /// Global tracker for background processes
@@ -29,16 +34,36 @@ fn tracker() -> &'static Mutex<BgTracker> {
 }
 
 /// Register a new background process
-pub fn add_bg_process(pid: u32, command: String, log_file: PathBuf) {
+pub fn add_bg_process(pid: u32, command: String, log_file: PathBuf, session_id: Option<String>) {
     let process = BgProcess {
         pid,
         command,
         started_at: Utc::now(),
         log_file,
+        session_id,
+        exited_at: None,
+        killed: false,
     };
     let mut t = tracker().lock().unwrap();
     t.processes.insert(pid, process);
     debug!(pid, "Registered background process");
+}
+
+/// Process status as seen by the UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BgProcessStatus {
+    Running,
+    Completed,
+    Killed,
+}
+
+/// Snapshot of a background process for the UI
+pub struct BgProcessSnapshot {
+    pub pid: u32,
+    pub command: String,
+    pub started_at: DateTime<Utc>,
+    pub exited_at: Option<DateTime<Utc>>,
+    pub status: BgProcessStatus,
 }
 
 /// Check if a process is still alive using `kill(pid, 0)`
@@ -47,19 +72,95 @@ pub fn is_process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
+/// Recursively find all descendant PIDs of a process by walking `/proc`.
+/// Returns descendants in depth-first order (children before grandchildren),
+/// which means reversing the result gives a bottom-up order for killing.
+fn find_descendants(pid: u32) -> Vec<u32> {
+    let mut result = Vec::new();
+    let mut stack = vec![pid];
+    while let Some(p) = stack.pop() {
+        // Read /proc/<p>/task/<p>/children to get direct children
+        let path = format!("/proc/{p}/task/{p}/children");
+        if let Ok(children_str) = std::fs::read_to_string(&path) {
+            for token in children_str.split_whitespace() {
+                if let Ok(child_pid) = token.parse::<u32>() {
+                    result.push(child_pid);
+                    stack.push(child_pid);
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Send a signal to a process and all its descendants (found via /proc tree walk).
+/// This is more robust than process-group kill because it catches children that
+/// created their own process groups (e.g. uvicorn --reload, python subprocess).
+fn kill_tree(pid: u32, signal: i32) {
+    let descendants = find_descendants(pid);
+    // Kill descendants first (bottom-up: reverse since find_descendants is DFS)
+    for &child in descendants.iter().rev() {
+        unsafe { libc::kill(child as i32, signal); }
+    }
+    // Kill the root process
+    unsafe { libc::kill(pid as i32, signal); }
+    // Also try the process group for good measure
+    let pgid = -(pid as i32);
+    unsafe { libc::kill(pgid, signal); }
+}
+
+/// Build a snapshot from a tracked process, updating exited_at on first death detection.
+fn snapshot_process(p: &mut BgProcess) -> BgProcessSnapshot {
+    let alive = is_process_alive(p.pid);
+    if !alive && p.exited_at.is_none() {
+        p.exited_at = Some(Utc::now());
+    }
+    let status = if alive {
+        BgProcessStatus::Running
+    } else if p.killed {
+        BgProcessStatus::Killed
+    } else {
+        BgProcessStatus::Completed
+    };
+    BgProcessSnapshot {
+        pid: p.pid,
+        command: p.command.clone(),
+        started_at: p.started_at,
+        exited_at: p.exited_at,
+        status,
+    }
+}
+
 /// Get list of all tracked background processes (alive ones first, then dead)
-pub fn get_bg_processes() -> Vec<(u32, String, DateTime<Utc>, bool)> {
-    let t = tracker().lock().unwrap();
-    let mut result: Vec<(u32, String, DateTime<Utc>, bool)> = t
+pub fn get_bg_processes() -> Vec<BgProcessSnapshot> {
+    let mut t = tracker().lock().unwrap();
+    let mut result: Vec<BgProcessSnapshot> = t
         .processes
-        .values()
-        .map(|p| {
-            let alive = is_process_alive(p.pid);
-            (p.pid, p.command.clone(), p.started_at, alive)
-        })
+        .values_mut()
+        .map(|p| snapshot_process(p))
         .collect();
-    // Sort: alive first, then by start time descending
-    result.sort_by(|a, b| b.3.cmp(&a.3).then(b.2.cmp(&a.2)));
+    result.sort_by(|a, b| {
+        let a_alive = a.status == BgProcessStatus::Running;
+        let b_alive = b.status == BgProcessStatus::Running;
+        b_alive.cmp(&a_alive).then(b.started_at.cmp(&a.started_at))
+    });
+    result
+}
+
+/// Get list of background processes filtered by session
+pub fn get_bg_processes_for_session(session_id: &str) -> Vec<BgProcessSnapshot> {
+    let mut t = tracker().lock().unwrap();
+    let mut result: Vec<BgProcessSnapshot> = t
+        .processes
+        .values_mut()
+        .filter(|p| p.session_id.as_deref() == Some(session_id))
+        .map(|p| snapshot_process(p))
+        .collect();
+    result.sort_by(|a, b| {
+        let a_alive = a.status == BgProcessStatus::Running;
+        let b_alive = b.status == BgProcessStatus::Running;
+        b_alive.cmp(&a_alive).then(b.started_at.cmp(&a.started_at))
+    });
     result
 }
 
@@ -88,59 +189,44 @@ pub fn get_bg_log(pid: u32, max_lines: usize) -> Option<String> {
     }
 }
 
-/// Kill a background process and all its children by sending SIGTERM to the
-/// entire process group. Processes are spawned with `setsid` so the tracked
-/// PID is also the process group leader — using a negative PID in `kill()`
-/// targets every process in that group (e.g. `uv run` → `bash` → `uvicorn`).
+/// Kill a background process and all its descendants by walking the process
+/// tree via `/proc`. This catches children in different process groups (e.g.
+/// uvicorn --reload spawns a subprocess that may have its own PGID).
 pub fn kill_bg_process(pid: u32) -> bool {
-    // SAFETY: sending SIGTERM to the entire process group (-pid)
-    let pgid = -(pid as i32);
-    let result = unsafe { libc::kill(pgid, libc::SIGTERM) };
-    if result == 0 {
-        debug!(pid, "Sent SIGTERM to process group");
-        true
-    } else {
-        // Fallback: try killing just the single PID (in case setsid wasn't used)
-        let result = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-        if result == 0 {
-            debug!(pid, "Sent SIGTERM to single process (group kill failed)");
-            true
-        } else {
-            warn!(pid, "Failed to kill background process");
-            false
+    // Mark as killed in the tracker before sending signal
+    {
+        let mut t = tracker().lock().unwrap();
+        if let Some(p) = t.processes.get_mut(&pid) {
+            p.killed = true;
         }
     }
+
+    let alive = is_process_alive(pid);
+    if !alive {
+        debug!(pid, "Process already dead");
+        return false;
+    }
+
+    kill_tree(pid, libc::SIGTERM);
+    debug!(pid, "Sent SIGTERM to process tree");
+    true
 }
 
-/// Forcefully kill a process group: SIGTERM → wait up to 500ms → SIGKILL.
-/// Used by the Bash tool to clean up child processes on cancellation.
+/// Forcefully kill a process tree: SIGTERM → wait 500ms → SIGKILL.
+/// Walks `/proc` to find all descendants so nothing escapes, even if
+/// children created their own process groups.
 pub async fn kill_process_group_force(pid: u32) {
-    // Send SIGTERM to the process group
-    let pgid = -(pid as i32);
-    unsafe {
-        if libc::kill(pgid, libc::SIGTERM) != 0 {
-            // Fallback: try single PID
-            libc::kill(pid as i32, libc::SIGTERM);
-        }
-    }
-    debug!(pid, "Sent SIGTERM to process group (force kill)");
+    // SIGTERM the entire tree
+    kill_tree(pid, libc::SIGTERM);
+    debug!(pid, "Sent SIGTERM to process tree (force kill)");
 
-    // Poll for up to 500ms
-    for _ in 0..10 {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        if !is_process_alive(pid) {
-            debug!(pid, "Process exited after SIGTERM");
-            return;
-        }
-    }
+    // Wait 500ms for graceful shutdown
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Still alive — escalate to SIGKILL
-    warn!(pid, "Process still alive after 500ms, sending SIGKILL");
-    unsafe {
-        if libc::kill(pgid, libc::SIGKILL) != 0 {
-            libc::kill(pid as i32, libc::SIGKILL);
-        }
-    }
+    // SIGKILL the entire tree — re-walk because SIGTERM may have spawned
+    // cleanup children or some processes may have forked since the first walk
+    kill_tree(pid, libc::SIGKILL);
+    debug!(pid, "Sent SIGKILL to process tree");
 }
 
 /// Wait for a background process to finish, polling every `poll_interval_ms`.
@@ -169,18 +255,12 @@ pub fn remove_bg_process(pid: u32) {
     }
 }
 
-/// Clean up all tracked processes: kill alive ones (entire group), remove log files
+/// Clean up all tracked processes: kill alive ones (entire tree), remove log files
 pub fn cleanup_all() {
     let mut t = tracker().lock().unwrap();
     for (pid, process) in t.processes.drain() {
         if is_process_alive(pid) {
-            // Kill entire process group first, fallback to single PID
-            let pgid = -(pid as i32);
-            unsafe {
-                if libc::kill(pgid, libc::SIGTERM) != 0 {
-                    libc::kill(pid as i32, libc::SIGTERM);
-                }
-            }
+            kill_tree(pid, libc::SIGTERM);
         }
         let _ = std::fs::remove_file(&process.log_file);
     }

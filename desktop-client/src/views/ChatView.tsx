@@ -125,9 +125,7 @@ export default function ChatView() {
             {isEmpty && (
               <div className="flex flex-col items-center justify-center h-full text-zinc-400 gap-4 pt-32">
                 <div className="relative">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-zinc-800 border border-zinc-700 animate-pulse-subtle">
-                    <img src={logoUrl} alt="lukan" className="h-9 w-9" />
-                  </div>
+                  <img src={logoUrl} alt="lukan" className="h-18 w-18 animate-pulse-subtle" />
                 </div>
                 <div className="text-center space-y-2">
                   <h2 className="text-xl font-semibold text-zinc-200">Welcome to lukan</h2>

@@ -10,12 +10,14 @@ import type {
   RemotePlugin,
   WhatsAppGroup,
   PluginCommand,
+  PluginToolsInfo,
   WebUiStatus,
   InitResponse,
   SessionSummary,
   ToolApprovalRequest,
   TerminalSessionInfo,
   TerminalOutputEvent,
+  BgProcessInfo,
   BrowserStatus,
   BrowserTab,
   DirectoryListing,
@@ -66,6 +68,8 @@ export const getPluginCommands = (name: string) =>
   invoke<PluginCommand[]>("get_plugin_commands", { name });
 export const runPluginCommand = (name: string, command: string) =>
   invoke<string>("run_plugin_command", { name, command });
+export const getPluginManifestTools = (name: string) =>
+  invoke<PluginToolsInfo>("get_plugin_manifest_tools", { name });
 
 // Providers
 export const listProviders = () => invoke<ProviderInfo[]>("list_providers");
@@ -130,6 +134,16 @@ export const onTerminalOutput = (
 ): Promise<UnlistenFn> =>
   listen<TerminalOutputEvent>(`terminal-output-${sessionId}`, (e) => cb(e.payload));
 
+// Background processes
+export const listBgProcesses = (sessionId?: string) =>
+  invoke<BgProcessInfo[]>("list_bg_processes", { sessionId });
+export const getBgProcessLog = (pid: number, maxLines: number) =>
+  invoke<string | null>("get_bg_process_log", { pid, maxLines });
+export const killBgProcess = (pid: number) =>
+  invoke<boolean>("kill_bg_process", { pid });
+export const sendToBackground = () =>
+  invoke<boolean>("send_to_background");
+
 // Browser
 export const browserLaunch = (visible?: boolean, profile?: string, port?: number) =>
   invoke<BrowserStatus>("browser_launch", { visible, profile, port });
@@ -145,6 +159,7 @@ export const listDirectory = (path?: string) =>
 export const openInEditor = (path: string, editor?: string) =>
   invoke<void>("open_in_editor", { path, editor });
 export const getCwd = () => invoke<string>("get_cwd");
+export const openUrl = (url: string) => invoke<void>("open_url", { url });
 
 // Workers
 export const listWorkers = () => invoke<WorkerSummary[]>("list_workers");

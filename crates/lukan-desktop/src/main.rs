@@ -84,6 +84,7 @@ fn main() {
             commands::plugins::fetch_whatsapp_groups,
             commands::plugins::get_plugin_commands,
             commands::plugins::run_plugin_command,
+            commands::plugins::get_plugin_manifest_tools,
             commands::plugins::get_web_ui_status,
             commands::plugins::start_web_ui,
             commands::plugins::stop_web_ui,
@@ -136,10 +137,16 @@ fn main() {
             commands::workers::toggle_worker,
             commands::workers::get_worker_detail,
             commands::workers::get_worker_run,
+            // Background processes
+            commands::bg_processes::list_bg_processes,
+            commands::bg_processes::get_bg_process_log,
+            commands::bg_processes::kill_bg_process,
+            commands::bg_processes::send_to_background,
             // Files
             commands::files::list_directory,
             commands::files::open_in_editor,
             commands::files::get_cwd,
+            commands::files::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -87,3 +87,30 @@ pub async fn get_cwd() -> Result<String, String> {
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| format!("Failed to get cwd: {e}"))
 }
+
+/// Open a URL in the system's default browser.
+#[tauri::command]
+pub async fn open_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    let cmd = "xdg-open";
+    #[cfg(target_os = "macos")]
+    let cmd = "open";
+    #[cfg(target_os = "windows")]
+    let cmd = "cmd";
+
+    #[cfg(target_os = "windows")]
+    {
+        tokio::process::Command::new(cmd)
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {e}"))?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        tokio::process::Command::new(cmd)
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {e}"))?;
+    }
+    Ok(())
+}

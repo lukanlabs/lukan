@@ -1,8 +1,9 @@
-import type { SidePanelId } from "../../lib/types";
+import type { SidePanelId, BgProcessInfo } from "../../lib/types";
 import { FilesPanel } from "./panels/FilesPanel";
 import { WorkersPanel } from "./panels/WorkersPanel";
 import { SessionsPanel } from "./panels/SessionsPanel";
 import { BrowserPanel } from "./panels/BrowserPanel";
+import { ProcessesPanel } from "./panels/ProcessesPanel";
 
 interface SidePanelProps {
   activePanel: SidePanelId;
@@ -10,11 +11,13 @@ interface SidePanelProps {
   currentSessionId: string;
   onLoadSession: (id: string) => void;
   onNewSession: () => void;
+  onOpenProcessLog?: (process: BgProcessInfo) => void;
 }
 
 const PANEL_TITLES: Record<SidePanelId, string> = {
   files: "Explorer",
   workers: "Workers",
+  processes: "Processes",
   sessions: "Sessions",
   browser: "Browser",
 };
@@ -24,6 +27,7 @@ export function SidePanel({
   currentSessionId,
   onLoadSession,
   onNewSession,
+  onOpenProcessLog,
 }: SidePanelProps) {
   return (
     <div className="side-panel">
@@ -39,6 +43,9 @@ export function SidePanel({
             onLoadSession={onLoadSession}
             onNewSession={onNewSession}
           />
+        )}
+        {activePanel === "processes" && (
+          <ProcessesPanel currentSessionId={currentSessionId} onOpenLog={onOpenProcessLog} />
         )}
         {activePanel === "browser" && <BrowserPanel />}
       </div>

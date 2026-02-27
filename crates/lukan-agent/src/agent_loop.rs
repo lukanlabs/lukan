@@ -1713,6 +1713,7 @@ impl AgentLoop {
             let sandbox_cfg = sandbox_cfg.clone();
             let allowed_paths = self.allowed_paths.clone();
             let cancel_token = cancel.cloned();
+            let session_id = Some(self.session.id.clone());
 
             handles.push(tokio::spawn(async move {
                 // Send progress start
@@ -1734,6 +1735,7 @@ impl AgentLoop {
                     sandbox: sandbox_cfg.clone(),
                     allowed_paths,
                     cancel: cancel_token,
+                    session_id,
                 };
 
                 match registry.execute(&name, input, &ctx).await {

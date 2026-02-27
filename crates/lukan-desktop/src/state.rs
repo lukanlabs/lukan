@@ -12,7 +12,7 @@ use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse};
 use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::{create_configured_browser_registry, create_configured_registry};
 use tokio::sync::Mutex;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 type AgentTurnHandle = tokio::task::JoinHandle<(AgentLoop, Result<()>)>;
@@ -30,6 +30,8 @@ pub struct ChatState {
     pub planner_answer_tx: Mutex<Option<mpsc::Sender<String>>>,
     pub cancel_token: Mutex<Option<CancellationToken>>,
     pub agent_handle: Mutex<Option<AgentTurnHandle>>,
+    /// Sender to signal "send to background" for the currently running Bash tool
+    pub bg_signal_tx: Mutex<Option<watch::Sender<()>>>,
 }
 
 impl Default for ChatState {
@@ -46,6 +48,7 @@ impl Default for ChatState {
             planner_answer_tx: Mutex::new(None),
             cancel_token: Mutex::new(None),
             agent_handle: Mutex::new(None),
+            bg_signal_tx: Mutex::new(None),
         }
     }
 }
@@ -89,6 +92,10 @@ impl ChatState {
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
         *self.planner_answer_tx.lock().await = Some(planner_answer_tx);
 
+        // Create bg_signal channel (send-to-background for running Bash)
+        let (bg_signal_tx, bg_signal_rx) = watch::channel(());
+        *self.bg_signal_tx.lock().await = Some(bg_signal_tx);
+
         let tools = if has_browser {
             create_configured_browser_registry(&permissions, &allowed)
         } else {
@@ -102,7 +109,7 @@ impl ChatState {
             cwd,
             provider_name,
             model_name,
-            bg_signal: None,
+            bg_signal: Some(bg_signal_rx),
             allowed_paths: Some(allowed),
             permission_mode,
             permissions,
@@ -159,6 +166,10 @@ impl ChatState {
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
         *self.planner_answer_tx.lock().await = Some(planner_answer_tx);
 
+        // Create bg_signal channel (send-to-background for running Bash)
+        let (bg_signal_tx, bg_signal_rx) = watch::channel(());
+        *self.bg_signal_tx.lock().await = Some(bg_signal_tx);
+
         let tools = if has_browser {
             create_configured_browser_registry(&permissions, &allowed)
         } else {
@@ -172,7 +183,7 @@ impl ChatState {
             cwd,
             provider_name,
             model_name,
-            bg_signal: None,
+            bg_signal: Some(bg_signal_rx),
             allowed_paths: Some(allowed),
             permission_mode,
             permissions,

@@ -3478,15 +3478,8 @@ impl App {
                 self.messages
                     .push(ChatMessage::new("system", "No background processes."));
             } else {
-                let entries: Vec<BgEntry> = processes
-                    .into_iter()
-                    .map(|(pid, command, started_at, alive)| BgEntry {
-                        pid,
-                        command,
-                        started_at,
-                        alive,
-                    })
-                    .collect();
+                let entries: Vec<BgEntry> =
+                    processes.into_iter().map(BgEntry::from).collect();
                 self.bg_picker = Some(BgPicker::new(entries));
             }
             return;

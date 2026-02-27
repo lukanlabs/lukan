@@ -94,6 +94,11 @@ export interface PluginCommand {
   description: string;
 }
 
+export interface PluginToolsInfo {
+  defaultTools: string[];
+  allCoreTools: string[];
+}
+
 export interface WhatsAppGroup {
   id: string;
   subject: string;
@@ -111,7 +116,15 @@ export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" |
 
 export type WorkspaceMode = "agent" | "terminal";
 
-export type SidePanelId = "files" | "workers" | "sessions" | "browser";
+export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes";
+
+export interface BgProcessInfo {
+  pid: number;
+  command: string;
+  startedAt: string;
+  exitedAt: string | null;
+  status: "running" | "completed" | "killed";
+}
 
 export interface BrowserStatus {
   running: boolean;

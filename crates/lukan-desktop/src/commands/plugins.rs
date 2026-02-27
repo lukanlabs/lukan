@@ -448,6 +448,31 @@ pub async fn fetch_whatsapp_groups(name: String) -> Result<Vec<WhatsAppGroup>, S
     Ok(groups)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginToolsInfo {
+    pub default_tools: Vec<String>,
+    pub all_core_tools: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn get_plugin_manifest_tools(name: String) -> Result<PluginToolsInfo, String> {
+    let manifest = PluginManager::load_manifest(&name)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let all_core: Vec<String> = lukan_tools::all_tool_info()
+        .into_iter()
+        .filter(|t| t.source.is_none())
+        .map(|t| t.name)
+        .collect();
+
+    Ok(PluginToolsInfo {
+        default_tools: manifest.security.default_tools,
+        all_core_tools: all_core,
+    })
+}
+
 /// Read the current WhatsApp QR code string (if pending authentication).
 #[tauri::command]
 pub async fn get_whatsapp_qr() -> Result<Option<String>, String> {

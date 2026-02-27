@@ -14,9 +14,11 @@ import {
   ListChecks,
   ChevronDown,
   ChevronRight,
+  ArrowUpRight,
 } from "lucide-react";
 import type { ToolStatus } from "../../hooks/useChat";
 import { DiffView } from "./DiffView";
+import { sendToBackground } from "../../lib/tauri";
 
 interface ToolCallCardProps {
   tool: ToolStatus;
@@ -76,11 +78,23 @@ function getToolSummary(name: string, input?: Record<string, unknown>): string |
 
 export function ToolCallCard({ tool }: ToolCallCardProps) {
   const [open, setOpen] = useState(false);
+  const [sendingToBg, setSendingToBg] = useState(false);
 
   const icon = toolIcons[tool.name] ?? <Wrench className="h-3.5 w-3.5" />;
   const displayName = toolDisplayNames[tool.name] || tool.name;
   const summary = getToolSummary(tool.name, tool.rawInput);
   const isAgent = tool.name === "SubAgent" || tool.name === "Explore";
+  const isBashRunning = tool.name === "Bash" && tool.isRunning;
+
+  const handleSendToBackground = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSendingToBg(true);
+    try {
+      await sendToBackground();
+    } catch (err) {
+      console.error("Failed to send to background:", err);
+    }
+  };
 
   const borderColor = tool.isRunning
     ? isAgent
@@ -126,7 +140,18 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
         {summary && (
           <span className="text-xs text-zinc-500 truncate font-mono flex-1 min-w-0">{summary}</span>
         )}
-        <span className="shrink-0 ml-auto">{statusBadge}</span>
+        <span className="shrink-0 ml-auto flex items-center gap-1.5">
+          {isBashRunning && !sendingToBg && tool.content && (
+            <button
+              onClick={handleSendToBackground}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-zinc-100 text-zinc-900 hover:bg-zinc-200 transition-colors"
+            >
+              <ArrowUpRight className="h-3 w-3" />
+              Background
+            </button>
+          )}
+          {statusBadge}
+        </span>
       </button>
 
       {/* Live progress for agents (Explore/SubAgent) — always visible while running */}

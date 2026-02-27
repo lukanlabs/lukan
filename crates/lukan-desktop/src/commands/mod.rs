@@ -1,3 +1,4 @@
+pub mod bg_processes;
 pub mod browser;
 pub mod chat;
 pub mod config;

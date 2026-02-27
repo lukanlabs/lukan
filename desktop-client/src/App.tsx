@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ToastProvider, useToast } from "./components/ui/Toast";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { Toolbar } from "./components/workspace/Toolbar";
@@ -8,6 +8,7 @@ import { MainArea } from "./components/workspace/MainArea";
 import { SettingsOverlay } from "./components/workspace/SettingsOverlay";
 import { useBrowser } from "./hooks/useBrowser";
 import { onWorkerNotification } from "./lib/tauri";
+import type { BgProcessInfo } from "./lib/types";
 
 /** Inner component that can use useToast (must be inside ToastProvider) */
 function WorkerNotificationListener() {
@@ -32,6 +33,15 @@ export default function App() {
   const workspace = useWorkspace();
   const browser = useBrowser();
   const [currentSessionId, setCurrentSessionId] = useState("");
+  const [processLog, setProcessLog] = useState<BgProcessInfo | null>(null);
+
+  const handleOpenProcessLog = useCallback((process: BgProcessInfo) => {
+    setProcessLog(process);
+  }, []);
+
+  const handleCloseProcessLog = useCallback(() => {
+    setProcessLog(null);
+  }, []);
 
   const handleBrowserClick = () => {
     if (!browser.status.running) {
@@ -72,10 +82,16 @@ export default function App() {
             currentSessionId={currentSessionId}
             onLoadSession={handleLoadSession}
             onNewSession={handleNewSession}
+            onOpenProcessLog={handleOpenProcessLog}
           />
         )}
 
-        <MainArea mode={workspace.mode} />
+        <MainArea
+          mode={workspace.mode}
+          processLog={processLog}
+          processLogSessionId={currentSessionId}
+          onCloseProcessLog={handleCloseProcessLog}
+        />
 
         {workspace.showSettings && (
           <SettingsOverlay

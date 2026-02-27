@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import type { PluginInfo, RemotePlugin, WhatsAppGroup, PluginCommand } from "../../lib/types";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import type { PluginInfo, RemotePlugin, WhatsAppGroup, PluginCommand, PluginToolsInfo } from "../../lib/types";
 import {
   listPlugins,
   installPlugin,
@@ -17,6 +17,8 @@ import {
   fetchWhatsappGroups,
   getPluginCommands,
   runPluginCommand,
+  getPluginManifestTools,
+  listTools,
 } from "../../lib/tauri";
 import QRCode from "qrcode";
 import { useToast } from "../ui/Toast";
@@ -42,7 +44,28 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  Wrench,
+  RotateCcw,
 } from "lucide-react";
+
+/** Known core tool groups (same as ToolsTab) */
+const CORE_GROUPS: Record<string, string> = {
+  ReadFiles: "File ops",
+  WriteFile: "File ops",
+  EditFile: "File ops",
+  Grep: "Search",
+  Glob: "Search",
+  Bash: "Execution",
+  WebFetch: "Web",
+  TaskAdd: "Tasks",
+  TaskList: "Tasks",
+  TaskUpdate: "Tasks",
+  LoadSkill: "Skills",
+  SubmitPlan: "Planner",
+  PlannerQuestion: "Planner",
+};
+
+const GROUP_ORDER = ["File ops", "Search", "Execution", "Web", "Tasks", "Skills", "Planner"];
 
 // ---------------------------------------------------------------------------
 // Main Component
@@ -623,6 +646,11 @@ function DetailView({
         </Section>
       )}
 
+      {/* Tools */}
+      {plugin.pluginType === "channel" && (
+        <PluginToolsSection pluginName={plugin.name} config={config} onConfigSave={onConfigSave} />
+      )}
+
       {/* Configuration */}
       {configKeys.length > 0 && (
         isWhatsapp ? (
@@ -674,6 +702,290 @@ function DetailView({
         </Section>
       )}
     </div>
+  );
+}
+
+// ===========================================================================
+// Plugin Tools Section
+// ===========================================================================
+
+function PluginToolsSection({ pluginName, config, onConfigSave }: {
+  pluginName: string;
+  config: Record<string, unknown>;
+  onConfigSave: (pluginName: string, key: string, value: string) => void;
+}) {
+  const { toast } = useToast();
+  const [manifestInfo, setManifestInfo] = useState<PluginToolsInfo | null>(null);
+  const [pluginTools, setPluginTools] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [info, allTools] = await Promise.all([
+          getPluginManifestTools(pluginName),
+          listTools(),
+        ]);
+        setManifestInfo(info);
+        setPluginTools(allTools.filter((t) => t.source !== null).map((t) => t.name));
+      } catch (e) {
+        toast("error", `Failed to load tools info: ${e}`);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [pluginName]);
+
+  // Current enabled tools from config (or default_tools from manifest)
+  // Default = only core tools enabled. Plugin tools from other plugins must be enabled manually.
+  const enabledTools: Set<string> = useMemo(() => {
+    const configTools = config.tools;
+    if (Array.isArray(configTools)) return new Set(configTools as string[]);
+    if (!manifestInfo) return new Set<string>();
+    // No override — use defaults. Empty defaults = all core tools only.
+    if (manifestInfo.defaultTools.length === 0) return new Set(manifestInfo.allCoreTools);
+    return new Set(manifestInfo.defaultTools);
+  }, [config.tools, manifestInfo]);
+
+  const isUsingDefaults = !Array.isArray(config.tools);
+
+  // Group core tools
+  const coreGroups: [string, string[]][] = useMemo(() => {
+    if (!manifestInfo) return [];
+    const map = new Map<string, string[]>();
+    for (const tool of manifestInfo.allCoreTools) {
+      const group = CORE_GROUPS[tool] ?? "Other";
+      if (!map.has(group)) map.set(group, []);
+      map.get(group)!.push(tool);
+    }
+    return [...map.entries()].sort(([a], [b]) => {
+      const ai = GROUP_ORDER.indexOf(a);
+      const bi = GROUP_ORDER.indexOf(b);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1;
+      if (bi !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [manifestInfo]);
+
+  const saveTools = (next: Set<string>) => {
+    onConfigSave(pluginName, "tools", JSON.stringify([...next].sort()));
+  };
+
+  const toggle = (name: string) => {
+    const next = new Set(enabledTools);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    saveTools(next);
+  };
+
+  const setGroup = (tools: string[], enable: boolean) => {
+    const next = new Set(enabledTools);
+    for (const t of tools) {
+      if (enable) next.add(t);
+      else next.delete(t);
+    }
+    saveTools(next);
+  };
+
+  const resetToDefaults = () => {
+    // Remove the tools key from config so it falls back to manifest defaults
+    onConfigSave(pluginName, "tools", "null");
+  };
+
+  if (loading) {
+    return (
+      <Section icon={<Wrench size={12} />} title="Tools">
+        <div className="flex items-center gap-2 py-2">
+          <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Loading tools...</span>
+        </div>
+      </Section>
+    );
+  }
+
+  if (!manifestInfo) return null;
+
+  const allToolNames = [...manifestInfo.allCoreTools, ...pluginTools];
+  const totalTools = allToolNames.length;
+  const enabledCount = allToolNames.filter((t) => enabledTools.has(t)).length;
+
+  return (
+    <Section
+      icon={<Wrench size={12} />}
+      title="Tools"
+      action={
+        <div className="flex items-center gap-2">
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+            style={{ background: "rgba(63,63,70,0.5)", color: "#a1a1aa" }}
+          >
+            {enabledCount}/{totalTools} enabled
+          </span>
+          {!isUsingDefaults && (
+            <button
+              onClick={resetToDefaults}
+              className="inline-flex items-center gap-1 text-[10px] cursor-pointer border-none bg-transparent"
+              style={{ color: "var(--text-muted)" }}
+              title="Reset to manifest defaults"
+            >
+              <RotateCcw size={10} />
+              Reset
+            </button>
+          )}
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        {/* Core tool groups */}
+        {coreGroups.map(([group, tools]) => {
+          const groupEnabled = tools.filter((t) => enabledTools.has(t)).length;
+          const allEnabled = groupEnabled === tools.length;
+          const allDisabled = groupEnabled === 0;
+          return (
+            <div key={group}>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-semibold" style={{ color: "var(--text-secondary)" }}>
+                    {group}
+                  </span>
+                  <span
+                    className="text-[9px] px-1 py-px rounded-full"
+                    style={{
+                      background: allDisabled ? "rgba(239,68,68,0.1)" : "rgba(63,63,70,0.4)",
+                      color: allDisabled ? "#f87171" : "var(--text-muted)",
+                    }}
+                  >
+                    {groupEnabled}/{tools.length}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setGroup(tools, !allEnabled)}
+                  className="text-[9px] px-1.5 py-0.5 rounded cursor-pointer border-none"
+                  style={{ background: "rgba(63,63,70,0.3)", color: "var(--text-muted)" }}
+                >
+                  {allEnabled ? "Disable all" : "Enable all"}
+                </button>
+              </div>
+              <div
+                className="flex flex-col rounded-lg overflow-hidden"
+                style={{ border: "1px solid rgba(63,63,70,0.3)" }}
+              >
+                {tools.map((tool, i) => {
+                  const enabled = enabledTools.has(tool);
+                  return (
+                    <div
+                      key={tool}
+                      className="flex items-center justify-between px-2.5 py-1.5"
+                      style={{
+                        background: "rgba(24,24,27,0.5)",
+                        borderTop: i > 0 ? "1px solid rgba(63,63,70,0.2)" : undefined,
+                      }}
+                    >
+                      <span className="text-[11px] font-mono" style={{ color: enabled ? "var(--text-primary)" : "var(--text-muted)" }}>
+                        {tool}
+                      </span>
+                      <button
+                        onClick={() => toggle(tool)}
+                        className="relative w-7 h-[16px] rounded-full transition-colors"
+                        style={{
+                          background: enabled ? "rgba(34,197,94,0.35)" : "rgba(63,63,70,0.4)",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        <span
+                          className="absolute top-[2px] w-[12px] h-[12px] rounded-full transition-all"
+                          style={{
+                            background: enabled ? "#22c55e" : "#52525b",
+                            left: enabled ? 12 : 2,
+                          }}
+                        />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Plugin-provided tools (toggleable) */}
+        {pluginTools.length > 0 && (() => {
+          const groupEnabled = pluginTools.filter((t) => enabledTools.has(t)).length;
+          const allEnabled = groupEnabled === pluginTools.length;
+          const allDisabled = groupEnabled === 0;
+          return (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-semibold" style={{ color: "var(--text-secondary)" }}>
+                    Plugin Tools
+                  </span>
+                  <span
+                    className="text-[9px] px-1 py-px rounded-full"
+                    style={{
+                      background: allDisabled ? "rgba(239,68,68,0.1)" : "rgba(63,63,70,0.4)",
+                      color: allDisabled ? "#f87171" : "var(--text-muted)",
+                    }}
+                  >
+                    {groupEnabled}/{pluginTools.length}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setGroup(pluginTools, !allEnabled)}
+                  className="text-[9px] px-1.5 py-0.5 rounded cursor-pointer border-none"
+                  style={{ background: "rgba(63,63,70,0.3)", color: "var(--text-muted)" }}
+                >
+                  {allEnabled ? "Disable all" : "Enable all"}
+                </button>
+              </div>
+              <div
+                className="flex flex-col rounded-lg overflow-hidden"
+                style={{ border: "1px solid rgba(63,63,70,0.3)" }}
+              >
+                {pluginTools.map((tool, i) => {
+                  const enabled = enabledTools.has(tool);
+                  return (
+                    <div
+                      key={tool}
+                      className="flex items-center justify-between px-2.5 py-1.5"
+                      style={{
+                        background: "rgba(24,24,27,0.5)",
+                        borderTop: i > 0 ? "1px solid rgba(63,63,70,0.2)" : undefined,
+                      }}
+                    >
+                      <span className="text-[11px] font-mono" style={{ color: enabled ? "var(--text-primary)" : "var(--text-muted)" }}>
+                        {tool}
+                      </span>
+                      <button
+                        onClick={() => toggle(tool)}
+                        className="relative w-7 h-[16px] rounded-full transition-colors"
+                        style={{
+                          background: enabled ? "rgba(34,197,94,0.35)" : "rgba(63,63,70,0.4)",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        <span
+                          className="absolute top-[2px] w-[12px] h-[12px] rounded-full transition-all"
+                          style={{
+                            background: enabled ? "#22c55e" : "#52525b",
+                            left: enabled ? 12 : 2,
+                          }}
+                        />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    </Section>
   );
 }
 

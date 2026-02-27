@@ -1,9 +1,10 @@
-import { FolderOpen, Puzzle, MessageSquare, Globe } from "lucide-react";
+import { FolderOpen, Puzzle, MessageSquare, Globe, Terminal } from "lucide-react";
 import type { SidePanelId } from "../../lib/types";
 
 const ITEMS: { id: SidePanelId; icon: typeof FolderOpen; label: string }[] = [
   { id: "files", icon: FolderOpen, label: "Files" },
   { id: "workers", icon: Puzzle, label: "Workers" },
+  { id: "processes", icon: Terminal, label: "Processes" },
   { id: "sessions", icon: MessageSquare, label: "Sessions" },
   { id: "browser", icon: Globe, label: "Browser" },
 ];

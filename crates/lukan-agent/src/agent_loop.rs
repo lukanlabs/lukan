@@ -72,6 +72,8 @@ pub struct AgentConfig {
     pub planner_answer_rx: Option<mpsc::Receiver<String>>,
     /// Whether browser tools are enabled (auto-allow without asking)
     pub browser_tools: bool,
+    /// When true, `save_session()` becomes a no-op (used by workers)
+    pub skip_session_save: bool,
 }
 
 /// Pending tool call accumulated from stream events
@@ -120,6 +122,8 @@ pub struct AgentLoop {
     pending_events: Vec<PendingEvent>,
     /// Tool names disabled at runtime by the TUI tool picker
     disabled_tools: HashSet<String>,
+    /// When true, `save_session()` is a no-op
+    skip_session_save: bool,
 }
 
 /// A system event from a plugin, queued for injection into the agent context.
@@ -178,6 +182,7 @@ impl AgentLoop {
         let approval_rx = config.approval_rx;
         let plan_review_rx = config.plan_review_rx;
         let planner_answer_rx = config.planner_answer_rx;
+        let skip_session_save = config.skip_session_save;
         let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
         let available_skills = lukan_tools::skills::discover_skills(&config.cwd).await;
         Ok(Self {
@@ -204,6 +209,7 @@ impl AgentLoop {
             loaded_skills: HashSet::new(),
             pending_events: Vec::new(),
             disabled_tools: HashSet::new(),
+            skip_session_save,
         })
     }
 
@@ -252,6 +258,7 @@ impl AgentLoop {
         let approval_rx = config.approval_rx;
         let plan_review_rx = config.plan_review_rx;
         let planner_answer_rx = config.planner_answer_rx;
+        let skip_session_save = config.skip_session_save;
         let session = SessionManager::load(session_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
@@ -284,6 +291,7 @@ impl AgentLoop {
             loaded_skills: HashSet::new(),
             pending_events: Vec::new(),
             disabled_tools: HashSet::new(),
+            skip_session_save,
         })
     }
 
@@ -1420,6 +1428,9 @@ impl AgentLoop {
 
     /// Save current state to disk
     async fn save_session(&mut self) -> Result<()> {
+        if self.skip_session_save {
+            return Ok(());
+        }
         self.session.messages = self.history.to_json();
         self.session.total_input_tokens = self.input_tokens;
         self.session.total_output_tokens = self.output_tokens;

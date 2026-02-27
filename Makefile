@@ -36,12 +36,13 @@ all: build
 build:
 	@if [ -d desktop-client ]; then \
 		echo "Building desktop frontend..."; \
-		cd desktop-client && bun install --frozen-lockfile 2>/dev/null || bun install && bun run build; \
+		(cd desktop-client && bun install --frozen-lockfile 2>/dev/null || bun install && bun run build); \
 		echo "Forcing desktop crate rebuild (frontend changed)..."; \
-		cargo clean -p lukan-desktop 2>/dev/null || true; \
-		rm -rf target/release/build/lukan-desktop-* target/debug/build/lukan-desktop-* 2>/dev/null || true; \
+		touch crates/lukan-desktop/build.rs; \
+		rm -f target/release/lukan-desktop target/release/deps/lukan_desktop-* 2>/dev/null || true; \
+		rm -rf target/release/build/lukan-desktop-* 2>/dev/null || true; \
 	fi
-	cargo build --release
+	cargo build --release -p lukan -p lukan-desktop
 
 ## build-debug: Build debug binary
 build-debug:

@@ -42,12 +42,11 @@ export default function App() {
 
   const handleLoadSession = (id: string) => {
     setCurrentSessionId(id);
-    // The ChatView handles actual session loading via its own hook
-    // This is for highlighting in the sessions panel
+    window.dispatchEvent(new CustomEvent("load-session", { detail: id }));
   };
 
   const handleNewSession = () => {
-    // Trigger new session — ChatView handles this via its own hook
+    window.dispatchEvent(new CustomEvent("new-session"));
   };
 
   return (

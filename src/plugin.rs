@@ -580,6 +580,7 @@ async fn plugin_start_foreground(
         plan_review_rx: None,
         planner_answer_rx: None,
         browser_tools: false,
+        skip_session_save: false,
     };
 
     println!(

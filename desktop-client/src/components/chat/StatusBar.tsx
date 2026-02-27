@@ -1,4 +1,4 @@
-import { Plus, History } from "lucide-react";
+import { Plus } from "lucide-react";
 import type { TokenUsage } from "../../lib/types";
 
 interface StatusBarProps {
@@ -7,7 +7,6 @@ interface StatusBarProps {
   tokenUsage: TokenUsage;
   contextSize: number;
   onNewSession: () => void;
-  onToggleSessions: () => void;
 }
 
 function formatTokens(n: number): string {
@@ -22,7 +21,6 @@ export function StatusBar({
   tokenUsage,
   contextSize,
   onNewSession,
-  onToggleSessions,
 }: StatusBarProps) {
   return (
     <div
@@ -51,13 +49,6 @@ export function StatusBar({
             {formatTokens(tokenUsage.input)}in / {formatTokens(tokenUsage.output)}out
           </span>
         )}
-        <button
-          onClick={onToggleSessions}
-          className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
-          title="Sessions"
-        >
-          <History className="h-3.5 w-3.5" />
-        </button>
         <button
           onClick={onNewSession}
           className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"

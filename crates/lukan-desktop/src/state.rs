@@ -100,6 +100,7 @@ impl ChatState {
             plan_review_rx: Some(plan_review_rx),
             planner_answer_rx: Some(planner_answer_rx),
             browser_tools: has_browser,
+            skip_session_save: false,
         };
 
         AgentLoop::new(agent_config).await
@@ -165,6 +166,7 @@ impl ChatState {
             plan_review_rx: Some(plan_review_rx),
             planner_answer_rx: Some(planner_answer_rx),
             browser_tools: has_browser,
+            skip_session_save: false,
         };
 
         AgentLoop::load_session(agent_config, session_id).await

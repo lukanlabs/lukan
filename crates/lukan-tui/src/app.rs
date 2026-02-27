@@ -622,6 +622,7 @@ impl App {
             plan_review_rx: Some(plan_review_rx),
             planner_answer_rx: Some(planner_answer_rx),
             browser_tools: self.browser_tools,
+            skip_session_save: false,
         };
 
         match AgentLoop::new(config).await {
@@ -678,6 +679,7 @@ impl App {
             plan_review_rx: None,
             planner_answer_rx: None,
             browser_tools: false,
+            skip_session_save: false,
         };
 
         match AgentLoop::new(config).await {
@@ -3752,6 +3754,7 @@ impl App {
             plan_review_rx: Some(plan_review_rx),
             planner_answer_rx: Some(planner_answer_rx),
             browser_tools: self.browser_tools,
+            skip_session_save: false,
         };
 
         match AgentLoop::load_session(config, &session_id).await {

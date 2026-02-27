@@ -12,7 +12,6 @@ import { ChatInput } from "../components/chat/ChatInput";
 import { ApprovalModal } from "../components/chat/ApprovalModal";
 import { PlanReviewer } from "../components/chat/PlanReviewer";
 import { QuestionPicker } from "../components/chat/QuestionPicker";
-import { SessionSidebar } from "../components/chat/SessionSidebar";
 
 function buildToolResultsMap(
   messages: Message[],
@@ -40,7 +39,22 @@ export default function ChatView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [showSessions, setShowSessions] = useState(false);
+  // Listen for sidebar session events
+  useEffect(() => {
+    const onLoad = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      chat.loadSession(id);
+    };
+    const onNew = () => {
+      chat.newSession();
+    };
+    window.addEventListener("load-session", onLoad);
+    window.addEventListener("new-session", onNew);
+    return () => {
+      window.removeEventListener("load-session", onLoad);
+      window.removeEventListener("new-session", onNew);
+    };
+  }, [chat.loadSession, chat.newSession]);
 
   // Auto-scroll to bottom on new content
   useEffect(() => {
@@ -92,13 +106,6 @@ export default function ChatView() {
     [chat.messages, chat.toolImages],
   );
 
-  const handleToggleSessions = useCallback(() => {
-    if (!showSessions) {
-      chat.listSessions();
-    }
-    setShowSessions(!showSessions);
-  }, [showSessions, chat.listSessions]);
-
   return (
     <div className="flex flex-1 flex-col min-h-0 bg-zinc-950">
       <StatusBar
@@ -107,27 +114,9 @@ export default function ChatView() {
         tokenUsage={chat.tokenUsage}
         contextSize={chat.contextSize}
         onNewSession={chat.newSession}
-        onToggleSessions={handleToggleSessions}
       />
 
       <div className="flex flex-1 min-h-0">
-        {/* Session sidebar */}
-        {showSessions && (
-          <SessionSidebar
-            sessions={chat.sessionList}
-            currentSessionId={chat.sessionId}
-            onLoadSession={(id) => {
-              chat.loadSession(id);
-              setShowSessions(false);
-            }}
-            onNewSession={() => {
-              chat.newSession();
-              setShowSessions(false);
-            }}
-            onClose={() => setShowSessions(false)}
-          />
-        )}
-
         {/* Main chat area */}
         <div className="flex flex-1 flex-col min-h-0">
           <div

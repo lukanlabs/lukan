@@ -228,6 +228,61 @@ if echo "${CHECKSUMS}" | grep -q "lukan-desktop-${PLATFORM}"; then
   install_binary "lukan-desktop-${PLATFORM}" "lukan-desktop" || warn "Desktop app not installed (optional)"
 fi
 
+# --- Restart daemon if running (pick up new binary) ---
+DAEMON_PID_FILE="${HOME}/.config/lukan/daemon.pid"
+if [ -f "${DAEMON_PID_FILE}" ]; then
+  OLD_PID=$(cat "${DAEMON_PID_FILE}" 2>/dev/null | tr -d '[:space:]')
+  if [ -n "${OLD_PID}" ] && kill -0 "${OLD_PID}" 2>/dev/null; then
+    info "Restarting worker daemon (PID ${OLD_PID})..."
+    kill "${OLD_PID}" 2>/dev/null || true
+    # Wait for graceful shutdown
+    for i in $(seq 1 10); do
+      kill -0 "${OLD_PID}" 2>/dev/null || break
+      sleep 0.5
+    done
+    rm -f "${DAEMON_PID_FILE}"
+    # Restart with new binary
+    if [ -x "${BIN_DIR}/lukan" ]; then
+      nohup "${BIN_DIR}/lukan" daemon start >/dev/null 2>&1 &
+      sleep 1
+      if [ -f "${DAEMON_PID_FILE}" ]; then
+        NEW_PID=$(cat "${DAEMON_PID_FILE}" 2>/dev/null | tr -d '[:space:]')
+        ok "Worker daemon restarted (PID ${NEW_PID})"
+      else
+        ok "Worker daemon stopped (will auto-start on next use)"
+      fi
+    fi
+  else
+    rm -f "${DAEMON_PID_FILE}"
+  fi
+fi
+
+# --- Restart plugin daemons if running ---
+PLUGIN_RUN_DIR="${HOME}/.config/lukan/plugins"
+if [ -d "${PLUGIN_RUN_DIR}" ]; then
+  for PID_FILE in "${PLUGIN_RUN_DIR}"/*/plugin.pid; do
+    [ -f "${PID_FILE}" ] || continue
+    PLUGIN_PID=$(cat "${PID_FILE}" 2>/dev/null | tr -d '[:space:]')
+    PLUGIN_NAME=$(basename "$(dirname "${PID_FILE}")")
+    if [ -n "${PLUGIN_PID}" ] && kill -0 "${PLUGIN_PID}" 2>/dev/null; then
+      info "Restarting plugin '${PLUGIN_NAME}' (PID ${PLUGIN_PID})..."
+      kill "${PLUGIN_PID}" 2>/dev/null || true
+      for i in $(seq 1 10); do
+        kill -0 "${PLUGIN_PID}" 2>/dev/null || break
+        sleep 0.5
+      done
+      rm -f "${PID_FILE}"
+      if [ -x "${BIN_DIR}/lukan" ]; then
+        nohup "${BIN_DIR}/lukan" plugin start "${PLUGIN_NAME}" >/dev/null 2>&1 &
+        sleep 1
+        ok "Plugin '${PLUGIN_NAME}' restarted"
+      fi
+    else
+      rm -f "${PID_FILE}"
+    fi
+  done
+fi
+
 # --- Setup PATH ---
 if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then
   SHELL_NAME="$(basename "${SHELL:-bash}")"

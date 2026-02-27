@@ -251,6 +251,12 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
     // Track the last item_id seen for fallback
     let mut last_item_id = String::new();
 
+    // Phantom tool call detection: some models emit tool calls as text
+    // instead of proper function_call events. We buffer text and detect these.
+    let mut text_buffer = String::new();
+    let mut phantom_buffer = String::new();
+    let mut phantom_suppressed = false;
+
     let chunk_timeout = std::time::Duration::from_secs(60);
     while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next())
         .await
@@ -290,6 +296,41 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                 }
             };
 
+            // Flush text buffer on non-text events
+            if current_event != "response.output_text.delta" && !text_buffer.is_empty() {
+                tx.send(StreamEvent::TextDelta {
+                    text: std::mem::take(&mut text_buffer),
+                })
+                .await
+                .ok();
+            }
+
+            // Try to parse phantom buffer as a real tool call
+            if current_event != "response.output_text.delta" && !phantom_buffer.is_empty() {
+                if let Some((name, input)) = extract_phantom_tool_call(&phantom_buffer) {
+                    debug!("Recovered phantom tool call: {name}");
+                    let call_id = format!("phantom_{}", uuid::Uuid::new_v4());
+                    has_tool_calls = true;
+                    tx.send(StreamEvent::ToolUseStart {
+                        id: call_id.clone(),
+                        name: name.clone(),
+                    })
+                    .await
+                    .ok();
+                    tx.send(StreamEvent::ToolUseEnd {
+                        id: call_id,
+                        name,
+                        input,
+                    })
+                    .await
+                    .ok();
+                } else {
+                    debug!("Discarded phantom text: {}", &phantom_buffer[..phantom_buffer.len().min(100)]);
+                }
+                phantom_buffer.clear();
+                phantom_suppressed = false;
+            }
+
             match current_event.as_str() {
                 "response.output_item.added" => {
                     if data["item"]["type"].as_str() == Some("function_call") {
@@ -315,11 +356,67 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
 
                 "response.output_text.delta" => {
                     if let Some(delta) = data["delta"].as_str() {
-                        tx.send(StreamEvent::TextDelta {
-                            text: delta.to_string(),
-                        })
-                        .await
-                        .ok();
+                        if phantom_suppressed {
+                            // Already in phantom mode — accumulate for possible tool extraction
+                            phantom_buffer.push_str(delta);
+                        } else {
+                            // Append to text buffer and check for phantom patterns
+                            text_buffer.push_str(delta);
+
+                            // Check for phantom tool call patterns in accumulated text
+                            let phantom_triggers = [
+                                "to=functions.",
+                                "+#+#+#+#",
+                                "assistant to=",
+                            ];
+                            let mut trigger_pos = None;
+                            for trigger in &phantom_triggers {
+                                if let Some(pos) = text_buffer.find(trigger) {
+                                    trigger_pos = Some(pos);
+                                    break;
+                                }
+                            }
+
+                            if let Some(pos) = trigger_pos {
+                                // Emit clean text before the phantom pattern
+                                let clean = &text_buffer[..pos];
+                                let trimmed = clean.trim_end();
+                                if !trimmed.is_empty() {
+                                    tx.send(StreamEvent::TextDelta {
+                                        text: trimmed.to_string(),
+                                    })
+                                    .await
+                                    .ok();
+                                }
+                                // Move remainder to phantom buffer
+                                phantom_buffer = text_buffer[pos..].to_string();
+                                text_buffer.clear();
+                                phantom_suppressed = true;
+                                debug!("Phantom tool call detected, suppressing text output");
+                            } else {
+                                // No phantom detected — emit all safe text
+                                // Keep last 30 chars as lookback in case a trigger spans deltas
+                                let lookback_chars = 30;
+                                let char_count = text_buffer.chars().count();
+                                if char_count > lookback_chars {
+                                    let emit_chars = char_count - lookback_chars;
+                                    let safe_len = text_buffer
+                                        .char_indices()
+                                        .nth(emit_chars)
+                                        .map(|(i, _)| i)
+                                        .unwrap_or(0);
+                                    if safe_len > 0 {
+                                        let emit = &text_buffer[..safe_len];
+                                        tx.send(StreamEvent::TextDelta {
+                                            text: emit.to_string(),
+                                        })
+                                        .await
+                                        .ok();
+                                        text_buffer = text_buffer[safe_len..].to_string();
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -441,6 +538,42 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
         }
     }
 
+    // Flush remaining text buffer
+    if !text_buffer.is_empty() {
+        tx.send(StreamEvent::TextDelta {
+            text: std::mem::take(&mut text_buffer),
+        })
+        .await
+        .ok();
+    }
+
+    // Try to recover phantom tool call from buffer
+    if !phantom_buffer.is_empty() {
+        if let Some((name, input)) = extract_phantom_tool_call(&phantom_buffer) {
+            debug!("Recovered phantom tool call at end: {name}");
+            let call_id = format!("phantom_{}", uuid::Uuid::new_v4());
+            has_tool_calls = true;
+            tx.send(StreamEvent::ToolUseStart {
+                id: call_id.clone(),
+                name: name.clone(),
+            })
+            .await
+            .ok();
+            tx.send(StreamEvent::ToolUseEnd {
+                id: call_id,
+                name,
+                input,
+            })
+            .await
+            .ok();
+        } else {
+            debug!(
+                "Discarded phantom text at end: {}",
+                &phantom_buffer[..phantom_buffer.len().min(100)]
+            );
+        }
+    }
+
     // Determine final stop reason
     if has_tool_calls && stop_reason != StopReason::Error {
         stop_reason = StopReason::ToolUse;
@@ -449,6 +582,55 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
     tx.send(StreamEvent::MessageEnd { stop_reason }).await.ok();
 
     Ok(())
+}
+
+/// Extract a tool name and JSON input from phantom tool call text.
+///
+/// Phantom text looks like:
+///   "assistant to=functions.ReadFile <garbled> json {"file_path": "..."}"
+///   "+#+#+#+assistant to=functions.Glob <garbled> json {"pattern": "..."}"
+fn extract_phantom_tool_call(text: &str) -> Option<(String, Value)> {
+    // Extract tool name: "to=functions.TOOLNAME"
+    let func_marker = "to=functions.";
+    let func_pos = text.find(func_marker)?;
+    let after_func = &text[func_pos + func_marker.len()..];
+
+    // Tool name ends at first non-alphanumeric/underscore
+    let name_end = after_func
+        .find(|c: char| !c.is_alphanumeric() && c != '_')
+        .unwrap_or(after_func.len());
+    let tool_name = &after_func[..name_end];
+    if tool_name.is_empty() {
+        return None;
+    }
+
+    // Extract JSON: find first '{' and match braces
+    let json_start = text.find('{')?;
+    let json_text = &text[json_start..];
+
+    // Find matching closing brace
+    let mut depth = 0;
+    let mut end = 0;
+    for (i, c) in json_text.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if end == 0 {
+        return None;
+    }
+
+    let input = parse_tool_input(&json_text[..end]);
+    Some((tool_name.to_string(), input))
 }
 
 // ── Message Conversion ────────────────────────────────────────────────────

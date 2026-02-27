@@ -13,7 +13,8 @@
         "width": 1300,
         "height": 850,
         "resizable": true,
-        "center": true
+        "center": true,
+        "decorations": false
       }
     ],
     "security": {
@@ -23,6 +24,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.png"]
+    "icon": ["icons/icon.png"],
+    "resources": ["icons/icon.png"]
   }
 }

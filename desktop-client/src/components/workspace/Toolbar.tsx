@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { Globe, Settings, ExternalLink, ChevronDown } from "lucide-react";
+import { Globe, Settings, ExternalLink, ChevronDown, Minus, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import logoUrl from "../../assets/logo.png";
 import type { WorkspaceMode, ProviderInfo } from "../../lib/types";
 import {
   listProviders,
@@ -81,10 +83,19 @@ export function Toolbar({
     }
   };
 
+  const handleMinimize = () => {
+    getCurrentWindow().minimize();
+  };
+
+  const handleClose = () => {
+    getCurrentWindow().close();
+  };
+
   return (
-    <div className="workspace-toolbar">
-      {/* Left: mode toggle */}
+    <div className="workspace-toolbar" data-tauri-drag-region>
+      {/* Left: logo + mode toggle */}
       <div className="toolbar-section">
+        <img src={logoUrl} alt="lukan" className="toolbar-logo" />
         <div className="mode-toggle">
           <button
             className={mode === "agent" ? "active" : ""}
@@ -210,7 +221,7 @@ export function Toolbar({
         )}
       </div>
 
-      {/* Right: browser, web UI, settings */}
+      {/* Right: browser, web UI, settings, window controls */}
       <div className="toolbar-section">
         <button className="toolbar-btn" onClick={onBrowserClick} title="Browser">
           <Globe size={14} />
@@ -233,6 +244,15 @@ export function Toolbar({
 
         <button className="toolbar-btn" onClick={onSettingsClick} title="Settings">
           <Settings size={14} />
+        </button>
+
+        <div className="toolbar-divider" />
+
+        <button className="toolbar-btn window-ctrl" onClick={handleMinimize} title="Minimize">
+          <Minus size={14} />
+        </button>
+        <button className="toolbar-btn window-ctrl window-close" onClick={handleClose} title="Close">
+          <X size={14} />
         </button>
       </div>
     </div>

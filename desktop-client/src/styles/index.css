@@ -358,6 +358,30 @@ select {
   -webkit-app-region: no-drag;
 }
 
+.toolbar-logo {
+  height: 20px;
+  width: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+.toolbar-btn.window-ctrl {
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.toolbar-btn.window-close:hover {
+  background: rgba(239, 68, 68, 0.3) !important;
+  color: #ef4444 !important;
+}
+
 .toolbar-section {
   display: flex;
   align-items: center;

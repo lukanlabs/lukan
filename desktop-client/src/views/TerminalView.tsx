@@ -4,7 +4,7 @@ import TerminalTabBar from "../components/terminal/TerminalTabBar";
 import XTermPanel from "../components/terminal/XTermPanel";
 
 export default function TerminalView() {
-  const { sessions, activeSessionId, createSession, destroySession, switchSession } =
+  const { sessions, activeSessionId, createSession, destroySession, switchSession, renameSession } =
     useTerminalSessions();
   const initialized = useRef(false);
 
@@ -24,6 +24,7 @@ export default function TerminalView() {
         onSwitch={switchSession}
         onClose={destroySession}
         onCreate={createSession}
+        onRename={renameSession}
       />
       {/* Render ALL sessions, show/hide with CSS to preserve xterm buffers */}
       <div className="flex-1 min-h-0 relative">

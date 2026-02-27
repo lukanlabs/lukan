@@ -2,8 +2,12 @@ import { useState, useCallback } from "react";
 import { terminalCreate, terminalDestroy } from "../lib/tauri";
 import type { TerminalSessionInfo } from "../lib/types";
 
+export interface TerminalSession extends TerminalSessionInfo {
+  label?: string;
+}
+
 export function useTerminalSessions() {
-  const [sessions, setSessions] = useState<TerminalSessionInfo[]>([]);
+  const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const createSession = useCallback(async () => {
@@ -32,11 +36,16 @@ export function useTerminalSessions() {
     setActiveSessionId(id);
   }, []);
 
+  const renameSession = useCallback((id: string, label: string) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, label } : s)));
+  }, []);
+
   return {
     sessions,
     activeSessionId,
     createSession,
     destroySession,
     switchSession,
+    renameSession,
   };
 }

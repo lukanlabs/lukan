@@ -22,3 +22,4 @@ open.workspace = true
 rand.workspace = true
 regex.workspace = true
 urlencoding.workspace = true
+uuid.workspace = true

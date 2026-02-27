@@ -20,7 +20,7 @@ pub enum ToolVerdict {
 
 /// Tools that are always safe (read-only or low-risk)
 const SAFE_TOOLS: &[&str] = &[
-    "ReadFile",
+    "ReadFiles",
     "Grep",
     "Glob",
     "WebFetch",
@@ -49,7 +49,7 @@ const BROWSER_TOOLS: &[&str] = &[
 
 /// Tools allowed in planner mode (read-only exploration + planner-specific)
 const PLANNER_WHITELIST: &[&str] = &[
-    "ReadFile",
+    "ReadFiles",
     "Grep",
     "Glob",
     "WebFetch",
@@ -119,7 +119,7 @@ impl PatternRule {
                     .unwrap_or("");
                 match_bash_pattern(arg_pattern, command)
             }
-            "ReadFile" | "WriteFile" | "EditFile" => {
+            "ReadFiles" | "WriteFile" | "EditFile" => {
                 // For file tools: match against `file_path` with glob
                 let file_path = tool_input
                     .get("file_path")
@@ -296,7 +296,7 @@ mod tests {
     fn manual_mode_asks_all() {
         let matcher = PermissionMatcher::new(PermissionMode::Manual, &default_config());
         assert_eq!(
-            matcher.verdict("ReadFile", &json!({"file_path": "test.rs"})),
+            matcher.verdict("ReadFiles", &json!({"file_path": "test.rs"})),
             ToolVerdict::Ask
         );
     }
@@ -305,7 +305,7 @@ mod tests {
     fn auto_mode_safe_tools() {
         let matcher = PermissionMatcher::new(PermissionMode::Auto, &default_config());
         assert_eq!(
-            matcher.verdict("ReadFile", &json!({"file_path": "test.rs"})),
+            matcher.verdict("ReadFiles", &json!({"file_path": "test.rs"})),
             ToolVerdict::Allow
         );
         assert_eq!(
@@ -335,7 +335,7 @@ mod tests {
     fn planner_mode_whitelist() {
         let matcher = PermissionMatcher::new(PermissionMode::Planner, &default_config());
         assert_eq!(
-            matcher.verdict("ReadFile", &json!({"file_path": "test.rs"})),
+            matcher.verdict("ReadFiles", &json!({"file_path": "test.rs"})),
             ToolVerdict::Allow
         );
         assert_eq!(
@@ -372,16 +372,16 @@ mod tests {
     #[test]
     fn file_glob_pattern() {
         let config = PermissionsConfig {
-            deny: vec!["ReadFile(**/.env)".to_string()],
+            deny: vec!["ReadFiles(**/.env)".to_string()],
             ..default_config()
         };
         let matcher = PermissionMatcher::new(PermissionMode::Auto, &config);
         assert_eq!(
-            matcher.verdict("ReadFile", &json!({"file_path": "/home/user/.env"})),
+            matcher.verdict("ReadFiles", &json!({"file_path": "/home/user/.env"})),
             ToolVerdict::Deny
         );
         assert_eq!(
-            matcher.verdict("ReadFile", &json!({"file_path": "src/main.rs"})),
+            matcher.verdict("ReadFiles", &json!({"file_path": "src/main.rs"})),
             ToolVerdict::Allow
         );
     }

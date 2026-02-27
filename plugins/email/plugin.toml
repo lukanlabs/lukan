@@ -68,7 +68,7 @@ description = "Subject prefix filter (e.g. '[agent]')"
 type = "string[]"
 description = "Agent tools available in email sessions"
 valid_values = [
-  "ReadFile", "WriteFile", "EditFile",
+  "ReadFiles", "WriteFile", "EditFile",
   "Grep", "Glob",
   "Bash",
   "WebFetch", "WebSearch",

@@ -180,7 +180,7 @@ impl ResolvedConfig {
 
 /// Tool groups for categorized display
 pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
-    ("File ops", &["ReadFile", "WriteFile", "EditFile"]),
+    ("File ops", &["ReadFiles", "WriteFile", "EditFile"]),
     ("Search", &["Grep", "Glob"]),
     ("Agent", &["Explore", "SubAgent", "SubAgentResult"]),
     ("Execution", &["Bash"]),

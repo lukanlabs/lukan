@@ -260,7 +260,7 @@ impl Tool for BashTool {
                              The process is still running — do NOT kill or restart it.\n\
                              PID: {child_pid}\n\
                              Log file: {log_display}\n\
-                             To check output later: ReadFile(\"{log_display}\")\n\
+                             To check output later: ReadFiles(\"{log_display}\")\n\
                              To wait for completion: Bash({{ wait_pid: {child_pid} }})\n\
                              To stop (only if user asks): Bash({{ command: \"kill {child_pid}\" }})"
                         )))
@@ -376,7 +376,7 @@ impl BashTool {
         Ok(ToolResult::success(format!(
             "Background process started. PID: {pid}\n\
              Log file: {log_display}\n\
-             To check output: ReadFile(\"{log_display}\")\n\
+             To check output: ReadFiles(\"{log_display}\")\n\
              To wait for completion: Bash({{ wait_pid: {pid} }})\n\
              To stop: Bash({{ command: \"kill {pid}\" }})"
         )))

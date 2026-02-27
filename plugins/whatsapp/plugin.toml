@@ -28,7 +28,7 @@ type = "string[]"
 description = "Agent tools"
 valid_values = [
   "Bash",
-  "ReadFile", "WriteFile", "EditFile",
+  "ReadFiles", "WriteFile", "EditFile",
   "Grep", "Glob",
   "WebFetch",
   "SheetsRead", "SheetsWrite", "SheetsCreate",
@@ -60,7 +60,7 @@ description = "Chat ID for reminders"
 
 # Security policy — generic protocol
 [security]
-default_tools = ["Grep", "Glob", "ReadFile", "WebFetch"]
+default_tools = ["Grep", "Glob", "ReadFiles", "WebFetch"]
 include_memory = true
 dir_restrictions = true
 dangerous_tools = ["Bash", "WriteFile", "EditFile"]

@@ -116,7 +116,7 @@ impl ToolContext {
 /// Trait that all tools must implement
 #[async_trait]
 pub trait Tool: Send + Sync {
-    /// Unique tool name (e.g. "Bash", "ReadFile")
+    /// Unique tool name (e.g. "Bash", "ReadFiles")
     fn name(&self) -> &str;
 
     /// Human-readable description

@@ -71,7 +71,7 @@ impl Tool for WriteFileTool {
         let old_content = if path.exists() {
             if !ctx.read_files.lock().await.contains(&path) {
                 return Ok(ToolResult::error(format!(
-                    "File exists but has not been read yet. Use ReadFile first: {file_path_str}"
+                    "File exists but has not been read yet. Use ReadFiles first: {file_path_str}"
                 )));
             }
             tokio::fs::read_to_string(&path).await.ok()

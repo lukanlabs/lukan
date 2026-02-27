@@ -24,7 +24,7 @@ interface ToolCallCardProps {
 
 const toolIcons: Record<string, React.ReactNode> = {
   Bash: <Terminal className="h-3.5 w-3.5" />,
-  ReadFile: <FileCode className="h-3.5 w-3.5" />,
+  ReadFiles: <FileCode className="h-3.5 w-3.5" />,
   WriteFile: <FilePlus className="h-3.5 w-3.5" />,
   EditFile: <FileEdit className="h-3.5 w-3.5" />,
   Grep: <Search className="h-3.5 w-3.5" />,
@@ -40,7 +40,7 @@ const toolIcons: Record<string, React.ReactNode> = {
 const toolDisplayNames: Record<string, string> = {
   SubAgent: "Sub-Agent",
   Explore: "Explore",
-  ReadFile: "Read",
+  ReadFiles: "Read",
   WriteFile: "Write",
   EditFile: "Edit",
   FindSymbol: "Symbol Search",
@@ -54,7 +54,7 @@ function getToolSummary(name: string, input?: Record<string, unknown>): string |
   switch (name) {
     case "Bash":
       return typeof input.command === "string" ? input.command.slice(0, 60) : null;
-    case "ReadFile":
+    case "ReadFiles":
     case "WriteFile":
     case "EditFile":
       return typeof input.file_path === "string" ? input.file_path : null;

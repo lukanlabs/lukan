@@ -2,6 +2,6 @@
 All file operations are restricted to the following directories:
 {{ALLOWED_DIRS}}
 
-- **ReadFile, WriteFile, EditFile, Grep, Glob**: Only operate on files within these directories.
+- **ReadFiles, WriteFile, EditFile, Grep, Glob**: Only operate on files within these directories.
 - **Bash**: Only run commands that operate within these directories. Do not read, write, or access files outside them.
 - If the user asks you to access a path outside these directories, tell them it's restricted and suggest: `lukan {{PLUGIN_ALIAS}} allowed_dirs add <path>`

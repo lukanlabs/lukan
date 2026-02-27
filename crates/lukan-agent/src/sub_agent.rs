@@ -687,7 +687,7 @@ Guidelines:
 - Be concise but complete — include everything the main agent needs to act.";
 
 /// Read-only tools available to the Explore sub-agent
-const EXPLORE_TOOLS: &[&str] = &["ReadFile", "Grep", "Glob", "WebFetch"];
+const EXPLORE_TOOLS: &[&str] = &["ReadFiles", "Grep", "Glob", "WebFetch"];
 
 /// Extract the main display arg for a tool call (file path, pattern, etc.)
 fn get_display_arg(name: &str, input: &serde_json::Value) -> String {
@@ -699,7 +699,7 @@ fn get_display_arg(name: &str, input: &serde_json::Value) -> String {
             .to_string()
     };
     match name {
-        "ReadFile" => s("file_path"),
+        "ReadFiles" => s("file_path"),
         "Grep" => s("pattern"),
         "Glob" => s("pattern"),
         "WebFetch" => s("url"),
@@ -717,7 +717,7 @@ fn summarize_result(name: &str, content: &str, is_error: bool) -> String {
         return format!("Error: {}", &first_line[..first_line.len().min(80)]);
     }
     match name {
-        "ReadFile" => {
+        "ReadFiles" => {
             let lines = content.lines().filter(|l| !l.trim().is_empty()).count();
             format!("{lines} lines")
         }

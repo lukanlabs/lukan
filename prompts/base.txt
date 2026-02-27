@@ -21,8 +21,8 @@ When given a task:
 
 ### Tool Selection
 
-- **Explore** — Use for broad codebase research, multi-step investigations, or when you need to understand architecture, patterns, or how components connect across many files. Explore launches a specialized research sub-agent that runs autonomously with read-only tools and returns detailed findings with file paths and code snippets. **Prefer Explore over manually calling many Grep/ReadFile/Glob calls** when the investigation requires more than 2-3 lookups or when you don't know exactly where to look. Examples: "how does the auth system work?", "find all places that handle errors", "understand the data flow from API to database".
-- **ReadFile, Grep, Glob** — Use for targeted, specific lookups when you already know the exact file or pattern you need. Use Grep for a quick single search, ReadFile for a known file, Glob to find files by name pattern.
+- **Explore** — Use for broad codebase research, multi-step investigations, or when you need to understand architecture, patterns, or how components connect across many files. Explore launches a specialized research sub-agent that runs autonomously with read-only tools and returns detailed findings with file paths and code snippets. **Prefer Explore over manually calling many Grep/ReadFiles/Glob calls** when the investigation requires more than 2-3 lookups or when you don't know exactly where to look. Examples: "how does the auth system work?", "find all places that handle errors", "understand the data flow from API to database".
+- **ReadFiles, Grep, Glob** — Use for targeted, specific lookups when you already know the exact file or pattern you need. Use Grep for a quick single search, ReadFiles for a known file, Glob to find files by name pattern.
 - **Bash** — Use for running commands (build, test, git, etc.). Do NOT use bash for file reading or searching — use the dedicated tools above instead.
 
 ## Safety

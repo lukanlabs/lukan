@@ -4262,7 +4262,7 @@ impl App {
 
                 // For compact tools (ReadFile, Grep, Glob): update the existing
                 // progress message in-place instead of adding a new line.
-                let compact = matches!(name.as_str(), "ReadFile" | "Grep" | "Glob")
+                let compact = matches!(name.as_str(), "ReadFiles" | "Grep" | "Glob")
                     && !is_err
                     && diff.is_none();
 
@@ -4764,7 +4764,7 @@ fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("(no command)")
             .to_string(),
-        "ReadFile" => {
+        "ReadFiles" => {
             let path = input
                 .get("file_path")
                 .and_then(|v| v.as_str())
@@ -4846,7 +4846,7 @@ fn format_tool_result_named(name: &str, content: &str, is_error: bool) -> String
         return format_tool_result(content, true);
     }
     match name {
-        "ReadFile" => {
+        "ReadFiles" => {
             let line_count = content.lines().count();
             format!("  ⎿  {line_count} lines")
         }

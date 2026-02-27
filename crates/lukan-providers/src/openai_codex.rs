@@ -936,7 +936,7 @@ mod tests {
             },
             ContentBlock::ToolUse {
                 id: "call_123".to_string(),
-                name: "ReadFile".to_string(),
+                name: "ReadFiles".to_string(),
                 input: json!({"path": "/tmp/test.txt"}),
             },
         ]);
@@ -948,7 +948,7 @@ mod tests {
         // Second item: function_call
         assert_eq!(items[1]["type"], "function_call");
         assert_eq!(items[1]["call_id"], "call_123");
-        assert_eq!(items[1]["name"], "ReadFile");
+        assert_eq!(items[1]["name"], "ReadFiles");
     }
 
     #[test]

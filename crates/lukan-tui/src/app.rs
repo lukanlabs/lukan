@@ -39,6 +39,7 @@ use crate::widgets::bg_picker::{BgEntry, BgPicker, BgPickerView, BgPickerWidget}
 use crate::widgets::chat::{
     ChatMessage, ChatWidget, build_message_lines, physical_row_count, sanitize_for_display,
 };
+use crate::widgets::event_picker::{EventPicker, EventPickerMode, EventPickerWidget};
 use crate::widgets::input::{InputWidget, cursor_position, input_height};
 use crate::widgets::rewind_picker::{RewindEntry, RewindPicker, RewindPickerWidget, RewindView};
 use crate::widgets::status_bar::StatusBarWidget;
@@ -180,10 +181,6 @@ pub struct App {
     event_viewport_scroll: u16,
     /// Whether the Event Agent has unread messages (badge)
     event_agent_has_unread: bool,
-    /// Whether the event history floating overlay is visible (Alt+L)
-    show_event_history: bool,
-    /// Scroll offset for the event history overlay
-    event_history_scroll: u16,
     /// Index of the first assistant text message in the current streaming turn.
     /// Continuation text after tool calls is appended here instead of creating
     /// a separate message (prevents mid-sentence splits).
@@ -192,6 +189,10 @@ pub struct App {
     tool_picker: Option<ToolPicker>,
     /// Persisted disabled tools applied to new turns
     disabled_tools: HashSet<String>,
+    /// Unified event picker / log viewer (Alt+L)
+    event_picker: Option<EventPicker>,
+    /// Auto (true) vs manual (false) event forwarding mode
+    event_auto_mode: bool,
     /// Auto-load the most recent session on startup (--continue flag)
     continue_session: bool,
     /// Embedded interactive terminal modal (F9)
@@ -375,11 +376,11 @@ impl App {
             event_committed_msg_idx: 0,
             event_viewport_scroll: 0,
             event_agent_has_unread: false,
-            show_event_history: false,
-            event_history_scroll: 0,
             turn_text_msg_idx: None,
             tool_picker: None,
             disabled_tools: HashSet::new(),
+            event_picker: None,
+            event_auto_mode: false,
             continue_session: false,
             terminal_modal: None,
             terminal_visible: false,
@@ -503,7 +504,6 @@ impl App {
             selected,
             disabled: self.disabled_tools.clone(),
         });
-        self.show_event_history = false;
         self.force_redraw = true;
     }
 
@@ -1245,6 +1245,7 @@ impl App {
                 && self.rewind_picker.is_none()
                 && self.memory_viewer.is_none()
                 && self.tool_picker.is_none()
+                && self.event_picker.is_none()
                 && !self.terminal_visible
             {
                 let (msgs, committed_idx, streaming, vscroll) = match self.active_view {
@@ -1400,6 +1401,9 @@ impl App {
                     frame.render_widget(widget, chat_area);
                 } else if let Some(ref picker) = self.session_picker {
                     let widget = SessionPickerWidget::new(picker);
+                    frame.render_widget(widget, chat_area);
+                } else if let Some(ref picker) = self.event_picker {
+                    let widget = EventPickerWidget::new(picker);
                     frame.render_widget(widget, chat_area);
                 } else {
                     // Add left margin so chat text doesn't hug the border
@@ -1589,6 +1593,11 @@ impl App {
                     InputWidget::new("↑↓ navigate · Enter select · ESC close", 0, false)
                 } else if self.tool_picker.is_some() {
                     InputWidget::new("↑↓ navigate · Space toggle · Esc/Alt+P close", 0, false)
+                } else if let Some(ref picker) = self.event_picker {
+                    match picker.mode {
+                        EventPickerMode::Picker => InputWidget::new("←→ tabs · ↑↓ nav · Space toggle · a=all · Enter send · Esc close", 0, false),
+                        EventPickerMode::Log => InputWidget::new("←→ tabs · ↑↓ scroll · Esc close", 0, false),
+                    }
                 } else {
                     InputWidget::new(&di, dc, true)
                 };
@@ -1632,7 +1641,11 @@ impl App {
                 };
                 let view_label = match self.active_view {
                     ActiveView::Main => None,
-                    ActiveView::EventAgent => Some("Events"),
+                    ActiveView::EventAgent => Some(if self.event_auto_mode {
+                        "Events [AUTO]"
+                    } else {
+                        "Events [MANUAL]"
+                    }),
                 };
                 let status = StatusBarWidget::new(
                     self.provider.name(),
@@ -1701,81 +1714,6 @@ impl App {
                     frame.render_widget(widget, overlay_area);
                 }
 
-                // Event history floating overlay (Alt+L in Event Agent view)
-                if self.active_view == ActiveView::EventAgent
-                    && self.show_event_history
-                    && self.tool_picker.is_none()
-                {
-                    use ratatui::widgets::{Block, Borders, Wrap};
-
-                    let events = Self::load_event_history(50);
-
-                    let overlay_w = (chat_area.width * 80 / 100).max(20);
-                    let overlay_h = (chat_area.height * 60 / 100).max(5);
-                    let overlay_x = chat_area.x + (chat_area.width.saturating_sub(overlay_w)) / 2;
-                    let overlay_y = chat_area.y + (chat_area.height.saturating_sub(overlay_h)) / 2;
-                    let overlay_area = Rect {
-                        x: overlay_x,
-                        y: overlay_y,
-                        width: overlay_w,
-                        height: overlay_h,
-                    };
-
-                    let mut lines: Vec<Line<'_>> = Vec::new();
-                    if events.is_empty() {
-                        lines.push(Line::from(Span::styled(
-                            "  No events recorded yet.",
-                            Style::default().fg(Color::DarkGray),
-                        )));
-                    } else {
-                        for (ts, level, source, detail) in &events {
-                            let short_ts = if ts.len() >= 19 {
-                                // Extract HH:MM:SS from ISO timestamp
-                                &ts[11..19]
-                            } else {
-                                ts.as_str()
-                            };
-                            let upper_level = level.to_uppercase();
-                            let color = match upper_level.as_str() {
-                                "critical" | "error" => Color::Red,
-                                "warn" | "warning" => Color::Yellow,
-                                _ => Color::DarkGray,
-                            };
-                            lines.push(Line::from(vec![
-                                Span::styled(
-                                    format!(" {} ", short_ts),
-                                    Style::default().fg(Color::DarkGray),
-                                ),
-                                Span::styled(
-                                    format!("[{}] ", upper_level),
-                                    Style::default().fg(color),
-                                ),
-                                Span::styled(
-                                    format!("{}: ", source),
-                                    Style::default().fg(Color::Cyan),
-                                ),
-                                Span::styled(
-                                    detail.clone(),
-                                    Style::default().fg(Color::White),
-                                ),
-                            ]));
-                        }
-                    }
-
-                    Clear.render(overlay_area, frame.buffer_mut());
-                    let block = Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Event Log (Alt+L) ")
-                        .border_style(Style::default().fg(Color::Cyan))
-                        .style(Style::default().bg(Color::Rgb(20, 20, 20)));
-                    let paragraph = ratatui::widgets::Paragraph::new(lines)
-                        .block(block)
-                        .wrap(Wrap { trim: false })
-                        .scroll((self.event_history_scroll, 0))
-                        .style(Style::default().bg(Color::Rgb(20, 20, 20)));
-                    frame.render_widget(paragraph, overlay_area);
-                }
-
                 // Embedded terminal overlay (F9) — only when visible
                 if self.terminal_visible
                     && let Some(ref modal) = self.terminal_modal
@@ -1815,7 +1753,7 @@ impl App {
                     && self.session_picker.is_none()
                     && self.model_picker.is_none()
                     && self.tool_picker.is_none()
-                    && !self.show_event_history
+                    && self.event_picker.is_none()
                     && !self.terminal_visible
                 {
                     let (cx, cy) = cursor_position(&di, dc, input_area);
@@ -2092,6 +2030,94 @@ impl App {
                                     }
                                     KeyCode::Enter => {
                                         // Block Enter while tool picker is open
+                                    }
+                                    _ => {}
+                                }
+                            } else if self.event_picker.is_some() {
+                                // Unified event picker / log key handling
+                                let mode = self.event_picker.as_ref().unwrap().mode;
+                                match key.code {
+                                    KeyCode::Left => {
+                                        if let Some(ref mut picker) = self.event_picker {
+                                            picker.prev_tab();
+                                        }
+                                    }
+                                    KeyCode::Right => {
+                                        if let Some(ref mut picker) = self.event_picker {
+                                            picker.next_tab();
+                                        }
+                                    }
+                                    KeyCode::Up => {
+                                        if let Some(ref mut picker) = self.event_picker {
+                                            match mode {
+                                                EventPickerMode::Picker => {
+                                                    if picker.cursor > 0 {
+                                                        picker.cursor -= 1;
+                                                    }
+                                                }
+                                                EventPickerMode::Log => {
+                                                    picker.log_scroll = picker.log_scroll.saturating_sub(1);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if let Some(ref mut picker) = self.event_picker {
+                                            match mode {
+                                                EventPickerMode::Picker => {
+                                                    let max = picker.filtered_entry_indices().len().saturating_sub(1);
+                                                    if picker.cursor < max {
+                                                        picker.cursor += 1;
+                                                    }
+                                                }
+                                                EventPickerMode::Log => {
+                                                    picker.log_scroll = picker.log_scroll.saturating_add(1);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Char(' ') if mode == EventPickerMode::Picker => {
+                                        if let Some(ref mut picker) = self.event_picker {
+                                            picker.toggle_current();
+                                        }
+                                    }
+                                    KeyCode::Char('a') if mode == EventPickerMode::Picker => {
+                                        if let Some(ref mut picker) = self.event_picker {
+                                            picker.select_all();
+                                        }
+                                    }
+                                    KeyCode::Char('n') if mode == EventPickerMode::Picker => {
+                                        if let Some(ref mut picker) = self.event_picker {
+                                            picker.deselect_all();
+                                        }
+                                    }
+                                    KeyCode::Enter if mode == EventPickerMode::Picker => {
+                                        // Send selected events to event agent and trigger review
+                                        let mut has_events = false;
+                                        if let Some(ref mut picker) = self.event_picker {
+                                            let (selected, remaining) = picker.take_selected();
+                                            self.event_buffer.extend(remaining);
+                                            if !selected.is_empty() {
+                                                has_events = true;
+                                                self.event_buffer.extend(selected);
+                                            }
+                                        }
+                                        self.event_picker = None;
+                                        self.force_redraw = true;
+                                        if has_events {
+                                            self.trigger_event_agent_auto_turn(event_agent_tx.clone()).await;
+                                        }
+                                    }
+                                    KeyCode::Esc => {
+                                        // Close — return events to buffer in picker mode
+                                        if let Some(ref mut picker) = self.event_picker
+                                            && picker.mode == EventPickerMode::Picker
+                                        {
+                                            let returned = picker.return_all();
+                                            self.event_buffer.extend(returned);
+                                        }
+                                        self.event_picker = None;
+                                        self.force_redraw = true;
                                     }
                                     _ => {}
                                 }
@@ -2725,6 +2751,12 @@ impl App {
                                 && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
                             {
                                 // Alt+E: toggle between Main and Event Agent views
+                                // Close event picker if open (return events to buffer)
+                                if let Some(ref mut picker) = self.event_picker {
+                                    let returned = picker.return_all();
+                                    self.event_buffer.extend(returned);
+                                    self.event_picker = None;
+                                }
                                 match self.active_view {
                                     ActiveView::Main => {
                                         self.active_view = ActiveView::EventAgent;
@@ -2732,13 +2764,12 @@ impl App {
                                         if self.event_messages.is_empty() {
                                             self.event_messages.push(ChatMessage::new(
                                                 "system",
-                                                "Event Agent view. System events will appear here.\nAlt+L to view event log. Press Alt+E to return to main view.",
+                                                "Event Agent view. System events will appear here.\nAlt+L to view events. Press Alt+E to return to main view.",
                                             ));
                                         }
                                     }
                                     ActiveView::EventAgent => {
                                         self.active_view = ActiveView::Main;
-                                        self.show_event_history = false;
                                     }
                                 }
                                 self.force_redraw = true;
@@ -2746,9 +2777,50 @@ impl App {
                                 && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
                                 && self.active_view == ActiveView::EventAgent
                             {
-                                // Alt+L: toggle event history overlay (Event Agent view only)
-                                self.show_event_history = !self.show_event_history;
-                                self.event_history_scroll = 0;
+                                // Alt+L: open/close unified event view (Event Agent view only)
+                                if self.event_picker.is_some() {
+                                    // Close — return pending to buffer if picker mode
+                                    if let Some(ref mut picker) = self.event_picker
+                                        && picker.mode == EventPickerMode::Picker
+                                    {
+                                        let returned = picker.return_all();
+                                        self.event_buffer.extend(returned);
+                                    }
+                                    self.event_picker = None;
+                                } else if !self.event_buffer.is_empty() {
+                                    // Picker mode — pending events exist
+                                    let events: Vec<_> = self.event_buffer.drain(..).collect();
+                                    self.event_picker = Some(EventPicker::new_picker(events));
+                                } else {
+                                    // No pending events — load history into picker so user can re-send
+                                    let history = Self::load_event_history(50);
+                                    if history.is_empty() {
+                                        self.event_picker = Some(EventPicker::new_log(history));
+                                    } else {
+                                        // Convert history (ts, level, source, detail) → picker entries (source, level, detail)
+                                        let events: Vec<_> = history
+                                            .into_iter()
+                                            .map(|(_ts, level, source, detail)| (source, level, detail))
+                                            .collect();
+                                        self.event_picker = Some(EventPicker::new_picker(events));
+                                    }
+                                }
+                                self.force_redraw = true;
+                            } else if key.code == KeyCode::Char('a')
+                                && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
+                                && self.event_picker.is_none()
+                            {
+                                // Alt+A: toggle auto/manual event forwarding mode
+                                self.event_auto_mode = !self.event_auto_mode;
+                                let mode_label = if self.event_auto_mode { "AUTO" } else { "MANUAL" };
+                                let msgs = match self.active_view {
+                                    ActiveView::Main => &mut self.messages,
+                                    ActiveView::EventAgent => &mut self.event_messages,
+                                };
+                                msgs.push(ChatMessage::new(
+                                    "system",
+                                    format!("Event forwarding mode: {mode_label}"),
+                                ));
                                 self.force_redraw = true;
                             } else if key.code == KeyCode::BackTab {
                                 // Shift+Tab: cycle permission mode (works during streaming too)
@@ -2761,28 +2833,6 @@ impl App {
                                     format!("Permission mode: {}", self.permission_mode),
                                 ));
                             } else if !self.is_streaming {
-                                // Event history overlay intercepts certain keys
-                                if self.show_event_history {
-                                    match key.code {
-                                        KeyCode::Esc => {
-                                            self.show_event_history = false;
-                                            self.force_redraw = true;
-                                        }
-                                        KeyCode::Up => {
-                                            self.event_history_scroll =
-                                                self.event_history_scroll.saturating_sub(1);
-                                        }
-                                        KeyCode::Down => {
-                                            self.event_history_scroll =
-                                                self.event_history_scroll.saturating_add(1);
-                                        }
-                                        KeyCode::Enter => {
-                                            // Block input submission while overlay is open
-                                        }
-                                        _ => {}
-                                    }
-                                } else {
-
                                 let cmds = filtered_commands(&self.input);
                                 let has_palette = !cmds.is_empty()
                                     && self.session_picker.is_none()
@@ -2920,7 +2970,6 @@ impl App {
                                     KeyCode::End => self.cursor_pos = self.input.len(),
                                     _ => {}
                                 }
-                                } // end else (not show_event_history)
                             } else if self.is_streaming {
                                 // Typing keys during streaming (Enter/Esc handled above)
                                 match key.code {
@@ -3066,8 +3115,17 @@ impl App {
                             if self.last_event_poll.elapsed().as_secs() >= 3 {
                                 self.last_event_poll = Instant::now();
                                 let has_critical = self.poll_pending_events_to_event_agent();
-                                if has_critical {
+                                if has_critical && self.event_auto_mode {
+                                    // Auto mode: trigger event agent directly
                                     self.trigger_event_agent_auto_turn(event_agent_tx.clone()).await;
+                                } else if has_critical && !self.event_auto_mode && self.event_picker.is_none() {
+                                    // Manual mode: auto-open picker for critical events
+                                    let events: Vec<_> = self.event_buffer.drain(..).collect();
+                                    if !events.is_empty() {
+                                        self.event_picker = Some(EventPicker::new_picker(events));
+                                        self.event_agent_has_unread = true;
+                                        self.force_redraw = true;
+                                    }
                                 }
                             }
                         }
@@ -3445,7 +3503,7 @@ impl App {
             return;
         }
 
-        // Handle /events — switch to Event Agent view (Alt+L for history overlay)
+        // Handle /events — switch to Event Agent view (Alt+L for events)
         if text == "/events" || text.starts_with("/events ") {
             let arg = text.strip_prefix("/events").unwrap_or("").trim();
 
@@ -3465,7 +3523,7 @@ impl App {
             if self.event_messages.is_empty() {
                 self.event_messages.push(ChatMessage::new(
                     "system",
-                    "Event Agent view. System events will appear here.\nAlt+L to view event log. Press Alt+E to return to main view.",
+                    "Event Agent view. System events will appear here.\nAlt+L to view events. Press Alt+E to return to main view.",
                 ));
             }
             return;
@@ -3478,8 +3536,7 @@ impl App {
                 self.messages
                     .push(ChatMessage::new("system", "No background processes."));
             } else {
-                let entries: Vec<BgEntry> =
-                    processes.into_iter().map(BgEntry::from).collect();
+                let entries: Vec<BgEntry> = processes.into_iter().map(BgEntry::from).collect();
                 self.bg_picker = Some(BgPicker::new(entries));
             }
             return;
@@ -4898,7 +4955,7 @@ fn build_welcome_banner(provider: &str, model: &str) -> String {
  ███████╗╚██████╔╝██║  ██╗██║  ██║██║ ╚████║   {cwd}
  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
- /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+E  Events    Alt+L  Event Log    Alt+M  Memory    Alt+P  Tools    Alt+S  Subagents    Alt+T  Tasks    Shift+Tab  Mode    Ctrl+C  Quit"
+ /model  Switch model    /resume  Sessions    /bg  Background    /clear  Clear    Alt+B  Background cmd    Alt+E  Events    Alt+L  Events    Alt+M  Memory    Alt+P  Tools    Alt+S  Subagents    Alt+T  Tasks    Shift+Tab  Mode    Ctrl+C  Quit"
     )
 }
 
@@ -4919,7 +4976,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/skills", "list available skills"),
     (
         "/events",
-        "Event Agent view (/events | clear) — Alt+L for event log",
+        "Event Agent view (/events | clear) — Alt+L for events",
     ),
     ("/workers", "browse workers and runs"),
     ("/exit", "quit lukan"),

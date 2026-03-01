@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Terminal,
   FileCode,
@@ -79,12 +79,21 @@ function getToolSummary(name: string, input?: Record<string, unknown>): string |
 export function ToolCallCard({ tool }: ToolCallCardProps) {
   const [open, setOpen] = useState(false);
   const [sendingToBg, setSendingToBg] = useState(false);
+  const [startedAt] = useState(() => Date.now());
+  const [elapsed, setElapsed] = useState(0);
 
   const icon = toolIcons[tool.name] ?? <Wrench className="h-3.5 w-3.5" />;
   const displayName = toolDisplayNames[tool.name] || tool.name;
   const summary = getToolSummary(tool.name, tool.rawInput);
   const isAgent = tool.name === "SubAgent" || tool.name === "Explore";
   const isBashRunning = tool.name === "Bash" && tool.isRunning;
+
+  // Tick elapsed time while Bash is running (for delayed "Background" button)
+  useEffect(() => {
+    if (!isBashRunning) return;
+    const interval = setInterval(() => setElapsed(Date.now() - startedAt), 1000);
+    return () => clearInterval(interval);
+  }, [isBashRunning, startedAt]);
 
   const handleSendToBackground = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -141,7 +150,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
           <span className="text-xs text-zinc-500 truncate font-mono flex-1 min-w-0">{summary}</span>
         )}
         <span className="shrink-0 ml-auto flex items-center gap-1.5">
-          {isBashRunning && !sendingToBg && tool.content && (
+          {isBashRunning && !sendingToBg && tool.content && elapsed >= 5000 && (
             <button
               onClick={handleSendToBackground}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-zinc-100 text-zinc-900 hover:bg-zinc-200 transition-colors"

@@ -393,6 +393,7 @@ export interface TokenUsage {
 }
 
 export interface TurnComplete {
+  sessionId: string;
   messages: Message[];
   contextSize: number;
   tokenUsage: TokenUsage;

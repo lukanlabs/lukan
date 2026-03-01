@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use anyhow::Result;
 
@@ -32,6 +33,9 @@ pub struct ChatState {
     pub agent_handle: Mutex<Option<AgentTurnHandle>>,
     /// Sender to signal "send to background" for the currently running Bash tool
     pub bg_signal_tx: Mutex<Option<watch::Sender<()>>>,
+    /// Generation counter — incremented on each turn/session switch.
+    /// Prevents stale completion handlers from overwriting state.
+    pub generation: AtomicU64,
 }
 
 impl Default for ChatState {
@@ -49,11 +53,42 @@ impl Default for ChatState {
             cancel_token: Mutex::new(None),
             agent_handle: Mutex::new(None),
             bg_signal_tx: Mutex::new(None),
+            generation: AtomicU64::new(0),
         }
     }
 }
 
 impl ChatState {
+    /// Cancel any running turn and wait for it to finish (up to 5s).
+    /// Returns the agent if it was recovered, otherwise None.
+    pub async fn cancel_running_turn(&self) -> Option<AgentLoop> {
+        // Signal cancellation
+        if let Some(token) = self.cancel_token.lock().await.take() {
+            token.cancel();
+        }
+
+        // Wait for the handle to finish (don't abort — let it return gracefully)
+        let handle = self.agent_handle.lock().await.take();
+        if let Some(handle) = handle {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
+                Ok(Ok((agent, _result))) => {
+                    *self.is_processing.lock().await = false;
+                    return Some(agent);
+                }
+                Ok(Err(_join_err)) => {
+                    // Task panicked or was already aborted
+                }
+                Err(_timeout) => {
+                    // Agent didn't stop in time — it will be orphaned
+                    eprintln!("[warn] Agent turn did not stop within 5s after cancellation");
+                }
+            }
+        }
+
+        *self.is_processing.lock().await = false;
+        None
+    }
+
     /// Create a new agent, storing approval/plan channels in state
     pub async fn create_agent(&self, config: &ResolvedConfig) -> anyhow::Result<AgentLoop> {
         let provider = create_provider(config)?;

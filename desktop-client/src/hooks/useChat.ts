@@ -269,20 +269,29 @@ export function useChat() {
     blocksRef.current = [];
     blockIdCounter.current = 0;
     pendingTextRef.current = "";
-    setState((s) => ({
-      ...s,
-      isProcessing: false,
-      messages: complete.messages,
-      streamingBlocks: [],
-      toolImages: { ...s.toolImages, ...imageCacheRef.current },
-      contextSize: complete.contextSize ?? s.contextSize,
-      tokenUsage: {
-        input: complete.tokenUsage?.input ?? s.tokenUsage.input,
-        output: complete.tokenUsage?.output ?? s.tokenUsage.output,
-        cacheCreation: complete.tokenUsage?.cacheCreation ?? s.tokenUsage.cacheCreation,
-        cacheRead: complete.tokenUsage?.cacheRead ?? s.tokenUsage.cacheRead,
-      },
-    }));
+    const newSessionId = complete.sessionId || undefined;
+    setState((s) => {
+      // Notify App.tsx if session changed (e.g. agent lazily created a new session)
+      const sid = newSessionId ?? s.sessionId;
+      if (sid && sid !== s.sessionId) {
+        window.dispatchEvent(new CustomEvent("session-changed", { detail: sid }));
+      }
+      return {
+        ...s,
+        isProcessing: false,
+        sessionId: sid || s.sessionId,
+        messages: complete.messages,
+        streamingBlocks: [],
+        toolImages: { ...s.toolImages, ...imageCacheRef.current },
+        contextSize: complete.contextSize ?? s.contextSize,
+        tokenUsage: {
+          input: complete.tokenUsage?.input ?? s.tokenUsage.input,
+          output: complete.tokenUsage?.output ?? s.tokenUsage.output,
+          cacheCreation: complete.tokenUsage?.cacheCreation ?? s.tokenUsage.cacheCreation,
+          cacheRead: complete.tokenUsage?.cacheRead ?? s.tokenUsage.cacheRead,
+        },
+      };
+    });
   }, []);
 
   // Subscribe to Tauri events
@@ -381,10 +390,15 @@ export function useChat() {
   // ── Actions ──────────────────────────────────────────────────────
 
   const sendMessage = useCallback((content: string) => {
+    // Clear any leftover streaming blocks (e.g. from a cancelled turn)
+    blocksRef.current = [];
+    blockIdCounter.current = 0;
+    pendingTextRef.current = "";
     // Optimistically add user message
     setState((s) => ({
       ...s,
       messages: [...s.messages, { role: "user" as const, content }],
+      streamingBlocks: [],
     }));
     api.sendMessage(content).catch((e) => {
       setState((s) => ({ ...s, error: `Send failed: ${e}` }));
@@ -392,11 +406,27 @@ export function useChat() {
   }, []);
 
   const abort = useCallback(() => {
+    // cancel_stream waits for the agent to finish gracefully and emits
+    // turn-complete, which will update messages and clear streaming blocks.
+    // We immediately unlock the input (isProcessing=false) and mark running
+    // tools as done so the UI doesn't appear stuck. The turn-complete event
+    // will finalize messages when the agent actually stops.
     api.cancelStream().catch(() => {});
-    blocksRef.current = [];
-    blockIdCounter.current = 0;
-    setState((s) => ({ ...s, isProcessing: false, streamingBlocks: [] }));
-  }, []);
+    // Mark all running tools as finished in the streaming blocks
+    for (const block of blocksRef.current) {
+      if (block.type === "tool" && block.tool.isRunning) {
+        block.tool = { ...block.tool, isRunning: false };
+      }
+    }
+    flushRender();
+    setState((s) => ({
+      ...s,
+      isProcessing: false,
+      pendingApproval: null,
+      pendingQuestion: null,
+      pendingPlanReview: null,
+    }));
+  }, [flushRender]);
 
   const clearApprovalBlocks = useCallback(() => {
     blocksRef.current = blocksRef.current.filter((b) => b.type !== "approval");

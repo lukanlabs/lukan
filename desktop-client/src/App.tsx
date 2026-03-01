@@ -169,12 +169,24 @@ export default function App() {
     workspace.togglePanel("browser");
   };
 
+  // Sync currentSessionId when the chat hook detects a new session
+  // (e.g. agent lazily created on first message)
+  useEffect(() => {
+    const onSessionChanged = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id) setCurrentSessionId(id);
+    };
+    window.addEventListener("session-changed", onSessionChanged);
+    return () => window.removeEventListener("session-changed", onSessionChanged);
+  }, []);
+
   const handleLoadSession = (id: string) => {
     setCurrentSessionId(id);
     window.dispatchEvent(new CustomEvent("load-session", { detail: id }));
   };
 
   const handleNewSession = () => {
+    setCurrentSessionId("");
     window.dispatchEvent(new CustomEvent("new-session"));
   };
 

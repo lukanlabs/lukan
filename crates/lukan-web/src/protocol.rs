@@ -154,6 +154,7 @@ pub enum ServerMessage {
         browser_screenshots: bool,
     },
     ProcessingComplete {
+        session_id: String,
         messages: Vec<Message>,
         checkpoints: Vec<Checkpoint>,
         #[serde(skip_serializing_if = "Option::is_none")]

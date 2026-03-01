@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use lukan_agent::SessionManager;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::config::{ConfigManager, CredentialsManager, ResolvedConfig};
@@ -38,6 +40,7 @@ pub struct TokenUsage {
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnComplete {
+    pub session_id: String,
     pub messages: serde_json::Value,
     pub context_size: u64,
     pub token_usage: TokenUsage,
@@ -70,7 +73,7 @@ pub async fn initialize_chat(state: State<'_, ChatState>) -> Result<InitResponse
     };
 
     let provider_name = resolved.config.provider.to_string();
-    let model_name = resolved.effective_model();
+    let model_name = resolved.effective_model().unwrap_or_default();
 
     // If provider or model changed, save current session and clear agent
     // so it gets lazily recreated with the new provider on next message.
@@ -161,6 +164,26 @@ pub async fn send_message(
                 Ok(agent) => *agent_lock = Some(agent),
                 Err(e) => {
                     *state.is_processing.lock().await = false;
+                    // No model selected → send a friendly assistant message instead of a raw error
+                    if config.effective_model().is_none() {
+                        let _ = app.emit(
+                            "stream-event",
+                            serde_json::to_string(&serde_json::json!({
+                                "type": "text_delta",
+                                "text": "No model selected. Go to **Providers** in the sidebar and choose a model to get started."
+                            }))
+                            .unwrap_or_default(),
+                        );
+                        let _ = app.emit(
+                            "stream-event",
+                            serde_json::to_string(&serde_json::json!({
+                                "type": "message_end",
+                                "stop_reason": "end_turn"
+                            }))
+                            .unwrap_or_default(),
+                        );
+                        return Ok(());
+                    }
                     return Err(format!("Failed to create agent: {e}"));
                 }
             }
@@ -177,6 +200,9 @@ pub async fn send_message(
     let content_owned = content;
     let app_handle = app.clone();
 
+    // Bump generation so stale completion handlers don't overwrite state
+    let turn_gen = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+
     // Create cancellation token so cancel_stream can signal the agent
     let cancel_token = CancellationToken::new();
     *state.cancel_token.lock().await = Some(cancel_token.clone());
@@ -189,7 +215,7 @@ pub async fn send_message(
         (agent, result)
     });
 
-    // Store handle so cancel_stream can abort it
+    // Store handle so cancel_stream can wait on it
     *state.agent_handle.lock().await = Some(agent_handle);
 
     // Spawn event forwarder
@@ -213,7 +239,7 @@ pub async fn send_message(
 
         if let Some(handle) = handle {
             match handle.await {
-                Ok((returned_agent, result)) => {
+                Ok((mut returned_agent, result)) => {
                     if let Err(e) = result {
                         let _ = app_handle.emit(
                             "stream-event",
@@ -225,12 +251,32 @@ pub async fn send_message(
                         );
                     }
 
+                    let chat_state = app_for_complete.state::<ChatState>();
+
+                    // Check if this completion is still current (generation matches).
+                    // If the user switched sessions, gen will have been bumped and a
+                    // new agent will already be in state — don't overwrite it.
+                    let current_gen = chat_state.generation.load(Ordering::SeqCst);
+                    if current_gen != turn_gen {
+                        let _ = returned_agent.save_session_public().await;
+                        // Still recover the agent if nothing replaced it (e.g. cancel
+                        // within the same session where no new agent was created yet).
+                        let mut agent_lock = chat_state.agent.lock().await;
+                        if agent_lock.is_none() {
+                            *agent_lock = Some(returned_agent);
+                        }
+                        *chat_state.is_processing.lock().await = false;
+                        return;
+                    }
+
+                    let session_id = returned_agent.session_id().to_string();
                     let messages = returned_agent.messages_json();
                     let context_size = returned_agent.last_context_size();
                     let input_tokens = returned_agent.input_tokens();
                     let output_tokens = returned_agent.output_tokens();
 
                     let complete = TurnComplete {
+                        session_id,
                         messages: serde_json::to_value(messages).unwrap_or_default(),
                         context_size,
                         token_usage: TokenUsage {
@@ -247,8 +293,9 @@ pub async fn send_message(
                     );
 
                     // Put agent back
-                    let chat_state = app_for_complete.state::<ChatState>();
                     *chat_state.agent.lock().await = Some(returned_agent);
+                    *chat_state.cancel_token.lock().await = None;
+                    *chat_state.is_processing.lock().await = false;
                 }
                 Err(e) => {
                     if !e.is_cancelled() {
@@ -261,13 +308,17 @@ pub async fn send_message(
                             .unwrap_or_default(),
                         );
                     }
+                    let chat_state = app_for_complete.state::<ChatState>();
+                    let current_gen = chat_state.generation.load(Ordering::SeqCst);
+                    if current_gen == turn_gen {
+                        *chat_state.cancel_token.lock().await = None;
+                        *chat_state.is_processing.lock().await = false;
+                    }
                 }
             }
+        } else {
+            // Handle was already taken (by cancel_running_turn) — nothing to do
         }
-
-        let chat_state = app_for_complete.state::<ChatState>();
-        *chat_state.cancel_token.lock().await = None;
-        *chat_state.is_processing.lock().await = false;
     });
 
     Ok(())
@@ -275,14 +326,32 @@ pub async fn send_message(
 
 #[tauri::command]
 pub async fn cancel_stream(state: State<'_, ChatState>) -> Result<(), String> {
-    // Signal cancellation — the agent loop and Bash tool will react by aborting
+    // Do NOT bump generation here — cancel stays in the same session.
+    // Generation is only bumped by load_session/new_session (session switches).
+
+    // Signal cancellation — the agent loop and Bash tool will react by stopping
     if let Some(token) = state.cancel_token.lock().await.take() {
         token.cancel();
     }
 
-    // Abort the spawned agent task so the completion handler sees JoinError::Cancelled
-    if let Some(handle) = state.agent_handle.lock().await.take() {
-        handle.abort();
+    // Try to take the handle (the completion handler may have already taken it).
+    // If we get it, wait for the agent and put it back. If the completion handler
+    // already has it, it will put the agent back via turn-complete — either way the
+    // agent is recovered and the session is preserved.
+    let handle = state.agent_handle.lock().await.take();
+    if let Some(handle) = handle {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
+            Ok(Ok((mut returned_agent, _result))) => {
+                let _ = returned_agent.save_session_public().await;
+                *state.agent.lock().await = Some(returned_agent);
+            }
+            Ok(Err(_join_err)) => {
+                // Task panicked — agent is lost
+            }
+            Err(_timeout) => {
+                eprintln!("[warn] Agent did not stop within 5s after cancel");
+            }
+        }
     }
 
     *state.is_processing.lock().await = false;
@@ -392,12 +461,19 @@ pub async fn list_sessions() -> Result<Vec<SessionSummaryJs>, String> {
 
 #[tauri::command]
 pub async fn load_session(state: State<'_, ChatState>, id: String) -> Result<InitResponse, String> {
-    // Save current session
+    // Cancel any running turn and recover the agent
+    state.generation.fetch_add(1, Ordering::SeqCst);
+    if let Some(mut recovered) = state.cancel_running_turn().await {
+        let _ = recovered.save_session_public().await;
+    }
+
+    // Save current session if agent is in state (not running a turn)
     {
         let mut agent_lock = state.agent.lock().await;
         if let Some(ref mut agent) = *agent_lock {
             let _ = agent.save_session_public().await;
         }
+        *agent_lock = None;
     }
 
     let config_lock = state.config.lock().await;
@@ -438,7 +514,13 @@ pub async fn load_session(state: State<'_, ChatState>, id: String) -> Result<Ini
 
 #[tauri::command]
 pub async fn new_session(state: State<'_, ChatState>) -> Result<InitResponse, String> {
-    // Save current session
+    // Cancel any running turn and recover the agent
+    state.generation.fetch_add(1, Ordering::SeqCst);
+    if let Some(mut recovered) = state.cancel_running_turn().await {
+        let _ = recovered.save_session_public().await;
+    }
+
+    // Save current session if agent is in state
     {
         let mut agent_lock = state.agent.lock().await;
         if let Some(ref mut agent) = *agent_lock {

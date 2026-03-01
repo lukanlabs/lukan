@@ -673,13 +673,37 @@ async fn handle_send_message(
                 Err(e) => {
                     let mut owner = state.processing_owner.lock().await;
                     *owner = None;
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::Error {
-                            error: format!("Failed to create agent: {e}"),
-                        },
-                    )
-                    .await;
+                    // No model selected → send a friendly assistant-like message
+                    let config = state.config.lock().await;
+                    if config.effective_model().is_none() {
+                        let hint = "No model selected. Open **Providers** in the sidebar and choose a model to get started.";
+                        let _ = ws_tx
+                            .send(Message::Text(
+                                serde_json::to_string(&StreamEvent::TextDelta {
+                                    text: hint.to_string(),
+                                })
+                                .unwrap()
+                                .into(),
+                            ))
+                            .await;
+                        let _ = ws_tx
+                            .send(Message::Text(
+                                serde_json::to_string(&StreamEvent::MessageEnd {
+                                    stop_reason: lukan_core::models::events::StopReason::EndTurn,
+                                })
+                                .unwrap()
+                                .into(),
+                            ))
+                            .await;
+                    } else {
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::Error {
+                                error: format!("Failed to create agent: {e}"),
+                            },
+                        )
+                        .await;
+                    }
                     return;
                 }
             }
@@ -766,6 +790,7 @@ async fn handle_send_message(
 
             if !client_disconnected {
                 // Send processing_complete with updated state
+                let session_id = returned_agent.session_id().to_string();
                 let messages = returned_agent.messages_json();
                 let checkpoints = returned_agent.checkpoints().to_vec();
                 let context_size = returned_agent.last_context_size();
@@ -773,6 +798,7 @@ async fn handle_send_message(
                 send_json(
                     ws_tx,
                     &ServerMessage::ProcessingComplete {
+                        session_id,
                         messages,
                         checkpoints,
                         context_size: Some(context_size),

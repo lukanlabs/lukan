@@ -59,6 +59,7 @@ impl CredentialsManager {
         env_fallback!(tavily_api_key, "TAVILY_API_KEY");
         env_fallback!(openai_api_key, "OPENAI_API_KEY");
         env_fallback!(zai_api_key, "ZAI_API_KEY");
+        env_fallback!(ollama_cloud_api_key, "OLLAMA_API_KEY");
         env_fallback!(openai_compatible_api_key, "OPENAI_COMPATIBLE_API_KEY");
     }
 
@@ -95,6 +96,7 @@ impl CredentialsManager {
                 .or_else(|| creds.github_token.clone()),
             super::types::ProviderName::OpenaiCodex => creds.codex_access_token.clone(),
             super::types::ProviderName::Zai => creds.zai_api_key.clone(),
+            super::types::ProviderName::OllamaCloud => creds.ollama_cloud_api_key.clone(),
             super::types::ProviderName::OpenaiCompatible => creds.openai_compatible_api_key.clone(),
         }
     }

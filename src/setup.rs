@@ -84,6 +84,7 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
         ("github-copilot", "GitHub Copilot"),
         ("openai-codex", "OpenAI Codex"),
         ("zai", "z.ai (GLM models)"),
+        ("ollama-cloud", "Ollama Cloud"),
         ("openai-compatible", "OpenAI-compatible endpoint"),
     ];
 
@@ -100,7 +101,7 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
 
     println!();
     let input = prompt(&format!(
-        "Select provider [1-7] {DIM}(current: {current_str}){RESET}: "
+        "Select provider [1-8] {DIM}(current: {current_str}){RESET}: "
     ))?;
 
     if !input.is_empty() {
@@ -194,6 +195,14 @@ fn setup_credentials(provider: &ProviderName, mut creds: Credentials) -> Result<
             creds.zai_api_key =
                 prompt_credential("z.ai API key", "ZAI_API_KEY", creds.zai_api_key.as_deref())?
                     .or(creds.zai_api_key);
+        }
+        ProviderName::OllamaCloud => {
+            creds.ollama_cloud_api_key = prompt_credential(
+                "Ollama Cloud API key",
+                "OLLAMA_API_KEY",
+                creds.ollama_cloud_api_key.as_deref(),
+            )?
+            .or(creds.ollama_cloud_api_key);
         }
         ProviderName::OpenaiCompatible => {
             creds.openai_compatible_api_key = prompt_credential(
@@ -401,6 +410,11 @@ pub async fn run_doctor() -> Result<()> {
     );
     print_key_status("z.ai", creds.zai_api_key.as_deref(), "ZAI_API_KEY");
     print_key_status(
+        "Ollama Cloud",
+        creds.ollama_cloud_api_key.as_deref(),
+        "OLLAMA_API_KEY",
+    );
+    print_key_status(
         "OpenAI-compat",
         creds.openai_compatible_api_key.as_deref(),
         "OPENAI_COMPATIBLE_API_KEY",
@@ -540,6 +554,7 @@ fn env_var_for_provider(provider: &ProviderName) -> &'static str {
         ProviderName::GithubCopilot => "GITHUB_TOKEN",
         ProviderName::OpenaiCodex => "CODEX_ACCESS_TOKEN",
         ProviderName::Zai => "ZAI_API_KEY",
+        ProviderName::OllamaCloud => "OLLAMA_API_KEY",
         ProviderName::OpenaiCompatible => "OPENAI_COMPATIBLE_API_KEY",
     }
 }

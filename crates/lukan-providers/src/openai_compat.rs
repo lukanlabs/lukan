@@ -369,27 +369,62 @@ impl OpenAiCompatBase {
 
         debug!("Sending request to {} (model: {})", url, self.config.model);
 
-        let mut req = self
-            .client
-            .post(&url)
-            .header("content-type", "application/json")
-            .header("authorization", format!("Bearer {}", self.config.api_key));
+        // Retry with exponential backoff for connection errors and 5xx responses
+        const MAX_RETRIES: u32 = 3;
+        let mut last_err;
+        let mut response = None;
 
-        for (key, value) in &self.config.extra_headers {
-            req = req.header(key.as_str(), value.as_str());
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_millis(500 * 2u64.pow(attempt - 1));
+                warn!(
+                    "Retry {attempt}/{MAX_RETRIES} for {} after {delay:?}",
+                    self.config.base_url
+                );
+                tokio::time::sleep(delay).await;
+            }
+
+            let mut retry_req = self
+                .client
+                .post(&url)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", self.config.api_key));
+
+            for (key, value) in &self.config.extra_headers {
+                retry_req = retry_req.header(key.as_str(), value.as_str());
+            }
+
+            match retry_req.json(&body).send().await {
+                Ok(resp) if resp.status().is_server_error() => {
+                    let status = resp.status();
+                    last_err = resp.text().await.unwrap_or_default();
+                    warn!("Server error ({status}): {last_err}");
+                    if attempt == MAX_RETRIES {
+                        anyhow::bail!("API error ({status}) after {MAX_RETRIES} retries: {last_err}");
+                    }
+                }
+                Ok(resp) if !resp.status().is_success() => {
+                    let status = resp.status();
+                    let error_body = resp.text().await.unwrap_or_default();
+                    anyhow::bail!("API error ({}): {}", status, error_body);
+                }
+                Ok(resp) => {
+                    response = Some(resp);
+                    break;
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                    warn!("Connection error: {last_err}");
+                    if attempt == MAX_RETRIES {
+                        anyhow::bail!(
+                            "Failed to connect to {url} after {MAX_RETRIES} retries: {last_err}"
+                        );
+                    }
+                }
+            }
         }
 
-        let response = req
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("Failed to connect to {url}"))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_body = response.text().await.unwrap_or_default();
-            anyhow::bail!("API error ({}): {}", status, error_body);
-        }
+        let response = response.expect("response must be set after retry loop");
 
         tx.send(StreamEvent::MessageStart).await.ok();
 

@@ -6,6 +6,7 @@ use tokio::process::Command;
 use crate::{Tool, ToolContext, sandbox};
 
 const MAX_OUTPUT_BYTES: usize = 30_000;
+const GREP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 pub struct GrepTool;
 
@@ -185,7 +186,10 @@ async fn try_rg(
 
     cmd.arg(opts.pattern).arg(opts.path).current_dir(cwd);
 
-    let output = cmd.output().await?;
+    let output = tokio::time::timeout(GREP_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| anyhow::anyhow!("rg timed out after {}s", GREP_TIMEOUT.as_secs()))?
+        ?;
     // rg exit code 1 means no matches (not an error)
     Ok(output)
 }
@@ -213,5 +217,9 @@ async fn try_grep(
 
     cmd.arg(opts.pattern).arg(opts.path).current_dir(cwd);
 
-    Ok(cmd.output().await?)
+    let output = tokio::time::timeout(GREP_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| anyhow::anyhow!("grep timed out after {}s", GREP_TIMEOUT.as_secs()))?
+        ?;
+    Ok(output)
 }

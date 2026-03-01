@@ -239,6 +239,7 @@ pub async fn run_models(provider: Option<&str>, model_entry: Option<&str>) -> Re
         }
         "openai-codex" | "codex" => select_static("openai-codex", OPENAI_CODEX_MODELS, true).await,
         "zai" | "z.ai" => select_static("zai", ZAI_MODELS, false).await,
+        "ollama-cloud" | "ollama" => select_ollama_cloud().await,
         "openai-compatible" | "oai-compatible" => select_openai_compatible().await,
         other => {
             eprintln!("{RED}Error:{RESET} Provider \"{other}\" does not have a catalog API.");
@@ -260,6 +261,7 @@ fn print_usage() {
     println!("  {CYAN}nebius{RESET}            Nebius AI models (requires API key)");
     println!("  {CYAN}github-copilot{RESET}    GitHub Copilot (Premium models)");
     println!("  {CYAN}openai-codex{RESET}      OpenAI Codex (ChatGPT subscription)");
+    println!("  {CYAN}ollama-cloud{RESET}      Ollama Cloud (requires API key)");
     println!("  {CYAN}openai-compatible{RESET}  Generic OpenAI-compatible endpoint");
     println!("  {CYAN}zai{RESET}               z.ai (GLM models)");
     println!();
@@ -510,6 +512,88 @@ async fn select_fireworks() -> Result<()> {
     Ok(())
 }
 
+// ── Ollama Cloud (API fetch) ────────────────────────────────────────────────
+
+async fn select_ollama_cloud() -> Result<()> {
+    let creds = CredentialsManager::load().await?;
+    let api_key = creds.ollama_cloud_api_key.as_deref().unwrap_or("");
+
+    if api_key.is_empty() {
+        eprintln!(
+            "{RED}Error:{RESET} Ollama Cloud API key not found. Set OLLAMA_API_KEY or run: lukan setup"
+        );
+        return Ok(());
+    }
+
+    println!("{DIM}Fetching models from Ollama Cloud...{RESET}");
+    let models = lukan_providers::ollama_cloud::fetch_ollama_cloud_models(api_key).await?;
+
+    if models.is_empty() {
+        println!("No models found.");
+        return Ok(());
+    }
+
+    let existing = get_existing_model_ids("ollama-cloud").await;
+    let model_ids: Vec<String> = models.iter().map(|m| m.name.clone()).collect();
+    let checked = defaults_for(&model_ids, &existing);
+
+    let vision_flags: Vec<bool> = model_ids.iter().map(|id| is_vision_model(id)).collect();
+
+    let items: Vec<String> = models
+        .iter()
+        .zip(vision_flags.iter())
+        .map(|(m, &is_vision)| {
+            if is_vision {
+                format!("{} [vision]", m.name)
+            } else {
+                m.name.clone()
+            }
+        })
+        .collect();
+
+    let selected = MultiSelect::with_theme(&picker_theme())
+        .with_prompt("Select models (space to toggle, enter to confirm)")
+        .items(&items)
+        .defaults(&checked)
+        .interact()?;
+
+    let entries: Vec<String> = selected
+        .iter()
+        .map(|&i| format!("ollama-cloud:{}", models[i].name))
+        .collect();
+
+    let vision_ids: Vec<String> = selected
+        .iter()
+        .filter(|&&i| vision_flags[i])
+        .map(|&i| models[i].name.clone())
+        .collect();
+
+    ConfigManager::set_provider_models("ollama-cloud", &entries, &vision_ids).await?;
+
+    if selected.is_empty() {
+        println!("{GREEN}✓{RESET} Cleared all ollama-cloud models.");
+    } else {
+        let vision_count = vision_ids.len();
+        println!(
+            "\n{GREEN}✓{RESET} Set {} model(s) for ollama-cloud:",
+            selected.len()
+        );
+        for &idx in &selected {
+            let badge = if vision_flags[idx] {
+                format!(" {MAGENTA}(vision){RESET}")
+            } else {
+                String::new()
+            };
+            println!("  - ollama-cloud:{}{badge}", models[idx].name);
+        }
+        if vision_count > 0 {
+            println!("\n{MAGENTA}✓{RESET} Auto-tagged {vision_count} vision-capable model(s).");
+        }
+    }
+    println!("\nUse /model in chat to switch between models.");
+    Ok(())
+}
+
 // ── Vision detection ────────────────────────────────────────────────────────
 
 /// Detect vision-capable models by ID using the same patterns as the Node.js provider.
@@ -521,6 +605,7 @@ fn is_vision_model(model_id: &str) -> bool {
         r"(?i)multimodal",
         r"(?i)qwen2\.5-vl",
         r"(?i)llava",
+        r"(?i)llama-4",
     ];
     patterns
         .iter()

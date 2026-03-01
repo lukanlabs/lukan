@@ -12,6 +12,7 @@ pub enum ProviderName {
     GithubCopilot,
     OpenaiCodex,
     Zai,
+    OllamaCloud,
     OpenaiCompatible,
 }
 
@@ -24,6 +25,7 @@ impl fmt::Display for ProviderName {
             ProviderName::GithubCopilot => write!(f, "github-copilot"),
             ProviderName::OpenaiCodex => write!(f, "openai-codex"),
             ProviderName::Zai => write!(f, "zai"),
+            ProviderName::OllamaCloud => write!(f, "ollama-cloud"),
             ProviderName::OpenaiCompatible => write!(f, "openai-compatible"),
         }
     }
@@ -39,6 +41,7 @@ impl ProviderName {
             ProviderName::GithubCopilot => "claude-sonnet-4.5",
             ProviderName::OpenaiCodex => "gpt-5.3-codex",
             ProviderName::Zai => "glm-5",
+            ProviderName::OllamaCloud => "llama3.3:70b",
             ProviderName::OpenaiCompatible => "default",
         }
     }
@@ -152,6 +155,8 @@ pub struct Credentials {
     pub codex_token_expiry: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zai_api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ollama_cloud_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openai_compatible_api_key: Option<String>,
 }

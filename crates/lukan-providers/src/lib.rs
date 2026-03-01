@@ -8,6 +8,7 @@ pub mod copilot_token;
 pub mod fireworks;
 pub mod github_copilot;
 pub mod nebius;
+pub mod ollama_cloud;
 pub mod openai_codex;
 pub mod openai_compat;
 pub mod schema_adapter;
@@ -87,6 +88,22 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
                 max_tokens,
             )))
         }
+        ProviderName::OllamaCloud => {
+            let api_key =
+                CredentialsManager::get_api_key(&config.credentials, &ProviderName::OllamaCloud)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                        "Missing Ollama Cloud API key. Set it via `lukan setup` or OLLAMA_API_KEY env var"
+                    )
+                    })?;
+            let supports_images = is_vision_model(&model, config);
+            Ok(Box::new(ollama_cloud::OllamaCloudProvider::new(
+                api_key,
+                model,
+                max_tokens,
+                supports_images,
+            )))
+        }
         ProviderName::OpenaiCompatible => {
             let raw_base_url = config
                 .config
@@ -128,7 +145,7 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
         }
         provider => {
             bail!(
-                "Provider '{}' is not yet implemented. Available: anthropic, openai-codex, nebius, fireworks, github-copilot, openai-compatible",
+                "Provider '{}' is not yet implemented. Available: anthropic, openai-codex, nebius, fireworks, github-copilot, ollama-cloud, openai-compatible",
                 provider
             );
         }

@@ -613,7 +613,7 @@ impl App {
             system_prompt,
             cwd,
             provider_name: self.config.config.provider.to_string(),
-            model_name: self.config.effective_model(),
+            model_name: self.config.effective_model().unwrap_or_default(),
             bg_signal: Some(self.bg_signal_rx.clone()),
             allowed_paths: Some(allowed),
             permission_mode: self.permission_mode.clone(),
@@ -675,7 +675,7 @@ impl App {
             system_prompt,
             cwd,
             provider_name: self.config.config.provider.to_string(),
-            model_name: self.config.effective_model(),
+            model_name: self.config.effective_model().unwrap_or_default(),
             bg_signal: None,
             allowed_paths: Some(allowed),
             permission_mode: PermissionMode::Skip,
@@ -1169,7 +1169,13 @@ impl App {
         // Welcome banner
         self.messages.push(ChatMessage::new(
             "banner",
-            build_welcome_banner(self.provider.name(), &self.config.effective_model()),
+            build_welcome_banner(
+                self.provider.name(),
+                &self
+                    .config
+                    .effective_model()
+                    .unwrap_or_else(|| "(no model selected)".to_string()),
+            ),
         ));
 
         // Auto-load most recent session if --continue was passed
@@ -1622,7 +1628,7 @@ impl App {
                 }
 
                 // Status bar — show correct tokens/tool for the active view
-                let effective_model = self.config.effective_model();
+                let effective_model = self.config.effective_model().unwrap_or_else(|| "(no model)".to_string());
                 let memory_active = LukanPaths::project_memory_active_file().exists();
                 let mode_str = self.permission_mode.to_string();
                 let (sb_tokens_in, sb_tokens_out, sb_cache_read, sb_cache_create, sb_ctx, sb_streaming, sb_tool) = match self.active_view {
@@ -3662,6 +3668,17 @@ impl App {
             return;
         }
 
+        // Guard: no model selected → block send, prompt user
+        if self.config.effective_model().is_none() {
+            self.messages.push(ChatMessage::new(
+                "system",
+                "No model selected. Use /model to choose one.",
+            ));
+            self.input = text;
+            self.cursor_pos = self.input.len();
+            return;
+        }
+
         // Regular message — show truncated preview in chat, send full text to agent
         self.messages.push(ChatMessage::new("user", display));
 
@@ -3801,7 +3818,7 @@ impl App {
             system_prompt,
             cwd,
             provider_name: self.config.config.provider.to_string(),
-            model_name: self.config.effective_model(),
+            model_name: self.config.effective_model().unwrap_or_default(),
             bg_signal: Some(self.bg_signal_rx.clone()),
             allowed_paths: Some(allowed),
             permission_mode: self.permission_mode.clone(),
@@ -4034,7 +4051,7 @@ impl App {
         let current = format!(
             "{}:{}",
             self.config.config.provider,
-            self.config.effective_model()
+            self.config.effective_model().unwrap_or_default()
         );
 
         // Pre-select the current model
@@ -4201,8 +4218,13 @@ impl App {
                     agent.swap_provider(Arc::clone(&self.provider));
                 }
                 if let Some(banner) = self.messages.iter_mut().find(|m| m.role == "banner") {
-                    let new_banner =
-                        build_welcome_banner(self.provider.name(), &self.config.effective_model());
+                    let new_banner = build_welcome_banner(
+                        self.provider.name(),
+                        &self
+                            .config
+                            .effective_model()
+                            .unwrap_or_else(|| "(no model selected)".to_string()),
+                    );
                     banner.content = sanitize_for_display(&new_banner);
                 }
                 let effort_label = reasoning_effort

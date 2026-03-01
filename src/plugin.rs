@@ -570,7 +570,7 @@ async fn plugin_start_foreground(
         system_prompt,
         cwd,
         provider_name: resolved.config.provider.to_string(),
-        model_name: resolved.effective_model(),
+        model_name: resolved.effective_model().unwrap_or_default(),
         bg_signal: None,
         allowed_paths,
         // Plugins run unattended — skip all permission checks
@@ -592,7 +592,7 @@ async fn plugin_start_foreground(
         "Starting plugin '{}' ({} with {})",
         name,
         resolved.config.provider,
-        resolved.effective_model()
+        resolved.effective_model().as_deref().unwrap_or("(none)")
     );
 
     // Create agent

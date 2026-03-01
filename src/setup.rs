@@ -368,10 +368,7 @@ pub async fn run_doctor() -> Result<()> {
     println!();
 
     // Active provider
-    let model = config
-        .model
-        .as_deref()
-        .unwrap_or(config.provider.default_model());
+    let model = config.model.as_deref().unwrap_or("(none)");
     println!("{BOLD}Active Provider{RESET}");
     println!("  Provider:  {BOLD}{}{RESET}", config.provider);
     println!("  Model:     {BOLD}{model}{RESET}");

@@ -41,7 +41,7 @@ pub async fn list_providers() -> impl IntoResponse {
         .iter()
         .map(|p| ProviderInfoDto {
             name: p.to_string(),
-            default_model: p.default_model().to_string(),
+            default_model: String::new(),
             active: config.provider == *p,
             current_model: if config.provider == *p {
                 current_model.clone()
@@ -164,10 +164,7 @@ pub async fn fetch_provider_models(Path(provider): Path<String>) -> impl IntoRes
                 )),
             }
         }
-        _ => Ok(vec![FetchedModelDto {
-            id: provider_name.default_model().to_string(),
-            name: provider_name.default_model().to_string(),
-        }]),
+        _ => Ok(vec![]),
     };
 
     match result {

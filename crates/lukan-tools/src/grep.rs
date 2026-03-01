@@ -188,8 +188,7 @@ async fn try_rg(
 
     let output = tokio::time::timeout(GREP_TIMEOUT, cmd.output())
         .await
-        .map_err(|_| anyhow::anyhow!("rg timed out after {}s", GREP_TIMEOUT.as_secs()))?
-        ?;
+        .map_err(|_| anyhow::anyhow!("rg timed out after {}s", GREP_TIMEOUT.as_secs()))??;
     // rg exit code 1 means no matches (not an error)
     Ok(output)
 }
@@ -219,7 +218,6 @@ async fn try_grep(
 
     let output = tokio::time::timeout(GREP_TIMEOUT, cmd.output())
         .await
-        .map_err(|_| anyhow::anyhow!("grep timed out after {}s", GREP_TIMEOUT.as_secs()))?
-        ?;
+        .map_err(|_| anyhow::anyhow!("grep timed out after {}s", GREP_TIMEOUT.as_secs()))??;
     Ok(output)
 }

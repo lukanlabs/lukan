@@ -400,7 +400,9 @@ impl OpenAiCompatBase {
                     last_err = resp.text().await.unwrap_or_default();
                     warn!("Server error ({status}): {last_err}");
                     if attempt == MAX_RETRIES {
-                        anyhow::bail!("API error ({status}) after {MAX_RETRIES} retries: {last_err}");
+                        anyhow::bail!(
+                            "API error ({status}) after {MAX_RETRIES} retries: {last_err}"
+                        );
                     }
                 }
                 Ok(resp) if !resp.status().is_success() => {

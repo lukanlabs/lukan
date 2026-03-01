@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
 use tracing::debug;
 
-use super::credentials::CredentialsManager;
 use super::paths::LukanPaths;
-use super::types::{AppConfig, ProviderName};
+use super::types::AppConfig;
 
 /// Manages loading and saving the main application config
 pub struct ConfigManager;
@@ -61,33 +60,9 @@ impl ConfigManager {
             return Ok(models.clone());
         }
 
-        // Otherwise, build from defaults for providers with credentials
-        let creds = CredentialsManager::load().await?;
-        let all_providers = [
-            ProviderName::Anthropic,
-            ProviderName::Nebius,
-            ProviderName::Fireworks,
-            ProviderName::GithubCopilot,
-            ProviderName::OpenaiCodex,
-            ProviderName::Zai,
-            ProviderName::OpenaiCompatible,
-        ];
-
-        let mut models: Vec<String> = Vec::new();
-        for provider in &all_providers {
-            if CredentialsManager::get_api_key(&creds, provider).is_some() {
-                models.push(format!("{}:{}", provider, provider.default_model()));
-            }
-        }
-
-        // Fallback: if no credentials at all, show all defaults
-        if models.is_empty() {
-            for provider in &all_providers {
-                models.push(format!("{}:{}", provider, provider.default_model()));
-            }
-        }
-
-        Ok(models)
+        // No custom models configured — return empty list.
+        // Users should fetch models via `lukan models <provider>` or the desktop/web UI.
+        Ok(Vec::new())
     }
 
     /// Add a model entry ("provider:model") to the models list if not already present.

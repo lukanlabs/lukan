@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing::info;
 
-use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig};
+use lukan_core::config::{
+    ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig,
+};
 use lukan_plugins::PluginManager;
 use lukan_providers::create_provider;
 use lukan_tui::app::App;
@@ -716,12 +718,14 @@ async fn run_chat(
     info!(
         "Starting lukan with provider={}, model={}, browser={}",
         resolved.config.provider,
-        resolved.effective_model(),
+        resolved.effective_model().as_deref().unwrap_or("(none)"),
         browser_opts.is_some()
     );
 
-    // Create provider
-    let provider = create_provider(&resolved)?;
+    // Create provider (falls back to NullProvider when no model is selected,
+    // so the TUI still launches and the user can pick a model via /model)
+    let provider =
+        create_provider(&resolved).unwrap_or_else(|_| Box::new(lukan_providers::NullProvider));
 
     // Run TUI
     let mut app = App::new(provider, resolved);

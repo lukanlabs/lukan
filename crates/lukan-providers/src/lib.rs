@@ -22,9 +22,30 @@ use tracing::debug;
 
 pub use contracts::{Provider, StreamParams, SystemPrompt};
 
+/// A no-op provider returned when no model is selected.
+/// Allows the TUI to launch; streaming returns an error prompting the user to pick a model.
+pub struct NullProvider;
+
+#[async_trait::async_trait]
+impl Provider for NullProvider {
+    fn name(&self) -> &str {
+        "none"
+    }
+
+    async fn stream(
+        &self,
+        _params: StreamParams,
+        _tx: tokio::sync::mpsc::Sender<lukan_core::models::events::StreamEvent>,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("No model selected. Use /model to choose one.")
+    }
+}
+
 /// Factory: create the appropriate provider from resolved config
 pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
-    let model = config.effective_model();
+    let model = config
+        .effective_model()
+        .ok_or_else(|| anyhow::anyhow!("No model selected. Use /model to choose one."))?;
     let max_tokens = config.config.max_tokens;
 
     match &config.config.provider {

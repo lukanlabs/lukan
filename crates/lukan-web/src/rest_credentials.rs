@@ -49,7 +49,7 @@ pub async fn get_provider_status() -> impl IntoResponse {
         .map(|p| ProviderStatusDto {
             name: p.to_string(),
             configured: CredentialsManager::get_api_key(&creds, p).is_some(),
-            default_model: p.default_model().to_string(),
+            default_model: String::new(),
         })
         .collect();
 

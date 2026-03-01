@@ -29,6 +29,7 @@ pub async fn list_providers() -> Result<Vec<ProviderInfo>, String> {
         ProviderName::GithubCopilot,
         ProviderName::OpenaiCodex,
         ProviderName::Zai,
+        ProviderName::OllamaCloud,
         ProviderName::OpenaiCompatible,
     ];
 
@@ -37,7 +38,7 @@ pub async fn list_providers() -> Result<Vec<ProviderInfo>, String> {
         .iter()
         .map(|p| ProviderInfo {
             name: p.to_string(),
-            default_model: p.default_model().to_string(),
+            default_model: String::new(),
             active: config.provider == *p,
             current_model: if config.provider == *p {
                 current_model.clone()
@@ -120,6 +121,18 @@ pub async fn fetch_provider_models(provider: String) -> Result<Vec<FetchedModel>
                 })
                 .collect())
         }
+        ProviderName::OllamaCloud => {
+            let models = lukan_providers::ollama_cloud::fetch_ollama_cloud_models(&api_key)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(models
+                .into_iter()
+                .map(|m| FetchedModel {
+                    name: m.name,
+                    id: m.model,
+                })
+                .collect())
+        }
         ProviderName::OpenaiCompatible => {
             let config = lukan_core::config::ConfigManager::load()
                 .await
@@ -143,10 +156,7 @@ pub async fn fetch_provider_models(provider: String) -> Result<Vec<FetchedModel>
                 })
                 .collect())
         }
-        _ => Ok(vec![FetchedModel {
-            id: provider_name.default_model().to_string(),
-            name: provider_name.default_model().to_string(),
-        }]),
+        _ => Ok(vec![]),
     }
 }
 

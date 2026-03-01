@@ -31,22 +31,6 @@ impl fmt::Display for ProviderName {
     }
 }
 
-impl ProviderName {
-    /// Default model for each provider
-    pub fn default_model(&self) -> &'static str {
-        match self {
-            ProviderName::Nebius => "MiniMaxAI/MiniMax-M2.1",
-            ProviderName::Anthropic => "claude-sonnet-4-5-20250929",
-            ProviderName::Fireworks => "accounts/fireworks/models/minimax-m2p5",
-            ProviderName::GithubCopilot => "claude-sonnet-4.5",
-            ProviderName::OpenaiCodex => "gpt-5.3-codex",
-            ProviderName::Zai => "glm-5",
-            ProviderName::OllamaCloud => "llama3.3:70b",
-            ProviderName::OpenaiCompatible => "default",
-        }
-    }
-}
-
 /// Main application configuration (persisted as config.json)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -169,20 +153,17 @@ pub struct ResolvedConfig {
 }
 
 impl ResolvedConfig {
-    /// Get the effective model (config override or provider default).
+    /// Get the effective model, if one is configured.
+    /// Returns `None` when no model has been selected (user must pick one via `/model`).
     /// Strips "provider:" prefix if present (models list stores entries as
     /// "provider:model_id" and legacy configs may have saved the prefixed form).
-    pub fn effective_model(&self) -> String {
-        let raw = self
-            .config
-            .model
-            .clone()
-            .unwrap_or_else(|| self.config.provider.default_model().to_string());
+    pub fn effective_model(&self) -> Option<String> {
+        let raw = self.config.model.clone()?;
         let prefix = format!("{}:", self.config.provider);
         if raw.starts_with(&prefix) {
-            raw[prefix.len()..].to_string()
+            Some(raw[prefix.len()..].to_string())
         } else {
-            raw
+            Some(raw)
         }
     }
 }

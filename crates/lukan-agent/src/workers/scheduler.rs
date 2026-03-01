@@ -437,7 +437,7 @@ async fn run_worker(
     }
 
     let provider_name = config.config.provider.to_string();
-    let model_name = config.effective_model();
+    let model_name = config.effective_model().unwrap_or_default();
 
     let system_prompt = SystemPrompt::Text(
         "You are a scheduled worker agent. Execute the task described in the user message. \

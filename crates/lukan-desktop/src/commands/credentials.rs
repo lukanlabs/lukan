@@ -34,6 +34,7 @@ pub async fn get_provider_status() -> Result<Vec<ProviderStatus>, String> {
         ProviderName::GithubCopilot,
         ProviderName::OpenaiCodex,
         ProviderName::Zai,
+        ProviderName::OllamaCloud,
         ProviderName::OpenaiCompatible,
     ];
 
@@ -42,7 +43,7 @@ pub async fn get_provider_status() -> Result<Vec<ProviderStatus>, String> {
         .map(|p| ProviderStatus {
             name: p.to_string(),
             configured: CredentialsManager::get_api_key(&creds, p).is_some(),
-            default_model: p.default_model().to_string(),
+            default_model: String::new(),
         })
         .collect();
 

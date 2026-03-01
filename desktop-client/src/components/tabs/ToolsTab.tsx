@@ -19,9 +19,18 @@ const CORE_GROUPS: Record<string, string> = {
   LoadSkill: "Skills",
   SubmitPlan: "Planner",
   PlannerQuestion: "Planner",
+  BrowserNavigate: "Browser",
+  BrowserClick: "Browser",
+  BrowserType: "Browser",
+  BrowserSnapshot: "Browser",
+  BrowserScreenshot: "Browser",
+  BrowserEvaluate: "Browser",
+  BrowserTabs: "Browser",
+  BrowserNewTab: "Browser",
+  BrowserSwitchTab: "Browser",
 };
 
-const GROUP_ORDER = ["File ops", "Search", "Execution", "Web", "Tasks", "Skills", "Planner"];
+const GROUP_ORDER = ["File ops", "Search", "Execution", "Web", "Browser", "Tasks", "Skills", "Planner"];
 
 interface ToolEntry {
   name: string;

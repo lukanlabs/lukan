@@ -1,8 +1,20 @@
 mod auth;
-pub mod embedded_ui;
+mod auth_middleware;
 mod protocol;
+mod rest_browser;
+mod rest_config;
+mod rest_credentials;
+mod rest_events;
+mod rest_files;
+mod rest_memory;
+mod rest_plugins;
+mod rest_processes;
+mod rest_providers;
+mod rest_workers;
 mod server;
 mod state;
+mod static_files;
+mod terminal;
 mod ws_handler;
 
 use std::sync::Arc;

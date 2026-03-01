@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { Globe, Settings, ExternalLink, ChevronDown, Minus, X } from "lucide-react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import logoUrl from "../../assets/logo.png";
 import logoTextUrl from "../../assets/lukan_text.png";
 import type { WorkspaceMode, ProviderInfo } from "../../lib/types";
+import { IS_TAURI } from "../../lib/transport";
 import {
   listProviders,
   getModels,
@@ -84,16 +84,20 @@ export function Toolbar({
     }
   };
 
-  const handleMinimize = () => {
+  const handleMinimize = async () => {
+    if (!IS_TAURI) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
     getCurrentWindow().minimize();
   };
 
-  const handleClose = () => {
+  const handleClose = async () => {
+    if (!IS_TAURI) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
     getCurrentWindow().close();
   };
 
   return (
-    <div className="workspace-toolbar" data-tauri-drag-region>
+    <div className="workspace-toolbar" {...(IS_TAURI ? { "data-tauri-drag-region": true } : {})}>
       {/* Left: logo + mode toggle */}
       <div className="toolbar-section">
         <img src={logoUrl} alt="lukan" className="toolbar-logo" />
@@ -230,32 +234,38 @@ export function Toolbar({
           <span className={`status-dot ${browserRunning ? "active" : ""}`} />
         </button>
 
-        <button className="toolbar-btn" onClick={handleWebUi} title="Web UI">
-          <ExternalLink size={14} />
-          {webUiRunning && (
-            <span
-              style={{
-                fontSize: 9,
-                color: "var(--success)",
-              }}
-            >
-              ON
-            </span>
-          )}
-        </button>
+        {IS_TAURI && (
+          <button className="toolbar-btn" onClick={handleWebUi} title="Web UI">
+            <ExternalLink size={14} />
+            {webUiRunning && (
+              <span
+                style={{
+                  fontSize: 9,
+                  color: "var(--success)",
+                }}
+              >
+                ON
+              </span>
+            )}
+          </button>
+        )}
 
         <button className="toolbar-btn" onClick={onSettingsClick} title="Settings">
           <Settings size={14} />
         </button>
 
-        <div className="toolbar-divider" />
+        {IS_TAURI && (
+          <>
+            <div className="toolbar-divider" />
 
-        <button className="toolbar-btn window-ctrl" onClick={handleMinimize} title="Minimize">
-          <Minus size={14} />
-        </button>
-        <button className="toolbar-btn window-ctrl window-close" onClick={handleClose} title="Close">
-          <X size={14} />
-        </button>
+            <button className="toolbar-btn window-ctrl" onClick={handleMinimize} title="Minimize">
+              <Minus size={14} />
+            </button>
+            <button className="toolbar-btn window-ctrl window-close" onClick={handleClose} title="Close">
+              <X size={14} />
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

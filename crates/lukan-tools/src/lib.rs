@@ -482,7 +482,16 @@ pub struct ToolInfo {
 
 /// List all available tools with their source (plugin name or null for built-in).
 pub fn all_tool_info() -> Vec<ToolInfo> {
-    let registry = create_default_registry();
+    tool_info_from_registry(create_default_registry())
+}
+
+/// Like `all_tool_info` but also includes browser tools.
+/// Call this when the browser has been launched/activated.
+pub fn all_tool_info_with_browser() -> Vec<ToolInfo> {
+    tool_info_from_registry(create_browser_registry())
+}
+
+fn tool_info_from_registry(registry: ToolRegistry) -> Vec<ToolInfo> {
     let mut tools: Vec<ToolInfo> = registry
         .tools
         .values()

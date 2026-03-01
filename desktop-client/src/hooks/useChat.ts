@@ -277,10 +277,10 @@ export function useChat() {
       toolImages: { ...s.toolImages, ...imageCacheRef.current },
       contextSize: complete.contextSize ?? s.contextSize,
       tokenUsage: {
-        input: complete.tokenUsage.input,
-        output: complete.tokenUsage.output,
-        cacheCreation: complete.tokenUsage.cacheCreation,
-        cacheRead: complete.tokenUsage.cacheRead,
+        input: complete.tokenUsage?.input ?? s.tokenUsage.input,
+        output: complete.tokenUsage?.output ?? s.tokenUsage.output,
+        cacheCreation: complete.tokenUsage?.cacheCreation ?? s.tokenUsage.cacheCreation,
+        cacheRead: complete.tokenUsage?.cacheRead ?? s.tokenUsage.cacheRead,
       },
     }));
   }, []);
@@ -297,18 +297,18 @@ export function useChat() {
         setState((s) => ({
           ...s,
           initialized: true,
-          sessionId: init.sessionId,
-          messages: init.messages,
-          providerName: init.providerName,
-          modelName: init.modelName,
-          permissionMode: init.permissionMode as PermissionMode,
+          sessionId: init.sessionId ?? "",
+          messages: init.messages ?? [],
+          providerName: init.providerName ?? "",
+          modelName: init.modelName ?? "",
+          permissionMode: (init.permissionMode ?? "auto") as PermissionMode,
           tokenUsage: {
-            input: init.tokenUsage.input,
-            output: init.tokenUsage.output,
-            cacheCreation: init.tokenUsage.cacheCreation,
-            cacheRead: init.tokenUsage.cacheRead,
+            input: init.tokenUsage?.input ?? 0,
+            output: init.tokenUsage?.output ?? 0,
+            cacheCreation: init.tokenUsage?.cacheCreation,
+            cacheRead: init.tokenUsage?.cacheRead,
           },
-          contextSize: init.contextSize,
+          contextSize: init.contextSize ?? 0,
         }));
       } catch (e) {
         if (!mounted) return;
@@ -456,12 +456,12 @@ export function useChat() {
         streamingBlocks: [],
         toolImages: {},
         tokenUsage: {
-          input: init.tokenUsage.input,
-          output: init.tokenUsage.output,
-          cacheCreation: init.tokenUsage.cacheCreation,
-          cacheRead: init.tokenUsage.cacheRead,
+          input: init.tokenUsage?.input ?? 0,
+          output: init.tokenUsage?.output ?? 0,
+          cacheCreation: init.tokenUsage?.cacheCreation,
+          cacheRead: init.tokenUsage?.cacheRead,
         },
-        contextSize: init.contextSize,
+        contextSize: init.contextSize ?? 0,
         sessionList: null,
       }));
     } catch (e) {

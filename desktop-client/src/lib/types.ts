@@ -138,6 +138,12 @@ export interface WebUiStatus {
   port: number;
 }
 
+export interface WhisperStatus {
+  installed: boolean;
+  running: boolean;
+  port: number;
+}
+
 export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" | "providers" | "memory";
 
 // ── Workspace types ──────────────────────────────────────────────────

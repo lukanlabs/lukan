@@ -763,11 +763,19 @@ impl AgentLoop {
                     _ => {}
                 }
 
+                let is_message_end = matches!(&event, StreamEvent::MessageEnd { .. });
+
                 // Forward all events to the TUI
                 if event_tx.send(event).await.is_err() {
                     warn!("Event receiver dropped, aborting turn");
                     stream_handle.abort();
                     return Ok(());
+                }
+
+                // Break after MessageEnd — don't wait for the channel to close,
+                // as some providers may keep the HTTP connection alive after [DONE].
+                if is_message_end {
+                    break;
                 }
             }
 

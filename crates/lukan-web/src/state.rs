@@ -6,6 +6,9 @@ use lukan_core::config::types::PermissionMode;
 use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse};
 use tokio::sync::{Mutex, broadcast, mpsc};
 
+use crate::protocol::ServerMessage;
+use crate::terminal::TerminalManager;
+
 /// Shared application state for the web server
 pub struct AppState {
     /// The agent loop instance (None until first message or session load)
@@ -36,6 +39,10 @@ pub struct AppState {
     pub planner_answer_tx: Mutex<Option<mpsc::Sender<String>>>,
     /// Broadcast channel for worker notifications from the daemon
     pub notification_tx: broadcast::Sender<WorkerNotification>,
+    /// Terminal PTY manager
+    pub terminal_manager: TerminalManager,
+    /// Broadcast channel for terminal output (sent to all WS clients)
+    pub terminal_tx: broadcast::Sender<ServerMessage>,
 }
 
 impl AppState {
@@ -53,6 +60,7 @@ impl AppState {
         let provider_name = resolved.config.provider.to_string();
         let model_name = resolved.effective_model();
         let (notification_tx, _) = broadcast::channel(64);
+        let (terminal_tx, _) = broadcast::channel(256);
 
         Self {
             agent: Mutex::new(None),
@@ -69,6 +77,8 @@ impl AppState {
             plan_review_tx: Mutex::new(None),
             planner_answer_tx: Mutex::new(None),
             notification_tx,
+            terminal_manager: TerminalManager::default(),
+            terminal_tx,
         }
     }
 

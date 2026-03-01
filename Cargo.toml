@@ -69,6 +69,7 @@ open = "5"
 urlencoding = "2"
 toml = "0.8"
 portable-pty = "0.9"
+rust-embed = { version = "8", features = ["compression"] }
 
 # Audio
 cpal = "0.15"

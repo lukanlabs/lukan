@@ -36,7 +36,11 @@ pub async fn save_config(state: State<'_, ChatState>, config: AppConfig) -> Resu
 
 #[tauri::command]
 pub async fn list_tools() -> Result<Vec<lukan_tools::ToolInfo>, String> {
-    Ok(lukan_tools::all_tool_info())
+    if lukan_browser::BrowserManager::get().is_some() {
+        Ok(lukan_tools::all_tool_info_with_browser())
+    } else {
+        Ok(lukan_tools::all_tool_info())
+    }
 }
 
 #[tauri::command]

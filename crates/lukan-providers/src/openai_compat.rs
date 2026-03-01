@@ -409,6 +409,7 @@ impl OpenAiCompatBase {
         use futures::StreamExt;
 
         let chunk_timeout = std::time::Duration::from_secs(60);
+        let mut stream_done = false;
         while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next())
             .await
             .context("Provider stream timed out (no data for 60s)")?
@@ -418,7 +419,10 @@ impl OpenAiCompatBase {
 
             for sse_event in sse_parser.feed(&text) {
                 match sse_event {
-                    SseEvent::Done => {}
+                    SseEvent::Done => {
+                        stream_done = true;
+                        break;
+                    }
                     SseEvent::Data(data) => {
                         let chunk: OpenAiChunk = match serde_json::from_str(&data) {
                             Ok(c) => c,
@@ -447,6 +451,17 @@ impl OpenAiCompatBase {
                         }
 
                         let delta = &choice.delta;
+
+                        // Reasoning/thinking content (Ollama reasoning models, DeepSeek R1)
+                        if let Some(ref reasoning) = delta.reasoning_content
+                            && !reasoning.is_empty()
+                        {
+                            tx.send(StreamEvent::ThinkingDelta {
+                                text: reasoning.clone(),
+                            })
+                            .await
+                            .ok();
+                        }
 
                         // Text content
                         if let Some(ref content) = delta.content
@@ -526,6 +541,9 @@ impl OpenAiCompatBase {
                         }
                     }
                 }
+            }
+            if stream_done {
+                break;
             }
         }
 
@@ -610,6 +628,9 @@ struct OpenAiChoice {
 struct OpenAiDelta {
     #[serde(default)]
     content: Option<String>,
+    /// Reasoning/thinking content (Ollama reasoning models, DeepSeek R1, etc.)
+    #[serde(default)]
+    reasoning_content: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<OpenAiToolCallDelta>>,
 }

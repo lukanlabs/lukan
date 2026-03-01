@@ -111,6 +111,26 @@ pub enum ClientMessage {
         task_index: u32,
         feedback: String,
     },
+
+    // Terminal
+    TerminalCreate {
+        cwd: Option<String>,
+        cols: u16,
+        rows: u16,
+    },
+    TerminalInput {
+        session_id: String,
+        data: String,
+    },
+    TerminalResize {
+        session_id: String,
+        cols: u16,
+        rows: u16,
+    },
+    TerminalDestroy {
+        session_id: String,
+    },
+    TerminalList,
 }
 
 /// Messages sent from the server to the client (browser)
@@ -207,6 +227,31 @@ pub enum ServerMessage {
         id: String,
         questions: Vec<PlannerQuestionItem>,
     },
+
+    // Terminal
+    TerminalCreated {
+        id: String,
+        cols: u16,
+        rows: u16,
+    },
+    TerminalSessions {
+        sessions: Vec<TerminalSessionInfoDto>,
+    },
+    TerminalOutput {
+        session_id: String,
+        data: String,
+    },
+    TerminalExited {
+        session_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSessionInfoDto {
+    pub id: String,
+    pub cols: u16,
+    pub rows: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

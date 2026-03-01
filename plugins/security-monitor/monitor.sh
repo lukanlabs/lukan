@@ -25,6 +25,11 @@ send_error() {
   send_json "{\"type\":\"error\",\"message\":$(jq -Rn --arg m "$message" '$m'),\"recoverable\":${recoverable}}"
 }
 
+send_view_update() {
+  local view_id="$1" data="$2"
+  send_json "{\"type\":\"viewUpdate\",\"viewId\":\"${view_id}\",\"data\":${data}}"
+}
+
 ###############################################################################
 # Read Init message
 ###############################################################################
@@ -830,6 +835,28 @@ if [[ "$WATCH_DOCKER" == "true" ]]; then
   monitor_docker &
   CHILD_PIDS+=($!)
 fi
+
+# ── Status view emitter ──────────────────────────────────────────────
+(
+  while true; do
+    items="["
+    sep=""
+    for mod in ssh firewall files processes sudo docker; do
+      var="WATCH_${mod^^}"
+      val="${!var}"
+      if [[ "$val" == "true" ]]; then
+        items="${items}${sep}{\"label\":\"${mod^}\",\"value\":\"Active\",\"status\":\"ok\"}"
+      else
+        items="${items}${sep}{\"label\":\"${mod^}\",\"value\":\"Disabled\",\"status\":\"info\"}"
+      fi
+      sep=","
+    done
+    items="${items}]"
+    send_view_update "status" "{\"items\":${items}}"
+    sleep 15
+  done
+) &
+CHILD_PIDS+=($!)
 
 # Wait for all modules (they run forever until killed)
 wait

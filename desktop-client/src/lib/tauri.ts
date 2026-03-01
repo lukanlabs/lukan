@@ -7,6 +7,7 @@ import type {
   ProviderInfo,
   FetchedModel,
   PluginInfo,
+  PluginViewEnvelope,
   RemotePlugin,
   WhatsAppGroup,
   PluginCommand,
@@ -71,6 +72,8 @@ export const runPluginCommand = (name: string, command: string) =>
   invoke<string>("run_plugin_command", { name, command });
 export const getPluginManifestTools = (name: string) =>
   invoke<PluginToolsInfo>("get_plugin_manifest_tools", { name });
+export const getPluginViewData = (pluginName: string, viewId: string) =>
+  invoke<PluginViewEnvelope | null>("get_plugin_view_data", { pluginName, viewId });
 
 // Providers
 export const listProviders = () => invoke<ProviderInfo[]>("list_providers");

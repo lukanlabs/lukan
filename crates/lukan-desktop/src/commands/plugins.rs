@@ -16,6 +16,14 @@ pub struct ActivityBarDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ViewDeclarationDto {
+    pub id: String,
+    pub view_type: String,
+    pub label: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginInfoDto {
     pub name: String,
     pub version: String,
@@ -24,6 +32,7 @@ pub struct PluginInfoDto {
     pub running: bool,
     pub alias: Option<String>,
     pub activity_bar: Option<ActivityBarDto>,
+    pub views: Vec<ViewDeclarationDto>,
 }
 
 #[derive(Serialize)]
@@ -95,8 +104,30 @@ pub async fn list_plugins() -> Result<Vec<PluginInfoDto>, String> {
                 icon: ab.icon,
                 label: ab.label,
             }),
+            views: p
+                .views
+                .into_iter()
+                .map(|v| ViewDeclarationDto {
+                    id: v.id,
+                    view_type: v.view_type,
+                    label: v.label,
+                })
+                .collect(),
         })
         .collect())
+}
+
+#[tauri::command]
+pub fn get_plugin_view_data(
+    plugin_name: String,
+    view_id: String,
+) -> Result<serde_json::Value, String> {
+    let path = LukanPaths::plugin_view_file(&plugin_name, &view_id);
+    if !path.exists() {
+        return Ok(serde_json::Value::Null);
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -683,7 +714,10 @@ pub async fn transcribe_audio(audio: Vec<u8>) -> Result<String, String> {
         return Err(format!("Whisper server error {status}: {body}"));
     }
 
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("Invalid response: {e}"))?;
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Invalid response: {e}"))?;
 
     json.get("text")
         .and_then(|v| v.as_str())

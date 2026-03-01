@@ -10,6 +10,11 @@ alias = "security"
 icon = "shield-alert"
 label = "Security Events"
 
+[[plugin.views]]
+id = "status"
+type = "status"
+label = "Status"
+
 [run]
 command = "bash"
 args = ["monitor.sh"]

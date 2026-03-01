@@ -45,7 +45,7 @@ export function ActivityBar({ active, activeSource, onToggle, onDynamicClick, dy
           <div className="activity-bar-separator" />
           {dynamicItems.map((item) => {
             const { icon: Icon, label, sourceFilter, hasNotification } = item;
-            const isActive = active === "events" && activeSource === sourceFilter;
+            const isActive = active === "plugin" && activeSource === sourceFilter;
             return (
               <button
                 key={`dyn-${sourceFilter}`}

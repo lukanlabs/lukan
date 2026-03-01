@@ -934,3 +934,33 @@ select {
 .xterm-viewport::-webkit-scrollbar-thumb:hover {
   background: rgba(120, 120, 120, 0.5);
 }
+
+/* ── Plugin view tabs ──────────────────────────────────────────── */
+
+.plugin-view-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 8px;
+}
+
+.plugin-view-tabs button {
+  padding: 6px 12px;
+  font-size: 11px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.plugin-view-tabs button:hover {
+  color: var(--text-secondary);
+}
+
+.plugin-view-tabs button.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--text-primary);
+}

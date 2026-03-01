@@ -11,10 +11,7 @@ pub async fn get_config() -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-pub async fn save_config(
-    state: State<'_, ChatState>,
-    config: AppConfig,
-) -> Result<(), String> {
+pub async fn save_config(state: State<'_, ChatState>, config: AppConfig) -> Result<(), String> {
     ConfigManager::save(&config)
         .await
         .map_err(|e| e.to_string())?;

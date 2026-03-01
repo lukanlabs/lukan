@@ -31,6 +31,8 @@ pub struct PluginInfo {
     pub alias: Option<String>,
     /// Activity bar contribution from manifest (icon + label for sidebar)
     pub activity_bar: Option<lukan_core::models::plugin::ActivityBarContribution>,
+    /// Views declared by the plugin
+    pub views: Vec<lukan_core::models::plugin::ViewDeclaration>,
 }
 
 impl Default for PluginManager {
@@ -204,6 +206,7 @@ impl PluginManager {
                         running: self.running.contains_key(&name),
                         alias: manifest.plugin.alias,
                         activity_bar: manifest.plugin.activity_bar,
+                        views: manifest.plugin.views,
                     });
                 }
                 Err(e) => {
@@ -215,6 +218,7 @@ impl PluginManager {
                         running: false,
                         alias: None,
                         activity_bar: None,
+                        views: Vec::new(),
                     });
                 }
             }

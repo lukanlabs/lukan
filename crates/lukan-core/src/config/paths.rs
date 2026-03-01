@@ -129,6 +129,18 @@ impl LukanPaths {
         Self::events_dir().join("history.jsonl")
     }
 
+    /// Views directory: ~/.config/lukan/views/
+    pub fn views_dir() -> PathBuf {
+        Self::config_dir().join("views")
+    }
+
+    /// View data file: ~/.config/lukan/views/<plugin>/<view_id>.json
+    pub fn plugin_view_file(plugin: &str, view_id: &str) -> PathBuf {
+        Self::views_dir()
+            .join(plugin)
+            .join(format!("{view_id}.json"))
+    }
+
     /// Worker daemon PID file: ~/.config/lukan/daemon.pid
     pub fn daemon_pid_file() -> PathBuf {
         Self::config_dir().join("daemon.pid")

@@ -240,6 +240,10 @@ impl PluginChannel {
                     // Inject into agent context for next turn
                     agent.push_event(&source, &level, &detail);
                 }
+                PluginMessage::ViewUpdate { view_id, data } => {
+                    self.log_to_file("VIEW", &format!("view={view_id}"));
+                    persist_view_data(&self.name, &view_id, &data);
+                }
             }
         }
 
@@ -313,6 +317,22 @@ fn persist_system_event(source: &str, level: &str, detail: &str) {
         .open(&path)
     {
         let _ = writeln!(f, "{}", event);
+    }
+}
+
+/// Persist a view update to `~/.config/lukan/views/<plugin>/<view_id>.json`.
+/// Best-effort: never fails. Uses sync I/O since it's a small JSON write.
+fn persist_view_data(plugin: &str, view_id: &str, data: &serde_json::Value) {
+    let path = LukanPaths::plugin_view_file(plugin, view_id);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let envelope = serde_json::json!({
+        "updatedAt": chrono::Utc::now().to_rfc3339(),
+        "data": data,
+    });
+    if let Ok(content) = serde_json::to_string(&envelope) {
+        let _ = std::fs::write(&path, content);
     }
 }
 

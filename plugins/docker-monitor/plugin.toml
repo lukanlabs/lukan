@@ -10,6 +10,11 @@ alias = "docker-monitor"
 icon = "container"
 label = "Docker Events"
 
+[[plugin.views]]
+id = "status"
+type = "status"
+label = "Status"
+
 [run]
 command = "bash"
 args = ["monitor.sh"]

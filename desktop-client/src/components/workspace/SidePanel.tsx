@@ -1,10 +1,11 @@
-import type { SidePanelId, BgProcessInfo } from "../../lib/types";
+import type { SidePanelId, BgProcessInfo, ViewDeclaration } from "../../lib/types";
 import { FilesPanel } from "./panels/FilesPanel";
 import { WorkersPanel } from "./panels/WorkersPanel";
 import { SessionsPanel } from "./panels/SessionsPanel";
 import { BrowserPanel } from "./panels/BrowserPanel";
 import { ProcessesPanel } from "./panels/ProcessesPanel";
 import { EventsPanel } from "./panels/EventsPanel";
+import { PluginViewPanel } from "./panels/PluginViewPanel";
 
 interface SidePanelProps {
   activePanel: SidePanelId;
@@ -14,6 +15,10 @@ interface SidePanelProps {
   onLoadSession: (id: string) => void;
   onNewSession: () => void;
   onOpenProcessLog?: (process: BgProcessInfo) => void;
+  // Plugin view props
+  activePluginName?: string | null;
+  activePluginViews?: ViewDeclaration[];
+  activePluginRunning?: boolean;
 }
 
 const PANEL_TITLES: Record<SidePanelId, string> = {
@@ -23,6 +28,7 @@ const PANEL_TITLES: Record<SidePanelId, string> = {
   sessions: "Sessions",
   browser: "Browser",
   events: "System Events",
+  plugin: "Plugin",
 };
 
 export function SidePanel({
@@ -32,10 +38,16 @@ export function SidePanel({
   onLoadSession,
   onNewSession,
   onOpenProcessLog,
+  activePluginName,
+  activePluginViews,
+  activePluginRunning,
 }: SidePanelProps) {
-  const title = activePanel === "events" && eventSourceFilter
-    ? `${eventSourceFilter} Events`
-    : PANEL_TITLES[activePanel];
+  const title =
+    activePanel === "plugin" && activePluginName
+      ? activePluginName
+      : activePanel === "events" && eventSourceFilter
+        ? `${eventSourceFilter} Events`
+        : PANEL_TITLES[activePanel];
 
   return (
     <div className="side-panel">
@@ -57,6 +69,13 @@ export function SidePanel({
         )}
         {activePanel === "browser" && <BrowserPanel />}
         {activePanel === "events" && <EventsPanel sourceFilter={eventSourceFilter} />}
+        {activePanel === "plugin" && activePluginName && (
+          <PluginViewPanel
+            pluginName={activePluginName}
+            views={activePluginViews ?? []}
+            running={activePluginRunning ?? false}
+          />
+        )}
       </div>
     </div>
   );

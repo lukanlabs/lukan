@@ -21,7 +21,7 @@ import { MainArea } from "./components/workspace/MainArea";
 import { SettingsOverlay } from "./components/workspace/SettingsOverlay";
 import { useBrowser } from "./hooks/useBrowser";
 import { onWorkerNotification, listPlugins, consumePendingEvents } from "./lib/tauri";
-import type { BgProcessInfo, PluginInfo, SidePanelId } from "./lib/types";
+import type { BgProcessInfo, PluginInfo, SidePanelId, ViewDeclaration } from "./lib/types";
 
 /** Map of lucide icon names to components. Plugins reference these by name in plugin.toml. */
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -62,8 +62,9 @@ export default function App() {
   const [currentSessionId, setCurrentSessionId] = useState("");
   const [processLog, setProcessLog] = useState<BgProcessInfo | null>(null);
   const [runningMonitors, setRunningMonitors] = useState<PluginInfo[]>([]);
-  const [hasUnreadEvents, setHasUnreadEvents] = useState(false);
+  const [unreadSources, setUnreadSources] = useState<Set<string>>(new Set());
   const [eventSourceFilter, setEventSourceFilter] = useState<string | null>(null);
+  const [activePluginName, setActivePluginName] = useState<string | null>(null);
   const sidePanelRef = useRef<SidePanelId | null>(null);
   sidePanelRef.current = workspace.sidePanel;
 
@@ -90,7 +91,12 @@ export default function App() {
       try {
         const newEvents = await consumePendingEvents();
         if (newEvents.length > 0) {
-          setHasUnreadEvents(true);
+          const sources = new Set(newEvents.map((e) => e.source));
+          setUnreadSources((prev) => {
+            const next = new Set(prev);
+            for (const s of sources) next.add(s);
+            return next;
+          });
         }
       } catch {
         // ignore
@@ -99,30 +105,35 @@ export default function App() {
     return () => clearInterval(interval);
   }, [runningMonitors.length]);
 
-  // Handle dynamic monitor icon click — toggle events panel filtered by source
+  // Handle dynamic monitor icon click — open plugin view panel
   const handleDynamicClick = useCallback(
     (item: DynamicActivityItem) => {
-      setHasUnreadEvents(false);
-      if (workspace.sidePanel === "events" && eventSourceFilter === item.sourceFilter) {
-        // Clicking the same monitor icon again closes the panel
-        workspace.togglePanel("events");
+      setUnreadSources((prev) => {
+        const next = new Set(prev);
+        next.delete(item.sourceFilter);
+        return next;
+      });
+      if (workspace.sidePanel === "plugin" && activePluginName === item.sourceFilter) {
+        // Clicking the same plugin icon again closes the panel
+        workspace.togglePanel("plugin");
+        setActivePluginName(null);
         setEventSourceFilter(null);
       } else {
-        // Open events panel filtered to this source
+        // Open plugin panel for this source
+        setActivePluginName(item.sourceFilter);
         setEventSourceFilter(item.sourceFilter);
-        if (workspace.sidePanel !== "events") {
-          workspace.togglePanel("events");
-        }
+        workspace.setSidePanel("plugin");
       }
     },
-    [workspace, eventSourceFilter],
+    [workspace, activePluginName],
   );
 
-  // Clear source filter when switching away from events via static items
+  // Clear source filter when switching away from plugin/events via static items
   const handleTogglePanel = useCallback(
     (panel: SidePanelId) => {
-      if (panel !== "events") {
+      if (panel !== "events" && panel !== "plugin") {
         setEventSourceFilter(null);
+        setActivePluginName(null);
       }
       workspace.togglePanel(panel);
     },
@@ -135,11 +146,11 @@ export default function App() {
     .map((m) => {
       const ab = m.activityBar!;
       return {
-        id: "events" as const,
+        id: "plugin" as const,
         icon: ICON_MAP[ab.icon] ?? Activity,
         label: ab.label,
         sourceFilter: m.name,
-        hasNotification: hasUnreadEvents,
+        hasNotification: unreadSources.has(m.name),
       };
     });
 
@@ -195,6 +206,9 @@ export default function App() {
             onLoadSession={handleLoadSession}
             onNewSession={handleNewSession}
             onOpenProcessLog={handleOpenProcessLog}
+            activePluginName={activePluginName}
+            activePluginViews={activePluginName ? runningMonitors.find((m) => m.name === activePluginName)?.views : undefined}
+            activePluginRunning={activePluginName ? runningMonitors.some((m) => m.name === activePluginName && m.running) : undefined}
           />
         )}
 

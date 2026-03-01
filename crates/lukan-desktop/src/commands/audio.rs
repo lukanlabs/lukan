@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -120,8 +120,7 @@ pub fn start_recording() -> Result<(), String> {
                             b.extend(data.iter().map(|&s| s as f32 / 32768.0));
                         } else {
                             for chunk in data.chunks(channels) {
-                                let sum: f32 =
-                                    chunk.iter().map(|&s| s as f32 / 32768.0).sum();
+                                let sum: f32 = chunk.iter().map(|&s| s as f32 / 32768.0).sum();
                                 b.push(sum / channels as f32);
                             }
                         }
@@ -140,15 +139,11 @@ pub fn start_recording() -> Result<(), String> {
                         }
                         let mut b = bw.lock().unwrap();
                         if channels == 1 {
-                            b.extend(
-                                data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0),
-                            );
+                            b.extend(data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0));
                         } else {
                             for chunk in data.chunks(channels) {
-                                let sum: f32 = chunk
-                                    .iter()
-                                    .map(|&s| (s as f32 - 32768.0) / 32768.0)
-                                    .sum();
+                                let sum: f32 =
+                                    chunk.iter().map(|&s| (s as f32 - 32768.0) / 32768.0).sum();
                                 b.push(sum / channels as f32);
                             }
                         }

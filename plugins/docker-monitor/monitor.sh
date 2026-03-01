@@ -24,6 +24,11 @@ send_error() {
   send_json "{\"type\":\"error\",\"message\":\"${message}\",\"recoverable\":${recoverable}}"
 }
 
+send_view_update() {
+  local view_id="$1" data="$2"
+  send_json "{\"type\":\"viewUpdate\",\"viewId\":\"${view_id}\",\"data\":${data}}"
+}
+
 # ── Read Init message ────────────────────────────────────────────────
 read -r init_line
 init_type=$(echo "$init_line" | jq -r '.type // empty' 2>/dev/null || true)
@@ -63,7 +68,11 @@ else
 fi
 
 # ── Handle shutdown ──────────────────────────────────────────────────
+CHILD_PIDS=()
 cleanup() {
+  for pid in "${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"}"; do
+    kill "$pid" 2>/dev/null || true
+  done
   [[ -n "${STDIN_PID:-}" ]] && kill "$STDIN_PID" 2>/dev/null || true
   exit 0
 }
@@ -95,6 +104,32 @@ DOCKER_FILTER_ARGS=(
 for name in "${CONTAINERS[@]+"${CONTAINERS[@]}"}"; do
   DOCKER_FILTER_ARGS+=(--filter "container=${name}")
 done
+
+# ── Status view emitter ──────────────────────────────────────────────
+emit_status() {
+  local running stopped healthy unhealthy total
+  running=$(docker ps -q --filter status=running 2>/dev/null | wc -l || echo 0)
+  stopped=$(docker ps -aq --filter status=exited 2>/dev/null | wc -l || echo 0)
+  healthy=$(docker ps -q --filter health=healthy 2>/dev/null | wc -l || echo 0)
+  unhealthy=$(docker ps -q --filter health=unhealthy 2>/dev/null | wc -l || echo 0)
+  total=$(docker ps -aq 2>/dev/null | wc -l || echo 0)
+
+  local uh_status="ok"
+  [[ "$unhealthy" -gt 0 ]] && uh_status="error"
+  local run_status="ok"
+  [[ "$running" -eq 0 && "$total" -gt 0 ]] && run_status="warn"
+
+  send_view_update "status" "{\"items\":[{\"label\":\"Running\",\"value\":\"${running}\",\"status\":\"${run_status}\"},{\"label\":\"Stopped\",\"value\":\"${stopped}\",\"status\":\"info\"},{\"label\":\"Healthy\",\"value\":\"${healthy}\",\"status\":\"ok\"},{\"label\":\"Unhealthy\",\"value\":\"${unhealthy}\",\"status\":\"${uh_status}\"},{\"label\":\"Total\",\"value\":\"${total}\",\"status\":\"info\"}]}"
+}
+
+# Emit status periodically in background
+(
+  while true; do
+    emit_status
+    sleep 10
+  done
+) &
+CHILD_PIDS+=($!)
 
 # ── Main event loop ─────────────────────────────────────────────────
 # Use process substitution (not pipe) so the while loop runs in the

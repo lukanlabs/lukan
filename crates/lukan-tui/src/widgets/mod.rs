@@ -1,5 +1,6 @@
 pub mod bg_picker;
 pub mod chat;
+pub mod event_picker;
 pub mod input;
 pub mod markdown;
 pub mod rewind_picker;

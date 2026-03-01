@@ -325,7 +325,11 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                     .await
                     .ok();
                 } else {
-                    debug!("Discarded phantom text ({} chars): {}", phantom_buffer.len(), &phantom_buffer[..phantom_buffer.len().min(300)]);
+                    debug!(
+                        "Discarded phantom text ({} chars): {}",
+                        phantom_buffer.len(),
+                        &phantom_buffer[..phantom_buffer.len().min(300)]
+                    );
                 }
                 phantom_buffer.clear();
                 phantom_suppressed = false;
@@ -371,11 +375,7 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                             text_buffer.push_str(delta);
 
                             // Check for phantom tool call patterns in accumulated text
-                            let phantom_triggers = [
-                                "to=functions.",
-                                "+#+#+#+#",
-                                "assistant to=",
-                            ];
+                            let phantom_triggers = ["to=functions.", "+#+#+#+#", "assistant to="];
                             let mut trigger_pos = None;
                             for trigger in &phantom_triggers {
                                 if let Some(pos) = text_buffer.find(trigger) {
@@ -484,7 +484,10 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                 }
 
                 "response.completed" => {
-                    debug!("Stream completed. has_tool_calls={has_tool_calls}, phantom_suppressed={phantom_suppressed}, phantom_buffer_len={}", phantom_buffer.len());
+                    debug!(
+                        "Stream completed. has_tool_calls={has_tool_calls}, phantom_suppressed={phantom_suppressed}, phantom_buffer_len={}",
+                        phantom_buffer.len()
+                    );
                     let response = &data["response"];
 
                     // Usage
@@ -517,7 +520,10 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                 }
 
                 "response.failed" => {
-                    debug!("Stream FAILED: {}", serde_json::to_string_pretty(&data).unwrap_or_default());
+                    debug!(
+                        "Stream FAILED: {}",
+                        serde_json::to_string_pretty(&data).unwrap_or_default()
+                    );
                     let error_msg = data["response"]["error"]["message"]
                         .as_str()
                         .or_else(|| data["error"]["message"].as_str())
@@ -588,7 +594,11 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
         stop_reason = StopReason::ToolUse;
     }
 
-    debug!("Codex stream done: stop_reason={stop_reason:?}, has_tool_calls={has_tool_calls}, text_buffer_len={}, phantom_buffer_len={}", text_buffer.len(), phantom_buffer.len());
+    debug!(
+        "Codex stream done: stop_reason={stop_reason:?}, has_tool_calls={has_tool_calls}, text_buffer_len={}, phantom_buffer_len={}",
+        text_buffer.len(),
+        phantom_buffer.len()
+    );
 
     tx.send(StreamEvent::MessageEnd { stop_reason }).await.ok();
 

@@ -112,6 +112,12 @@ pub enum PluginMessage {
         level: String,
         detail: String,
     },
+    /// Update a declared view's data (persisted to disk, polled by frontend)
+    ViewUpdate {
+        #[serde(rename = "viewId")]
+        view_id: String,
+        data: serde_json::Value,
+    },
 }
 
 // ── Enums ───────────────────────────────────────────────────────────────
@@ -239,6 +245,9 @@ pub struct PluginMeta {
     pub alias: Option<String>,
     /// Optional activity bar contribution (VS Code-style sidebar icon)
     pub activity_bar: Option<ActivityBarContribution>,
+    /// Views declared by the plugin (VS Code-style panels)
+    #[serde(default)]
+    pub views: Vec<ViewDeclaration>,
 }
 
 /// Plugin contribution to the desktop activity bar (like VS Code extensions).
@@ -248,6 +257,15 @@ pub struct ActivityBarContribution {
     /// Lucide icon name (e.g. "container", "shield-alert", "activity")
     pub icon: String,
     /// Label shown on hover
+    pub label: String,
+}
+
+/// A view declared by a plugin in plugin.toml `[[plugin.views]]`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ViewDeclaration {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub view_type: String,
     pub label: String,
 }
 

@@ -100,13 +100,19 @@ fn kill_tree(pid: u32, signal: i32) {
     let descendants = find_descendants(pid);
     // Kill descendants first (bottom-up: reverse since find_descendants is DFS)
     for &child in descendants.iter().rev() {
-        unsafe { libc::kill(child as i32, signal); }
+        unsafe {
+            libc::kill(child as i32, signal);
+        }
     }
     // Kill the root process
-    unsafe { libc::kill(pid as i32, signal); }
+    unsafe {
+        libc::kill(pid as i32, signal);
+    }
     // Also try the process group for good measure
     let pgid = -(pid as i32);
-    unsafe { libc::kill(pgid, signal); }
+    unsafe {
+        libc::kill(pgid, signal);
+    }
 }
 
 /// Build a snapshot from a tracked process, updating exited_at on first death detection.
@@ -134,11 +140,8 @@ fn snapshot_process(p: &mut BgProcess) -> BgProcessSnapshot {
 /// Get list of all tracked background processes (alive ones first, then dead)
 pub fn get_bg_processes() -> Vec<BgProcessSnapshot> {
     let mut t = tracker().lock().unwrap();
-    let mut result: Vec<BgProcessSnapshot> = t
-        .processes
-        .values_mut()
-        .map(|p| snapshot_process(p))
-        .collect();
+    let mut result: Vec<BgProcessSnapshot> =
+        t.processes.values_mut().map(snapshot_process).collect();
     result.sort_by(|a, b| {
         let a_alive = a.status == BgProcessStatus::Running;
         let b_alive = b.status == BgProcessStatus::Running;
@@ -154,7 +157,7 @@ pub fn get_bg_processes_for_session(session_id: &str) -> Vec<BgProcessSnapshot> 
         .processes
         .values_mut()
         .filter(|p| p.session_id.as_deref() == Some(session_id))
-        .map(|p| snapshot_process(p))
+        .map(snapshot_process)
         .collect();
     result.sort_by(|a, b| {
         let a_alive = a.status == BgProcessStatus::Running;

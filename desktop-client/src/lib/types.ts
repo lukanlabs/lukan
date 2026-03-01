@@ -75,6 +75,12 @@ export interface PluginActivityBar {
   label: string;
 }
 
+export interface ViewDeclaration {
+  id: string;
+  viewType: string;
+  label: string;
+}
+
 export interface PluginInfo {
   name: string;
   version: string;
@@ -83,6 +89,22 @@ export interface PluginInfo {
   running: boolean;
   alias?: string;
   activityBar?: PluginActivityBar;
+  views: ViewDeclaration[];
+}
+
+export interface StatusViewItem {
+  label: string;
+  value: string;
+  status?: "ok" | "warn" | "error" | "info";
+}
+
+export interface StatusViewData {
+  items: StatusViewItem[];
+}
+
+export interface PluginViewEnvelope {
+  updatedAt: string;
+  data: StatusViewData;
 }
 
 export interface RemotePlugin {
@@ -122,7 +144,7 @@ export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" |
 
 export type WorkspaceMode = "agent" | "terminal";
 
-export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes" | "events";
+export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes" | "events" | "plugin";
 
 export interface SystemEvent {
   ts: string;

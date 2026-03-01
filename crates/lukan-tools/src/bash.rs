@@ -254,7 +254,12 @@ impl Tool for BashTool {
                         });
 
                         let log_display = log_path.display().to_string();
-                        bg_processes::add_bg_process(child_pid, command_str, log_path, ctx.session_id.clone());
+                        bg_processes::add_bg_process(
+                            child_pid,
+                            command_str,
+                            log_path,
+                            ctx.session_id.clone(),
+                        );
 
                         Ok(ToolResult::success(format!(
                             "The user pressed Alt+B to send this command to background. \

@@ -69,6 +69,7 @@ fn main() {
             commands::credentials::test_provider,
             // Plugins
             commands::plugins::list_plugins,
+            commands::plugins::get_plugin_view_data,
             commands::plugins::install_plugin,
             commands::plugins::install_remote_plugin,
             commands::plugins::remove_plugin,

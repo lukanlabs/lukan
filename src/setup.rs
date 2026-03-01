@@ -26,7 +26,6 @@ pub async fn run_setup() -> Result<()> {
     let creds = CredentialsManager::load().await?;
 
     let config = setup_provider(config)?;
-    let config = setup_model(config)?;
     let config = if config.provider == ProviderName::OpenaiCompatible {
         setup_openai_compatible_url(config)?
     } else {
@@ -68,14 +67,7 @@ pub async fn run_setup() -> Result<()> {
         );
     }
 
-    let model = config
-        .model
-        .as_deref()
-        .unwrap_or(config.provider.default_model());
-    println!(
-        "{GREEN}✓{RESET} Active: {BOLD}{}{RESET} / {BOLD}{}{RESET}",
-        config.provider, model
-    );
+    println!("{GREEN}✓{RESET} Provider: {BOLD}{}{RESET}", config.provider);
     println!();
 
     Ok(())
@@ -128,38 +120,6 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
     Ok(config)
 }
 
-fn setup_model(mut config: AppConfig) -> Result<AppConfig> {
-    println!("{BOLD}2. Model{RESET}");
-    println!();
-
-    let default_model = config.provider.default_model();
-    let current = config.model.as_deref().unwrap_or(default_model);
-
-    println!(
-        "  Default for {}: {BOLD}{default_model}{RESET}",
-        config.provider
-    );
-    if current != default_model {
-        println!("  Current override: {BOLD}{current}{RESET}");
-    }
-
-    println!();
-    let input = prompt(&format!(
-        "Model name {DIM}(Enter to keep '{current}'){RESET}: "
-    ))?;
-
-    if !input.is_empty() {
-        let model = input.trim().to_string();
-        config.model = Some(model.clone());
-        println!("  {GREEN}✓{RESET} Model set to {BOLD}{model}{RESET}");
-    } else {
-        println!("  {DIM}Keeping {current}{RESET}");
-    }
-
-    println!();
-    Ok(config)
-}
-
 fn setup_openai_compatible_url(mut config: AppConfig) -> Result<AppConfig> {
     println!("{BOLD}Base URL{RESET}");
     println!();
@@ -188,7 +148,7 @@ fn setup_openai_compatible_url(mut config: AppConfig) -> Result<AppConfig> {
 }
 
 fn setup_credentials(provider: &ProviderName, mut creds: Credentials) -> Result<Credentials> {
-    println!("{BOLD}3. API Key{RESET}");
+    println!("{BOLD}2. API Key{RESET}");
     println!();
 
     // Only ask for the API key of the selected provider

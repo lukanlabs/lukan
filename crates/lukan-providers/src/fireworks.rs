@@ -17,7 +17,7 @@ pub struct FireworksProvider {
 }
 
 impl FireworksProvider {
-    pub fn new(api_key: String, model: String, max_tokens: u32) -> Self {
+    pub fn new(api_key: String, model: String, max_tokens: u32, supports_images: bool) -> Self {
         let config = OpenAiCompatConfig {
             base_url: FIREWORKS_BASE_URL.to_string(),
             api_key,
@@ -26,6 +26,7 @@ impl FireworksProvider {
             extra_headers: HashMap::new(),
             use_think_tags: true, // Some models use <think> tags
             strip_schema: true,
+            supports_images,
         };
         Self {
             base: OpenAiCompatBase::new(config),
@@ -37,6 +38,10 @@ impl FireworksProvider {
 impl Provider for FireworksProvider {
     fn name(&self) -> &str {
         "fireworks"
+    }
+
+    fn supports_images(&self) -> bool {
+        self.base.config.supports_images
     }
 
     async fn stream(

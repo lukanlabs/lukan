@@ -11,7 +11,7 @@ use lukan_core::models::events::{
     ApprovalResponse, PlanReviewResponse, PlanTask, PlannerQuestionItem, StopReason, StreamEvent,
     ToolApprovalRequest,
 };
-use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
+use lukan_core::models::messages::{ContentBlock, ImageSource, Message, MessageContent, Role};
 use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
@@ -19,8 +19,10 @@ use lukan_tools::{ToolContext, ToolRegistry};
 use crate::permission_matcher::{
     PLANNER_TOOL_WHITELIST, PermissionMatcher, ToolVerdict, generate_allow_pattern,
 };
+use base64::Engine;
 use lukan_core::config::project_config::ProjectConfig;
 use rand::Rng;
+use regex::Regex;
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -74,6 +76,8 @@ pub struct AgentConfig {
     pub browser_tools: bool,
     /// When true, `save_session()` becomes a no-op (used by workers)
     pub skip_session_save: bool,
+    /// Optional vision-capable provider for describing images on non-vision models
+    pub vision_provider: Option<Arc<dyn Provider>>,
 }
 
 /// Pending tool call accumulated from stream events
@@ -124,6 +128,8 @@ pub struct AgentLoop {
     disabled_tools: HashSet<String>,
     /// When true, `save_session()` is a no-op
     skip_session_save: bool,
+    /// Optional vision-capable provider for describing images on non-vision models
+    vision_provider: Option<Arc<dyn Provider>>,
 }
 
 /// A system event from a plugin, queued for injection into the agent context.
@@ -210,6 +216,7 @@ impl AgentLoop {
             pending_events: Vec::new(),
             disabled_tools: HashSet::new(),
             skip_session_save,
+            vision_provider: config.vision_provider,
         })
     }
 
@@ -292,6 +299,7 @@ impl AgentLoop {
             pending_events: Vec::new(),
             disabled_tools: HashSet::new(),
             skip_session_save,
+            vision_provider: config.vision_provider,
         })
     }
 
@@ -676,8 +684,15 @@ impl AgentLoop {
             self.history.add_user_message(&ctx);
         }
 
-        // Add user message to history
-        self.history.add_user_message(user_message);
+        // Add user message to history, extracting any image URLs as vision blocks
+        let (clean_text, image_blocks) = extract_image_urls(user_message).await;
+        if image_blocks.is_empty() {
+            self.history.add_user_message(user_message);
+        } else {
+            let mut blocks = vec![ContentBlock::Text { text: clean_text }];
+            blocks.extend(image_blocks);
+            self.history.add_user_blocks(blocks);
+        }
 
         // Accumulate file snapshots across all tool rounds in this turn
         let mut turn_snapshots: Vec<FileSnapshot> = Vec::new();
@@ -692,9 +707,17 @@ impl AgentLoop {
             // Also hide tools disabled at runtime by the TUI
             tool_defs.retain(|d| !self.disabled_tools.contains(&d.name));
 
+            // Preprocess images for non-vision providers
+            let messages = crate::vision_preprocessor::preprocess_images(
+                self.history.messages(),
+                self.provider.as_ref(),
+                &self.vision_provider,
+            )
+            .await;
+
             let params = StreamParams {
                 system_prompt: self.system_prompt.clone(),
-                messages: self.history.messages().to_vec(),
+                messages,
                 tools: tool_defs,
             };
 
@@ -703,8 +726,20 @@ impl AgentLoop {
             let provider = Arc::clone(&self.provider);
 
             let stream_handle = tokio::spawn(async move {
-                if let Err(e) = provider.stream(params, stream_tx).await {
+                if let Err(e) = provider.stream(params, stream_tx.clone()).await {
                     error!("Provider stream error: {e}");
+                    // Send error event so the TUI/UI can display the error
+                    // instead of hanging silently.
+                    let _ = stream_tx
+                        .send(StreamEvent::Error {
+                            error: e.to_string(),
+                        })
+                        .await;
+                    let _ = stream_tx
+                        .send(StreamEvent::MessageEnd {
+                            stop_reason: StopReason::Error,
+                        })
+                        .await;
                 }
             });
 
@@ -1880,4 +1915,101 @@ async fn write_memory_file_to(path: &std::path::Path, content: &str) {
     if let Err(e) = tokio::fs::write(path, content).await {
         error!("Failed to write MEMORY.md: {e}");
     }
+}
+
+/// Infer MIME type from a URL's file extension.
+fn media_type_from_url(url: &str) -> Option<String> {
+    let path = url.split('?').next().unwrap_or(url);
+    let ext = path.rsplit('.').next()?.to_lowercase();
+    match ext.as_str() {
+        "png" => Some("image/png".into()),
+        "jpg" | "jpeg" => Some("image/jpeg".into()),
+        "gif" => Some("image/gif".into()),
+        "webp" => Some("image/webp".into()),
+        "svg" => Some("image/svg+xml".into()),
+        "bmp" => Some("image/bmp".into()),
+        "ico" => Some("image/x-icon".into()),
+        _ => None,
+    }
+}
+
+/// Flatten RGBA image to RGB with white background, re-encode as PNG.
+/// Returns the original bytes unchanged if not RGBA or if processing fails.
+fn flatten_alpha(bytes: &[u8]) -> Vec<u8> {
+    let img = match image::load_from_memory(bytes) {
+        Ok(img) => img,
+        Err(_) => return bytes.to_vec(),
+    };
+
+    if !matches!(
+        img.color(),
+        image::ColorType::Rgba8 | image::ColorType::Rgba16
+    ) {
+        return bytes.to_vec();
+    }
+
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let mut rgb = image::RgbImage::new(w, h);
+    for (x, y, pixel) in rgba.enumerate_pixels() {
+        let [r, g, b, a] = pixel.0;
+        let alpha = a as f32 / 255.0;
+        let blend = |fg: u8| -> u8 { (fg as f32 * alpha + 255.0 * (1.0 - alpha)) as u8 };
+        rgb.put_pixel(x, y, image::Rgb([blend(r), blend(g), blend(b)]));
+    }
+
+    let mut buf = std::io::Cursor::new(Vec::new());
+    if rgb.write_to(&mut buf, image::ImageFormat::Png).is_ok() {
+        buf.into_inner()
+    } else {
+        bytes.to_vec()
+    }
+}
+
+/// Extract image URLs from user text, fetch them, and return cleaned text + base64 image blocks.
+async fn extract_image_urls(text: &str) -> (String, Vec<ContentBlock>) {
+    let re = Regex::new(r"https?://\S+\.(?:png|jpe?g|gif|webp|svg|bmp|ico)(?:\?\S*)?").unwrap();
+
+    let urls: Vec<String> = re.find_iter(text).map(|m| m.as_str().to_string()).collect();
+    if urls.is_empty() {
+        return (text.to_string(), Vec::new());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap();
+
+    let mut images = Vec::new();
+    for url in &urls {
+        match client.get(url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let media_type = resp
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+                    .or_else(|| media_type_from_url(url));
+
+                match resp.bytes().await {
+                    Ok(bytes) => {
+                        // Flatten RGBA transparency to white background
+                        let processed = flatten_alpha(&bytes);
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&processed);
+                        images.push(ContentBlock::Image {
+                            source: ImageSource::Base64,
+                            data: b64,
+                            media_type,
+                        });
+                    }
+                    Err(e) => warn!("Failed to read image bytes from {url}: {e}"),
+                }
+            }
+            Ok(resp) => warn!("Failed to fetch image {url}: HTTP {}", resp.status()),
+            Err(e) => warn!("Failed to fetch image {url}: {e}"),
+        }
+    }
+
+    let cleaned = re.replace_all(text, "").trim().to_string();
+    (cleaned, images)
 }

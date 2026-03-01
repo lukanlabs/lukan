@@ -623,6 +623,11 @@ impl App {
             planner_answer_rx: Some(planner_answer_rx),
             browser_tools: self.browser_tools,
             skip_session_save: false,
+            vision_provider: lukan_providers::create_vision_provider(
+                self.config.config.vision_model.as_deref(),
+                &self.config.credentials,
+            )
+            .map(std::sync::Arc::from),
         };
 
         match AgentLoop::new(config).await {
@@ -680,6 +685,7 @@ impl App {
             planner_answer_rx: None,
             browser_tools: false,
             skip_session_save: false,
+            vision_provider: None,
         };
 
         match AgentLoop::new(config).await {
@@ -3805,6 +3811,11 @@ impl App {
             planner_answer_rx: Some(planner_answer_rx),
             browser_tools: self.browser_tools,
             skip_session_save: false,
+            vision_provider: lukan_providers::create_vision_provider(
+                self.config.config.vision_model.as_deref(),
+                &self.config.credentials,
+            )
+            .map(std::sync::Arc::from),
         };
 
         match AgentLoop::load_session(config, &session_id).await {

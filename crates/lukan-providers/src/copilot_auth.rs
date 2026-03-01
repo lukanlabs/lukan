@@ -11,6 +11,9 @@ use tracing::debug;
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 
+/// VS Code's official OAuth app client ID — required to get Copilot Pro model access.
+const COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
+
 // ── Types ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -48,12 +51,12 @@ struct AccessTokenResponse {
 ///
 /// Displays a user code and verification URL. Polls until the user authorizes
 /// the app or a timeout is reached. Returns the access token.
-pub async fn auth_copilot_device_flow(client: &Client, client_id: &str) -> Result<String> {
+pub async fn auth_copilot_device_flow(client: &Client) -> Result<String> {
     // Step 1: Request device + user codes
     let resp = client
         .post(DEVICE_CODE_URL)
         .header("Accept", "application/json")
-        .form(&[("client_id", client_id), ("scope", "read:user")])
+        .form(&[("client_id", COPILOT_CLIENT_ID), ("scope", "read:user")])
         .send()
         .await
         .context("Failed to request device code from GitHub")?;
@@ -96,7 +99,7 @@ pub async fn auth_copilot_device_flow(client: &Client, client_id: &str) -> Resul
             .post(ACCESS_TOKEN_URL)
             .header("Accept", "application/json")
             .form(&[
-                ("client_id", client_id),
+                ("client_id", COPILOT_CLIENT_ID),
                 ("device_code", &*device.device_code),
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ])

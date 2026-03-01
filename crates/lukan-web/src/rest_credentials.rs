@@ -102,7 +102,8 @@ pub async fn test_provider(Path(provider): Path<String>) -> impl IntoResponse {
             .await
             .map(|m| format!("Connected. {} models available.", m.len())),
         ProviderName::GithubCopilot => {
-            lukan_providers::github_copilot::fetch_github_copilot_models(&api_key)
+            let mgr = lukan_providers::copilot_token::CopilotTokenManager::new(api_key);
+            lukan_providers::github_copilot::fetch_github_copilot_models(&mgr)
                 .await
                 .map(|m| format!("Connected. {} models available.", m.len()))
         }

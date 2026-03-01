@@ -462,6 +462,7 @@ async fn run_worker(
         planner_answer_rx: None,
         browser_tools: false,
         skip_session_save: true,
+        vision_provider: None,
     };
 
     // Create agent and run

@@ -32,6 +32,16 @@ impl MessageHistory {
         self.add(Message::user(content));
     }
 
+    /// Add a user message with structured content blocks (e.g. text + images)
+    pub fn add_user_blocks(&mut self, blocks: Vec<ContentBlock>) {
+        self.add(Message {
+            role: Role::User,
+            content: MessageContent::Blocks(blocks),
+            tool_call_id: None,
+            name: None,
+        });
+    }
+
     /// Add an assistant message with content blocks
     pub fn add_assistant_blocks(&mut self, blocks: Vec<ContentBlock>) {
         if !blocks.is_empty() {

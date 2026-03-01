@@ -4,6 +4,7 @@ pub mod anthropic;
 pub mod codex_auth;
 pub mod contracts;
 pub mod copilot_auth;
+pub mod copilot_token;
 pub mod fireworks;
 pub mod github_copilot;
 pub mod nebius;
@@ -14,7 +15,9 @@ pub mod sse;
 pub mod think_tag_parser;
 
 use anyhow::{Result, bail};
+use lukan_core::config::types::{AppConfig, Credentials};
 use lukan_core::config::{CredentialsManager, ProviderName, ResolvedConfig};
+use tracing::debug;
 
 pub use contracts::{Provider, StreamParams, SystemPrompt};
 
@@ -63,8 +66,12 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
                         "Missing Fireworks API key. Set it via `lukan setup` or FIREWORKS_API_KEY env var"
                     )
                     })?;
+            let supports_images = is_vision_model(&model, config);
             Ok(Box::new(fireworks::FireworksProvider::new(
-                api_key, model, max_tokens,
+                api_key,
+                model,
+                max_tokens,
+                supports_images,
             )))
         }
         ProviderName::GithubCopilot => {
@@ -73,8 +80,11 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
                     .ok_or_else(|| {
                         anyhow::anyhow!("Missing GitHub Copilot token. Run: lukan copilot-auth")
                     })?;
+            let token_manager = std::sync::Arc::new(copilot_token::CopilotTokenManager::new(token));
             Ok(Box::new(github_copilot::GitHubCopilotProvider::new(
-                token, model, max_tokens,
+                token_manager,
+                model,
+                max_tokens,
             )))
         }
         ProviderName::OpenaiCompatible => {
@@ -99,6 +109,7 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
             )
             .unwrap_or_default();
 
+            let supports_images = is_vision_model(&model, config);
             let compat_config = openai_compat::OpenAiCompatConfig {
                 base_url,
                 api_key,
@@ -107,6 +118,7 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
                 extra_headers: std::collections::HashMap::new(),
                 use_think_tags: true,
                 strip_schema: true,
+                supports_images,
             };
 
             // Wrap in a simple struct that implements Provider
@@ -123,6 +135,78 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
     }
 }
 
+/// Create a vision-capable provider for the image preprocessor.
+///
+/// `vision_model` is an optional `"provider:model"` string from config.
+/// Falls back to `anthropic:claude-haiku-4-5-20251001` if an Anthropic key is available.
+/// Returns `None` on any error (non-fatal).
+pub fn create_vision_provider(
+    vision_model: Option<&str>,
+    credentials: &Credentials,
+) -> Option<Box<dyn Provider>> {
+    let (provider_str, model_str) = match vision_model {
+        Some(spec) => {
+            // Parse "provider:model"
+            let (p, m) = spec.split_once(':')?;
+            (p.to_string(), m.to_string())
+        }
+        None => {
+            // Fallback: use Anthropic Haiku if key is available
+            if CredentialsManager::get_api_key(credentials, &ProviderName::Anthropic).is_some() {
+                (
+                    "anthropic".to_string(),
+                    "claude-haiku-4-5-20251001".to_string(),
+                )
+            } else {
+                return None;
+            }
+        }
+    };
+
+    let provider_name: ProviderName =
+        serde_json::from_value(serde_json::Value::String(provider_str.clone())).ok()?;
+
+    let resolved = ResolvedConfig {
+        config: AppConfig {
+            provider: provider_name,
+            model: Some(model_str),
+            max_tokens: 1024,
+            ..AppConfig::default()
+        },
+        credentials: credentials.clone(),
+    };
+
+    match create_provider(&resolved) {
+        Ok(p) => {
+            debug!("Vision provider created: {}", p.name());
+            Some(p)
+        }
+        Err(e) => {
+            debug!("Failed to create vision provider ({provider_str}): {e}");
+            None
+        }
+    }
+}
+
+/// Check if a model supports image inputs:
+/// 1. From `config.vision_models` (set by model picker from API capabilities)
+/// 2. Fallback heuristic on model name
+fn is_vision_model(model: &str, config: &ResolvedConfig) -> bool {
+    if let Some(ref vision_models) = config.config.vision_models
+        && vision_models.iter().any(|v| v == model)
+    {
+        return true;
+    }
+    // Fallback heuristic for models not in the list
+    let lower = model.to_lowercase();
+    lower.contains("vision")
+        || lower.contains("-vl")
+        || lower.contains("multimodal")
+        || lower.contains("llava")
+        || lower.contains("gemma-3")
+        || lower.contains("llama-4")
+}
+
 /// Generic OpenAI-compatible provider for custom endpoints (vLLM, Ollama, LM Studio, etc.)
 struct OpenAiCompatibleProvider {
     base: openai_compat::OpenAiCompatBase,
@@ -132,6 +216,10 @@ struct OpenAiCompatibleProvider {
 impl Provider for OpenAiCompatibleProvider {
     fn name(&self) -> &str {
         "openai-compatible"
+    }
+
+    fn supports_images(&self) -> bool {
+        self.base.config.supports_images
     }
 
     async fn stream(

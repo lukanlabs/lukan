@@ -83,7 +83,8 @@ pub async fn test_provider(provider: String) -> Result<String, String> {
             Ok(format!("Connected. {} models available.", models.len()))
         }
         ProviderName::GithubCopilot => {
-            let models = lukan_providers::github_copilot::fetch_github_copilot_models(&api_key)
+            let mgr = lukan_providers::copilot_token::CopilotTokenManager::new(api_key);
+            let models = lukan_providers::github_copilot::fetch_github_copilot_models(&mgr)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(format!("Connected. {} models available.", models.len()))

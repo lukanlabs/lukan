@@ -39,14 +39,22 @@ impl AnthropicProvider {
                 vec![serde_json::json!({ "type": "text", "text": text })]
             }
             SystemPrompt::Structured { cached, dynamic } => {
+                let last_cached = cached.len().saturating_sub(1);
                 let mut blocks: Vec<serde_json::Value> = cached
                     .iter()
-                    .map(|text| {
-                        serde_json::json!({
-                            "type": "text",
-                            "text": text,
-                            "cache_control": { "type": "ephemeral" }
-                        })
+                    .enumerate()
+                    .map(|(i, text)| {
+                        if i == last_cached {
+                            // Single cache breakpoint on last cached block —
+                            // everything before it gets cached as a prefix.
+                            serde_json::json!({
+                                "type": "text",
+                                "text": text,
+                                "cache_control": { "type": "ephemeral" }
+                            })
+                        } else {
+                            serde_json::json!({ "type": "text", "text": text })
+                        }
                     })
                     .collect();
 

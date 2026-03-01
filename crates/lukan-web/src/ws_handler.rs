@@ -1240,6 +1240,11 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         planner_answer_rx: Some(planner_answer_rx),
         browser_tools: has_browser,
         skip_session_save: false,
+        vision_provider: lukan_providers::create_vision_provider(
+            config.config.vision_model.as_deref(),
+            &config.credentials,
+        )
+        .map(Arc::from),
     };
 
     AgentLoop::new(agent_config).await
@@ -1309,6 +1314,11 @@ async fn create_agent_with_session(
         planner_answer_rx: Some(planner_answer_rx),
         browser_tools: has_browser,
         skip_session_save: false,
+        vision_provider: lukan_providers::create_vision_provider(
+            config.config.vision_model.as_deref(),
+            &config.credentials,
+        )
+        .map(Arc::from),
     };
 
     AgentLoop::load_session(agent_config, session_id).await

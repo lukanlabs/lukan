@@ -581,6 +581,11 @@ async fn plugin_start_foreground(
         planner_answer_rx: None,
         browser_tools: false,
         skip_session_save: false,
+        vision_provider: lukan_providers::create_vision_provider(
+            resolved.config.vision_model.as_deref(),
+            &resolved.credentials,
+        )
+        .map(Arc::from),
     };
 
     println!(

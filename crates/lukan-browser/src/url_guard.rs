@@ -99,9 +99,15 @@ fn is_private_ip(ip: IpAddr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize all tests that depend on the global ALLOW_INTERNAL flag.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn allows_public_urls() {
+        let _g = TEST_LOCK.lock().unwrap();
+        set_allow_internal(false);
         assert!(check_url("https://example.com").is_none());
         assert!(check_url("https://www.google.com/search?q=test").is_none());
         assert!(check_url("http://93.184.216.34").is_none());
@@ -109,6 +115,7 @@ mod tests {
 
     #[test]
     fn blocks_localhost() {
+        let _g = TEST_LOCK.lock().unwrap();
         set_allow_internal(false);
         assert!(check_url("http://localhost").is_some());
         assert!(check_url("http://localhost:3000").is_some());
@@ -117,6 +124,7 @@ mod tests {
 
     #[test]
     fn blocks_private_ipv4() {
+        let _g = TEST_LOCK.lock().unwrap();
         set_allow_internal(false);
         assert!(check_url("http://127.0.0.1").is_some());
         assert!(check_url("http://10.0.0.1").is_some());
@@ -129,12 +137,14 @@ mod tests {
 
     #[test]
     fn blocks_ipv6_loopback() {
+        let _g = TEST_LOCK.lock().unwrap();
         set_allow_internal(false);
         assert!(check_url("http://[::1]").is_some());
     }
 
     #[test]
     fn blocks_cloud_metadata() {
+        let _g = TEST_LOCK.lock().unwrap();
         set_allow_internal(false);
         assert!(check_url("http://metadata.google.internal").is_some());
         assert!(check_url("http://instance-data").is_some());
@@ -142,12 +152,15 @@ mod tests {
 
     #[test]
     fn blocks_non_http_schemes() {
+        let _g = TEST_LOCK.lock().unwrap();
         assert!(check_url("ftp://example.com").is_some());
         assert!(check_url("file:///etc/passwd").is_some());
     }
 
     #[test]
     fn allows_public_ipv4() {
+        let _g = TEST_LOCK.lock().unwrap();
+        set_allow_internal(false);
         // 172.32.x.x is NOT private (private range is 172.16-31)
         assert!(check_url("http://172.32.0.1").is_none());
         assert!(check_url("http://8.8.8.8").is_none());
@@ -155,14 +168,10 @@ mod tests {
 
     #[test]
     fn allow_internal_flag_overrides() {
-        // This test modifies global state (AtomicBool), so we only test
-        // the "allow" direction to avoid races with other tests that
-        // set_allow_internal(false). The "block" behavior is tested by
-        // blocks_localhost and blocks_private_ipv4.
+        let _g = TEST_LOCK.lock().unwrap();
         set_allow_internal(true);
         assert!(check_url("http://localhost").is_none());
         assert!(check_url("http://192.168.1.1").is_none());
-        // Restore default
         set_allow_internal(false);
     }
 }

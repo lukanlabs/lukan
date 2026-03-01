@@ -3,6 +3,7 @@ pub mod message_history;
 pub mod permission_matcher;
 pub mod session_manager;
 pub mod sub_agent;
+pub mod vision_preprocessor;
 pub mod whatsapp_channel;
 pub mod workers;
 

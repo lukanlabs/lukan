@@ -1,6 +1,7 @@
 //! GitHub Copilot provider (OpenAI-compatible at api.githubcopilot.com).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -8,38 +9,56 @@ use tokio::sync::mpsc;
 use lukan_core::models::events::StreamEvent;
 
 use crate::contracts::{Provider, StreamParams};
+use crate::copilot_token::CopilotTokenManager;
 use crate::openai_compat::{OpenAiCompatBase, OpenAiCompatConfig};
 
 const COPILOT_BASE_URL: &str = "https://api.githubcopilot.com";
 
+// VS Code identity headers for API requests.
+const EDITOR_VERSION: &str = "vscode/1.104.3";
+const PLUGIN_VERSION: &str = "copilot-chat/0.26.7";
+
 pub struct GitHubCopilotProvider {
-    base: OpenAiCompatBase,
+    token_manager: Arc<CopilotTokenManager>,
+    model: String,
+    max_tokens: u32,
 }
 
 impl GitHubCopilotProvider {
-    pub fn new(copilot_token: String, model: String, max_tokens: u32) -> Self {
-        let mut extra_headers = HashMap::new();
-        extra_headers.insert("Editor-Version".to_string(), "lukan/0.1.0".to_string());
-        extra_headers.insert(
-            "Editor-Plugin-Version".to_string(),
-            "lukan/0.1.0".to_string(),
-        );
-        extra_headers.insert(
-            "OpenAI-Intent".to_string(),
-            "conversation-panel".to_string(),
-        );
-
-        let config = OpenAiCompatConfig {
-            base_url: COPILOT_BASE_URL.to_string(),
-            api_key: copilot_token,
+    pub fn new(token_manager: Arc<CopilotTokenManager>, model: String, max_tokens: u32) -> Self {
+        Self {
+            token_manager,
             model,
             max_tokens,
+        }
+    }
+
+    fn build_config(&self, session_token: String) -> OpenAiCompatConfig {
+        let mut extra_headers = HashMap::new();
+        extra_headers.insert(
+            "copilot-integration-id".to_string(),
+            "vscode-chat".to_string(),
+        );
+        extra_headers.insert("editor-version".to_string(), EDITOR_VERSION.to_string());
+        extra_headers.insert(
+            "editor-plugin-version".to_string(),
+            PLUGIN_VERSION.to_string(),
+        );
+        extra_headers.insert(
+            "openai-intent".to_string(),
+            "conversation-panel".to_string(),
+        );
+        extra_headers.insert("x-request-id".to_string(), uuid::Uuid::new_v4().to_string());
+
+        OpenAiCompatConfig {
+            base_url: COPILOT_BASE_URL.to_string(),
+            api_key: session_token,
+            model: self.model.clone(),
+            max_tokens: self.max_tokens,
             extra_headers,
             use_think_tags: false,
             strip_schema: true,
-        };
-        Self {
-            base: OpenAiCompatBase::new(config),
+            supports_images: true,
         }
     }
 }
@@ -59,23 +78,29 @@ impl Provider for GitHubCopilotProvider {
         params: StreamParams,
         tx: mpsc::Sender<StreamEvent>,
     ) -> anyhow::Result<()> {
-        self.base.stream(params, tx).await
+        let token = self.token_manager.get_token().await?;
+        let config = self.build_config(token);
+        let base = OpenAiCompatBase::new(config);
+        base.stream(params, tx).await
     }
 }
 
 // ── Model listing ──────────────────────────────────────────────────────────
 
 use anyhow::Result;
-use reqwest::Client;
 use serde::Deserialize;
 
-pub async fn fetch_github_copilot_models(copilot_token: &str) -> Result<Vec<String>> {
-    let client = Client::new();
+pub async fn fetch_github_copilot_models(
+    token_manager: &CopilotTokenManager,
+) -> Result<Vec<String>> {
+    let token = token_manager.get_token().await?;
+    let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{COPILOT_BASE_URL}/v1/models"))
-        .header("authorization", format!("Bearer {copilot_token}"))
-        .header("Editor-Version", "lukan/0.1.0")
-        .header("Editor-Plugin-Version", "lukan/0.1.0")
+        .get(format!("{COPILOT_BASE_URL}/models"))
+        .header("authorization", format!("Bearer {token}"))
+        .header("copilot-integration-id", "vscode-chat")
+        .header("editor-version", EDITOR_VERSION)
+        .header("editor-plugin-version", PLUGIN_VERSION)
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await?;

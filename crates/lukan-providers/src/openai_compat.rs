@@ -138,6 +138,8 @@ pub struct OpenAiCompatConfig {
     pub use_think_tags: bool,
     /// Whether to strip advanced schema keywords (for servers that don't support them).
     pub strip_schema: bool,
+    /// Whether this model supports image inputs.
+    pub supports_images: bool,
 }
 
 /// Shared OpenAI-compatible streaming implementation.

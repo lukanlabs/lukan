@@ -123,7 +123,8 @@ pub async fn fetch_provider_models(Path(provider): Path<String>) -> impl IntoRes
                     .collect()
             }),
         ProviderName::GithubCopilot => {
-            lukan_providers::github_copilot::fetch_github_copilot_models(&api_key)
+            let mgr = lukan_providers::copilot_token::CopilotTokenManager::new(api_key);
+            lukan_providers::github_copilot::fetch_github_copilot_models(&mgr)
                 .await
                 .map(|m| {
                     m.into_iter()

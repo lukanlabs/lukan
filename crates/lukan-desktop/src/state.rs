@@ -118,6 +118,11 @@ impl ChatState {
             planner_answer_rx: Some(planner_answer_rx),
             browser_tools: has_browser,
             skip_session_save: false,
+            vision_provider: lukan_providers::create_vision_provider(
+                config.config.vision_model.as_deref(),
+                &config.credentials,
+            )
+            .map(Arc::from),
         };
 
         let mut agent = AgentLoop::new(agent_config).await?;
@@ -192,6 +197,11 @@ impl ChatState {
             planner_answer_rx: Some(planner_answer_rx),
             browser_tools: has_browser,
             skip_session_save: false,
+            vision_provider: lukan_providers::create_vision_provider(
+                config.config.vision_model.as_deref(),
+                &config.credentials,
+            )
+            .map(Arc::from),
         };
 
         let mut agent = AgentLoop::load_session(agent_config, session_id).await?;

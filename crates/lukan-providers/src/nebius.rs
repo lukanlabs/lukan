@@ -26,6 +26,7 @@ impl NebiusProvider {
             extra_headers: HashMap::new(),
             use_think_tags: true, // DeepSeek models use <think> tags
             strip_schema: true,
+            supports_images: false,
         };
         Self {
             base: OpenAiCompatBase::new(config),

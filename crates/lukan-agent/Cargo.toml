@@ -20,3 +20,7 @@ rand.workspace = true
 tokio-tungstenite.workspace = true
 tokio-util.workspace = true
 globset.workspace = true
+regex.workspace = true
+image.workspace = true
+reqwest.workspace = true
+base64.workspace = true

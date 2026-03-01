@@ -108,7 +108,13 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
         let idx: usize = input.trim().parse().unwrap_or(0);
         if idx >= 1 && idx <= providers.len() {
             let (id, _) = providers[idx - 1];
-            config.provider = serde_json::from_value(serde_json::Value::String(id.to_string()))?;
+            let new_provider: ProviderName =
+                serde_json::from_value(serde_json::Value::String(id.to_string()))?;
+            // Clear stale model from previous provider
+            if config.provider != new_provider {
+                config.model = None;
+            }
+            config.provider = new_provider;
             println!("  {GREEN}✓{RESET} Provider set to {BOLD}{id}{RESET}");
         } else {
             println!("  {YELLOW}⚠{RESET} Invalid selection, keeping {BOLD}{current_str}{RESET}");

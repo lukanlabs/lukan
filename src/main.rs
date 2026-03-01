@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing::info;
 
-use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, ResolvedConfig};
+use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig};
 use lukan_plugins::PluginManager;
 use lukan_providers::create_provider;
 use lukan_tui::app::App;
@@ -484,8 +484,13 @@ async fn run_web(provider_override: Option<String>, model_override: Option<Strin
 
     // Apply CLI overrides
     if let Some(p) = provider_override {
-        config.provider = serde_json::from_value(serde_json::Value::String(p))
-            .context("Invalid provider name. Valid: anthropic, nebius, fireworks, github-copilot, openai-codex, zai, openai-compatible")?;
+        let new_provider: ProviderName = serde_json::from_value(serde_json::Value::String(p))
+            .context("Invalid provider name. Valid: anthropic, nebius, fireworks, github-copilot, openai-codex, zai, ollama-cloud, openai-compatible")?;
+        // When switching provider via CLI without --model, reset to the new provider's default
+        if config.provider != new_provider && model_override.is_none() {
+            config.model = None;
+        }
+        config.provider = new_provider;
     }
     if let Some(m) = model_override {
         config.model = Some(m);
@@ -671,8 +676,13 @@ async fn run_chat(
 
     // Apply CLI overrides
     if let Some(p) = provider_override {
-        config.provider = serde_json::from_value(serde_json::Value::String(p))
-            .context("Invalid provider name. Valid: anthropic, nebius, fireworks, github-copilot, openai-codex, zai, openai-compatible")?;
+        let new_provider: ProviderName = serde_json::from_value(serde_json::Value::String(p))
+            .context("Invalid provider name. Valid: anthropic, nebius, fireworks, github-copilot, openai-codex, zai, ollama-cloud, openai-compatible")?;
+        // When switching provider via CLI without --model, reset to the new provider's default
+        if config.provider != new_provider && model_override.is_none() {
+            config.model = None;
+        }
+        config.provider = new_provider;
     }
     if let Some(m) = model_override {
         config.model = Some(m);

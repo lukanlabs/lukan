@@ -8,6 +8,7 @@ import type {
   TurnComplete,
   PlannerQuestion,
   PlanTask,
+  TaskInfo,
   ToolApprovalRequest,
 } from "../lib/types";
 import {
@@ -38,7 +39,9 @@ export type StreamingBlock =
   | { type: "text"; id: string; text: string }
   | { type: "thinking"; id: string; text: string }
   | { type: "tool"; id: string; tool: ToolStatus }
-  | { type: "approval"; id: string; tools: ToolApprovalRequest[] };
+  | { type: "approval"; id: string; tools: ToolApprovalRequest[] }
+  | { type: "plan"; id: string; plan: PendingPlanReview }
+  | { type: "question"; id: string; question: PendingQuestion };
 
 export interface PendingApproval {
   tools: ToolApprovalRequest[];
@@ -73,6 +76,7 @@ export interface ChatState {
   error: string | null;
   sessionList: SessionSummary[] | null;
   toolImages: Record<string, string>;
+  tasks: TaskInfo[];
 }
 
 // ── Hook ─────────────────────────────────────────────────────────────
@@ -95,6 +99,7 @@ export function useChat() {
     error: null,
     sessionList: null,
     toolImages: {},
+    tasks: [],
   });
 
   const blocksRef = useRef<StreamingBlock[]>([]);
@@ -214,24 +219,37 @@ export function useChat() {
           setState((s) => ({ ...s, pendingApproval: { tools: event.tools } }));
           break;
 
-        case "planner_question":
+        case "planner_question": {
+          const questionData: PendingQuestion = { id: event.id, questions: event.questions };
+          blocksRef.current.push({
+            type: "question",
+            id: `question-${blockIdCounter.current++}`,
+            question: questionData,
+          } as StreamingBlock);
+          flushRender();
           setState((s) => ({
             ...s,
-            pendingQuestion: { id: event.id, questions: event.questions },
+            pendingQuestion: questionData,
           }));
           break;
+        }
 
-        case "plan_review":
-          setState((s) => ({
-            ...s,
-            pendingPlanReview: {
-              id: event.id,
-              title: event.title,
-              plan: event.plan,
-              tasks: event.tasks,
-            },
-          }));
+        case "plan_review": {
+          const planData: PendingPlanReview = {
+            id: event.id,
+            title: event.title,
+            plan: event.plan,
+            tasks: event.tasks,
+          };
+          blocksRef.current.push({
+            type: "plan",
+            id: `plan-${blockIdCounter.current++}`,
+            plan: planData,
+          } as StreamingBlock);
+          flushRender();
+          setState((s) => ({ ...s, pendingPlanReview: planData }));
           break;
+        }
 
         case "usage":
           setState((s) => ({
@@ -248,6 +266,10 @@ export function useChat() {
 
         case "mode_changed":
           setState((s) => ({ ...s, permissionMode: event.mode as PermissionMode }));
+          break;
+
+        case "tasks_update":
+          setState((s) => ({ ...s, tasks: event.tasks }));
           break;
 
         case "error":
@@ -452,20 +474,34 @@ export function useChat() {
     setState((s) => ({ ...s, pendingApproval: null }));
   }, [clearApprovalBlocks]);
 
+  const clearQuestionBlocks = useCallback(() => {
+    blocksRef.current = blocksRef.current.filter((b) => b.type !== "question");
+    flushRender();
+  }, [flushRender]);
+
   const answerQuestion = useCallback((answer: string) => {
     api.answerQuestion(answer).catch(() => {});
+    clearQuestionBlocks();
     setState((s) => ({ ...s, pendingQuestion: null }));
-  }, []);
+  }, [clearQuestionBlocks]);
 
-  const acceptPlan = useCallback((tasks?: Array<{ title: string; detail: string }>) => {
+  const clearPlanBlocks = useCallback(() => {
+    blocksRef.current = blocksRef.current.filter((b) => b.type !== "plan");
+    flushRender();
+  }, [flushRender]);
+
+  const acceptPlan = useCallback((tasks?: Array<{ title: string; detail: string }>, mode?: PermissionMode) => {
     api.acceptPlan(tasks).catch(() => {});
-    setState((s) => ({ ...s, pendingPlanReview: null }));
-  }, []);
+    if (mode) api.setPermissionMode(mode).catch(() => {});
+    clearPlanBlocks();
+    setState((s) => ({ ...s, pendingPlanReview: null, permissionMode: mode ?? s.permissionMode }));
+  }, [clearPlanBlocks]);
 
   const rejectPlan = useCallback((feedback: string) => {
     api.rejectPlan(feedback).catch(() => {});
+    clearPlanBlocks();
     setState((s) => ({ ...s, pendingPlanReview: null }));
-  }, []);
+  }, [clearPlanBlocks]);
 
   const doListSessions = useCallback(async () => {
     try {
@@ -494,6 +530,7 @@ export function useChat() {
         },
         contextSize: init.contextSize ?? 0,
         sessionList: null,
+        tasks: [],
       }));
     } catch (e) {
       setState((s) => ({ ...s, error: `Failed to load session: ${e}` }));
@@ -510,6 +547,7 @@ export function useChat() {
         messages: [],
         streamingBlocks: [],
         toolImages: {},
+        tasks: [],
         tokenUsage: { input: 0, output: 0, cacheCreation: null, cacheRead: null },
         contextSize: 0,
       }));

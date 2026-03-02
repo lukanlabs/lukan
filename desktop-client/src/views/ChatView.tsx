@@ -10,8 +10,9 @@ import { StreamingText } from "../components/chat/StreamingText";
 import { ToolCallCard } from "../components/chat/ToolCallCard";
 import { ChatInput } from "../components/chat/ChatInput";
 import { InlineApproval } from "../components/chat/InlineApproval";
-import { PlanReviewer } from "../components/chat/PlanReviewer";
+import { InlinePlanReview } from "../components/chat/InlinePlanReview";
 import { QuestionPicker } from "../components/chat/QuestionPicker";
+import { TaskPanel } from "../components/chat/TaskPanel";
 
 function buildToolResultsMap(
   messages: Message[],
@@ -190,6 +191,23 @@ export default function ChatView() {
                                 onDenyAll={chat.denyAllTools}
                               />
                             );
+                          case "plan":
+                            return (
+                              <InlinePlanReview
+                                key={block.id}
+                                plan={block.plan}
+                                onAccept={chat.acceptPlan}
+                                onReject={chat.rejectPlan}
+                              />
+                            );
+                          case "question":
+                            return (
+                              <QuestionPicker
+                                key={block.id}
+                                questions={block.question.questions}
+                                onSubmit={chat.answerQuestion}
+                              />
+                            );
                           default:
                             return null;
                         }
@@ -240,25 +258,11 @@ export default function ChatView() {
             onSetPermissionMode={chat.setPermissionMode}
           />
         </div>
+
+        {/* Task panel */}
+        {chat.tasks.length > 0 && <TaskPanel tasks={chat.tasks} />}
       </div>
 
-      {/* Modals */}
-      {chat.pendingPlanReview && (
-        <PlanReviewer
-          title={chat.pendingPlanReview.title}
-          plan={chat.pendingPlanReview.plan}
-          tasks={chat.pendingPlanReview.tasks}
-          onAccept={chat.acceptPlan}
-          onReject={chat.rejectPlan}
-        />
-      )}
-
-      {chat.pendingQuestion && (
-        <QuestionPicker
-          questions={chat.pendingQuestion.questions}
-          onSubmit={chat.answerQuestion}
-        />
-      )}
     </div>
   );
 }

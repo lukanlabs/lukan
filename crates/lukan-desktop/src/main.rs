@@ -112,6 +112,7 @@ fn main() {
             commands::chat::load_session,
             commands::chat::new_session,
             commands::chat::set_permission_mode,
+            commands::chat::list_tasks,
             // Terminal
             commands::terminal::terminal_create,
             commands::terminal::terminal_input,

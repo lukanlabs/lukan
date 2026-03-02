@@ -9,7 +9,7 @@ use lukan_core::config::types::{PermissionMode, PermissionsConfig};
 use lukan_core::models::checkpoints::{Checkpoint, FileSnapshot};
 use lukan_core::models::events::{
     ApprovalResponse, PlanReviewResponse, PlanTask, PlannerQuestionItem, StopReason, StreamEvent,
-    ToolApprovalRequest,
+    TaskInfo, ToolApprovalRequest,
 };
 use lukan_core::models::messages::{ContentBlock, ImageSource, Message, MessageContent, Role};
 use lukan_core::models::sessions::ChatSession;
@@ -1155,6 +1155,23 @@ impl AgentLoop {
                     })
                     .await;
 
+                // Emit updated task list after task tool calls
+                if matches!(tool.name.as_str(), "TaskAdd" | "TaskUpdate") && !result.is_error {
+                    let all_tasks = lukan_tools::tasks::read_all_tasks(&self.cwd).await;
+                    let _ = event_tx
+                        .send(StreamEvent::TasksUpdate {
+                            tasks: all_tasks
+                                .iter()
+                                .map(|t| TaskInfo {
+                                    id: t.id,
+                                    title: t.title.clone(),
+                                    status: t.status.label().to_string(),
+                                })
+                                .collect(),
+                        })
+                        .await;
+                }
+
                 // Track loaded skills for prompt injection
                 if tool.name == "LoadSkill"
                     && !result.is_error
@@ -1416,6 +1433,21 @@ impl AgentLoop {
                         let task_titles: Vec<String> =
                             final_tasks.iter().map(|t| t.title.clone()).collect();
                         lukan_tools::tasks::create_tasks_from_plan(&cwd, &task_titles).await;
+
+                        // Emit task list to frontend
+                        let all_tasks = lukan_tools::tasks::read_all_tasks(&cwd).await;
+                        let _ = event_tx
+                            .send(StreamEvent::TasksUpdate {
+                                tasks: all_tasks
+                                    .iter()
+                                    .map(|t| TaskInfo {
+                                        id: t.id,
+                                        title: t.title.clone(),
+                                        status: t.status.label().to_string(),
+                                    })
+                                    .collect(),
+                            })
+                            .await;
 
                         // Keep current permission mode; user can cycle modes manually.
                         // Rebuild system prompt with latest tasks + plan context.

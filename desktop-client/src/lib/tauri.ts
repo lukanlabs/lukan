@@ -18,6 +18,7 @@ import type {
   SessionSummary,
   SystemEvent,
   ToolApprovalRequest,
+  TaskInfo,
   TerminalSessionInfo,
   TerminalOutputEvent,
   BgProcessInfo,
@@ -172,6 +173,8 @@ export const newSession = () =>
   getTransport().call<InitResponse>("new_session");
 export const setPermissionMode = (mode: string) =>
   getTransport().call<void>("set_permission_mode", { mode });
+export const listTasks = () =>
+  getTransport().call<TaskInfo[]>("list_tasks");
 
 // Terminal
 export const terminalCreate = (cwd?: string, cols?: number, rows?: number) =>

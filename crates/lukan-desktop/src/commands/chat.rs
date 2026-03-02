@@ -20,6 +20,14 @@ use crate::state::ChatState;
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskInfoJs {
+    pub id: u32,
+    pub title: String,
+    pub status: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct InitResponse {
     pub session_id: String,
     pub messages: serde_json::Value,
@@ -583,4 +591,18 @@ pub async fn set_permission_mode(state: State<'_, ChatState>, mode: String) -> R
     let _ = state.permission_mode.send(parsed);
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_tasks() -> Result<Vec<TaskInfoJs>, String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let tasks = lukan_tools::tasks::read_all_tasks(&cwd).await;
+    Ok(tasks
+        .iter()
+        .map(|t| TaskInfoJs {
+            id: t.id,
+            title: t.title.clone(),
+            status: t.status.label().to_string(),
+        })
+        .collect())
 }

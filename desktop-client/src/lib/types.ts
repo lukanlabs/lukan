@@ -364,6 +364,7 @@ export type StreamEvent =
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheCreationTokens?: number; cacheReadTokens?: number }
   | { type: "message_end"; stopReason: StopReason }
   | { type: "mode_changed"; mode: string }
+  | { type: "tasks_update"; tasks: TaskInfo[] }
   | { type: "error"; error: string };
 
 export interface PlannerQuestion {
@@ -376,6 +377,12 @@ export interface PlannerQuestion {
 export interface PlanTask {
   title: string;
   detail: string;
+}
+
+export interface TaskInfo {
+  id: number;
+  title: string;
+  status: "pending" | "in_progress" | "done";
 }
 
 // Session types

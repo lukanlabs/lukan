@@ -13,7 +13,9 @@ export type StreamingLikeBlock =
   | { type: "text"; id: string; text: string }
   | { type: "thinking"; id: string; text: string }
   | { type: "tool"; tool: StreamingToolData }
-  | { type: "approval"; id: string; tools: unknown[] };
+  | { type: "approval"; id: string; tools: unknown[] }
+  | { type: "plan"; id: string; plan: unknown }
+  | { type: "question"; id: string; question: unknown };
 
 export function appendTextDelta<T extends StreamingLikeBlock>(
   blocks: T[],

@@ -17,6 +17,14 @@ pub struct PlanTask {
     pub detail: String,
 }
 
+/// Lightweight task info for streaming to the frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskInfo {
+    pub id: u32,
+    pub title: String,
+    pub status: String,
+}
+
 /// A question item for the PlannerQuestion tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -154,6 +162,9 @@ pub enum StreamEvent {
 
     /// A queued user message was injected mid-turn
     QueuedMessageInjected { text: String },
+
+    /// Updated task list (emitted after plan acceptance or task tool calls)
+    TasksUpdate { tasks: Vec<TaskInfo> },
 }
 
 /// A tool call that needs user approval

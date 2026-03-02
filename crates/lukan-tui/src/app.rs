@@ -628,6 +628,7 @@ impl App {
                 &self.config.credentials,
             )
             .map(std::sync::Arc::from),
+            extra_env: self.config.credentials.flatten_skill_env(),
         };
 
         match AgentLoop::new(config).await {
@@ -686,6 +687,7 @@ impl App {
             browser_tools: false,
             skip_session_save: false,
             vision_provider: None,
+            extra_env: self.config.credentials.flatten_skill_env(),
         };
 
         match AgentLoop::new(config).await {
@@ -2240,7 +2242,8 @@ impl App {
                                                     .find(|e| e.pid == pid)
                                                     .map(|e| {
                                                         if e.command.len() > 40 {
-                                                            format!("{}…", &e.command[..39])
+                                                            let end = e.command.floor_char_boundary(39);
+                                                            format!("{}…", &e.command[..end])
                                                         } else {
                                                             e.command.clone()
                                                         }
@@ -2743,7 +2746,8 @@ impl App {
                                                         .unwrap_or_else(|| "?".to_string())
                                                 };
                                                 let task_preview = if a.task.len() > 60 {
-                                                    format!("{}...", &a.task[..57])
+                                                    let end = a.task.floor_char_boundary(57);
+                                                    format!("{}...", &a.task[..end])
                                                 } else {
                                                     a.task.clone()
                                                 };
@@ -3622,10 +3626,12 @@ impl App {
 
                     // Truncate if too large
                     let truncated = if combined.len() > 30000 {
+                        let start_end = combined.floor_char_boundary(15000);
+                        let tail_start = combined.floor_char_boundary(combined.len() - 15000);
                         format!(
                             "{}\n\n... (truncated) ...\n\n{}",
-                            &combined[..15000],
-                            &combined[combined.len() - 15000..]
+                            &combined[..start_end],
+                            &combined[tail_start..]
                         )
                     } else {
                         combined
@@ -3833,6 +3839,7 @@ impl App {
                 &self.config.credentials,
             )
             .map(std::sync::Arc::from),
+            extra_env: self.config.credentials.flatten_skill_env(),
         };
 
         match AgentLoop::load_session(config, &session_id).await {
@@ -4903,7 +4910,8 @@ fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
         "Explore" | "SubAgent" => {
             let task = input.get("task").and_then(|v| v.as_str()).unwrap_or("?");
             if task.len() > 80 {
-                format!("{}…", &task[..80])
+                let end = task.floor_char_boundary(80);
+                format!("{}…", &task[..end])
             } else {
                 task.to_string()
             }
@@ -4912,7 +4920,8 @@ fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
             // Fallback: compact JSON
             let s = serde_json::to_string(input).unwrap_or_default();
             if s.len() > 200 {
-                format!("{}...", &s[..200])
+                let end = s.floor_char_boundary(200);
+                format!("{}...", &s[..end])
             } else {
                 s
             }
@@ -5601,7 +5610,8 @@ impl Widget for ApprovalPromptWidget<'_> {
                 "{}{}",
                 tool.name,
                 if summary.len() > 60 {
-                    format!("({}...)", &summary[..57])
+                    let end = summary.floor_char_boundary(57);
+                    format!("({}...)", &summary[..end])
                 } else {
                     format!("({summary})")
                 }

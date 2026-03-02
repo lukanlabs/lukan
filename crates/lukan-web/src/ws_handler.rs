@@ -1271,6 +1271,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
             &config.credentials,
         )
         .map(Arc::from),
+        extra_env: config.credentials.flatten_skill_env(),
     };
 
     AgentLoop::new(agent_config).await
@@ -1345,6 +1346,7 @@ async fn create_agent_with_session(
             &config.credentials,
         )
         .map(Arc::from),
+        extra_env: config.credentials.flatten_skill_env(),
     };
 
     AgentLoop::load_session(agent_config, session_id).await

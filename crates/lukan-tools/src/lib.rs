@@ -45,6 +45,8 @@ pub struct ToolContext {
     pub cancel: Option<CancellationToken>,
     /// Session ID for associating background processes with the chat session
     pub session_id: Option<String>,
+    /// Extra environment variables injected into Bash commands (e.g. skill credentials)
+    pub extra_env: HashMap<String, String>,
 }
 
 impl ToolContext {
@@ -261,6 +263,7 @@ mod tests {
             allowed_paths: allowed.map(|v| v.into_iter().map(PathBuf::from).collect()),
             cancel: None,
             session_id: None,
+            extra_env: HashMap::new(),
         }
     }
 

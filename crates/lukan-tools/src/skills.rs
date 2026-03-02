@@ -138,9 +138,15 @@ impl Tool for LoadSkillTool {
             .ok_or_else(|| anyhow::anyhow!("Missing required field: name"))?;
 
         match load_skill_content(&ctx.cwd, folder).await {
-            Some(content) => Ok(ToolResult::success(format!(
-                "[Skill loaded: {folder}]\n\n{content}"
-            ))),
+            Some(content) => {
+                // Replace {baseDir} with the skill's directory path so
+                // OpenClaw scripts that reference {baseDir}/scripts/... work.
+                let skill_dir = ctx.cwd.join(".lukan").join("skills").join(folder);
+                let content = content.replace("{baseDir}", &skill_dir.to_string_lossy());
+                Ok(ToolResult::success(format!(
+                    "[Skill loaded: {folder}]\n\n{content}"
+                )))
+            }
             None => Ok(ToolResult::error(format!(
                 "Skill \"{folder}\" not found in .lukan/skills/."
             ))),
@@ -198,6 +204,47 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "Test Skill");
         assert_eq!(skills[0].folder, "test-skill");
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
+    #[tokio::test]
+    async fn basedir_replacement() {
+        use std::collections::HashSet;
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let tmp = std::env::temp_dir().join("lukan-skills-test-basedir");
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        let skill_dir = tmp.join(".lukan").join("skills").join("my-skill");
+        tokio::fs::create_dir_all(&skill_dir).await.unwrap();
+        let content = "---\nname: My Skill\ndescription: Desc\n---\nRun {baseDir}/scripts/run.sh";
+        tokio::fs::write(skill_dir.join("SKILL.md"), content)
+            .await
+            .unwrap();
+
+        let tool = LoadSkillTool;
+        let ctx = ToolContext {
+            progress_tx: None,
+            event_tx: None,
+            tool_call_id: None,
+            read_files: Arc::new(Mutex::new(HashSet::new())),
+            cwd: tmp.clone(),
+            bg_signal: None,
+            sandbox: None,
+            allowed_paths: None,
+            cancel: None,
+            session_id: None,
+            extra_env: std::collections::HashMap::new(),
+        };
+        let input = serde_json::json!({"name": "my-skill"});
+        let result = tool.execute(input, &ctx).await.unwrap();
+        let expected = format!("{}/scripts/run.sh", skill_dir.display());
+        assert!(
+            result.content.contains(&expected),
+            "Expected baseDir replacement: {expected}\nGot: {}",
+            result.content
+        );
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }

@@ -586,6 +586,7 @@ async fn plugin_start_foreground(
             &resolved.credentials,
         )
         .map(Arc::from),
+        extra_env: resolved.credentials.flatten_skill_env(),
     };
 
     println!(

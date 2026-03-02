@@ -416,6 +416,7 @@ async fn run_sub_agent(
                     allowed_paths: ap,
                     cancel: None,
                     session_id: None,
+                    extra_env: HashMap::new(),
                 };
                 match reg.execute(&n, inp, &ctx).await {
                     Ok(r) => r,
@@ -707,7 +708,11 @@ fn get_display_arg(name: &str, input: &serde_json::Value) -> String {
         "WebFetch" => s("url"),
         _ => {
             let j = input.to_string();
-            if j.len() > 60 { j[..60].to_string() } else { j }
+            if j.len() > 60 {
+                j[..j.floor_char_boundary(60)].to_string()
+            } else {
+                j
+            }
         }
     }
 }
@@ -740,7 +745,8 @@ fn summarize_result(name: &str, content: &str, is_error: bool) -> String {
         _ => {
             let first = content.lines().next().unwrap_or("(empty)").trim();
             if first.len() > 60 {
-                format!("{}…", &first[..60])
+                let end = first.floor_char_boundary(60);
+                format!("{}…", &first[..end])
             } else {
                 first.to_string()
             }
@@ -882,7 +888,7 @@ pub async fn run_explore(
 
                             // Track active tool for progress display
                             let arg = get_display_arg(name, input);
-                            let truncated = if arg.len() > 60 { arg[..60].to_string() + "…" } else { arg };
+                            let truncated = if arg.len() > 60 { arg[..arg.floor_char_boundary(60)].to_string() + "…" } else { arg };
                             active_tools.insert(id.clone(), (name.clone(), truncated));
 
                             // Emit progress showing new tool starting
@@ -989,6 +995,7 @@ pub async fn run_explore(
                         allowed_paths: ap,
                         cancel: None,
                         session_id: None,
+                        extra_env: HashMap::new(),
                     };
                     match reg.execute(&n, inp, &ctx).await {
                         Ok(r) => r,

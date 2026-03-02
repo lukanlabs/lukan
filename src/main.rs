@@ -16,6 +16,7 @@ mod plugin_config;
 mod plugin_exec;
 mod sandbox_cmd;
 mod setup;
+mod skills;
 mod update;
 mod worker;
 
@@ -96,6 +97,11 @@ enum Commands {
     Plugin {
         #[command(subcommand)]
         command: plugin::PluginCommands,
+    },
+    /// Skill management (list, remove, env)
+    Skill {
+        #[command(subcommand)]
+        command: skills::SkillCommands,
     },
     /// OS-level sandbox management (bwrap)
     Sandbox {
@@ -179,6 +185,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Plugin { command }) => {
             plugin::handle_plugin_command(command).await?;
+        }
+        Some(Commands::Skill { command }) => {
+            skills::handle_skill_command(command).await?;
         }
         Some(Commands::Update) => {
             update::run_update().await?;

@@ -158,6 +158,7 @@ impl ChatState {
                 &config.credentials,
             )
             .map(Arc::from),
+            extra_env: config.credentials.flatten_skill_env(),
         };
 
         let mut agent = AgentLoop::new(agent_config).await?;
@@ -237,6 +238,7 @@ impl ChatState {
                 &config.credentials,
             )
             .map(Arc::from),
+            extra_env: config.credentials.flatten_skill_env(),
         };
 
         let mut agent = AgentLoop::load_session(agent_config, session_id).await?;

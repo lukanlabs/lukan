@@ -463,6 +463,7 @@ async fn run_worker(
         browser_tools: false,
         skip_session_save: true,
         vision_provider: None,
+        extra_env: config.credentials.flatten_skill_env(),
     };
 
     // Create agent and run

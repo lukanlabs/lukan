@@ -143,6 +143,21 @@ pub struct Credentials {
     pub ollama_cloud_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openai_compatible_api_key: Option<String>,
+    /// Per-skill environment variables (e.g. {"nano-banana-pro": {"GEMINI_API_KEY": "..."}})
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub skill_credentials: HashMap<String, HashMap<String, String>>,
+}
+
+impl Credentials {
+    /// Flatten all per-skill env vars into a single map for injection into Bash.
+    /// If two skills define the same var name the last one (alphabetically) wins.
+    pub fn flatten_skill_env(&self) -> HashMap<String, String> {
+        let mut out = HashMap::new();
+        for vars in self.skill_credentials.values() {
+            out.extend(vars.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+        out
+    }
 }
 
 /// Config + credentials resolved together

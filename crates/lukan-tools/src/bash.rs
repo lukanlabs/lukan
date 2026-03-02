@@ -138,6 +138,7 @@ impl Tool for BashTool {
                 .arg(command)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("LUKAN_AGENT", "1")
+                .envs(&ctx.extra_env)
                 .current_dir(&ctx.cwd)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -153,6 +154,7 @@ impl Tool for BashTool {
                 .arg(command)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("LUKAN_AGENT", "1")
+                .envs(&ctx.extra_env)
                 .current_dir(&ctx.cwd)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
@@ -342,6 +344,7 @@ impl BashTool {
                 .arg(command)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("LUKAN_AGENT", "1")
+                .envs(&ctx.extra_env)
                 .current_dir(&ctx.cwd)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -352,6 +355,7 @@ impl BashTool {
                 .arg(command)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("LUKAN_AGENT", "1")
+                .envs(&ctx.extra_env)
                 .current_dir(&ctx.cwd)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());

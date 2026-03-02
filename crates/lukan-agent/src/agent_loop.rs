@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -78,6 +78,9 @@ pub struct AgentConfig {
     pub skip_session_save: bool,
     /// Optional vision-capable provider for describing images on non-vision models
     pub vision_provider: Option<Arc<dyn Provider>>,
+    /// Extra environment variables injected into Bash commands (e.g. skill credentials)
+    #[allow(dead_code)]
+    pub extra_env: HashMap<String, String>,
 }
 
 /// Pending tool call accumulated from stream events
@@ -130,6 +133,8 @@ pub struct AgentLoop {
     skip_session_save: bool,
     /// Optional vision-capable provider for describing images on non-vision models
     vision_provider: Option<Arc<dyn Provider>>,
+    /// Extra environment variables injected into Bash commands (e.g. skill credentials)
+    extra_env: HashMap<String, String>,
 }
 
 /// A system event from a plugin, queued for injection into the agent context.
@@ -217,6 +222,7 @@ impl AgentLoop {
             disabled_tools: HashSet::new(),
             skip_session_save,
             vision_provider: config.vision_provider,
+            extra_env: config.extra_env,
         })
     }
 
@@ -300,6 +306,7 @@ impl AgentLoop {
             disabled_tools: HashSet::new(),
             skip_session_save,
             vision_provider: config.vision_provider,
+            extra_env: config.extra_env,
         })
     }
 
@@ -1757,6 +1764,7 @@ impl AgentLoop {
             let allowed_paths = self.allowed_paths.clone();
             let cancel_token = cancel.cloned();
             let session_id = Some(self.session.id.clone());
+            let extra_env = self.extra_env.clone();
 
             handles.push(tokio::spawn(async move {
                 // Send progress start
@@ -1779,6 +1787,7 @@ impl AgentLoop {
                     allowed_paths,
                     cancel: cancel_token,
                     session_id,
+                    extra_env,
                 };
 
                 match registry.execute(&name, input, &ctx).await {
@@ -1841,7 +1850,8 @@ fn format_messages_for_context(messages: &[Message]) -> String {
                         ContentBlock::ToolUse { name, input, .. } => {
                             let input_str = serde_json::to_string(input).unwrap_or_default();
                             let truncated = if input_str.len() > 500 {
-                                format!("{}...", &input_str[..500])
+                                let end = input_str.floor_char_boundary(500);
+                                format!("{}...", &input_str[..end])
                             } else {
                                 input_str
                             };
@@ -1857,7 +1867,8 @@ fn format_messages_for_context(messages: &[Message]) -> String {
                             };
                             // Truncate long tool results
                             let truncated = if content.len() > 2000 {
-                                format!("{}...(truncated)", &content[..2000])
+                                let end = content.floor_char_boundary(2000);
+                                format!("{}...(truncated)", &content[..end])
                             } else {
                                 content.clone()
                             };

@@ -37,9 +37,24 @@ impl Tool for GrepTool {
                     "type": "string",
                     "description": "Glob pattern to filter files (e.g. \"*.rs\", \"*.{ts,tsx}\")"
                 },
+                "output_mode": {
+                    "type": "string",
+                    "enum": ["content", "files_with_matches", "count"],
+                    "description": "Output format: \"content\" shows matching lines, \"files_with_matches\" shows file paths, \"count\" shows match counts (default: \"files_with_matches\")",
+                    "default": "files_with_matches"
+                },
+                "type": {
+                    "type": "string",
+                    "description": "File type filter (e.g. \"js\", \"py\", \"rust\"). Maps to rg --type."
+                },
                 "case_insensitive": {
                     "type": "boolean",
                     "description": "Case insensitive search (default: false)",
+                    "default": false
+                },
+                "multiline": {
+                    "type": "boolean",
+                    "description": "Enable multiline matching where patterns can span lines (default: false)",
                     "default": false
                 },
                 "max_results": {
@@ -49,7 +64,20 @@ impl Tool for GrepTool {
                 },
                 "context_lines": {
                     "type": "integer",
-                    "description": "Number of context lines around each match"
+                    "description": "Number of context lines around each match (content mode only)"
+                },
+                "before_context": {
+                    "type": "integer",
+                    "description": "Number of lines to show before each match (content mode only)"
+                },
+                "after_context": {
+                    "type": "integer",
+                    "description": "Number of lines to show after each match (content mode only)"
+                },
+                "head_limit": {
+                    "type": "integer",
+                    "description": "Limit output to first N lines/entries. 0 = unlimited (default: 0)",
+                    "default": 0
                 }
             },
             "required": ["pattern"]
@@ -102,8 +130,17 @@ impl Tool for GrepTool {
         };
 
         let glob_pattern = input.get("glob").and_then(|v| v.as_str());
+        let output_mode = input
+            .get("output_mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("files_with_matches");
+        let file_type = input.get("type").and_then(|v| v.as_str());
         let case_insensitive = input
             .get("case_insensitive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let multiline = input
+            .get("multiline")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let max_results = input
@@ -111,14 +148,25 @@ impl Tool for GrepTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(50);
         let context_lines = input.get("context_lines").and_then(|v| v.as_u64());
+        let before_context = input.get("before_context").and_then(|v| v.as_u64());
+        let after_context = input.get("after_context").and_then(|v| v.as_u64());
+        let head_limit = input
+            .get("head_limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
 
         let opts = GrepOpts {
             pattern,
             path,
             glob_pattern,
+            output_mode,
+            file_type,
             case_insensitive,
+            multiline,
             max_results,
             context_lines,
+            before_context,
+            after_context,
             sensitive_patterns: &sensitive_patterns,
         };
 
@@ -133,6 +181,17 @@ impl Tool for GrepTool {
         };
 
         let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+
+        // Apply head_limit by truncating to first N lines
+        if head_limit > 0 {
+            let truncated: String = text.lines().take(head_limit).collect::<Vec<_>>().join("\n");
+            let was_truncated = text.lines().count() > head_limit;
+            text = truncated;
+            if was_truncated {
+                text.push_str("\n... (head_limit reached)");
+            }
+        }
+
         if text.len() > MAX_OUTPUT_BYTES {
             text.truncate(MAX_OUTPUT_BYTES);
             text.push_str("\n... (output truncated)");
@@ -150,9 +209,14 @@ struct GrepOpts<'a> {
     pattern: &'a str,
     path: &'a str,
     glob_pattern: Option<&'a str>,
+    output_mode: &'a str,
+    file_type: Option<&'a str>,
     case_insensitive: bool,
+    multiline: bool,
     max_results: u64,
     context_lines: Option<u64>,
+    before_context: Option<u64>,
+    after_context: Option<u64>,
     sensitive_patterns: &'a [String],
 }
 
@@ -161,14 +225,38 @@ async fn try_rg(
     cwd: &std::path::Path,
 ) -> anyhow::Result<std::process::Output> {
     let mut cmd = Command::new("rg");
-    cmd.arg("-n"); // line numbers
-    cmd.arg("--max-count").arg(opts.max_results.to_string());
+
+    match opts.output_mode {
+        "files_with_matches" => {
+            cmd.arg("-l");
+        }
+        "count" => {
+            cmd.arg("-c");
+        }
+        _ => {
+            // "content" mode — show line numbers and respect max-count
+            cmd.arg("-n");
+            cmd.arg("--max-count").arg(opts.max_results.to_string());
+            if let Some(b) = opts.before_context {
+                cmd.arg("-B").arg(b.to_string());
+            }
+            if let Some(a) = opts.after_context {
+                cmd.arg("-A").arg(a.to_string());
+            }
+            if let Some(ctx) = opts.context_lines {
+                cmd.arg("-C").arg(ctx.to_string());
+            }
+        }
+    }
 
     if opts.case_insensitive {
         cmd.arg("-i");
     }
-    if let Some(ctx) = opts.context_lines {
-        cmd.arg("-C").arg(ctx.to_string());
+    if opts.multiline {
+        cmd.arg("-U").arg("--multiline-dotall");
+    }
+    if let Some(ft) = opts.file_type {
+        cmd.arg("--type").arg(ft);
     }
     if let Some(glob) = opts.glob_pattern {
         cmd.arg("--glob").arg(glob);
@@ -198,14 +286,36 @@ async fn try_grep(
     cwd: &std::path::Path,
 ) -> anyhow::Result<std::process::Output> {
     let mut cmd = Command::new("grep");
-    cmd.arg("-rn");
-    cmd.arg("--max-count").arg(opts.max_results.to_string());
+
+    match opts.output_mode {
+        "files_with_matches" => {
+            cmd.arg("-rl");
+        }
+        "count" => {
+            cmd.arg("-rc");
+        }
+        _ => {
+            // "content" mode
+            cmd.arg("-rn");
+            cmd.arg("--max-count").arg(opts.max_results.to_string());
+            if let Some(b) = opts.before_context {
+                cmd.arg("-B").arg(b.to_string());
+            }
+            if let Some(a) = opts.after_context {
+                cmd.arg("-A").arg(a.to_string());
+            }
+            if let Some(ctx) = opts.context_lines {
+                cmd.arg("-C").arg(ctx.to_string());
+            }
+        }
+    }
 
     if opts.case_insensitive {
         cmd.arg("-i");
     }
 
     // Exclude sensitive patterns (gitignore-style)
+    // Note: --type and --multiline are not supported in grep fallback
     for sp in opts.sensitive_patterns {
         if let Some(dir) = sp.strip_suffix('/') {
             cmd.arg("--exclude-dir").arg(dir);

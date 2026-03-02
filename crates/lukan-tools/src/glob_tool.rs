@@ -19,7 +19,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "Find files matching a glob pattern. Returns paths sorted by modification time (newest first)."
+        "Find files matching a glob pattern. Returns paths sorted by modification time (newest first). IMPORTANT: Always use specific patterns like \"**/*.rs\", \"src/**/*.ts\", or \"**/Cargo.toml\". NEVER use overly broad patterns like \"**/*\", \"*\", or \"*/*\" — they waste tokens and return too many results. To understand project structure, use Bash(ls) instead."
     }
 
     fn input_schema(&self) -> serde_json::Value {

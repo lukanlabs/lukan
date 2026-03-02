@@ -285,4 +285,6 @@ pub struct PluginRunConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Handler script filename (e.g. "tools.py"). Defaults to "tools.js" if absent.
+    pub handler: Option<String>,
 }

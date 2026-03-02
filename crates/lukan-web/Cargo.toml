@@ -29,3 +29,4 @@ portable-pty.workspace = true
 uuid.workspace = true
 rust-embed.workspace = true
 mime_guess = "2"
+toml.workspace = true

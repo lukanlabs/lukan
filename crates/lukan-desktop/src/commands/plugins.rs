@@ -261,13 +261,29 @@ pub async fn restart_plugin(name: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_plugin_config(name: String) -> Result<serde_json::Value, String> {
     let path = LukanPaths::plugin_config(&name);
-    if !path.exists() {
-        return Ok(serde_json::json!({}));
+    let mut config: serde_json::Value = if path.exists() {
+        let content = tokio::fs::read_to_string(&path)
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    // Merge manifest-declared config fields so the UI always shows them
+    let manifest_path = LukanPaths::plugin_manifest(&name);
+    if let Ok(manifest_content) = tokio::fs::read_to_string(&manifest_path).await
+        && let Ok(manifest) =
+            toml::from_str::<lukan_core::models::plugin::PluginManifest>(&manifest_content)
+        && let Some(obj) = config.as_object_mut()
+    {
+        for key in manifest.config.keys() {
+            obj.entry(key as &str)
+                .or_insert(serde_json::Value::String(String::new()));
+        }
     }
-    let content = tokio::fs::read_to_string(&path)
-        .await
-        .map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| e.to_string())
+
+    Ok(config)
 }
 
 #[tauri::command]

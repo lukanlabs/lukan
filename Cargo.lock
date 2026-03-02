@@ -2557,6 +2557,7 @@ dependencies = [
  "tauri-build",
  "tokio",
  "tokio-util",
+ "toml 0.8.23",
  "uuid",
 ]
 
@@ -2695,6 +2696,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "toml 0.8.23",
  "tower-http",
  "tracing",
  "uuid",

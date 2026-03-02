@@ -300,17 +300,29 @@ pub async fn restart_plugin(Path(name): Path<String>) -> impl IntoResponse {
 /// GET /api/plugins/:name/config
 pub async fn get_plugin_config(Path(name): Path<String>) -> impl IntoResponse {
     let path = LukanPaths::plugin_config(&name);
-    if !path.exists() {
-        return Json(serde_json::json!({})).into_response();
-    }
-    match tokio::fs::read_to_string(&path).await {
-        Ok(content) => {
-            let val: serde_json::Value =
-                serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
-            Json(val).into_response()
+    let mut config: serde_json::Value = if path.exists() {
+        match tokio::fs::read_to_string(&path).await {
+            Ok(content) => serde_json::from_str(&content).unwrap_or(serde_json::json!({})),
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    } else {
+        serde_json::json!({})
+    };
+
+    // Merge manifest-declared config fields so the UI always shows them
+    let manifest_path = LukanPaths::plugin_manifest(&name);
+    if let Ok(manifest_content) = tokio::fs::read_to_string(&manifest_path).await
+        && let Ok(manifest) =
+            toml::from_str::<lukan_core::models::plugin::PluginManifest>(&manifest_content)
+        && let Some(obj) = config.as_object_mut()
+    {
+        for key in manifest.config.keys() {
+            obj.entry(key as &str)
+                .or_insert(serde_json::Value::String(String::new()));
+        }
     }
+
+    Json(config).into_response()
 }
 
 /// PUT /api/plugins/:name/config

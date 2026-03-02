@@ -31,6 +31,8 @@ struct ToolOutput {
     output: String,
     #[serde(default)]
     is_error: bool,
+    #[serde(default)]
+    image: Option<String>,
 }
 
 /// A proxy tool that delegates execution to a plugin's handler script.
@@ -44,6 +46,7 @@ struct PluginProvidedTool {
     tool_input_schema: Value,
     plugin_name: String,
     handler_command: String,
+    handler_file: String,
 }
 
 #[async_trait]
@@ -64,14 +67,15 @@ impl Tool for PluginProvidedTool {
         self.tool_input_schema.clone()
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let plugin_dir = LukanPaths::plugin_dir(&self.plugin_name);
-        let tools_script = plugin_dir.join("tools.js");
+        let tools_script = plugin_dir.join(&self.handler_file);
 
         if !tools_script.exists() {
             return Ok(ToolResult::error(format!(
-                "Plugin '{}' tools.js not found at {}",
+                "Plugin '{}' handler '{}' not found at {}",
                 self.plugin_name,
+                self.handler_file,
                 tools_script.display()
             )));
         }
@@ -80,6 +84,7 @@ impl Tool for PluginProvidedTool {
             .arg(tools_script.to_string_lossy().as_ref())
             .arg(&self.tool_name)
             .current_dir(&plugin_dir)
+            .envs(&ctx.extra_env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -115,11 +120,13 @@ impl Tool for PluginProvidedTool {
         // Parse stdout as JSON
         match serde_json::from_slice::<ToolOutput>(&output.stdout) {
             Ok(result) => {
-                if result.is_error {
-                    Ok(ToolResult::error(result.output))
+                let mut tool_result = if result.is_error {
+                    ToolResult::error(result.output)
                 } else {
-                    Ok(ToolResult::success(result.output))
-                }
+                    ToolResult::success(result.output)
+                };
+                tool_result.image = result.image;
+                Ok(tool_result)
             }
             Err(e) => {
                 // If parsing fails, return raw stdout as the output
@@ -167,22 +174,29 @@ pub fn register_plugin_tools(registry: &mut ToolRegistry) {
             continue;
         }
 
-        // Determine handler command from manifest or default to "node"
-        let handler_command = {
+        // Determine handler command and handler file from manifest or defaults
+        let (handler_command, handler_file) = {
             let manifest_path = plugin_dir.join("plugin.toml");
             if let Ok(content) = std::fs::read_to_string(&manifest_path) {
                 if let Ok(manifest) =
                     toml::from_str::<lukan_core::models::plugin::PluginManifest>(&content)
                 {
-                    manifest
+                    let cmd = manifest
                         .run
-                        .map(|r| r.command)
-                        .unwrap_or_else(|| "node".to_string())
+                        .as_ref()
+                        .map(|r| r.command.clone())
+                        .unwrap_or_else(|| "node".to_string());
+                    let handler = manifest
+                        .run
+                        .as_ref()
+                        .and_then(|r| r.handler.clone())
+                        .unwrap_or_else(|| "tools.js".to_string());
+                    (cmd, handler)
                 } else {
-                    "node".to_string()
+                    ("node".to_string(), "tools.js".to_string())
                 }
             } else {
-                "node".to_string()
+                ("node".to_string(), "tools.js".to_string())
             }
         };
 
@@ -222,6 +236,7 @@ pub fn register_plugin_tools(registry: &mut ToolRegistry) {
                 tool_input_schema: def.input_schema,
                 plugin_name: plugin_name.clone(),
                 handler_command: handler_command.clone(),
+                handler_file: handler_file.clone(),
             }));
         }
     }

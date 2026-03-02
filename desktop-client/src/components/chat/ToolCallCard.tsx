@@ -180,6 +180,14 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
       {/* Diff */}
       {tool.diff && <DiffView diff={tool.diff} />}
 
+      {/* Image result */}
+      {tool.image && (
+        <div className="mt-2 rounded-md overflow-hidden border border-white/5">
+          <img src={tool.image} alt="Tool result"
+               className="max-w-full max-h-96 object-contain" />
+        </div>
+      )}
+
       {/* Text result */}
       {!tool.isRunning && tool.content && !tool.diff && (
         <pre

@@ -330,7 +330,10 @@ pub async fn send_message(
 }
 
 #[tauri::command]
-pub async fn cancel_stream(state: State<'_, ChatState>) -> Result<(), String> {
+pub async fn cancel_stream(
+    app: AppHandle,
+    state: State<'_, ChatState>,
+) -> Result<(), String> {
     // Do NOT bump generation here — cancel stays in the same session.
     // Generation is only bumped by load_session/new_session (session switches).
 
@@ -344,17 +347,30 @@ pub async fn cancel_stream(state: State<'_, ChatState>) -> Result<(), String> {
     // already has it, it will put the agent back via turn-complete — either way the
     // agent is recovered and the session is preserved.
     let handle = state.agent_handle.lock().await.take();
-    if let Some(handle) = handle {
-        match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
-            Ok(Ok((mut returned_agent, _result))) => {
-                let _ = returned_agent.save_session_public().await;
-                *state.agent.lock().await = Some(returned_agent);
+    if let Some(mut handle) = handle {
+        tokio::select! {
+            result = &mut handle => {
+                match result {
+                    Ok((mut returned_agent, _result)) => {
+                        let _ = returned_agent.save_session_public().await;
+                        *state.agent.lock().await = Some(returned_agent);
+                    }
+                    Err(_join_err) => {
+                        // Task panicked — agent is lost
+                    }
+                }
             }
-            Ok(Err(_join_err)) => {
-                // Task panicked — agent is lost
-            }
-            Err(_timeout) => {
-                eprintln!("[warn] Agent did not stop within 5s after cancel");
+            _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                // Agent still running — spawn background recovery so we don't
+                // lose the agent and create a new session on next message.
+                eprintln!("[warn] Agent did not stop within 10s after cancel, recovering in background");
+                tokio::spawn(async move {
+                    if let Ok((mut returned_agent, _)) = handle.await {
+                        let _ = returned_agent.save_session_public().await;
+                        let chat_state = app.state::<ChatState>();
+                        *chat_state.agent.lock().await = Some(returned_agent);
+                    }
+                });
             }
         }
     }

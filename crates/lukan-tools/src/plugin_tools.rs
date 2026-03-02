@@ -13,7 +13,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{debug, warn};
 
-use crate::{Tool, ToolContext, ToolRegistry};
+use crate::{bg_processes, Tool, ToolContext, ToolRegistry};
 
 /// A tool definition as declared in a plugin's `tools.json`.
 #[derive(Debug, Clone, Deserialize)]
@@ -97,8 +97,24 @@ impl Tool for PluginProvidedTool {
             // Drop stdin to signal EOF
         }
 
-        // Wait for output
-        let output = child.wait_with_output().await?;
+        // Wait for output, with cancellation support
+        let child_pid = child.id().unwrap_or(0);
+        let cancel_token = ctx.cancel.clone();
+
+        let output = tokio::select! {
+            result = child.wait_with_output() => result?,
+            _ = async {
+                match &cancel_token {
+                    Some(t) => t.cancelled().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if child_pid > 0 {
+                    bg_processes::kill_process_group_force(child_pid).await;
+                }
+                return Ok(ToolResult::error("Cancelled by user."));
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

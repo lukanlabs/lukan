@@ -134,7 +134,7 @@ export default function ChatView() {
             {isEmpty && (
               <div className="flex flex-col items-center justify-center h-full text-zinc-400 gap-4 pt-32">
                 <div className="relative">
-                  <img src={logoUrl} alt="lukan" className="h-18 w-18 animate-pulse-subtle" />
+                  <img src={logoUrl} alt="lukan" className="h-32 w-32 animate-pulse-subtle" style={{ imageRendering: "auto" }} />
                 </div>
                 <div className="text-center space-y-2">
                   <h2 className="text-xl font-semibold text-zinc-200">Welcome to lukan</h2>

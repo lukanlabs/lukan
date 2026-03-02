@@ -69,10 +69,13 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(rest_plugins::install_remote_plugin),
         )
         .route("/plugins/remote", get(rest_plugins::list_remote_plugins))
-        .route("/plugins/whatsapp/qr", get(rest_plugins::get_whatsapp_qr))
         .route(
-            "/plugins/whatsapp/auth",
-            get(rest_plugins::check_whatsapp_auth),
+            "/plugins/{name}/auth/qr",
+            get(rest_plugins::get_plugin_auth_qr),
+        )
+        .route(
+            "/plugins/{name}/auth/status",
+            get(rest_plugins::check_plugin_auth),
         )
         .route("/plugins/{name}", delete(rest_plugins::remove_plugin))
         .route("/plugins/{name}/start", post(rest_plugins::start_plugin))
@@ -99,16 +102,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(rest_plugins::run_plugin_command),
         )
         .route(
+            "/plugins/{name}/manifest-info",
+            get(rest_plugins::get_plugin_manifest_info),
+        )
+        .route(
             "/plugins/{name}/tools",
             get(rest_plugins::get_plugin_manifest_tools),
         )
         .route(
             "/plugins/{name}/views/{view_id}",
             get(rest_plugins::get_plugin_view_data),
-        )
-        .route(
-            "/plugins/{name}/whatsapp-groups",
-            get(rest_plugins::fetch_whatsapp_groups),
         )
         // Memory
         .route("/memory/global", get(rest_memory::get_global_memory))
@@ -162,9 +165,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/workers/{id}/runs/{run_id}",
             get(rest_workers::get_worker_run),
         )
-        // Whisper / Audio
-        .route("/whisper/status", get(rest_plugins::check_whisper_status))
-        .route("/whisper/transcribe", post(rest_plugins::transcribe_audio))
+        // Audio transcription
+        .route(
+            "/transcription/status",
+            get(rest_plugins::check_transcription_status),
+        )
+        .route(
+            "/transcription/transcribe",
+            post(rest_plugins::transcribe_audio),
+        )
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()

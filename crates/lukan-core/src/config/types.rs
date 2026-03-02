@@ -53,10 +53,6 @@ pub struct AppConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vision_models: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub whatsapp: Option<WhatsAppConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub email: Option<EmailConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub openai_compatible_base_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openai_compatible_provider_name: Option<String>,
@@ -95,8 +91,6 @@ impl Default for AppConfig {
             models: None,
             vision_model: None,
             vision_models: None,
-            whatsapp: None,
-            email: None,
             openai_compatible_base_url: None,
             openai_compatible_provider_name: None,
             openai_compatible_provider_options: None,
@@ -216,78 +210,6 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
         ],
     ),
 ];
-
-/// WhatsApp channel configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WhatsAppConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bridge_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub whitelist: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allowed_groups: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prefix: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allowed_dirs: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub skip_dir_restrictions: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<ProviderName>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reminder_advance: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reminder_chat: Option<String>,
-}
-
-/// Email channel configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EmailConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub smtp: Option<EmailSmtpConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub imap: Option<EmailImapConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub whitelist: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prefix: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<ProviderName>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EmailSmtpConfig {
-    pub host: String,
-    pub port: u16,
-    pub secure: bool,
-    pub user: String,
-    pub pass: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EmailImapConfig {
-    pub host: String,
-    pub port: u16,
-    pub secure: bool,
-    pub user: String,
-    pub pass: String,
-}
 
 /// Permission mode for tool execution
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

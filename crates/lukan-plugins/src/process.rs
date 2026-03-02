@@ -66,6 +66,14 @@ impl PluginProcess {
             .stderr(Stdio::from(log_file))
             .kill_on_drop(true);
 
+        // Inject standard env vars
+        cmd.env(
+            "PLUGIN_DATA_DIR",
+            LukanPaths::plugin_data_dir(&self.name)
+                .to_string_lossy()
+                .to_string(),
+        );
+
         // Inject env vars from manifest
         for (k, v) in &run.env {
             cmd.env(k, v);

@@ -1,7 +1,7 @@
 use lukan_core::config::LukanPaths;
 use lukan_plugins::PluginManager;
 use reqwest::multipart;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 /// PID of the web UI process (0 = not running).
@@ -466,48 +466,6 @@ pub async fn run_plugin_command(name: String, command: String) -> Result<String,
     Ok(combined)
 }
 
-#[derive(Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct WhatsAppGroup {
-    pub id: String,
-    pub subject: String,
-    #[serde(default)]
-    pub participants: Option<u64>,
-}
-
-/// Fetch WhatsApp groups by running `node cli.js groups-json` in the plugin directory.
-#[tauri::command]
-pub async fn fetch_whatsapp_groups(name: String) -> Result<Vec<WhatsAppGroup>, String> {
-    let plugin_dir = LukanPaths::plugin_dir(&name);
-    let cli_js = plugin_dir.join("cli.js");
-    if !cli_js.exists() {
-        return Ok(vec![]);
-    }
-
-    let output = tokio::process::Command::new("node")
-        .args([cli_js.to_string_lossy().as_ref(), "groups-json"])
-        .current_dir(&plugin_dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output();
-
-    let result = tokio::time::timeout(std::time::Duration::from_secs(10), output)
-        .await
-        .map_err(|_| "Timed out fetching groups (10s)".to_string())?
-        .map_err(|e| format!("Failed to run cli.js: {e}"))?;
-
-    if !result.status.success() {
-        return Ok(vec![]);
-    }
-
-    // Take only the first line — bridge may print duplicates
-    let raw = String::from_utf8_lossy(&result.stdout);
-    let json_str = raw.lines().next().unwrap_or("[]").trim();
-    let groups: Vec<WhatsAppGroup> = serde_json::from_str(json_str).unwrap_or_default();
-    Ok(groups)
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginToolsInfo {
@@ -533,10 +491,20 @@ pub async fn get_plugin_manifest_tools(name: String) -> Result<PluginToolsInfo, 
     })
 }
 
-/// Read the current WhatsApp QR code string (if pending authentication).
+/// Read the QR code string for a plugin that uses QR-based auth.
+/// Returns None if the plugin has no QR auth or no QR is available.
 #[tauri::command]
-pub async fn get_whatsapp_qr() -> Result<Option<String>, String> {
-    let qr_path = LukanPaths::whatsapp_auth_dir().join("current-qr.txt");
+pub async fn get_plugin_auth_qr(name: String) -> Result<Option<String>, String> {
+    let manifest = PluginManager::load_manifest(&name)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let qr_file = match &manifest.auth {
+        Some(lukan_core::models::plugin::AuthDeclaration::Qr { qr_file, .. }) => qr_file.clone(),
+        _ => return Ok(None),
+    };
+
+    let qr_path = LukanPaths::plugin_data_dir(&name).join(&qr_file);
     if !qr_path.exists() {
         return Ok(None);
     }
@@ -551,17 +519,114 @@ pub async fn get_whatsapp_qr() -> Result<Option<String>, String> {
     }
 }
 
-/// Check whether WhatsApp has valid auth credentials (creds.json exists and has content).
+/// Check whether a plugin is authenticated, according to its auth declaration.
+/// - QR: check if status_file exists and has content
+/// - Token: check if config field exists and is non-empty
+/// - Command / None: always returns true
 #[tauri::command]
-pub async fn check_whatsapp_auth() -> Result<bool, String> {
-    let creds_path = LukanPaths::whatsapp_auth_dir().join("creds.json");
-    if !creds_path.exists() {
-        return Ok(false);
+pub async fn check_plugin_auth(name: String) -> Result<bool, String> {
+    let manifest = PluginManager::load_manifest(&name)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    match &manifest.auth {
+        Some(lukan_core::models::plugin::AuthDeclaration::Qr { status_file, .. }) => {
+            let creds_path = LukanPaths::plugin_data_dir(&name).join(status_file);
+            if !creds_path.exists() {
+                return Ok(false);
+            }
+            match tokio::fs::metadata(&creds_path).await {
+                Ok(meta) => Ok(meta.len() > 2),
+                Err(_) => Ok(false),
+            }
+        }
+        Some(lukan_core::models::plugin::AuthDeclaration::Token { check_field }) => {
+            let config_path = LukanPaths::plugin_config(&name);
+            if !config_path.exists() {
+                return Ok(false);
+            }
+            let content = tokio::fs::read_to_string(&config_path)
+                .await
+                .map_err(|e| e.to_string())?;
+            let json: serde_json::Value =
+                serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+            Ok(json
+                .get(check_field)
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty()))
+        }
+        Some(lukan_core::models::plugin::AuthDeclaration::Command) | None => Ok(true),
     }
-    match tokio::fs::metadata(&creds_path).await {
-        Ok(meta) => Ok(meta.len() > 2), // non-empty JSON (not just "{}")
-        Err(_) => Ok(false),
+}
+
+/// DTO for config field schema — camelCase for the frontend JSON API.
+/// ConfigFieldSchema itself uses snake_case for TOML deserialization.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigFieldSchemaDto {
+    #[serde(rename = "type")]
+    field_type: String,
+    description: String,
+    valid_values: Vec<String>,
+    label: Option<String>,
+    format: Option<String>,
+    group: Option<String>,
+    depends_on: Option<DependsOnDto>,
+    options_command: Option<String>,
+    hidden: bool,
+    default: Option<serde_json::Value>,
+    order: i32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DependsOnDto {
+    field: String,
+    values: Vec<String>,
+}
+
+impl From<&lukan_core::models::plugin::ConfigFieldSchema> for ConfigFieldSchemaDto {
+    fn from(s: &lukan_core::models::plugin::ConfigFieldSchema) -> Self {
+        Self {
+            field_type: serde_json::to_value(&s.field_type)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default(),
+            description: s.description.clone(),
+            valid_values: s.valid_values.clone(),
+            label: s.label.clone(),
+            format: s.format.clone(),
+            group: s.group.clone(),
+            depends_on: s.depends_on.as_ref().map(|d| DependsOnDto {
+                field: d.field.clone(),
+                values: d.values.clone(),
+            }),
+            options_command: s.options_command.clone(),
+            hidden: s.hidden,
+            default: s.default.clone(),
+            order: s.order,
+        }
     }
+}
+
+/// Return the manifest info (config schema + auth declaration) for a plugin.
+/// This gives the frontend everything it needs to render a generic config form.
+#[tauri::command]
+pub async fn get_plugin_manifest_info(name: String) -> Result<serde_json::Value, String> {
+    let manifest = PluginManager::load_manifest(&name)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let config_schema: std::collections::HashMap<String, ConfigFieldSchemaDto> = manifest
+        .config
+        .iter()
+        .map(|(k, v)| (k.clone(), ConfigFieldSchemaDto::from(v)))
+        .collect();
+
+    Ok(serde_json::json!({
+        "config": config_schema,
+        "auth": manifest.auth,
+    }))
 }
 
 // ── Web UI management ────────────────────────────────────────────────────
@@ -647,65 +712,112 @@ pub async fn stop_web_ui() -> Result<(), String> {
     Ok(())
 }
 
-// ── Whisper / Audio transcription ────────────────────────────────────
+// ── Audio transcription (contribution-based discovery) ───────────────
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WhisperStatusDto {
+pub struct TranscriptionStatusDto {
     pub installed: bool,
     pub running: bool,
     pub port: u16,
 }
 
-/// Check whether the whisper plugin is installed and running, and return its port.
-#[tauri::command]
-pub async fn check_whisper_status() -> Result<WhisperStatusDto, String> {
-    let plugin_dir = LukanPaths::plugin_dir("whisper");
-    let installed = plugin_dir.join("plugin.toml").exists();
-
-    if !installed {
-        return Ok(WhisperStatusDto {
-            installed: false,
-            running: false,
-            port: 0,
-        });
-    }
-
-    let running = is_plugin_running("whisper");
-
-    // Read port from config (default 8787)
-    let port = read_whisper_port().await;
-
-    Ok(WhisperStatusDto {
-        installed,
-        running,
-        port,
-    })
+/// Resolved transcription endpoint from a plugin's contributions.
+struct TranscriptionProvider {
+    plugin_name: String,
+    port: u16,
+    endpoint: String,
 }
 
-/// Read the whisper plugin port from its config.json (default 8787).
-async fn read_whisper_port() -> u16 {
-    let config_path = LukanPaths::plugin_config("whisper");
+/// Scan all installed plugins for `contributions.transcription`,
+/// return the first one that is running.
+async fn find_transcription_provider() -> Option<TranscriptionProvider> {
+    let plugins_dir = LukanPaths::plugins_dir();
+    let entries = match std::fs::read_dir(&plugins_dir) {
+        Ok(e) => e,
+        Err(_) => return None,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let manifest_path = entry.path().join("plugin.toml");
+        let Ok(content) = std::fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        let Ok(manifest) = toml::from_str::<lukan_core::models::plugin::PluginManifest>(&content)
+        else {
+            continue;
+        };
+        let Some(tc) = manifest.contributions.transcription else {
+            continue;
+        };
+        if !is_plugin_running(&name) {
+            continue;
+        }
+        let port = read_plugin_port(&name, &tc.port_field, tc.default_port).await;
+        return Some(TranscriptionProvider {
+            plugin_name: name,
+            port,
+            endpoint: tc.endpoint,
+        });
+    }
+    None
+}
+
+/// Read a port from a plugin's config.json, falling back to a default.
+async fn read_plugin_port(name: &str, port_field: &str, default_port: u16) -> u16 {
+    let config_path = LukanPaths::plugin_config(name);
     if let Ok(content) = tokio::fs::read_to_string(&config_path).await
         && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
-        && let Some(port) = json.get("port").and_then(|v| v.as_u64())
+        && let Some(port) = json.get(port_field).and_then(|v| v.as_u64())
     {
         return port as u16;
     }
-    8787
+    default_port
 }
 
-/// Transcribe audio by forwarding it to the local whisper HTTP server.
+/// Check whether any transcription plugin is installed and running.
+#[tauri::command]
+pub async fn check_transcription_status() -> Result<TranscriptionStatusDto, String> {
+    match find_transcription_provider().await {
+        Some(provider) => Ok(TranscriptionStatusDto {
+            installed: true,
+            running: true,
+            port: provider.port,
+        }),
+        None => {
+            // Check if any plugin with transcription contribution is at least installed
+            let plugins_dir = LukanPaths::plugins_dir();
+            let installed = std::fs::read_dir(&plugins_dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|entry| {
+                    let manifest_path = entry.path().join("plugin.toml");
+                    std::fs::read_to_string(&manifest_path)
+                        .ok()
+                        .and_then(|c| {
+                            toml::from_str::<lukan_core::models::plugin::PluginManifest>(&c).ok()
+                        })
+                        .is_some_and(|m| m.contributions.transcription.is_some())
+                });
+            Ok(TranscriptionStatusDto {
+                installed,
+                running: false,
+                port: 0,
+            })
+        }
+    }
+}
+
+/// Transcribe audio by forwarding it to whichever transcription plugin is running.
 /// Accepts raw audio bytes (webm/opus from the browser MediaRecorder).
 #[tauri::command]
 pub async fn transcribe_audio(audio: Vec<u8>) -> Result<String, String> {
-    // Verify whisper is running
-    if !is_plugin_running("whisper") {
-        return Err("Whisper plugin is not running".into());
-    }
+    let provider = find_transcription_provider()
+        .await
+        .ok_or("No transcription plugin is running")?;
 
-    let port = read_whisper_port().await;
-    let url = format!("http://127.0.0.1:{port}/v1/audio/transcriptions");
+    let url = format!("http://127.0.0.1:{}{}", provider.port, provider.endpoint);
 
     // Build multipart form with the audio file
     let part = multipart::Part::bytes(audio)
@@ -722,12 +834,20 @@ pub async fn transcribe_audio(audio: Vec<u8>) -> Result<String, String> {
         .timeout(std::time::Duration::from_secs(120))
         .send()
         .await
-        .map_err(|e| format!("Whisper request failed: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "Transcription request failed ({}): {e}",
+                provider.plugin_name
+            )
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Whisper server error {status}: {body}"));
+        return Err(format!(
+            "Transcription server error ({}) {status}: {body}",
+            provider.plugin_name
+        ));
     }
 
     let json: serde_json::Value = resp
@@ -738,5 +858,5 @@ pub async fn transcribe_audio(audio: Vec<u8>) -> Result<String, String> {
     json.get("text")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| "Whisper response missing 'text' field".into())
+        .ok_or_else(|| "Transcription response missing 'text' field".into())
 }

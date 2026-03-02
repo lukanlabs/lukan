@@ -126,7 +126,7 @@ impl PluginManager {
             .context("Failed to send Init to plugin")?;
 
         // Wait for Ready (with timeout)
-        let ready = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let ready = tokio::time::timeout(std::time::Duration::from_secs(60), async {
             while let Some(msg) = plugin_rx.recv().await {
                 if let PluginMessage::Ready {
                     version,
@@ -159,7 +159,7 @@ impl PluginManager {
             anyhow::bail!("Plugin '{}' closed stdout without sending Ready", name)
         })
         .await
-        .map_err(|_| anyhow::anyhow!("Plugin '{}' did not send Ready within 10s", name))??;
+        .map_err(|_| anyhow::anyhow!("Plugin '{}' did not send Ready within 60s", name))??;
 
         // Verify Ready
         if let PluginMessage::Ready { .. } = ready {

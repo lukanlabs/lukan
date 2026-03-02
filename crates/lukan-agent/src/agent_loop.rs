@@ -322,9 +322,7 @@ impl AgentLoop {
         }
 
         // Allow lukan's data directory (~/.local/share/lukan/)
-        let data_dir = lukan_core::config::LukanPaths::whatsapp_auth_dir()
-            .parent()
-            .map(|p| p.to_path_buf());
+        let data_dir = Some(lukan_core::config::LukanPaths::data_dir());
         if let Some(data_dir) = data_dir
             && !dirs.iter().any(|d| data_dir.starts_with(d))
         {

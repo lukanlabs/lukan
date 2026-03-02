@@ -86,7 +86,7 @@ export function ChatInput({
   const isDisabled = !input.trim();
   const isRecording = recorder.state === "recording";
   const isTranscribing = recorder.state === "transcribing";
-  const micBlocked = !recorder.whisperAvailable;
+  const micBlocked = !recorder.transcriptionAvailable;
 
   return (
     <div className="border-t border-zinc-800 px-4 py-4 shrink-0 bg-zinc-950">
@@ -159,7 +159,7 @@ export function ChatInput({
               disabled={micBlocked || isProcessing || isTranscribing}
               title={
                 micBlocked
-                  ? "Install & start the Whisper plugin to enable voice input"
+                  ? "No transcription service available — install & start a transcription plugin"
                   : isRecording
                     ? "Stop recording & transcribe"
                     : "Record audio"

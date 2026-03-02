@@ -9,9 +9,10 @@ import type {
   PluginInfo,
   PluginViewEnvelope,
   RemotePlugin,
-  WhatsAppGroup,
   PluginCommand,
   PluginToolsInfo,
+  ConfigFieldSchemaDto,
+  AuthDeclarationDto,
   WebUiStatus,
   InitResponse,
   SessionSummary,
@@ -29,7 +30,7 @@ import type {
   WorkerRun,
   WorkerCreateInput,
   WorkerUpdateInput,
-  WhisperStatus,
+  TranscriptionStatus,
 } from "./types";
 
 // Config
@@ -80,12 +81,12 @@ export const getPluginLogs = (name: string, lines: number) =>
   getTransport().call<string>("get_plugin_logs", { name, lines });
 export const listRemotePlugins = () =>
   getTransport().call<RemotePlugin[]>("list_remote_plugins");
-export const getWhatsappQr = () =>
-  getTransport().call<string | null>("get_whatsapp_qr");
-export const checkWhatsappAuth = () =>
-  getTransport().call<boolean>("check_whatsapp_auth");
-export const fetchWhatsappGroups = (name: string) =>
-  getTransport().call<WhatsAppGroup[]>("fetch_whatsapp_groups", { name });
+export const getPluginManifestInfo = (name: string) =>
+  getTransport().call<{ config: Record<string, ConfigFieldSchemaDto>; auth: AuthDeclarationDto | null }>("get_plugin_manifest_info", { name });
+export const getPluginAuthQr = (name: string) =>
+  getTransport().call<string | null>("get_plugin_auth_qr", { name });
+export const checkPluginAuth = (name: string) =>
+  getTransport().call<boolean>("check_plugin_auth", { name });
 export const getPluginCommands = (name: string) =>
   getTransport().call<PluginCommand[]>("get_plugin_commands", { name });
 export const runPluginCommand = (name: string, command: string) =>
@@ -266,9 +267,9 @@ export const clearEventHistory = (source?: string) =>
     source: source ?? null,
   });
 
-// Whisper / Audio
-export const checkWhisperStatus = () =>
-  getTransport().call<WhisperStatus>("check_whisper_status");
+// Audio transcription
+export const checkTranscriptionStatus = () =>
+  getTransport().call<TranscriptionStatus>("check_transcription_status");
 export const transcribeAudio = (audio: number[]) =>
   getTransport().call<string>("transcribe_audio", { audio });
 

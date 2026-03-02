@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import type { PluginInfo, RemotePlugin, WhatsAppGroup, PluginCommand, PluginToolsInfo } from "../../lib/types";
+import type { PluginInfo, RemotePlugin, PluginCommand, PluginToolsInfo, ConfigFieldSchemaDto, AuthDeclarationDto } from "../../lib/types";
 import {
   listPlugins,
   installPlugin,
@@ -12,14 +12,15 @@ import {
   setPluginConfigField,
   getPluginLogs,
   listRemotePlugins,
-  getWhatsappQr,
-  checkWhatsappAuth,
-  fetchWhatsappGroups,
+  getPluginAuthQr,
+  checkPluginAuth,
+  getPluginManifestInfo,
   getPluginCommands,
   runPluginCommand,
   getPluginManifestTools,
   listTools,
 } from "../../lib/tauri";
+import { COUNTRY_CODES, formatPhoneNumber } from "../../lib/phone-utils";
 import QRCode from "qrcode";
 import { useToast } from "../ui/Toast";
 import {
@@ -38,9 +39,6 @@ import {
   Loader2,
   RotateCw,
   QrCode,
-  Plus,
-  Phone,
-  Users,
   ChevronRight,
   Eye,
   EyeOff,
@@ -89,24 +87,27 @@ export default function PluginsTab() {
   const [commandRunning, setCommandRunning] = useState<string | null>(null);
   const [commandOutput, setCommandOutput] = useState<string | null>(null);
 
-  const [whatsappAuthed, setWhatsappAuthed] = useState(false);
+  const [pluginAuthed, setPluginAuthed] = useState(false);
+  const [configSchema, setConfigSchema] = useState<Record<string, ConfigFieldSchemaDto> | null>(null);
+  const [authDeclaration, setAuthDeclaration] = useState<AuthDeclarationDto | null>(null);
 
   const [showQr, setShowQr] = useState(false);
+  const [qrPluginName, setQrPluginName] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [qrLinked, setQrLinked] = useState(false);
 
   const lastQrRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!showQr || qrLinked) return;
+    if (!showQr || qrLinked || !qrPluginName) return;
     let cancelled = false;
     const poll = async () => {
       try {
-        const qr = await getWhatsappQr();
+        const qr = await getPluginAuthQr(qrPluginName);
         if (cancelled) return;
         if (!qr && qrDataUrl) {
           setQrLinked(true);
-          toast("success", "WhatsApp linked successfully!");
+          toast("success", "Linked successfully!");
         } else if (qr && qr !== lastQrRef.current) {
           lastQrRef.current = qr;
           const url = await QRCode.toDataURL(qr, { width: 256, margin: 2, color: { dark: "#000000", light: "#ffffff" } });
@@ -120,7 +121,7 @@ export default function PluginsTab() {
     poll();
     const interval = setInterval(poll, 2000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [showQr, qrDataUrl, qrLinked, toast]);
+  }, [showQr, qrDataUrl, qrLinked, qrPluginName, toast]);
 
   const [remotePlugins, setRemotePlugins] = useState<RemotePlugin[]>([]);
   const [registryLoading, setRegistryLoading] = useState(false);
@@ -141,18 +142,19 @@ export default function PluginsTab() {
 
   const loadPluginDetail = useCallback(async (name: string) => {
     try {
-      const [cfg, logs, cmds] = await Promise.all([
+      const [cfg, logs, cmds, manifestInfo] = await Promise.all([
         getPluginConfig(name),
         getPluginLogs(name, 200),
         getPluginCommands(name).catch(() => [] as PluginCommand[]),
+        getPluginManifestInfo(name).catch(() => null),
       ]);
       setPluginConfig(cfg);
       setPluginLogs(logs);
       setPluginCommands(cmds);
-      if (name === "whatsapp") {
-        const authed = await checkWhatsappAuth().catch(() => false);
-        setWhatsappAuthed(authed);
-      }
+      setConfigSchema(manifestInfo?.config ?? null);
+      setAuthDeclaration(manifestInfo?.auth ?? null);
+      const authed = await checkPluginAuth(name).catch(() => false);
+      setPluginAuthed(authed);
     } catch (e) {
       toast("error", `Failed to load plugin details: ${e}`);
     }
@@ -171,7 +173,9 @@ export default function PluginsTab() {
     setPluginCommands([]);
     setCommandRunning(null);
     setCommandOutput(null);
-    setWhatsappAuthed(false);
+    setPluginAuthed(false);
+    setConfigSchema(null);
+    setAuthDeclaration(null);
   }, []);
 
   // ── Handlers ──
@@ -210,13 +214,13 @@ export default function PluginsTab() {
     }
   };
 
-  const handleShowQr = () => {
+  const handleShowQr = (pluginName: string) => {
+    setQrPluginName(pluginName);
     setShowQr(true);
     setQrLoading(true);
     setQrDataUrl(null);
     setQrLinked(false);
     lastQrRef.current = null;
-    // useEffect poll will pick up the QR and update qrDataUrl
   };
 
   const handleConfigSave = async (pluginName: string, key: string, value: string) => {
@@ -303,7 +307,9 @@ export default function PluginsTab() {
           commands={pluginCommands}
           commandRunning={commandRunning}
           commandOutput={commandOutput}
-          whatsappAuthed={whatsappAuthed}
+          pluginAuthed={pluginAuthed}
+          configSchema={configSchema}
+          authDeclaration={authDeclaration}
           onBack={goBack}
           onAction={handleAction}
           onConfigSave={handleConfigSave}
@@ -484,18 +490,21 @@ interface DetailViewProps {
   commands: PluginCommand[];
   commandRunning: string | null;
   commandOutput: string | null;
-  whatsappAuthed: boolean;
+  pluginAuthed: boolean;
+  configSchema: Record<string, ConfigFieldSchemaDto> | null;
+  authDeclaration: AuthDeclarationDto | null;
   onBack: () => void;
   onAction: (action: "start" | "stop" | "restart" | "remove", name: string) => void;
   onConfigSave: (pluginName: string, key: string, value: string) => void;
   onRefreshLogs: (name: string) => void;
-  onShowQr: () => void;
+  onShowQr: (pluginName: string) => void;
   onRunCommand: (pluginName: string, command: string) => void;
 }
 
 function DetailView({
   plugin, config, logs, actionLoading, logsRefreshing,
-  commands, commandRunning, commandOutput, whatsappAuthed,
+  commands, commandRunning, commandOutput, pluginAuthed,
+  configSchema, authDeclaration,
   onBack, onAction, onConfigSave, onRefreshLogs, onShowQr, onRunCommand,
 }: DetailViewProps) {
   const logsEndRef = useRef<HTMLPreElement>(null);
@@ -504,7 +513,7 @@ function DetailView({
   }, [logs]);
 
   const configKeys = Object.keys(config);
-  const isWhatsapp = plugin.name.includes("whatsapp");
+  const hasQrAuth = authDeclaration?.type === "qr";
 
   return (
     <div style={{ animation: "fadeIn 0.15s ease-out" }}>
@@ -593,9 +602,8 @@ function DetailView({
           <div className="flex flex-col gap-2">
             {commands.map((cmd) => {
               const isAuth = cmd.name === "auth";
-              const authed = isAuth && (plugin.name === "whatsapp" ? whatsappAuthed : !!config.accessToken);
               const btnLabel = isAuth
-                ? (commandRunning === cmd.name ? "..." : authed ? "Re-authenticate" : "Authenticate")
+                ? (commandRunning === cmd.name ? "..." : pluginAuthed ? "Re-authenticate" : "Authenticate")
                 : (commandRunning === cmd.name ? "..." : "Run");
               return (
                 <div key={cmd.name} className="flex items-center justify-between gap-2">
@@ -605,8 +613,8 @@ function DetailView({
                     </span>
                     {isAuth && (
                       <span className="text-[10px] ml-1.5 font-medium" style={{
-                        color: authed ? "#4ade80" : "var(--text-muted)",
-                      }}>{authed ? "authenticated" : "not authenticated"}</span>
+                        color: pluginAuthed ? "#4ade80" : "var(--text-muted)",
+                      }}>{pluginAuthed ? "authenticated" : "not authenticated"}</span>
                     )}
                     {cmd.description && (
                       <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>{cmd.description}</p>
@@ -615,7 +623,7 @@ function DetailView({
                   <ActionBtn
                     icon={commandRunning === cmd.name ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
                     label={btnLabel}
-                    onClick={() => isAuth && isWhatsapp ? onShowQr() : onRunCommand(plugin.name, cmd.name)}
+                    onClick={() => isAuth && hasQrAuth ? onShowQr(plugin.name) : onRunCommand(plugin.name, cmd.name)}
                     disabled={commandRunning !== null}
                     small
                   />
@@ -634,14 +642,14 @@ function DetailView({
         </Section>
       )}
 
-      {/* WhatsApp QR section */}
-      {isWhatsapp && (
-        <Section icon={<QrCode size={12} />} title="WhatsApp Auth">
+      {/* QR Auth section (for any plugin with QR-based auth) */}
+      {hasQrAuth && (
+        <Section icon={<QrCode size={12} />} title="Auth">
           <div className="flex items-center justify-between">
             <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
               Start plugin, then scan QR.
             </span>
-            <ActionBtn icon={<QrCode size={11} />} label="View QR" onClick={onShowQr} />
+            <ActionBtn icon={<QrCode size={11} />} label="View QR" onClick={() => onShowQr(plugin.name)} />
           </div>
         </Section>
       )}
@@ -653,22 +661,13 @@ function DetailView({
 
       {/* Configuration */}
       {configKeys.length > 0 && (
-        isWhatsapp ? (
-          <WhatsAppConfig
-            pluginName={plugin.name}
-            config={config}
-            running={plugin.running}
-            onConfigSave={onConfigSave}
-          />
-        ) : (
-          <Section icon={<Settings2 size={12} />} title="Configuration">
-            <div className="flex flex-col gap-2">
-              {configKeys.map((key) => (
-                <ConfigField key={key} fieldKey={key} value={config[key]} onSave={(v) => onConfigSave(plugin.name, key, v)} />
-              ))}
-            </div>
-          </Section>
-        )
+        <GenericConfigForm
+          pluginName={plugin.name}
+          config={config}
+          schema={configSchema}
+          running={plugin.running}
+          onConfigSave={onConfigSave}
+        />
       )}
 
       {/* Logs */}
@@ -1086,311 +1085,75 @@ function ConfigField({ fieldKey, value, onSave }: { fieldKey: string; value: unk
   );
 }
 
+
 // ===========================================================================
-// WhatsApp Config
+// Generic Config Form
 // ===========================================================================
 
-const WHATSAPP_MANAGED_KEYS = ["bridgeUrl", "prefix", "whitelist", "allowedGroups", "transcriptionBackend", "whisperUrl"];
-
-const COUNTRY_CODES: { value: string; label: string; code: string }[] = [
-  { value: "54", label: "Argentina (+54)", code: "+54" },
-  { value: "55", label: "Brazil (+55)", code: "+55" },
-  { value: "56", label: "Chile (+56)", code: "+56" },
-  { value: "86", label: "China (+86)", code: "+86" },
-  { value: "57", label: "Colombia (+57)", code: "+57" },
-  { value: "593", label: "Ecuador (+593)", code: "+593" },
-  { value: "33", label: "France (+33)", code: "+33" },
-  { value: "49", label: "Germany (+49)", code: "+49" },
-  { value: "91", label: "India (+91)", code: "+91" },
-  { value: "39", label: "Italy (+39)", code: "+39" },
-  { value: "81", label: "Japan (+81)", code: "+81" },
-  { value: "52", label: "Mexico (+52)", code: "+52" },
-  { value: "51", label: "Peru (+51)", code: "+51" },
-  { value: "82", label: "South Korea (+82)", code: "+82" },
-  { value: "34", label: "Spain (+34)", code: "+34" },
-  { value: "44", label: "United Kingdom (+44)", code: "+44" },
-  { value: "1", label: "United States (+1)", code: "+1" },
-  { value: "58", label: "Venezuela (+58)", code: "+58" },
-];
-
-const COUNTRY_CODE_PREFIXES = COUNTRY_CODES
-  .map((c) => ({ prefix: c.value, display: c.code }))
-  .sort((a, b) => b.prefix.length - a.prefix.length);
-
-function formatPhoneNumber(num: string): string {
-  for (const { prefix, display } of COUNTRY_CODE_PREFIXES) {
-    if (num.startsWith(prefix)) return `${display} ${num.slice(prefix.length)}`;
-  }
-  return `+${num}`;
-}
-
-function WhatsAppConfig({ pluginName, config, running, onConfigSave }: {
-  pluginName: string; config: Record<string, unknown>; running: boolean;
+function GenericConfigForm({ pluginName, config, schema, running, onConfigSave }: {
+  pluginName: string;
+  config: Record<string, unknown>;
+  schema: Record<string, ConfigFieldSchemaDto> | null;
+  running: boolean;
   onConfigSave: (pluginName: string, key: string, value: string) => void;
 }) {
   const { toast } = useToast();
-  const bridgeUrl = (config.bridgeUrl as string) ?? "";
-  const [localBridgeUrl, setLocalBridgeUrl] = useState(bridgeUrl);
-  useEffect(() => setLocalBridgeUrl((config.bridgeUrl as string) ?? ""), [config.bridgeUrl]);
-
-  const prefixValue = config.prefix;
-  const prefixStr = prefixValue === null || prefixValue === undefined ? "" : String(prefixValue);
-  const [localPrefix, setLocalPrefix] = useState(prefixStr);
-  useEffect(() => {
-    const v = config.prefix;
-    setLocalPrefix(v === null || v === undefined ? "" : String(v));
-  }, [config.prefix]);
-
-  const [groups, setGroups] = useState<WhatsAppGroup[]>([]);
-  const [groupsLoading, setGroupsLoading] = useState(false);
-  const [groupsFetched, setGroupsFetched] = useState(false);
-  const allowedGroups: string[] = Array.isArray(config.allowedGroups) ? (config.allowedGroups as string[]) : [];
-
-  const whitelist: string[] = Array.isArray(config.whitelist) ? (config.whitelist as string[]) : [];
-  const [showAddPhone, setShowAddPhone] = useState(false);
-  const [phoneCountry, setPhoneCountry] = useState("54");
-  const [phoneNumber, setPhoneNumber] = useState("");
-
-  const transcriptionBackend = (config.transcriptionBackend as string) ?? "openai";
-  const whisperUrl = (config.whisperUrl as string) ?? "http://localhost:8787";
-  const [localWhisperUrl, setLocalWhisperUrl] = useState(whisperUrl);
-  useEffect(() => setLocalWhisperUrl((config.whisperUrl as string) ?? "http://localhost:8787"), [config.whisperUrl]);
-
   const saveField = (key: string, value: unknown) => onConfigSave(pluginName, key, JSON.stringify(value));
 
-  const handleFetchGroups = async () => {
-    setGroupsLoading(true);
-    try {
-      const result = await fetchWhatsappGroups(pluginName);
-      setGroups(result);
-      setGroupsFetched(true);
-      if (result.length === 0) toast("info", "No groups found.");
-    } catch (e) {
-      toast("error", `Failed to fetch groups: ${e}`);
-    } finally {
-      setGroupsLoading(false);
-    }
-  };
+  // If no schema, fall back to raw config field editor
+  if (!schema) {
+    const keys = Object.keys(config);
+    return (
+      <Section icon={<Settings2 size={12} />} title="Configuration">
+        <div className="flex flex-col gap-2">
+          {keys.map((key) => (
+            <ConfigField key={key} fieldKey={key} value={config[key]} onSave={(v) => onConfigSave(pluginName, key, v)} />
+          ))}
+        </div>
+      </Section>
+    );
+  }
 
-  const handleToggleGroup = (groupId: string) => {
-    const next = allowedGroups.includes(groupId)
-      ? allowedGroups.filter((g) => g !== groupId)
-      : [...allowedGroups, groupId];
-    saveField("allowedGroups", next);
-  };
+  // Group fields by group, filter hidden, evaluate depends_on
+  const visibleFields = Object.entries(schema)
+    .filter(([, s]) => !s.hidden)
+    .filter(([, s]) => {
+      if (!s.dependsOn) return true;
+      const depValue = String(config[s.dependsOn.field] ?? "");
+      return s.dependsOn.values.includes(depValue);
+    })
+    .sort(([, a], [, b]) => a.order - b.order);
 
-  const handleAddPhone = () => {
-    const digits = phoneNumber.replace(/\D/g, "");
-    if (!digits) return;
-    const full = phoneCountry + digits;
-    if (whitelist.includes(full)) { toast("info", "Already in whitelist"); return; }
-    saveField("whitelist", [...whitelist, full]);
-    setPhoneNumber("");
-    setShowAddPhone(false);
-  };
+  const groups = new Map<string, [string, ConfigFieldSchemaDto][]>();
+  for (const entry of visibleFields) {
+    const group = entry[1].group ?? "General";
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group)!.push(entry);
+  }
 
-  const handleRemovePhone = (num: string) => saveField("whitelist", whitelist.filter((n) => n !== num));
-
-  const remainingKeys = Object.keys(config).filter((k) => !WHATSAPP_MANAGED_KEYS.includes(k));
+  // Remaining keys not in schema
+  const schemaKeys = new Set(Object.keys(schema));
+  const remainingKeys = Object.keys(config).filter((k) => !schemaKeys.has(k));
 
   return (
     <>
-      {/* Bridge URL */}
-      <Section icon={<Settings2 size={12} />} title="Bridge URL">
-        <input
-          value={localBridgeUrl}
-          placeholder="http://localhost:3000"
-          onChange={(e) => setLocalBridgeUrl(e.target.value)}
-          onBlur={() => { if (localBridgeUrl !== bridgeUrl) saveField("bridgeUrl", localBridgeUrl); }}
-          onKeyDown={(e) => { if (e.key === "Enter" && localBridgeUrl !== bridgeUrl) saveField("bridgeUrl", localBridgeUrl); }}
-          className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none"
-          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
-        />
-      </Section>
-
-      {/* Prefix */}
-      <Section icon={<Settings2 size={12} />} title="Prefix">
-        <input
-          value={localPrefix}
-          placeholder="No prefix (all messages)"
-          onChange={(e) => setLocalPrefix(e.target.value)}
-          onBlur={() => {
-            const next = localPrefix.trim() || null;
-            const prev = config.prefix === undefined ? null : config.prefix;
-            if (next !== prev) saveField("prefix", next);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              const next = localPrefix.trim() || null;
-              const prev = config.prefix === undefined ? null : config.prefix;
-              if (next !== prev) saveField("prefix", next);
-            }
-          }}
-          className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none"
-          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
-        />
-        <p className="text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-          Only messages starting with this prefix will be processed.
-        </p>
-      </Section>
-
-      {/* Transcription */}
-      <Section icon={<Settings2 size={12} />} title="Audio Transcription">
-        <select
-          value={transcriptionBackend}
-          onChange={(e) => saveField("transcriptionBackend", e.target.value)}
-          className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none appearance-none"
-          style={{
-            background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
-            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-            backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center", paddingRight: "2rem",
-          }}
-        >
-          <option value="openai">OpenAI API</option>
-          <option value="local">Local (whisper.cpp)</option>
-        </select>
-        {transcriptionBackend === "local" && (
-          <div className="mt-2">
-            <input
-              value={localWhisperUrl}
-              placeholder="http://localhost:8787"
-              onChange={(e) => setLocalWhisperUrl(e.target.value)}
-              onBlur={() => { if (localWhisperUrl !== whisperUrl) saveField("whisperUrl", localWhisperUrl); }}
-              onKeyDown={(e) => { if (e.key === "Enter" && localWhisperUrl !== whisperUrl) saveField("whisperUrl", localWhisperUrl); }}
-              className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none"
-              style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
-            />
-          </div>
-        )}
-      </Section>
-
-      {/* Allowed Groups */}
-      <Section
-        icon={<Users size={12} />}
-        title={`Groups${allowedGroups.length ? ` (${allowedGroups.length})` : ""}`}
-        action={
-          <button
-            onClick={handleFetchGroups}
-            disabled={!running || groupsLoading}
-            className="inline-flex items-center gap-1 text-[10px] cursor-pointer border-none bg-transparent"
-            style={{ color: "var(--text-muted)", opacity: !running || groupsLoading ? 0.4 : 1 }}
-          >
-            {groupsLoading ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
-            Fetch
-          </button>
-        }
-      >
-        {!running && !groupsFetched && (
-          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>Start plugin to fetch groups.</p>
-        )}
-        {groups.length > 0 && (
-          <div className="flex flex-col gap-px rounded-lg overflow-auto" style={{
-            maxHeight: 180, border: "1px solid var(--border)",
-          }}>
-            {groups.map((group) => (
-              <label
-                key={group.id}
-                className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer text-xs"
-                style={{ background: "var(--bg-secondary)" }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-secondary)"; }}
-              >
-                <input
-                  type="checkbox"
-                  checked={allowedGroups.includes(group.id)}
-                  onChange={() => handleToggleGroup(group.id)}
-                  style={{ accentColor: "#a1a1aa" }}
-                />
-                <span className="truncate" style={{ color: "var(--text-primary)" }}>{group.subject}</span>
-              </label>
-            ))}
-          </div>
-        )}
-      </Section>
-
-      {/* Whitelist */}
-      <Section
-        icon={<Phone size={12} />}
-        title={`Whitelist${whitelist.length ? ` (${whitelist.length})` : ""}`}
-        action={
-          !showAddPhone ? (
-            <button
-              onClick={() => setShowAddPhone(true)}
-              className="inline-flex items-center gap-1 text-[10px] cursor-pointer border-none bg-transparent"
-              style={{ color: "var(--text-muted)" }}
-            >
-              <Plus size={10} />
-              Add
-            </button>
-          ) : undefined
-        }
-      >
-        {whitelist.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-2">
-            {whitelist.map((num) => (
-              <span key={num} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono" style={{
-                background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
-              }}>
-                {formatPhoneNumber(num)}
-                <button
-                  className="inline-flex border-none bg-transparent cursor-pointer p-0"
-                  style={{ color: "var(--text-muted)" }}
-                  onClick={() => handleRemovePhone(num)}
-                >
-                  <X size={10} />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        {whitelist.length === 0 && !showAddPhone && (
-          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>No numbers. All allowed.</p>
-        )}
-        {showAddPhone && (
-          <div className="flex flex-wrap gap-1.5 p-2 rounded-lg" style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}>
-            <select
-              value={phoneCountry}
-              onChange={(e) => setPhoneCountry(e.target.value)}
-              className="px-2 py-1 rounded text-[10px] outline-none appearance-none"
-              style={{
-                background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
-                width: "100%",
-                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-                backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center", paddingRight: "2rem",
-              }}
-            >
-              {COUNTRY_CODES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
-            <div className="flex gap-1.5 w-full">
-              <input
-                value={phoneNumber}
-                placeholder="Phone number"
-                onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ""))}
-                onKeyDown={(e) => { if (e.key === "Enter") handleAddPhone(); if (e.key === "Escape") setShowAddPhone(false); }}
-                className="flex-1 px-2 py-1 rounded text-[10px] outline-none"
-                style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+      {[...groups.entries()].map(([group, fields]) => (
+        <Section key={group} icon={<Settings2 size={12} />} title={group}>
+          <div className="flex flex-col gap-2.5">
+            {fields.map(([key, fieldSchema]) => (
+              <GenericField
+                key={key}
+                fieldKey={key}
+                schema={fieldSchema}
+                value={config[key]}
+                pluginName={pluginName}
+                running={running}
+                onSave={(v) => saveField(key, v)}
               />
-              <button
-                onClick={handleAddPhone}
-                disabled={!phoneNumber.trim()}
-                className="inline-flex items-center gap-0.5 px-2 py-1 rounded text-[10px] font-medium cursor-pointer border-none"
-                style={{ background: "#fafafa", color: "#09090b", opacity: !phoneNumber.trim() ? 0.4 : 1 }}
-              >
-                <Plus size={10} /> Add
-              </button>
-              <button
-                onClick={() => { setShowAddPhone(false); setPhoneNumber(""); }}
-                className="px-2 py-1 rounded text-[10px] cursor-pointer border-none"
-                style={{ background: "transparent", color: "var(--text-muted)" }}
-              >
-                Cancel
-              </button>
-            </div>
+            ))}
           </div>
-        )}
-      </Section>
-
-      {/* Remaining config */}
+        </Section>
+      ))}
       {remainingKeys.length > 0 && (
         <Section icon={<Settings2 size={12} />} title="Other Settings">
           <div className="flex flex-col gap-2">
@@ -1401,6 +1164,403 @@ function WhatsAppConfig({ pluginName, config, running, onConfigSave }: {
         </Section>
       )}
     </>
+  );
+}
+
+// ===========================================================================
+// Generic Field (renders based on schema type + format)
+// ===========================================================================
+
+function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: {
+  fieldKey: string;
+  schema: ConfigFieldSchemaDto;
+  value: unknown;
+  pluginName: string;
+  running: boolean;
+  onSave: (value: unknown) => void;
+}) {
+  const label = schema.label ?? fieldKey;
+
+  // string + valid_values → select
+  if (schema.type === "string" && schema.validValues.length > 0) {
+    const defaultStr = schema.default != null ? String(schema.default) : undefined;
+    return (
+      <FieldRow label={label} description={schema.description}>
+        <select
+          value={String(value ?? "")}
+          onChange={(e) => onSave(e.target.value)}
+          className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none appearance-none"
+          style={{
+            background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
+            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+            backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center", paddingRight: "2rem",
+          }}
+        >
+          <option value="">{defaultStr ? `— (${defaultStr})` : "—"}</option>
+          {schema.validValues.map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+      </FieldRow>
+    );
+  }
+
+  // string[] + format: "phone" → phone list
+  if (schema.type === "string[]" && schema.format === "phone") {
+    return <PhoneListField label={label} description={schema.description} value={value} onSave={onSave} />;
+  }
+
+  // string[] + options_command → remote select (fetch options from plugin)
+  if (schema.type === "string[]" && schema.optionsCommand) {
+    return (
+      <RemoteOptionsField
+        label={label}
+        description={schema.description}
+        value={value}
+        pluginName={pluginName}
+        command={schema.optionsCommand}
+        running={running}
+        onSave={onSave}
+      />
+    );
+  }
+
+  // string[] → tag list
+  if (schema.type === "string[]") {
+    return <TagListField label={label} description={schema.description} value={value} onSave={onSave} />;
+  }
+
+  // bool → toggle
+  if (schema.type === "bool") {
+    const checked = value === true || value === "true";
+    return (
+      <FieldRow label={label} description={schema.description}>
+        <button
+          onClick={() => onSave(!checked)}
+          className="relative w-7 h-[16px] rounded-full transition-colors"
+          style={{
+            background: checked ? "rgba(34,197,94,0.35)" : "rgba(63,63,70,0.4)",
+            border: "none", cursor: "pointer", padding: 0,
+          }}
+        >
+          <span
+            className="absolute top-[2px] w-[12px] h-[12px] rounded-full transition-all"
+            style={{ background: checked ? "#22c55e" : "#52525b", left: checked ? 12 : 2 }}
+          />
+        </button>
+      </FieldRow>
+    );
+  }
+
+  // number → number input
+  if (schema.type === "number") {
+    return <TextInputField label={label} description={schema.description} value={value} type="number" sensitive={false} onSave={onSave} placeholder={schema.default != null ? String(schema.default) : undefined} />;
+  }
+
+  // string (default) — with format hints
+  const isSensitive = schema.format === "password" || /token|key|secret|password|credential/i.test(fieldKey);
+  return (
+    <TextInputField
+      label={label}
+      description={schema.description}
+      value={value}
+      type={schema.format === "url" ? "url" : "text"}
+      sensitive={isSensitive}
+      onSave={onSave}
+      placeholder={schema.default != null ? String(schema.default) : undefined}
+    />
+  );
+}
+
+function FieldRow({ label, description, children }: {
+  label: string; description?: string; children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-[10px] font-medium" style={{ color: "var(--text-secondary)" }}>{label}</span>
+        {children}
+      </div>
+      {description && (
+        <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>{description}</p>
+      )}
+    </div>
+  );
+}
+
+function TextInputField({ label, description, value, type, sensitive, onSave, placeholder }: {
+  label: string; description?: string; value: unknown; type: string; sensitive: boolean;
+  onSave: (v: unknown) => void; placeholder?: string;
+}) {
+  const strValue = value === null || value === undefined ? "" : String(value);
+  const [local, setLocal] = useState(strValue);
+  const [visible, setVisible] = useState(!sensitive);
+  useEffect(() => { setLocal(value === null || value === undefined ? "" : String(value)); }, [value]);
+
+  const commit = () => {
+    if (local !== strValue) {
+      onSave(type === "number" ? (local === "" ? null : Number(local)) : local);
+    }
+  };
+
+  return (
+    <div>
+      <span className="text-[10px] font-medium block mb-1" style={{ color: "var(--text-secondary)" }}>{label}</span>
+      <div className="flex items-center gap-1">
+        <input
+          type={visible ? (type === "number" ? "number" : "text") : "password"}
+          value={local}
+          onChange={(e) => setLocal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
+          placeholder={placeholder}
+          className="flex-1 px-2.5 py-1.5 rounded-lg text-xs outline-none"
+          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+        />
+        {sensitive && (
+          <button
+            type="button"
+            onClick={() => setVisible(!visible)}
+            className="shrink-0 p-1 rounded cursor-pointer border-none bg-transparent"
+            style={{ color: "var(--text-muted)" }}
+          >
+            {visible ? <EyeOff size={12} /> : <Eye size={12} />}
+          </button>
+        )}
+      </div>
+      {description && <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>}
+    </div>
+  );
+}
+
+function TagListField({ label, description, value, onSave }: {
+  label: string; description?: string; value: unknown; onSave: (v: unknown) => void;
+}) {
+  const items: string[] = Array.isArray(value) ? (value as string[]) : [];
+  const [adding, setAdding] = useState(false);
+  const [newItem, setNewItem] = useState("");
+
+  const handleAdd = () => {
+    const trimmed = newItem.trim();
+    if (!trimmed || items.includes(trimmed)) return;
+    onSave([...items, trimmed]);
+    setNewItem("");
+    setAdding(false);
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] font-medium" style={{ color: "var(--text-secondary)" }}>
+          {label}{items.length > 0 ? ` (${items.length})` : ""}
+        </span>
+        {!adding && (
+          <button onClick={() => setAdding(true)}
+            className="inline-flex items-center gap-0.5 text-[9px] cursor-pointer border-none bg-transparent"
+            style={{ color: "var(--text-muted)" }}>
+            + Add
+          </button>
+        )}
+      </div>
+      {items.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {items.map((item) => (
+            <span key={item} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono" style={{
+              background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
+            }}>
+              {item}
+              <button className="inline-flex border-none bg-transparent cursor-pointer p-0"
+                style={{ color: "var(--text-muted)" }}
+                onClick={() => onSave(items.filter((i) => i !== item))}>
+                <X size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {adding && (
+        <div className="flex gap-1.5">
+          <input value={newItem}
+            onChange={(e) => setNewItem(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setAdding(false); }}
+            placeholder="Value"
+            className="flex-1 px-2 py-1 rounded text-[10px] outline-none"
+            style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+            autoFocus
+          />
+          <button onClick={handleAdd} disabled={!newItem.trim()}
+            className="px-2 py-1 rounded text-[10px] font-medium cursor-pointer border-none"
+            style={{ background: "#fafafa", color: "#09090b", opacity: !newItem.trim() ? 0.4 : 1 }}>
+            Add
+          </button>
+          <button onClick={() => { setAdding(false); setNewItem(""); }}
+            className="px-2 py-1 rounded text-[10px] cursor-pointer border-none"
+            style={{ background: "transparent", color: "var(--text-muted)" }}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {description && <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>}
+    </div>
+  );
+}
+
+function PhoneListField({ label, description, value, onSave }: {
+  label: string; description?: string; value: unknown; onSave: (v: unknown) => void;
+}) {
+  const { toast } = useToast();
+  const items: string[] = Array.isArray(value) ? (value as string[]) : [];
+  const [showAdd, setShowAdd] = useState(false);
+  const [phoneCountry, setPhoneCountry] = useState("54");
+  const [phoneNumber, setPhoneNumber] = useState("");
+
+  const handleAdd = () => {
+    const digits = phoneNumber.replace(/\D/g, "");
+    if (!digits) return;
+    const full = phoneCountry + digits;
+    if (items.includes(full)) { toast("info", "Already in list"); return; }
+    onSave([...items, full]);
+    setPhoneNumber("");
+    setShowAdd(false);
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] font-medium" style={{ color: "var(--text-secondary)" }}>
+          {label}{items.length > 0 ? ` (${items.length})` : ""}
+        </span>
+        {!showAdd && (
+          <button onClick={() => setShowAdd(true)}
+            className="inline-flex items-center gap-0.5 text-[9px] cursor-pointer border-none bg-transparent"
+            style={{ color: "var(--text-muted)" }}>
+            + Add
+          </button>
+        )}
+      </div>
+      {items.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {items.map((num) => (
+            <span key={num} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono" style={{
+              background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
+            }}>
+              {formatPhoneNumber(num)}
+              <button className="inline-flex border-none bg-transparent cursor-pointer p-0"
+                style={{ color: "var(--text-muted)" }}
+                onClick={() => onSave(items.filter((n) => n !== num))}>
+                <X size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {items.length === 0 && !showAdd && (
+        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>No numbers. All allowed.</p>
+      )}
+      {showAdd && (
+        <div className="flex flex-wrap gap-1.5 p-2 rounded-lg" style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}>
+          <select value={phoneCountry} onChange={(e) => setPhoneCountry(e.target.value)}
+            className="px-2 py-1 rounded text-[10px] outline-none appearance-none"
+            style={{
+              background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)", width: "100%",
+              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+              backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center", paddingRight: "2rem",
+            }}>
+            {COUNTRY_CODES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+          <div className="flex gap-1.5 w-full">
+            <input value={phoneNumber} placeholder="Phone number"
+              onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ""))}
+              onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setShowAdd(false); }}
+              className="flex-1 px-2 py-1 rounded text-[10px] outline-none"
+              style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+            />
+            <button onClick={handleAdd} disabled={!phoneNumber.trim()}
+              className="inline-flex items-center gap-0.5 px-2 py-1 rounded text-[10px] font-medium cursor-pointer border-none"
+              style={{ background: "#fafafa", color: "#09090b", opacity: !phoneNumber.trim() ? 0.4 : 1 }}>
+              Add
+            </button>
+            <button onClick={() => { setShowAdd(false); setPhoneNumber(""); }}
+              className="px-2 py-1 rounded text-[10px] cursor-pointer border-none"
+              style={{ background: "transparent", color: "var(--text-muted)" }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {description && <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>}
+    </div>
+  );
+}
+
+function RemoteOptionsField({ label, description, value, pluginName, command, running, onSave }: {
+  label: string; description?: string; value: unknown; pluginName: string; command: string;
+  running: boolean; onSave: (v: unknown) => void;
+}) {
+  const { toast } = useToast();
+  const items: string[] = Array.isArray(value) ? (value as string[]) : [];
+  const [options, setOptions] = useState<{ id: string; label?: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [fetched, setFetched] = useState(false);
+
+  const fetchOptions = async () => {
+    setLoading(true);
+    try {
+      const output = await runPluginCommand(pluginName, command);
+      // Take only the first line (plugin may print duplicates)
+      const firstLine = output.split("\n")[0]?.trim() ?? output;
+      const parsed = JSON.parse(firstLine);
+      // Support both [{id, label}] and [{id, subject}] (WhatsApp compat)
+      setOptions(Array.isArray(parsed) ? parsed.map((o: Record<string, unknown>) => ({
+        id: String(o.id ?? o.value ?? ""),
+        label: String(o.label ?? o.subject ?? o.name ?? o.id ?? ""),
+      })) : []);
+      setFetched(true);
+    } catch (e) {
+      toast("error", `Failed to fetch options: ${e}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggle = (id: string) => {
+    const next = items.includes(id) ? items.filter((i) => i !== id) : [...items, id];
+    onSave(next);
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] font-medium" style={{ color: "var(--text-secondary)" }}>
+          {label}{items.length > 0 ? ` (${items.length})` : ""}
+        </span>
+        <button onClick={fetchOptions} disabled={!running || loading}
+          className="inline-flex items-center gap-1 text-[10px] cursor-pointer border-none bg-transparent"
+          style={{ color: "var(--text-muted)", opacity: !running || loading ? 0.4 : 1 }}>
+          {loading ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+          Fetch
+        </button>
+      </div>
+      {!running && !fetched && (
+        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>Start plugin to fetch options.</p>
+      )}
+      {options.length > 0 && (
+        <div className="flex flex-col gap-px rounded-lg overflow-auto" style={{
+          maxHeight: 180, border: "1px solid var(--border)",
+        }}>
+          {options.map((opt) => (
+            <label key={opt.id}
+              className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer text-xs"
+              style={{ background: "var(--bg-secondary)" }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-secondary)"; }}>
+              <input type="checkbox" checked={items.includes(opt.id)} onChange={() => toggle(opt.id)}
+                style={{ accentColor: "#a1a1aa" }} />
+              <span className="truncate" style={{ color: "var(--text-primary)" }}>{opt.label ?? opt.id}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {description && <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>}
+    </div>
   );
 }
 
@@ -1439,7 +1599,7 @@ function QrModal({ qrDataUrl, qrLoading, qrLinked, onClose, onDone }: {
             </div>
             <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Linked!</span>
             <p className="text-[11px] text-center" style={{ color: "var(--text-secondary)" }}>
-              WhatsApp connected successfully.
+              Connected successfully.
             </p>
             <button onClick={onDone} className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
               style={{ background: "#fafafa", color: "#09090b" }}>Done</button>
@@ -1451,7 +1611,7 @@ function QrModal({ qrDataUrl, qrLoading, qrLinked, onClose, onDone }: {
               <span className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>Scan QR Code</span>
             </div>
             <p className="text-[10px] text-center" style={{ color: "var(--text-muted)" }}>
-              Open WhatsApp &gt; Settings &gt; Linked Devices
+              Scan with your device to link
             </p>
             {qrLoading ? (
               <div className="flex items-center justify-center" style={{ width: 220, height: 220 }}>

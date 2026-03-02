@@ -775,14 +775,20 @@ export class WebTransport implements Transport {
         };
       case "list_remote_plugins":
         return { method: "GET", url: "/api/plugins/remote" };
-      case "get_whatsapp_qr":
-        return { method: "GET", url: "/api/plugins/whatsapp/qr" };
-      case "check_whatsapp_auth":
-        return { method: "GET", url: "/api/plugins/whatsapp/auth" };
-      case "fetch_whatsapp_groups":
+      case "get_plugin_manifest_info":
         return {
           method: "GET",
-          url: `/api/plugins/${encodeURIComponent(args?.name as string)}/whatsapp-groups`,
+          url: `/api/plugins/${encodeURIComponent(args?.name as string)}/manifest-info`,
+        };
+      case "get_plugin_auth_qr":
+        return {
+          method: "GET",
+          url: `/api/plugins/${encodeURIComponent(args?.name as string)}/auth/qr`,
+        };
+      case "check_plugin_auth":
+        return {
+          method: "GET",
+          url: `/api/plugins/${encodeURIComponent(args?.name as string)}/auth/status`,
         };
       case "get_plugin_commands":
         return {
@@ -963,13 +969,13 @@ export class WebTransport implements Transport {
         return { method: "DELETE", url: `/api/events/history${qs}` };
       }
 
-      // ── Whisper / Audio ──
-      case "check_whisper_status":
-        return { method: "GET", url: "/api/whisper/status" };
+      // ── Audio transcription ──
+      case "check_transcription_status":
+        return { method: "GET", url: "/api/transcription/status" };
       case "transcribe_audio":
         return {
           method: "POST",
-          url: "/api/whisper/transcribe",
+          url: "/api/transcription/transcribe",
           body: { audio: args?.audio },
         };
 

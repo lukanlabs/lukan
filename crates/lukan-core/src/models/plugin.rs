@@ -8,12 +8,27 @@ pub const PROTOCOL_VERSION: u32 = 1;
 // ── Config schema types ──────────────────────────────────────────────
 
 /// Supported configuration field types
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ConfigFieldType {
+    #[default]
     String,
     StringArray,
     Number,
     Bool,
+}
+
+impl serde::Serialize for ConfigFieldType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            ConfigFieldType::String => serializer.serialize_str("string"),
+            ConfigFieldType::StringArray => serializer.serialize_str("string[]"),
+            ConfigFieldType::Number => serializer.serialize_str("number"),
+            ConfigFieldType::Bool => serializer.serialize_str("bool"),
+        }
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for ConfigFieldType {
@@ -35,8 +50,15 @@ impl<'de> serde::Deserialize<'de> for ConfigFieldType {
     }
 }
 
+/// Conditional visibility for a config field
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependsOn {
+    pub field: String,
+    pub values: Vec<String>,
+}
+
 /// Schema for a single configuration field declared in plugin.toml
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ConfigFieldSchema {
     #[serde(rename = "type")]
     pub field_type: ConfigFieldType,
@@ -44,6 +66,30 @@ pub struct ConfigFieldSchema {
     pub description: String,
     #[serde(default)]
     pub valid_values: Vec<String>,
+    /// UI label (derived from key if absent)
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Rendering hint: "phone", "url", "password", "textarea"
+    #[serde(default)]
+    pub format: Option<String>,
+    /// UI section grouping (ungrouped → "General")
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Conditional visibility
+    #[serde(default)]
+    pub depends_on: Option<DependsOn>,
+    /// Plugin command that returns JSON options `[{id, label}]`
+    #[serde(default)]
+    pub options_command: Option<String>,
+    /// Hide from UI
+    #[serde(default)]
+    pub hidden: bool,
+    /// Default value
+    #[serde(default)]
+    pub default: Option<serde_json::Value>,
+    /// Sort order within group
+    #[serde(default)]
+    pub order: i32,
 }
 
 /// A custom command declared by a plugin in plugin.toml
@@ -142,6 +188,76 @@ pub enum LogLevel {
     Error,
 }
 
+// ── Auth declaration ────────────────────────────────────────────────────
+
+/// Authentication method declared in plugin.toml `[auth]`.
+/// The host uses this to render the appropriate auth UI without plugin-specific code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AuthDeclaration {
+    /// Plugin writes a QR code to a file; host renders it and polls for completion.
+    Qr {
+        #[serde(default = "default_qr_file")]
+        qr_file: String,
+        #[serde(default = "default_status_file")]
+        status_file: String,
+    },
+    /// Authenticated if a config field exists and is non-empty.
+    Token {
+        #[serde(default = "default_check_field")]
+        check_field: String,
+    },
+    /// Just runs the "auth" command with no special UI.
+    Command,
+}
+
+fn default_qr_file() -> String {
+    "current-qr.txt".to_string()
+}
+
+fn default_status_file() -> String {
+    "creds.json".to_string()
+}
+
+fn default_check_field() -> String {
+    "access_token".to_string()
+}
+
+// ── Contributions ──────────────────────────────────────────────────────
+
+/// Capabilities a plugin contributes to the host.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginContributions {
+    /// Audio transcription service
+    pub transcription: Option<TranscriptionContribution>,
+}
+
+/// Plugin provides an audio transcription HTTP endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptionContribution {
+    /// Config key holding the server port (default "port")
+    #[serde(default = "default_port_field")]
+    pub port_field: String,
+    /// Default port if not configured
+    #[serde(default = "default_transcription_port")]
+    pub default_port: u16,
+    /// API endpoint path
+    #[serde(default = "default_transcription_endpoint")]
+    pub endpoint: String,
+}
+
+fn default_port_field() -> String {
+    "port".to_string()
+}
+
+fn default_transcription_port() -> u16 {
+    8787
+}
+
+fn default_transcription_endpoint() -> String {
+    "/v1/audio/transcriptions".to_string()
+}
+
 // ── Plugin manifest (plugin.toml) ───────────────────────────────────────
 
 /// Top-level manifest parsed from plugin.toml
@@ -158,6 +274,11 @@ pub struct PluginManifest {
     /// Security policy declared by the plugin
     #[serde(default)]
     pub security: PluginSecurity,
+    /// Authentication method (QR, token check, or command-only)
+    pub auth: Option<AuthDeclaration>,
+    /// Capabilities this plugin contributes to the host
+    #[serde(default)]
+    pub contributions: PluginContributions,
 }
 
 /// Security policy declared in plugin.toml `[security]`
@@ -209,6 +330,8 @@ impl PluginManifest {
                     field_type: ConfigFieldType::StringArray,
                     description: "Allowed directories for file access".to_string(),
                     valid_values: Vec::new(),
+                    hidden: true,
+                    ..Default::default()
                 });
             self.config
                 .entry("skip_dir_restrictions".to_string())
@@ -216,6 +339,8 @@ impl PluginManifest {
                     field_type: ConfigFieldType::Bool,
                     description: "Disable directory restrictions".to_string(),
                     valid_values: Vec::new(),
+                    hidden: true,
+                    ..Default::default()
                 });
         }
         if !self.security.default_tools.is_empty() {
@@ -225,6 +350,8 @@ impl PluginManifest {
                     field_type: ConfigFieldType::StringArray,
                     description: "Agent tools".to_string(),
                     valid_values: Vec::new(),
+                    hidden: true,
+                    ..Default::default()
                 });
         }
     }

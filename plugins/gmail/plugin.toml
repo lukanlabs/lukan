@@ -5,6 +5,10 @@ alias = "gmail"
 description = "Gmail tools (search, read, send, reply, modify)"
 plugin_type = "tools"
 
+[auth]
+type = "token"
+check_field = "access_token"
+
 [config.client_id]
 type = "string"
 description = "Google OAuth Client ID"

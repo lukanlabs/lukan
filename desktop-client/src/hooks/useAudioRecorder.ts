@@ -6,7 +6,7 @@ export type RecorderState = "idle" | "recording" | "transcribing";
 export interface AudioRecorder {
   state: RecorderState;
   duration: number;
-  whisperAvailable: boolean;
+  transcriptionAvailable: boolean;
   error: string | null;
   start: () => void;
   stop: () => void;
@@ -16,13 +16,13 @@ export interface AudioRecorder {
 
 /**
  * Records audio via Tauri backend (cpal, system-level mic access)
- * and transcribes via the whisper plugin HTTP server.
+ * and transcribes via a plugin that contributes transcription.
  * Calls `onTranscript` with the transcribed text when done.
  */
 export function useAudioRecorder(onTranscript: (text: string) => void): AudioRecorder {
   const [state, setState] = useState<RecorderState>("idle");
   const [duration, setDuration] = useState(0);
-  const [whisperAvailable, setWhisperAvailable] = useState(false);
+  const [transcriptionAvailable, setTranscriptionAvailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const stateRef = useRef<RecorderState>("idle");
@@ -38,10 +38,10 @@ export function useAudioRecorder(onTranscript: (text: string) => void): AudioRec
 
   const refreshStatus = useCallback(async () => {
     try {
-      const status = await api.checkWhisperStatus();
-      setWhisperAvailable(status.installed && status.running);
+      const status = await api.checkTranscriptionStatus();
+      setTranscriptionAvailable(status.installed && status.running);
     } catch {
-      setWhisperAvailable(false);
+      setTranscriptionAvailable(false);
     }
   }, []);
 
@@ -111,7 +111,7 @@ export function useAudioRecorder(onTranscript: (text: string) => void): AudioRec
   return {
     state,
     duration,
-    whisperAvailable,
+    transcriptionAvailable,
     error,
     start,
     stop,

@@ -61,27 +61,30 @@ impl LukanPaths {
         Self::project_memory_dir().join(".active")
     }
 
-    /// WhatsApp auth directory: ~/.local/share/lukan/whatsapp-auth/
-    pub fn whatsapp_auth_dir() -> PathBuf {
+    /// Base data directory: ~/.local/share/lukan/
+    pub fn data_dir() -> PathBuf {
         dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("~/.local/share"))
             .join("lukan")
-            .join("whatsapp-auth")
     }
 
-    /// WhatsApp daemon PID file: ~/.config/lukan/whatsapp.pid
-    pub fn whatsapp_pid_file() -> PathBuf {
-        Self::config_dir().join("whatsapp.pid")
-    }
+    /// Generic plugin data directory: ~/.local/share/lukan/plugins/{name}/
+    /// Used for plugin-specific persistent data (auth credentials, caches, etc.)
+    pub fn plugin_data_dir(name: &str) -> PathBuf {
+        let new_path = Self::data_dir().join("plugins").join(name);
 
-    /// WhatsApp connector PID file: ~/.config/lukan/whatsapp-connector.pid
-    pub fn whatsapp_connector_pid_file() -> PathBuf {
-        Self::config_dir().join("whatsapp-connector.pid")
-    }
+        // Auto-migrate legacy whatsapp-auth dir → plugins/whatsapp/
+        if name == "whatsapp" && !new_path.exists() {
+            let old_path = Self::data_dir().join("whatsapp-auth");
+            if old_path.exists() {
+                if let Some(parent) = new_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::rename(&old_path, &new_path);
+            }
+        }
 
-    /// WhatsApp log file: ~/.config/lukan/whatsapp.log
-    pub fn whatsapp_log_file() -> PathBuf {
-        Self::config_dir().join("whatsapp.log")
+        new_path
     }
 
     /// Plugins directory: ~/.config/lukan/plugins/

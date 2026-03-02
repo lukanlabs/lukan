@@ -5,6 +5,10 @@ alias = "google"
 description = "Google Workspace tools (Sheets, Calendar, Docs, Drive)"
 plugin_type = "tools"
 
+[auth]
+type = "token"
+check_field = "access_token"
+
 [config.client_id]
 type = "string"
 description = "Google OAuth Client ID"

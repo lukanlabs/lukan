@@ -36,7 +36,7 @@ let bridgeUrl = "ws://localhost:3001";
 
 // Audio transcription
 let openaiApiKey = process.env.OPENAI_API_KEY || null;
-let transcriptionBackend = "openai"; // "openai" | "local"
+let transcriptionBackend = "local"; // "openai" | "local"
 let whisperUrl = "http://localhost:8787";
 let whisperChild = null; // child process if we started whisper server
 let whisperReady = false;

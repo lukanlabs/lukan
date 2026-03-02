@@ -9,8 +9,6 @@ export interface AppConfig {
   models?: string[];
   visionModel?: string;
   visionModels?: string[];
-  whatsapp?: Record<string, unknown>;
-  email?: Record<string, unknown>;
   openaiCompatibleBaseUrl?: string;
   openaiCompatibleProviderName?: string;
   openaiCompatibleProviderOptions?: Record<string, unknown>;
@@ -127,18 +125,36 @@ export interface PluginToolsInfo {
   allCoreTools: string[];
 }
 
-export interface WhatsAppGroup {
-  id: string;
-  subject: string;
-  participants?: number;
+export interface DependsOnDto {
+  field: string;
+  values: string[];
 }
+
+export interface ConfigFieldSchemaDto {
+  type: string;
+  description: string;
+  validValues: string[];
+  label?: string;
+  format?: string;
+  group?: string;
+  dependsOn?: DependsOnDto;
+  optionsCommand?: string;
+  hidden: boolean;
+  default?: unknown;
+  order: number;
+}
+
+export type AuthDeclarationDto =
+  | { type: "qr"; qrFile: string; statusFile: string }
+  | { type: "token"; checkField: string }
+  | { type: "command" };
 
 export interface WebUiStatus {
   running: boolean;
   port: number;
 }
 
-export interface WhisperStatus {
+export interface TranscriptionStatus {
   installed: boolean;
   running: boolean;
   port: number;

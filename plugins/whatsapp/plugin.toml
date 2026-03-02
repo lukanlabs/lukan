@@ -10,22 +10,83 @@ alias = "wa"
 command = "node"
 args = ["bridge.js"]
 
-# Config schema — each field is editable via generic CLI
-[config.whitelist]
-type = "string[]"
-description = "Allowed phone numbers"
+[auth]
+type = "qr"
+
+# Config schema — rich fields for generic UI rendering
+# Keys MUST match the camelCase keys used by bridge.js
+[config.bridgeUrl]
+type = "string"
+label = "Bridge URL"
+description = "Connector WebSocket URL"
+format = "url"
+group = "Connection"
+order = 0
+default = "ws://localhost:3001"
 
 [config.prefix]
 type = "string"
-description = "Command prefix"
+label = "Command Prefix"
+description = "Only messages starting with this prefix will be processed"
+group = "Connection"
+order = 1
 
-[config.allowed_groups]
+[config.whitelist]
 type = "string[]"
+label = "Phone Whitelist"
+description = "Allowed phone numbers"
+format = "phone"
+group = "Access Control"
+order = 0
+
+[config.allowedGroups]
+type = "string[]"
+label = "Allowed Groups"
 description = "Allowed group IDs"
+options_command = "groups-json"
+group = "Access Control"
+order = 1
+
+[config.transcriptionBackend]
+type = "string"
+label = "Transcription Backend"
+description = "Audio transcription backend"
+valid_values = ["openai", "local"]
+default = "local"
+group = "Audio"
+order = 0
+
+[config.whisperUrl]
+type = "string"
+label = "Whisper URL"
+description = "Local Whisper server URL"
+format = "url"
+default = "http://localhost:8787"
+group = "Audio"
+order = 1
+[config.whisperUrl.depends_on]
+field = "transcriptionBackend"
+values = ["local"]
+
+[config.reminderAdvance]
+type = "number"
+label = "Reminder Advance"
+description = "Minutes before reminder"
+default = 15
+group = "Reminders"
+order = 0
+
+[config.reminderChat]
+type = "string"
+label = "Reminder Chat"
+description = "Chat ID for reminders"
+group = "Reminders"
+order = 1
 
 [config.tools]
 type = "string[]"
 description = "Agent tools"
+hidden = true
 valid_values = [
   "Bash",
   "ReadFiles", "WriteFile", "EditFile",
@@ -36,27 +97,6 @@ valid_values = [
   "DocsRead", "DocsCreate", "DocsUpdate",
   "DriveList", "DriveDownload",
 ]
-
-[config.bridge_url]
-type = "string"
-description = "Connector WebSocket URL"
-
-[config.transcription_backend]
-type = "string"
-description = "Audio transcription backend: 'openai' (API) or 'local' (whisper.cpp server)"
-valid_values = ["openai", "local"]
-
-[config.whisper_url]
-type = "string"
-description = "Local Whisper server URL (used when transcription_backend = 'local')"
-
-[config.reminder_advance]
-type = "number"
-description = "Minutes before reminder"
-
-[config.reminder_chat]
-type = "string"
-description = "Chat ID for reminders"
 
 # Security policy — generic protocol
 [security]
@@ -81,3 +121,7 @@ handler = "logout"
 [commands.groups]
 description = "List available WhatsApp groups"
 handler = "groups"
+
+[commands.groups-json]
+description = "List groups as JSON (for UI picker)"
+handler = "groups-json"

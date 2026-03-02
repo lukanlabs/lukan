@@ -27,7 +27,7 @@ const RED = "\x1b[31m";
 
 const XDG_DATA_HOME =
   process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
-const AUTH_DIR = join(XDG_DATA_HOME, "lukan", "whatsapp-auth");
+const AUTH_DIR = process.env.PLUGIN_DATA_DIR || join(XDG_DATA_HOME, "lukan", "plugins", "whatsapp");
 const CREDS_FILE = join(AUTH_DIR, "creds.json");
 
 // Load plugin config to get bridge URL

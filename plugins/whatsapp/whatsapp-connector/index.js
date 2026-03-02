@@ -21,7 +21,7 @@ import { mkdirSync, writeFileSync, unlinkSync } from "fs";
 const logger = pino({ level: "silent" });
 
 const XDG_DATA_HOME = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
-const AUTH_DIR = join(XDG_DATA_HOME, "lukan", "whatsapp-auth");
+const AUTH_DIR = process.env.PLUGIN_DATA_DIR || join(XDG_DATA_HOME, "lukan", "plugins", "whatsapp");
 const WS_PORT = parseInt(process.env.CONNECTOR_PORT || "3001", 10);
 
 mkdirSync(AUTH_DIR, { recursive: true });

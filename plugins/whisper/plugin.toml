@@ -12,20 +12,36 @@ args = []
 
 [config.model_size]
 type = "string"
+label = "Model Size"
 description = "Whisper model size (tiny, base, small, medium, large-v3)"
 valid_values = ["tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium", "medium.en", "large-v3", "large-v3-turbo"]
+default = "base"
+order = 0
 
 [config.port]
 type = "number"
+label = "Port"
 description = "HTTP server port for transcription API"
+default = 8787
+order = 1
 
 [config.language]
 type = "string"
+label = "Language"
 description = "Force transcription language (e.g. 'es', 'en'). Leave empty for auto-detect"
+order = 2
 
 [config.use_gpu]
 type = "bool"
+label = "Use GPU"
 description = "Use GPU acceleration if available (CUDA/Metal)"
+default = true
+order = 3
+
+[contributions.transcription]
+port_field = "port"
+default_port = 8787
+endpoint = "/v1/audio/transcriptions"
 
 [commands.download]
 description = "Download a whisper model from HuggingFace"

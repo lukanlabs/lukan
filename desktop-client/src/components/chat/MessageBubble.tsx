@@ -1,4 +1,6 @@
-import { User, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { ChevronRight } from "lucide-react";
+import logoUrl from "../../assets/logo.png";
 import type { Message, ContentBlock } from "../../lib/types";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ToolCallCard } from "./ToolCallCard";
@@ -46,6 +48,7 @@ function isToolResultMessage(msg: Message): boolean {
 
 export function MessageBubble({ message, toolResultsMap }: MessageBubbleProps) {
   const isUser = message.role === "user";
+  const [showThinking, setShowThinking] = useState(false);
 
   // Skip tool-result-only messages — shown inline with tool_use blocks
   if (isUser && Array.isArray(message.content) && isToolResultMessage(message)) {
@@ -59,42 +62,44 @@ export function MessageBubble({ message, toolResultsMap }: MessageBubbleProps) {
   const thinking = !isUser ? extractThinkingContent(message.content) : null;
   const toolUses = !isUser ? extractToolUses(message.content) : [];
 
-  if (!text.trim() && !thinking && toolUses.length === 0) return null;
+  if (!text.trim() && toolUses.length === 0) return null;
 
   return (
     <div
       className={`mb-4 animate-message-in ${isUser ? "flex justify-end" : "flex justify-start"}`}
     >
       <div className={`flex gap-3 w-full max-w-4xl ${isUser ? "flex-row-reverse" : ""}`}>
-        {/* Avatar */}
-        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border bg-zinc-800 border-zinc-700 text-zinc-300">
-          {isUser ? <User className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
-        </div>
+        {/* Avatar — only for assistant */}
+        {!isUser && (
+          <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center">
+            <img src={logoUrl} alt="" className="h-5 w-5" style={{ imageRendering: "auto" }} />
+          </div>
+        )}
 
         {/* Content */}
         <div className="min-w-0 flex-1">
-          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-            {isUser ? "You" : "AI Assistant"}
-          </div>
+          {!isUser && thinking && (
+            <button
+              onClick={() => setShowThinking((v) => !v)}
+              className="mt-[7px] mb-1 inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-md border-none cursor-pointer transition-colors bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
+            >
+              <ChevronRight size={10} className={`transition-transform ${showThinking ? "rotate-90" : ""}`} />
+              Reasoning
+            </button>
+          )}
 
-          {/* Thinking block */}
-          {thinking && (
-            <details className="mb-2">
-              <summary className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-400">
-                Thinking...
-              </summary>
-              <div className="mt-1 rounded-lg bg-zinc-900/30 border border-zinc-800/50 px-3 py-2 text-xs text-zinc-500 italic max-h-40 overflow-y-auto">
-                {thinking}
-              </div>
-            </details>
+          {showThinking && thinking && (
+            <div className="mb-2 rounded-lg bg-zinc-900/30 border border-zinc-800/50 px-3 py-2 text-xs text-zinc-500 italic max-h-48 overflow-y-auto whitespace-pre-wrap break-words">
+              {thinking}
+            </div>
           )}
 
           {text.trim() && (
             <div
-              className={`rounded-2xl px-4 py-3 text-sm leading-relaxed max-w-3xl ${
+              className={`rounded-2xl text-sm leading-relaxed max-w-3xl ${
                 isUser
-                  ? "bg-zinc-800 border border-zinc-700 text-zinc-100"
-                  : "bg-zinc-900/50 border border-zinc-800 text-zinc-100"
+                  ? "px-4 py-3 bg-zinc-800 text-zinc-100"
+                  : "py-1 text-zinc-100"
               }`}
             >
               <MarkdownRenderer content={text} />

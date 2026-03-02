@@ -1,6 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
+import { openUrl } from "../../lib/tauri";
 
 interface MarkdownRendererProps {
   content: string;
@@ -63,9 +64,11 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           return (
             <a
               href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300 underline underline-offset-2"
+              onClick={(e) => {
+                e.preventDefault();
+                if (href) openUrl(href);
+              }}
+              className="text-blue-400 hover:text-blue-300 underline underline-offset-2 cursor-pointer"
             >
               {children}
             </a>

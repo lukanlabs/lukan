@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useState, useCallback } from "react";
-import { AlertCircle, Loader2, Sparkles } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import logoUrl from "../assets/logo.png";
 import { useChat } from "../hooks/useChat";
 import type { ToolResultInfo } from "../components/chat/MessageBubble";
@@ -156,13 +156,10 @@ export default function ChatView() {
             {chat.streamingBlocks.length > 0 && (
               <div className="mb-4 flex justify-start animate-fade-in max-w-4xl mx-auto">
                 <div className="flex gap-3 w-full max-w-4xl">
-                  <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border bg-zinc-800 border-zinc-700 text-zinc-300">
-                    <Sparkles className="h-4 w-4" />
+                  <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center" style={{ perspective: 200 }}>
+                    <img src={logoUrl} alt="" className={`h-5 w-5 ${chat.isProcessing ? "animate-logo-rock" : ""}`} style={{ imageRendering: "auto" }} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                      AI Assistant
-                    </div>
                     <div className="space-y-1.5">
                       {chat.streamingBlocks.map((block) => {
                         switch (block.type) {
@@ -172,9 +169,12 @@ export default function ChatView() {
                             return (
                               <div
                                 key={block.id}
-                                className="rounded-lg bg-zinc-900/30 border border-zinc-800/50 px-3 py-2 text-xs text-zinc-500 italic max-h-20 overflow-hidden"
+                                className="rounded-lg bg-zinc-900/30 border border-zinc-800/50 px-3 py-2 text-xs text-zinc-500 italic max-h-48 overflow-y-auto whitespace-pre-wrap break-words"
+                                ref={(el) => {
+                                  if (el) el.scrollTop = el.scrollHeight;
+                                }}
                               >
-                                {block.text.slice(-200)}
+                                {block.text}
                                 <span className="inline-block w-0.5 h-3 bg-zinc-600 ml-0.5 align-text-bottom animate-blink" />
                               </div>
                             );
@@ -203,8 +203,8 @@ export default function ChatView() {
             {/* Processing indicator */}
             {chat.isProcessing && chat.streamingBlocks.length === 0 && (
               <div className="flex items-center gap-3 py-4 animate-fade-in max-w-4xl mx-auto">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800">
-                  <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                <div className="flex h-8 w-8 items-center justify-center" style={{ perspective: 200 }}>
+                  <img src={logoUrl} alt="" className="h-5 w-5 animate-logo-rock" style={{ imageRendering: "auto" }} />
                 </div>
                 <div className="flex gap-1">
                   <span className="typing-dot w-2 h-2 rounded-full bg-zinc-500" />

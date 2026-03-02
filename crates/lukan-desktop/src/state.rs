@@ -23,7 +23,7 @@ pub struct ChatState {
     pub agent: Mutex<Option<AgentLoop>>,
     pub config: Mutex<Option<ResolvedConfig>>,
     pub is_processing: Mutex<bool>,
-    pub permission_mode: Mutex<PermissionMode>,
+    pub permission_mode: watch::Sender<PermissionMode>,
     pub provider_name: Mutex<String>,
     pub model_name: Mutex<String>,
     pub approval_tx: Mutex<Option<mpsc::Sender<ApprovalResponse>>>,
@@ -40,11 +40,12 @@ pub struct ChatState {
 
 impl Default for ChatState {
     fn default() -> Self {
+        let (permission_mode_tx, _) = watch::channel(PermissionMode::Auto);
         Self {
             agent: Mutex::new(None),
             config: Mutex::new(None),
             is_processing: Mutex::new(false),
-            permission_mode: Mutex::new(PermissionMode::Auto),
+            permission_mode: permission_mode_tx,
             provider_name: Mutex::new(String::new()),
             model_name: Mutex::new(String::new()),
             approval_tx: Mutex::new(None),
@@ -121,7 +122,8 @@ impl ChatState {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let provider_name = self.provider_name.lock().await.clone();
         let model_name = self.model_name.lock().await.clone();
-        let permission_mode = self.permission_mode.lock().await.clone();
+        let permission_mode = self.permission_mode.borrow().clone();
+        let permission_mode_rx = self.permission_mode.subscribe();
 
         let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
             .await
@@ -171,6 +173,7 @@ impl ChatState {
             bg_signal: Some(bg_signal_rx),
             allowed_paths: Some(allowed),
             permission_mode,
+            permission_mode_rx: Some(permission_mode_rx),
             permissions,
             approval_rx: Some(approval_rx),
             plan_review_rx: Some(plan_review_rx),
@@ -204,7 +207,8 @@ impl ChatState {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let provider_name = self.provider_name.lock().await.clone();
         let model_name = self.model_name.lock().await.clone();
-        let permission_mode = self.permission_mode.lock().await.clone();
+        let permission_mode = self.permission_mode.borrow().clone();
+        let permission_mode_rx = self.permission_mode.subscribe();
 
         let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
             .await
@@ -251,6 +255,7 @@ impl ChatState {
             bg_signal: Some(bg_signal_rx),
             allowed_paths: Some(allowed),
             permission_mode,
+            permission_mode_rx: Some(permission_mode_rx),
             permissions,
             approval_rx: Some(approval_rx),
             plan_review_rx: Some(plan_review_rx),

@@ -6,6 +6,7 @@
 
 use globset::GlobBuilder;
 use lukan_core::config::types::{PermissionMode, PermissionsConfig};
+use tokio::sync::watch;
 
 /// Verdict for a tool invocation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +66,9 @@ const PLANNER_WHITELIST: &[&str] = &[
 /// Permission matcher: evaluates tool calls against mode + config rules
 pub struct PermissionMatcher {
     mode: PermissionMode,
+    /// Optional watch receiver for live mode updates from the UI.
+    /// When set, `verdict()` reads the latest mode from here instead of `self.mode`.
+    mode_rx: Option<watch::Receiver<PermissionMode>>,
     deny: Vec<PatternRule>,
     ask: Vec<PatternRule>,
     allow: Vec<PatternRule>,
@@ -186,10 +190,26 @@ impl PermissionMatcher {
     pub fn new(mode: PermissionMode, config: &PermissionsConfig) -> Self {
         Self {
             mode,
+            mode_rx: None,
             deny: config.deny.iter().map(|p| PatternRule::parse(p)).collect(),
             ask: config.ask.iter().map(|p| PatternRule::parse(p)).collect(),
             allow: config.allow.iter().map(|p| PatternRule::parse(p)).collect(),
             browser_tools: false,
+        }
+    }
+
+    /// Attach a watch receiver for live permission mode updates.
+    /// When set, `verdict()` reads the latest mode from the receiver.
+    pub fn set_mode_watch(&mut self, rx: watch::Receiver<PermissionMode>) {
+        self.mode_rx = Some(rx);
+    }
+
+    /// Get the effective mode: from watch receiver if available, else stored value
+    fn effective_mode(&self) -> PermissionMode {
+        if let Some(ref rx) = self.mode_rx {
+            rx.borrow().clone()
+        } else {
+            self.mode.clone()
         }
     }
 
@@ -200,7 +220,7 @@ impl PermissionMatcher {
             return ToolVerdict::Deny;
         }
 
-        match self.mode {
+        match self.effective_mode() {
             // 2. Planner: only allow read-only tools
             PermissionMode::Planner => {
                 if PLANNER_WHITELIST.contains(&tool_name) {
@@ -236,11 +256,11 @@ impl PermissionMatcher {
     }
 
     /// Get the current permission mode
-    pub fn mode(&self) -> &PermissionMode {
-        &self.mode
+    pub fn mode(&self) -> PermissionMode {
+        self.effective_mode()
     }
 
-    /// Update the permission mode at runtime
+    /// Update the permission mode at runtime (for non-watch usage)
     pub fn set_mode(&mut self, mode: PermissionMode) {
         self.mode = mode;
     }

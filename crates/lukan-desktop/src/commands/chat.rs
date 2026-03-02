@@ -1,8 +1,10 @@
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use lukan_agent::SessionManager;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::config::{ConfigManager, CredentialsManager, ResolvedConfig};
+use lukan_providers::create_provider;
 use lukan_core::models::events::StreamEvent;
 use lukan_core::models::events::{
     ApprovalResponse, PlanReviewResponse, PlanTask, ToolApprovalRequest,
@@ -75,17 +77,18 @@ pub async fn initialize_chat(state: State<'_, ChatState>) -> Result<InitResponse
     let provider_name = resolved.config.provider.to_string();
     let model_name = resolved.effective_model().unwrap_or_default();
 
-    // If provider or model changed, save current session and clear agent
-    // so it gets lazily recreated with the new provider on next message.
+    // If provider or model changed, hot-swap the provider on the existing agent
+    // so the session (history) is preserved.
     {
         let old_provider = state.provider_name.lock().await.clone();
         let old_model = state.model_name.lock().await.clone();
         if !old_provider.is_empty() && (old_provider != provider_name || old_model != model_name) {
             let mut agent_lock = state.agent.lock().await;
-            if let Some(ref mut agent) = *agent_lock {
-                let _ = agent.save_session_public().await;
+            if let Some(ref mut agent) = *agent_lock
+                && let Ok(new_provider) = create_provider(&resolved)
+            {
+                agent.swap_provider(Arc::from(new_provider));
             }
-            *agent_lock = None;
         }
     }
 
@@ -121,7 +124,7 @@ pub async fn initialize_chat(state: State<'_, ChatState>) -> Result<InitResponse
         )
     };
 
-    let permission_mode = state.permission_mode.lock().await.to_string();
+    let permission_mode = state.permission_mode.borrow().to_string();
 
     Ok(InitResponse {
         session_id,
@@ -513,7 +516,7 @@ pub async fn load_session(state: State<'_, ChatState>, id: String) -> Result<Ini
     let context_size = agent.last_context_size();
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.to_string();
+    let permission_mode = state.permission_mode.borrow().to_string();
 
     *state.agent.lock().await = Some(agent);
 
@@ -552,7 +555,7 @@ pub async fn new_session(state: State<'_, ChatState>) -> Result<InitResponse, St
 
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.to_string();
+    let permission_mode = state.permission_mode.borrow().to_string();
 
     Ok(InitResponse {
         session_id: String::new(),
@@ -575,13 +578,9 @@ pub async fn set_permission_mode(state: State<'_, ChatState>, mode: String) -> R
     let parsed: PermissionMode =
         serde_json::from_value(serde_json::Value::String(mode)).unwrap_or(PermissionMode::Auto);
 
-    *state.permission_mode.lock().await = parsed.clone();
-
-    // Update live agent if it exists
-    let mut agent_lock = state.agent.lock().await;
-    if let Some(ref mut agent) = *agent_lock {
-        agent.set_permission_mode(parsed);
-    }
+    // Send to watch channel — the agent's PermissionMatcher picks it up
+    // immediately, even mid-turn (agent is taken out of state during turns).
+    let _ = state.permission_mode.send(parsed);
 
     Ok(())
 }

@@ -64,6 +64,8 @@ pub struct AgentConfig {
     pub allowed_paths: Option<Vec<PathBuf>>,
     /// Permission mode for tool execution
     pub permission_mode: PermissionMode,
+    /// Optional watch receiver for live permission mode updates (desktop UI)
+    pub permission_mode_rx: Option<watch::Receiver<PermissionMode>>,
     /// Permission rules (deny/ask/allow lists)
     pub permissions: PermissionsConfig,
     /// Channel to receive approval responses from the UI
@@ -187,6 +189,9 @@ impl AgentLoop {
         let allowed_paths = Self::expand_allowed_paths(config.allowed_paths.take());
         let mut permission_matcher =
             PermissionMatcher::new(config.permission_mode, &config.permissions);
+        if let Some(rx) = config.permission_mode_rx.take() {
+            permission_matcher.set_mode_watch(rx);
+        }
         if config.browser_tools {
             permission_matcher.enable_browser_tools();
         }
@@ -265,6 +270,9 @@ impl AgentLoop {
         let allowed_paths = Self::expand_allowed_paths(config.allowed_paths.take());
         let mut permission_matcher =
             PermissionMatcher::new(config.permission_mode, &config.permissions);
+        if let Some(rx) = config.permission_mode_rx.take() {
+            permission_matcher.set_mode_watch(rx);
+        }
         if config.browser_tools {
             permission_matcher.enable_browser_tools();
         }
@@ -484,7 +492,7 @@ impl AgentLoop {
     }
 
     /// Get the current permission mode
-    pub fn permission_mode(&self) -> &PermissionMode {
+    pub fn permission_mode(&self) -> PermissionMode {
         self.permission_matcher.mode()
     }
 
@@ -595,7 +603,7 @@ impl AgentLoop {
     /// Rebuild the system prompt based on current mode and plan state.
     /// Call this after mode changes (e.g. planner → auto on plan accept).
     pub async fn rebuild_system_prompt(&mut self) {
-        let base = if *self.permission_matcher.mode() == PermissionMode::Planner {
+        let base = if self.permission_matcher.mode() == PermissionMode::Planner {
             PLANNER_PROMPT
         } else {
             include_str!("../../../prompts/base.txt")
@@ -660,7 +668,7 @@ impl AgentLoop {
         }
 
         // Include active plan content in dynamic section (when not in planner mode)
-        if *self.permission_matcher.mode() != PermissionMode::Planner
+        if self.permission_matcher.mode() != PermissionMode::Planner
             && let Some(ref plan_content) = self.current_plan_content
         {
             dynamic.push_str("\n\n## Active Plan\n\n");
@@ -722,7 +730,7 @@ impl AgentLoop {
         loop {
             let mut tool_defs = self.tools.definitions();
             // In planner mode, only expose read-only tools to the LLM
-            if *self.permission_matcher.mode() == PermissionMode::Planner {
+            if self.permission_matcher.mode() == PermissionMode::Planner {
                 tool_defs.retain(|d| PLANNER_TOOL_WHITELIST.contains(&d.name.as_str()));
             }
             // Also hide tools disabled at runtime by the TUI

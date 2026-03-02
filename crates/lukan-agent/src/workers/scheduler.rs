@@ -456,6 +456,7 @@ async fn run_worker(
         allowed_paths: Some(allowed),
         // Workers run unattended — skip all permission checks
         permission_mode: lukan_core::config::types::PermissionMode::Skip,
+        permission_mode_rx: None,
         permissions,
         approval_rx: None,
         plan_review_rx: None,

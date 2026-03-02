@@ -575,6 +575,7 @@ async fn plugin_start_foreground(
         allowed_paths,
         // Plugins run unattended — skip all permission checks
         permission_mode: lukan_core::config::types::PermissionMode::Skip,
+        permission_mode_rx: None,
         permissions: lukan_core::config::types::PermissionsConfig::default(),
         approval_rx: None,
         plan_review_rx: None,

@@ -365,19 +365,11 @@ export function useChat() {
     const handleProviderChanged = async () => {
       try {
         const init = await api.initializeChat();
+        // Only update provider/model name — session and history are preserved
         setState((s) => ({
           ...s,
           providerName: init.providerName,
           modelName: init.modelName,
-          // If agent was cleared (provider changed), reset session state
-          ...(init.sessionId === "" ? {
-            sessionId: "",
-            messages: [],
-            streamingBlocks: [],
-            toolImages: {},
-            tokenUsage: { input: 0, output: 0, cacheCreation: null, cacheRead: null },
-            contextSize: 0,
-          } : {}),
         }));
       } catch {
         // ignore

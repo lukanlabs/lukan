@@ -12,45 +12,45 @@ args = ["bridge.js"]
 
 # ── SMTP config ──
 
-[config.smtp_host]
+[config.smtpHost]
 type = "string"
 description = "SMTP server hostname"
 
-[config.smtp_port]
+[config.smtpPort]
 type = "number"
 description = "SMTP server port"
 
-[config.smtp_secure]
+[config.smtpSecure]
 type = "bool"
 description = "Use TLS for SMTP"
 
-[config.smtp_user]
+[config.smtpUser]
 type = "string"
 description = "SMTP username (email address)"
 
-[config.smtp_pass]
+[config.smtpPass]
 type = "string"
 description = "SMTP password or app password"
 
 # ── IMAP config ──
 
-[config.imap_host]
+[config.imapHost]
 type = "string"
 description = "IMAP server hostname"
 
-[config.imap_port]
+[config.imapPort]
 type = "number"
 description = "IMAP server port"
 
-[config.imap_secure]
+[config.imapSecure]
 type = "bool"
 description = "Use TLS for IMAP"
 
-[config.imap_user]
+[config.imapUser]
 type = "string"
 description = "IMAP username (email address)"
 
-[config.imap_pass]
+[config.imapPass]
 type = "string"
 description = "IMAP password or app password"
 

@@ -1184,10 +1184,11 @@ function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: 
   // string + valid_values → select
   if (schema.type === "string" && schema.validValues.length > 0) {
     const defaultStr = schema.default != null ? String(schema.default) : undefined;
+    const effectiveValue = value != null && value !== "" ? String(value) : (defaultStr ?? "");
     return (
       <FieldRow label={label} description={schema.description}>
         <select
-          value={String(value ?? "")}
+          value={effectiveValue}
           onChange={(e) => onSave(e.target.value)}
           className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none appearance-none"
           style={{
@@ -1230,7 +1231,8 @@ function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: 
 
   // bool → toggle
   if (schema.type === "bool") {
-    const checked = value === true || value === "true";
+    const effective = value != null && value !== "" ? value : schema.default;
+    const checked = effective === true || effective === "true";
     return (
       <FieldRow label={label} description={schema.description}>
         <button
@@ -1252,20 +1254,22 @@ function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: 
 
   // number → number input
   if (schema.type === "number") {
-    return <TextInputField label={label} description={schema.description} value={value} type="number" sensitive={false} onSave={onSave} placeholder={schema.default != null ? String(schema.default) : undefined} />;
+    const effectiveValue = (value != null && value !== "") ? value : schema.default;
+    return <TextInputField label={label} description={schema.description} value={effectiveValue} type="number" sensitive={false} onSave={onSave} isDefault={value == null || value === ""} />;
   }
 
   // string (default) — with format hints
   const isSensitive = schema.format === "password" || /token|key|secret|password|credential/i.test(fieldKey);
+  const effectiveStrValue = (value != null && value !== "") ? value : schema.default;
   return (
     <TextInputField
       label={label}
       description={schema.description}
-      value={value}
+      value={effectiveStrValue}
       type={schema.format === "url" ? "url" : "text"}
       sensitive={isSensitive}
       onSave={onSave}
-      placeholder={schema.default != null ? String(schema.default) : undefined}
+      isDefault={value == null || value === ""}
     />
   );
 }
@@ -1286,9 +1290,9 @@ function FieldRow({ label, description, children }: {
   );
 }
 
-function TextInputField({ label, description, value, type, sensitive, onSave, placeholder }: {
+function TextInputField({ label, description, value, type, sensitive, onSave, isDefault }: {
   label: string; description?: string; value: unknown; type: string; sensitive: boolean;
-  onSave: (v: unknown) => void; placeholder?: string;
+  onSave: (v: unknown) => void; isDefault?: boolean;
 }) {
   const strValue = value === null || value === undefined ? "" : String(value);
   const [local, setLocal] = useState(strValue);
@@ -1311,9 +1315,8 @@ function TextInputField({ label, description, value, type, sensitive, onSave, pl
           onChange={(e) => setLocal(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
-          placeholder={placeholder}
           className="flex-1 px-2.5 py-1.5 rounded-lg text-xs outline-none"
-          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: isDefault ? "var(--text-muted)" : "var(--text-primary)" }}
         />
         {sensitive && (
           <button

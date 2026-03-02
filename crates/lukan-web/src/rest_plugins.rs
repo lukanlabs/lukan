@@ -307,9 +307,13 @@ pub async fn get_plugin_config(Path(name): Path<String>) -> impl IntoResponse {
             toml::from_str::<lukan_core::models::plugin::PluginManifest>(&manifest_content)
         && let Some(obj) = config.as_object_mut()
     {
-        for key in manifest.config.keys() {
-            obj.entry(key as &str)
-                .or_insert(serde_json::Value::String(String::new()));
+        for (key, schema) in &manifest.config {
+            obj.entry(key as &str).or_insert_with(|| {
+                schema
+                    .default
+                    .clone()
+                    .unwrap_or(serde_json::Value::String(String::new()))
+            });
         }
     }
 
@@ -486,7 +490,7 @@ pub async fn run_plugin_command(
         .stderr(std::process::Stdio::piped())
         .output();
 
-    let result = match tokio::time::timeout(std::time::Duration::from_secs(120), output).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(300), output).await {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
             return (
@@ -495,7 +499,7 @@ pub async fn run_plugin_command(
             )
                 .into_response();
         }
-        Err(_) => return (StatusCode::GATEWAY_TIMEOUT, "Command timed out (120s)").into_response(),
+        Err(_) => return (StatusCode::GATEWAY_TIMEOUT, "Command timed out (5m)").into_response(),
     };
 
     let stdout = String::from_utf8_lossy(&result.stdout).to_string();

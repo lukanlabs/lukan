@@ -50,6 +50,30 @@ bundle_whatsapp() {
   ok "whatsapp → dist/ (bridge.js, cli.js, connector)"
 }
 
+bundle_email() {
+  local src="$PLUGINS_DIR/email"
+  local dist="$src/dist"
+  info "Bundling email plugin..."
+
+  # Install deps if needed
+  if [ ! -d "$src/node_modules" ]; then
+    (cd "$src" && bun install --frozen-lockfile 2>/dev/null || bun install)
+  fi
+
+  mkdir -p "$dist"
+
+  bun build "$src/bridge.js" --target=node --outfile="$dist/bridge.js" 2>/dev/null
+  bun build "$src/cli.js" --target=node --outfile="$dist/cli.js" 2>/dev/null
+  bun build "$src/tools.js" --target=node --outfile="$dist/tools.js" 2>/dev/null
+
+  # Copy non-JS files needed at runtime
+  cp "$src/plugin.toml" "$dist/"
+  cp "$src/tools.json" "$dist/"
+  cp "$src/prompt.txt" "$dist/"
+
+  ok "email → dist/ (bridge.js, cli.js, tools.js)"
+}
+
 bundle_google_workspace() {
   local src="$PLUGINS_DIR/google-workspace"
   local dist="$src/dist"
@@ -137,6 +161,9 @@ case "$TARGET" in
   whatsapp)
     bundle_whatsapp
     ;;
+  email|mail)
+    bundle_email
+    ;;
   google-workspace|google)
     bundle_google_workspace
     ;;
@@ -154,6 +181,7 @@ case "$TARGET" in
     ;;
   all)
     bundle_whatsapp
+    bundle_email
     bundle_google_workspace
     bundle_gmail
     bundle_docker_monitor
@@ -162,7 +190,7 @@ case "$TARGET" in
     ;;
   *)
     err "Unknown plugin: $TARGET"
-    echo "Available: whatsapp, google-workspace, gmail, docker-monitor, security-monitor, nano-banana-pro, all"
+    echo "Available: whatsapp, email, google-workspace, gmail, docker-monitor, security-monitor, nano-banana-pro, all"
     exit 1
     ;;
 esac

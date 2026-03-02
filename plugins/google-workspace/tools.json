@@ -254,6 +254,91 @@
     }
   },
   {
+    "name": "SlidesRead",
+    "description": "Read a Google Slides presentation's content as plain text",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "presentationId": {
+          "type": "string",
+          "description": "The presentation ID (from the URL)"
+        }
+      },
+      "required": ["presentationId"]
+    }
+  },
+  {
+    "name": "SlidesCreate",
+    "description": "Create a new Google Slides presentation with optional initial slides",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Title for the new presentation"
+        },
+        "slides": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "description": "Slide title"
+              },
+              "body": {
+                "type": "string",
+                "description": "Slide body text"
+              }
+            }
+          },
+          "description": "Optional array of slides to create, each with title and/or body"
+        }
+      },
+      "required": ["title"]
+    }
+  },
+  {
+    "name": "SlidesUpdate",
+    "description": "Update a Google Slides presentation (add slide, replace text, or delete slide)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "presentationId": {
+          "type": "string",
+          "description": "The presentation ID to update"
+        },
+        "addSlide": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Title for the new slide"
+            },
+            "body": {
+              "type": "string",
+              "description": "Body text for the new slide"
+            }
+          },
+          "description": "Add a new slide at the end of the presentation"
+        },
+        "replaceText": {
+          "type": "string",
+          "description": "Text to find across all slides"
+        },
+        "replacementText": {
+          "type": "string",
+          "description": "Text to replace it with"
+        },
+        "deleteSlideIndex": {
+          "type": "number",
+          "description": "0-based index of the slide to delete"
+        }
+      },
+      "required": ["presentationId"]
+    }
+  },
+  {
     "name": "DriveList",
     "description": "List files in Google Drive with optional filtering",
     "inputSchema": {

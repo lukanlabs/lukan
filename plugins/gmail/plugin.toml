@@ -7,25 +7,25 @@ plugin_type = "tools"
 
 [auth]
 type = "token"
-check_field = "access_token"
+check_field = "accessToken"
 
-[config.client_id]
+[config.clientId]
 type = "string"
 description = "Google OAuth Client ID"
 
-[config.client_secret]
+[config.clientSecret]
 type = "string"
 description = "Google OAuth Client Secret"
 
-[config.access_token]
+[config.accessToken]
 type = "string"
 description = "OAuth access token (set by auth)"
 
-[config.refresh_token]
+[config.refreshToken]
 type = "string"
 description = "OAuth refresh token (set by auth)"
 
-[config.token_expiry]
+[config.tokenExpiry]
 type = "number"
 description = "Token expiry timestamp in ms (set by auth)"
 

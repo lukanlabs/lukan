@@ -465,6 +465,178 @@ const handlers = {
     return `Updated document ${documentId}:\n${actions.join("\n")}\nURL: https://docs.google.com/document/d/${documentId}/edit`;
   },
 
+  async SlidesRead(input, token) {
+    const { presentationId } = input;
+    const url = `https://slides.googleapis.com/v1/presentations/${presentationId}`;
+    const data = await googleGet(url, token);
+
+    const title = data.title || "(untitled)";
+    const slides = data.slides || [];
+
+    if (slides.length === 0) return `Title: ${title}\n\n(empty presentation)`;
+
+    const lines = [`Title: ${title}`, `Slides: ${slides.length}`, ""];
+
+    for (let i = 0; i < slides.length; i++) {
+      const slide = slides[i];
+      let slideText = "";
+
+      for (const el of slide.pageElements || []) {
+        if (el.shape?.text?.textElements) {
+          for (const te of el.shape.text.textElements) {
+            if (te.textRun?.content) slideText += te.textRun.content;
+          }
+        }
+      }
+
+      lines.push(`--- Slide ${i + 1} ---`);
+      lines.push(slideText.trim() || "(empty slide)");
+      lines.push("");
+    }
+
+    return lines.join("\n").trim();
+  },
+
+  async SlidesCreate(input, token) {
+    const { title, slides } = input;
+    const baseUrl = "https://slides.googleapis.com/v1/presentations";
+
+    // Create the presentation
+    const pres = await googlePost(baseUrl, { title }, token);
+    const presId = pres.presentationId;
+
+    if (slides && slides.length > 0) {
+      const batchUrl = `${baseUrl}/${presId}:batchUpdate`;
+
+      for (let i = 0; i < slides.length; i++) {
+        const slideData = slides[i];
+        const slideId = `slide_${i}`;
+        const titleId = `title_${i}`;
+        const bodyId = `body_${i}`;
+
+        const requests = [
+          {
+            createSlide: {
+              objectId: slideId,
+              insertionIndex: i + 1,
+              slideLayoutReference: { predefinedLayout: "TITLE_AND_BODY" },
+              placeholderIdMappings: [
+                { layoutPlaceholder: { type: "TITLE", index: 0 }, objectId: titleId },
+                { layoutPlaceholder: { type: "BODY", index: 0 }, objectId: bodyId },
+              ],
+            },
+          },
+        ];
+
+        if (slideData.title) {
+          requests.push({
+            insertText: { objectId: titleId, text: slideData.title, insertionIndex: 0 },
+          });
+        }
+        if (slideData.body) {
+          requests.push({
+            insertText: { objectId: bodyId, text: slideData.body, insertionIndex: 0 },
+          });
+        }
+
+        await googlePost(batchUrl, { requests }, token);
+      }
+
+      // Delete the default blank first slide
+      const defaultSlideId = pres.slides?.[0]?.objectId;
+      if (defaultSlideId) {
+        try {
+          await googlePost(batchUrl, {
+            requests: [{ deleteObject: { objectId: defaultSlideId } }],
+          }, token);
+        } catch {
+          // Default slide may already be gone
+        }
+      }
+    }
+
+    return `Created presentation: ${title}\nID: ${presId}\nURL: https://docs.google.com/presentation/d/${presId}/edit`;
+  },
+
+  async SlidesUpdate(input, token) {
+    const { presentationId } = input;
+    const baseUrl = `https://slides.googleapis.com/v1/presentations/${presentationId}`;
+    const batchUrl = `${baseUrl}:batchUpdate`;
+    const actions = [];
+
+    // Replace text across all slides
+    if (input.replaceText && input.replacementText !== undefined) {
+      await googlePost(batchUrl, {
+        requests: [
+          {
+            replaceAllText: {
+              containsText: { text: input.replaceText, matchCase: true },
+              replaceText: input.replacementText,
+            },
+          },
+        ],
+      }, token);
+      actions.push(`Replaced "${input.replaceText}" with "${input.replacementText}"`);
+    }
+
+    // Add a new slide
+    if (input.addSlide) {
+      const pres = await googleGet(baseUrl, token);
+      const insertionIndex = (pres.slides || []).length;
+      const slideId = `added_slide_${Date.now()}`;
+      const titleId = `added_title_${Date.now()}`;
+      const bodyId = `added_body_${Date.now()}`;
+
+      const requests = [
+        {
+          createSlide: {
+            objectId: slideId,
+            insertionIndex,
+            slideLayoutReference: { predefinedLayout: "TITLE_AND_BODY" },
+            placeholderIdMappings: [
+              { layoutPlaceholder: { type: "TITLE", index: 0 }, objectId: titleId },
+              { layoutPlaceholder: { type: "BODY", index: 0 }, objectId: bodyId },
+            ],
+          },
+        },
+      ];
+
+      if (input.addSlide.title) {
+        requests.push({
+          insertText: { objectId: titleId, text: input.addSlide.title, insertionIndex: 0 },
+        });
+      }
+      if (input.addSlide.body) {
+        requests.push({
+          insertText: { objectId: bodyId, text: input.addSlide.body, insertionIndex: 0 },
+        });
+      }
+
+      await googlePost(batchUrl, { requests }, token);
+      actions.push(`Added slide "${input.addSlide.title || "(untitled)"}"`);
+    }
+
+    // Delete a slide by index
+    if (input.deleteSlideIndex !== undefined) {
+      const pres = await googleGet(baseUrl, token);
+      const slides = pres.slides || [];
+      const idx = input.deleteSlideIndex;
+
+      if (idx < 0 || idx >= slides.length) {
+        throw new Error(`Slide index ${idx} out of range (0-${slides.length - 1})`);
+      }
+
+      const slideObjectId = slides[idx].objectId;
+      await googlePost(batchUrl, {
+        requests: [{ deleteObject: { objectId: slideObjectId } }],
+      }, token);
+      actions.push(`Deleted slide at index ${idx}`);
+    }
+
+    if (actions.length === 0) return "No update operations specified.";
+    return `Updated presentation ${presentationId}:\n${actions.join("\n")}\nURL: https://docs.google.com/presentation/d/${presentationId}/edit`;
+  },
+
   async DriveList(input, token) {
     const maxResults = input.maxResults || 20;
     const parts = ["trashed = false"];

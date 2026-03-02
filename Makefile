@@ -78,6 +78,9 @@ package-plugins: bundle-plugins
 	@# WhatsApp plugin
 	@cd plugins/whatsapp/dist && tar czf ../../../dist/plugins/lukan-plugin-whatsapp.tar.gz .
 	@echo "  Packaged: lukan-plugin-whatsapp.tar.gz"
+	@# Email plugin
+	@cd plugins/email/dist && tar czf ../../../dist/plugins/lukan-plugin-email.tar.gz .
+	@echo "  Packaged: lukan-plugin-email.tar.gz"
 	@# Google Workspace plugin
 	@cd plugins/google-workspace/dist && tar czf ../../../dist/plugins/lukan-plugin-google-workspace.tar.gz .
 	@echo "  Packaged: lukan-plugin-google-workspace.tar.gz"

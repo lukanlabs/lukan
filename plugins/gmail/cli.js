@@ -36,7 +36,7 @@ function saveConfig(config) {
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const REDIRECT_PORT = 1457;
+const REDIRECT_PORT = 1456;
 const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/auth/callback`;
 const SCOPES = "https://www.googleapis.com/auth/gmail.modify";
 
@@ -102,6 +102,7 @@ async function authenticate() {
 
   // Wait for callback
   const code = await new Promise((resolve, reject) => {
+    const connections = new Set();
     const server = http.createServer((req, res) => {
       const url = new URL(req.url, `http://localhost:${REDIRECT_PORT}`);
 
@@ -120,6 +121,7 @@ async function authenticate() {
         res.end("<h2>Authentication failed</h2><p>You can close this tab.</p>");
         clearTimeout(timeout);
         server.close();
+        for (const c of connections) c.destroy();
         reject(new Error(`Google auth error: ${error}`));
         return;
       }
@@ -129,17 +131,24 @@ async function authenticate() {
         res.end("<h2>State mismatch</h2><p>Please try again.</p>");
         clearTimeout(timeout);
         server.close();
+        for (const c of connections) c.destroy();
         reject(new Error("State mismatch — possible CSRF attack"));
         return;
       }
 
-      res.writeHead(200, { "Content-Type": "text/html" });
+      res.writeHead(200, { "Content-Type": "text/html", "Connection": "close" });
       res.end(
         "<h2>Authentication successful!</h2><p>You can close this tab and return to the terminal.</p>"
       );
       clearTimeout(timeout);
       server.close();
+      for (const c of connections) c.destroy();
       resolve(receivedCode);
+    });
+
+    server.on("connection", (conn) => {
+      connections.add(conn);
+      conn.on("close", () => connections.delete(conn));
     });
 
     server.on("error", (err) => {
@@ -159,6 +168,7 @@ async function authenticate() {
 
     const timeout = setTimeout(() => {
       server.close();
+      for (const c of connections) c.destroy();
       reject(new Error("Authentication timed out (5 minutes)"));
     }, 5 * 60 * 1000);
 
@@ -210,17 +220,16 @@ const commands = {
 async function main() {
   const handler = process.argv[2];
   if (!handler || !commands[handler]) {
-    console.error(`Unknown command: ${handler}`);
-    console.error(`Available: ${Object.keys(commands).join(", ")}`);
-    process.exit(1);
+    process.stderr.write(`Unknown command: ${handler}\n`);
+    process.exitCode = 1;
+    return;
   }
 
   try {
     await commands[handler]();
-    process.exit(0);
   } catch (err) {
-    console.error(`\x1b[31mError:\x1b[0m ${err.message}`);
-    process.exit(1);
+    process.stderr.write(`Error: ${err.message}\n`);
+    process.exitCode = 1;
   }
 }
 

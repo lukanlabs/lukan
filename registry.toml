@@ -21,6 +21,15 @@ source = "archive"
 [plugins.whatsapp.assets.all]
 url = "https://get.lukan.ai/plugins/lukan-plugin-whatsapp.tar.gz"
 
+[plugins.email]
+description = "Email channel and tools via IMAP/SMTP"
+version = "0.1.0"
+plugin_type = "channel"
+source = "archive"
+
+[plugins.email.assets.all]
+url = "https://get.lukan.ai/plugins/lukan-plugin-email.tar.gz"
+
 [plugins.google-workspace]
 description = "Google Workspace tools (Sheets, Calendar, Docs, Drive)"
 version = "0.1.0"

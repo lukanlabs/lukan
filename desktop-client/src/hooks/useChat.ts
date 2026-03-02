@@ -412,6 +412,15 @@ export function useChat() {
     // tools as done so the UI doesn't appear stuck. The turn-complete event
     // will finalize messages when the agent actually stops.
     api.cancelStream().catch(() => {});
+    // If there's a pending approval, send deny to unblock the agent from
+    // waiting on the approval channel. Without this the agent hangs on
+    // rx.recv() and cancel_stream times out.
+    setState((s) => {
+      if (s.pendingApproval) {
+        api.denyAllTools().catch(() => {});
+      }
+      return s;
+    });
     // Mark all running tools as finished in the streaming blocks
     for (const block of blocksRef.current) {
       if (block.type === "tool" && block.tool.isRunning) {

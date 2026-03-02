@@ -573,6 +573,22 @@ impl AgentLoop {
         &self.pending_events
     }
 
+    /// Replace the approval/plan/planner channels and bg_signal on an existing agent.
+    /// This MUST be called before each turn when reusing an agent, so that
+    /// stale receivers (whose senders were dropped) don't cause auto-denial.
+    pub fn set_channels(
+        &mut self,
+        approval_rx: Option<mpsc::Receiver<ApprovalResponse>>,
+        plan_review_rx: Option<mpsc::Receiver<PlanReviewResponse>>,
+        planner_answer_rx: Option<mpsc::Receiver<String>>,
+        bg_signal: Option<watch::Receiver<()>>,
+    ) {
+        self.approval_rx = approval_rx;
+        self.plan_review_rx = plan_review_rx;
+        self.planner_answer_rx = planner_answer_rx;
+        self.bg_signal = bg_signal;
+    }
+
     /// Set tools that should be excluded from tool definitions.
     pub fn set_disabled_tools(&mut self, disabled: HashSet<String>) {
         self.disabled_tools = disabled;
@@ -980,9 +996,22 @@ impl AgentLoop {
                     })
                     .await;
 
-                // Wait for approval response
+                // Wait for approval response (cancel-aware so abort doesn't hang)
                 if let Some(ref mut rx) = self.approval_rx {
-                    match rx.recv().await {
+                    let response = if let Some(ref token) = cancel {
+                        tokio::select! {
+                            biased;
+                            _ = token.cancelled() => {
+                                cancelled = true;
+                                None
+                            }
+                            resp = rx.recv() => resp,
+                        }
+                    } else {
+                        rx.recv().await
+                    };
+
+                    match response {
                         Some(ApprovalResponse::Approved { approved_ids }) => {
                             for tool in &needs_approval {
                                 if approved_ids.contains(&tool.id) {
@@ -1154,6 +1183,13 @@ impl AgentLoop {
                         .await;
                     self.history.add_user_message(&injected);
                 }
+            }
+
+            // If cancel fired during approval waiting, stop the turn now
+            if cancelled {
+                info!("Turn cancelled during tool approval");
+                self.save_session().await?;
+                return Ok(());
             }
 
             // Loop continues — LLM will see the tool results and decide next action

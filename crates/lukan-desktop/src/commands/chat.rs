@@ -190,6 +190,15 @@ pub async fn send_message(
         }
     }
 
+    // Refresh channels so a reused agent never has stale receivers
+    // (whose senders were dropped, causing rx.recv() → None → auto-denial)
+    {
+        let mut lock = state.agent.lock().await;
+        if let Some(ref mut agent) = *lock {
+            state.refresh_channels(agent).await;
+        }
+    }
+
     // Take agent out of mutex for the turn
     let mut agent = {
         let mut lock = state.agent.lock().await;
@@ -254,18 +263,14 @@ pub async fn send_message(
                     let chat_state = app_for_complete.state::<ChatState>();
 
                     // Check if this completion is still current (generation matches).
-                    // If the user switched sessions, gen will have been bumped and a
-                    // new agent will already be in state — don't overwrite it.
+                    // If the user switched sessions or sent a new message, gen will
+                    // have been bumped — save the session but do NOT put the stale
+                    // agent back or reset is_processing.  A stale agent has dead
+                    // approval channels (senders dropped by the new turn), so reusing
+                    // it would cause rx.recv() → None → auto-denial of all tools.
                     let current_gen = chat_state.generation.load(Ordering::SeqCst);
                     if current_gen != turn_gen {
                         let _ = returned_agent.save_session_public().await;
-                        // Still recover the agent if nothing replaced it (e.g. cancel
-                        // within the same session where no new agent was created yet).
-                        let mut agent_lock = chat_state.agent.lock().await;
-                        if agent_lock.is_none() {
-                            *agent_lock = Some(returned_agent);
-                        }
-                        *chat_state.is_processing.lock().await = false;
                         return;
                     }
 

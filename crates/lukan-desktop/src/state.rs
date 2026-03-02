@@ -89,6 +89,30 @@ impl ChatState {
         None
     }
 
+    /// Refresh approval/plan/bg channels on an existing agent.
+    /// Must be called before every turn when reusing an agent, so that
+    /// stale receivers (whose senders were dropped) never cause auto-denial.
+    pub async fn refresh_channels(&self, agent: &mut AgentLoop) {
+        let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
+        *self.approval_tx.lock().await = Some(approval_tx);
+
+        let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
+        *self.plan_review_tx.lock().await = Some(plan_review_tx);
+
+        let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        *self.planner_answer_tx.lock().await = Some(planner_answer_tx);
+
+        let (bg_signal_tx, bg_signal_rx) = watch::channel(());
+        *self.bg_signal_tx.lock().await = Some(bg_signal_tx);
+
+        agent.set_channels(
+            Some(approval_rx),
+            Some(plan_review_rx),
+            Some(planner_answer_rx),
+            Some(bg_signal_rx),
+        );
+    }
+
     /// Create a new agent, storing approval/plan channels in state
     pub async fn create_agent(&self, config: &ResolvedConfig) -> anyhow::Result<AgentLoop> {
         let provider = create_provider(config)?;

@@ -4,7 +4,7 @@ import {
   listProviders,
   getModels,
   fetchProviderModels,
-  setActiveProvider,
+  setProviderModels,
   getProviderStatus,
 } from "../../lib/tauri";
 import { useToast } from "../ui/Toast";
@@ -16,6 +16,7 @@ import {
   Cpu,
   ChevronRight,
   Loader2,
+  Save,
 } from "lucide-react";
 
 export default function ProvidersTab() {
@@ -26,13 +27,18 @@ export default function ProvidersTab() {
   const [fetchedModels, setFetchedModels] = useState<Record<string, FetchedModel[]>>({});
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
-  const [setting, setSetting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // Current configured models (prefixed entries like "provider:model_id")
+  const [configuredModels, setConfiguredModels] = useState<string[]>([]);
+  // Selected model entries for the picker (prefixed)
+  const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     try {
-      const [p, s] = await Promise.all([listProviders(), getProviderStatus()]);
+      const [p, s, m] = await Promise.all([listProviders(), getProviderStatus(), getModels()]);
       setProviders(p);
       setStatuses(s);
+      setConfiguredModels(m);
     } catch (e) {
       toast("error", `Failed to load providers: ${e}`);
     }
@@ -42,25 +48,18 @@ export default function ProvidersTab() {
     refresh();
   }, [refresh]);
 
+  // When entering detail view or configuredModels changes, sync selectedModels
+  useEffect(() => {
+    if (selectedProvider) {
+      const prefix = `${selectedProvider}:`;
+      const current = new Set(configuredModels.filter((m) => m.startsWith(prefix)));
+      setSelectedModels(current);
+    }
+  }, [selectedProvider, configuredModels]);
+
   const activeProvider = providers.find((p) => p.active);
   const selected = providers.find((p) => p.name === selectedProvider);
   const selectedStatus = statuses.find((s) => s.name === selectedProvider);
-
-  const handleSetActive = async (providerName: string, modelId?: string) => {
-    setSetting(true);
-    try {
-      await setActiveProvider(providerName, modelId);
-      await refresh();
-      const label = modelId ? `${providerName} / ${modelId}` : providerName;
-      toast("success", `Active provider set to ${label}`);
-      // Notify chat to reload with new provider/model
-      window.dispatchEvent(new Event("provider-changed"));
-    } catch (e) {
-      toast("error", `${e}`);
-    } finally {
-      setSetting(false);
-    }
-  };
 
   const handleFetchModels = async (providerName: string) => {
     setFetching(true);
@@ -78,11 +77,54 @@ export default function ProvidersTab() {
     }
   };
 
+  const toggleModel = (entry: string) => {
+    setSelectedModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(entry)) {
+        next.delete(entry);
+      } else {
+        next.add(entry);
+      }
+      return next;
+    });
+  };
+
+  const handleSaveSelection = async () => {
+    if (!selectedProvider) return;
+    setSaving(true);
+    try {
+      await setProviderModels(selectedProvider, [...selectedModels], []);
+      await refresh();
+      toast("success", `Saved ${selectedModels.size} models for ${selectedProvider}`);
+      window.dispatchEvent(new Event("provider-changed"));
+    } catch (e) {
+      toast("error", `${e}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Check if selection differs from configured
+  const hasChanges = (() => {
+    if (!selectedProvider) return false;
+    const prefix = `${selectedProvider}:`;
+    const current = new Set(configuredModels.filter((m) => m.startsWith(prefix)));
+    if (current.size !== selectedModels.size) return true;
+    for (const m of current) {
+      if (!selectedModels.has(m)) return true;
+    }
+    return false;
+  })();
+
   // ── Detail View ──────────────────────────────────────────────
 
   if (selected && selectedProvider) {
-    const isActive = selected.active;
+    const prefix = `${selectedProvider}:`;
     const models = fetchedModels[selectedProvider] ?? [];
+    // Current configured models for this provider (shown before fetch)
+    const currentProviderModels = configuredModels
+      .filter((m) => m.startsWith(prefix))
+      .map((m) => m.substring(prefix.length));
 
     return (
       <div style={{ animation: "fadeIn 0.15s ease-out" }}>
@@ -101,7 +143,7 @@ export default function ProvidersTab() {
           <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
             {selected.name}
           </span>
-          {isActive && (
+          {selected.active && (
             <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{
               background: "rgba(74,222,128,0.12)", color: "#4ade80",
             }}>Active</span>
@@ -121,21 +163,6 @@ export default function ProvidersTab() {
 
         {/* Actions */}
         <div className="flex gap-2 mb-4">
-          {!isActive && (
-            <button
-              onClick={() => handleSetActive(selected.name)}
-              disabled={setting}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
-              style={{
-                background: "#fafafa", color: "#09090b",
-                opacity: setting ? 0.5 : 1,
-                pointerEvents: setting ? "none" : "auto",
-              }}
-            >
-              <Star size={11} />
-              {setting ? "Setting..." : "Set Active"}
-            </button>
-          )}
           <button
             onClick={() => handleFetchModels(selectedProvider)}
             disabled={fetching}
@@ -150,6 +177,21 @@ export default function ProvidersTab() {
             <RefreshCw size={11} className={fetching ? "animate-spin" : ""} />
             {fetching ? "Fetching..." : "Fetch Models"}
           </button>
+          {hasChanges && (
+            <button
+              onClick={handleSaveSelection}
+              disabled={saving}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
+              style={{
+                background: "#fafafa", color: "#09090b",
+                opacity: saving ? 0.5 : 1,
+                pointerEvents: saving ? "none" : "auto",
+              }}
+            >
+              <Save size={11} />
+              {saving ? "Saving..." : "Save Selection"}
+            </button>
+          )}
         </div>
 
         {/* Error */}
@@ -162,36 +204,77 @@ export default function ProvidersTab() {
           </div>
         )}
 
-        {/* Models list */}
-        {models.length > 0 && (
+        {/* Models list (fetched or current) */}
+        {models.length > 0 ? (
           <div>
             <span className="text-[10px] font-semibold uppercase tracking-wider block mb-2" style={{ color: "var(--text-muted)" }}>
-              Models ({models.length})
+              Available Models ({models.length}) — {selectedModels.size} selected
             </span>
             <div className="flex flex-col gap-px rounded-lg overflow-hidden" style={{
               border: "1px solid var(--border)", maxHeight: 320, overflowY: "auto",
             }}>
-              {models.map((model) => (
-                <div
-                  key={model.id}
-                  className="flex items-center justify-between px-3 py-2 text-xs cursor-pointer"
-                  style={{ background: "var(--bg-secondary)" }}
-                  onClick={() => handleSetActive(selectedProvider, model.id)}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-secondary)"; }}
-                >
-                  <span className="font-mono truncate" style={{ color: "var(--text-primary)" }}>
-                    {model.id}
-                  </span>
-                  {model.name !== model.id && (
-                    <span className="text-[10px] ml-2 shrink-0" style={{ color: "var(--text-muted)" }}>
-                      {model.name}
+              {models.map((model) => {
+                const entry = `${prefix}${model.id}`;
+                const checked = selectedModels.has(entry);
+                return (
+                  <div
+                    key={model.id}
+                    className="flex items-center gap-2 px-3 py-2 text-xs cursor-pointer"
+                    style={{ background: checked ? "var(--bg-active)" : "var(--bg-secondary)" }}
+                    onClick={() => toggleModel(entry)}
+                    onMouseEnter={(e) => { if (!checked) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = checked ? "var(--bg-active)" : "var(--bg-secondary)"; }}
+                  >
+                    <div style={{
+                      width: 14, height: 14, borderRadius: 3, flexShrink: 0,
+                      border: checked ? "none" : "1px solid var(--border)",
+                      background: checked ? "#4ade80" : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {checked && <Check size={10} style={{ color: "#09090b" }} />}
+                    </div>
+                    <span className="font-mono truncate" style={{ color: "var(--text-primary)" }}>
+                      {model.id}
                     </span>
-                  )}
+                    {model.name !== model.id && (
+                      <span className="text-[10px] ml-auto shrink-0" style={{ color: "var(--text-muted)" }}>
+                        {model.name}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : currentProviderModels.length > 0 ? (
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-wider block mb-2" style={{ color: "var(--text-muted)" }}>
+              Configured Models ({currentProviderModels.length})
+            </span>
+            <div className="flex flex-col gap-px rounded-lg overflow-hidden" style={{
+              border: "1px solid var(--border)", maxHeight: 320, overflowY: "auto",
+            }}>
+              {currentProviderModels.map((modelId) => (
+                <div
+                  key={modelId}
+                  className="flex items-center gap-2 px-3 py-2 text-xs"
+                  style={{ background: "var(--bg-secondary)" }}
+                >
+                  <Check size={11} style={{ color: "#4ade80" }} />
+                  <span className="font-mono truncate" style={{ color: "var(--text-primary)" }}>
+                    {modelId}
+                  </span>
                 </div>
               ))}
             </div>
+            <span className="text-[10px] block mt-2" style={{ color: "var(--text-muted)" }}>
+              Click "Fetch Models" to see all available models and modify selection.
+            </span>
           </div>
+        ) : (
+          <span className="text-[10px] block" style={{ color: "var(--text-muted)" }}>
+            No models configured. Click "Fetch Models" to discover available models.
+          </span>
         )}
       </div>
     );
@@ -233,6 +316,8 @@ export default function ProvidersTab() {
       <div className="flex flex-col gap-1">
         {providers.map((provider) => {
           const status = statuses.find((s) => s.name === provider.name);
+          const prefix = `${provider.name}:`;
+          const modelCount = configuredModels.filter((m) => m.startsWith(prefix)).length;
           return (
             <div
               key={provider.name}
@@ -258,7 +343,7 @@ export default function ProvidersTab() {
                   )}
                 </div>
                 <span className="text-[10px] font-mono block truncate" style={{ color: "var(--text-muted)" }}>
-                  {provider.defaultModel}
+                  {modelCount > 0 ? `${modelCount} model${modelCount !== 1 ? "s" : ""}` : provider.defaultModel}
                 </span>
               </div>
               <div className="flex items-center gap-2 shrink-0">

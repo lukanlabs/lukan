@@ -58,8 +58,9 @@ export function Toolbar({
 
   const handleSelectModel = async (provider: string, model: string) => {
     try {
-      // Models from getModels() are stored as "provider:model_id" — strip prefix
-      const modelId = model.includes(":") ? model.substring(model.indexOf(":") + 1) : model;
+      // Models from getModels() are stored as "provider:model_id" — strip only the known prefix
+      const prefix = `${provider}:`;
+      const modelId = model.startsWith(prefix) ? model.substring(prefix.length) : model;
       await setActiveProvider(provider, modelId);
       setShowModelMenu(false);
       await loadProviders();

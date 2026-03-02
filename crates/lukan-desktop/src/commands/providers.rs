@@ -167,10 +167,11 @@ pub async fn set_active_provider(provider: String, model: Option<String>) -> Res
     config.provider = serde_json::from_value(serde_json::Value::String(provider.clone()))
         .map_err(|_| format!("Invalid provider: {provider}"))?;
 
-    // Models from getModels() are stored as "provider:model_id" — strip the prefix
+    // Models from getModels() are stored as "provider:model_id" — strip only the known prefix
     config.model = model.map(|m| {
-        if let Some((_prefix, raw)) = m.split_once(':') {
-            raw.to_string()
+        let prefix = format!("{}:", provider);
+        if m.starts_with(&prefix) {
+            m[prefix.len()..].to_string()
         } else {
             m
         }

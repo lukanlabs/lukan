@@ -135,7 +135,8 @@ impl PluginChannel {
                     processing.insert(channel_id.clone());
 
                     let preview = if content.len() > 80 {
-                        format!("{}...", &content[..80])
+                        let end = content.floor_char_boundary(80);
+                        format!("{}...", &content[..end])
                     } else {
                         content.clone()
                     };
@@ -152,7 +153,8 @@ impl PluginChannel {
                     let is_error = response.starts_with("Error:");
 
                     let resp_preview = if response.len() > 120 {
-                        format!("{}...", &response[..120])
+                        let end = response.floor_char_boundary(120);
+                        format!("{}...", &response[..end])
                     } else {
                         response.clone()
                     };

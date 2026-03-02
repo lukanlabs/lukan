@@ -207,7 +207,8 @@ fn render_options(picker: &RewindPicker, area: Rect, buf: &mut Buffer) {
         .map(|e| {
             let msg = e.message.lines().next().unwrap_or(&e.message);
             if msg.len() > 50 {
-                format!("{}…", &msg[..49])
+                let end = msg.floor_char_boundary(49);
+                format!("{}…", &msg[..end])
             } else {
                 msg.to_string()
             }

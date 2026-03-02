@@ -82,7 +82,8 @@ impl ChatSession {
                 let text = m.content.to_text();
                 let first_line = text.lines().next().unwrap_or("");
                 if first_line.len() > 60 {
-                    format!("{}…", &first_line[..57])
+                    let end = first_line.floor_char_boundary(57);
+                    format!("{}…", &first_line[..end])
                 } else {
                     first_line.to_string()
                 }

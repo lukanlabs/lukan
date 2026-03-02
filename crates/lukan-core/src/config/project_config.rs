@@ -148,7 +148,12 @@ impl ProjectConfig {
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("-");
-        let slug = if slug.len() > 50 { &slug[..50] } else { &slug };
+        let slug_end = slug.floor_char_boundary(50);
+        let slug = if slug.len() > 50 {
+            &slug[..slug_end]
+        } else {
+            &slug
+        };
         let filename = format!("{date}-{slug}.md");
 
         let path = plans_dir.join(&filename);

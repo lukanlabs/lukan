@@ -57,6 +57,15 @@ source = "archive"
 [plugins.security-monitor.assets.all]
 url = "https://get.lukan.ai/plugins/lukan-plugin-security-monitor.tar.gz"
 
+[plugins.nano-banana-pro]
+description = "AI image generation powered by Gemini"
+version = "0.1.0"
+plugin_type = "tools"
+source = "archive"
+
+[plugins.nano-banana-pro.assets.all]
+url = "https://get.lukan.ai/plugins/lukan-plugin-nano-banana-pro.tar.gz"
+
 # ── Native plugins (platform-specific) ─────────────────────────────────
 
 [plugins.whisper]

@@ -1,0 +1,13 @@
+[plugin]
+name = "nano-banana-pro"
+version = "0.1.0"
+description = "AI image generation powered by Gemini"
+plugin_type = "tools"
+
+[run]
+command = "python3"
+handler = "tools.py"
+
+[config.GEMINI_API_KEY]
+type = "string"
+description = "Gemini API key for image generation"

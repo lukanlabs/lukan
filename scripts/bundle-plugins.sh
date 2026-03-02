@@ -114,6 +114,21 @@ bundle_security_monitor() {
   ok "security-monitor → dist/ (bash script, no deps)"
 }
 
+bundle_nano_banana_pro() {
+  local src="$PLUGINS_DIR/nano-banana-pro"
+  local dist="$src/dist"
+  info "Bundling nano-banana-pro plugin..."
+
+  mkdir -p "$dist"
+
+  # Python plugin — just copy files
+  cp "$src/plugin.toml" "$dist/"
+  cp "$src/tools.json" "$dist/"
+  cp "$src/tools.py" "$dist/"
+
+  ok "nano-banana-pro → dist/ (python script, no deps)"
+}
+
 # ── Main ──────────────────────────────────────────────────────────────
 
 TARGET="${1:-all}"
@@ -134,16 +149,20 @@ case "$TARGET" in
   security-monitor|security)
     bundle_security_monitor
     ;;
+  nano-banana-pro|nano-banana)
+    bundle_nano_banana_pro
+    ;;
   all)
     bundle_whatsapp
     bundle_google_workspace
     bundle_gmail
     bundle_docker_monitor
     bundle_security_monitor
+    bundle_nano_banana_pro
     ;;
   *)
     err "Unknown plugin: $TARGET"
-    echo "Available: whatsapp, google-workspace, gmail, docker-monitor, security-monitor, all"
+    echo "Available: whatsapp, google-workspace, gmail, docker-monitor, security-monitor, nano-banana-pro, all"
     exit 1
     ;;
 esac

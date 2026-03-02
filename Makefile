@@ -90,6 +90,9 @@ package-plugins: bundle-plugins
 	@# Security Monitor plugin
 	@cd plugins/security-monitor/dist && tar czf ../../../dist/plugins/lukan-plugin-security-monitor.tar.gz .
 	@echo "  Packaged: lukan-plugin-security-monitor.tar.gz"
+	@# Nano Banana Pro plugin
+	@cd plugins/nano-banana-pro/dist && tar czf ../../../dist/plugins/lukan-plugin-nano-banana-pro.tar.gz .
+	@echo "  Packaged: lukan-plugin-nano-banana-pro.tar.gz"
 
 ## release: Build binary + bundle plugins + generate checksums
 release: build bundle-plugins package-plugins

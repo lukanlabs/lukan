@@ -1,0 +1,38 @@
+[
+  {
+    "name": "GenerateImage",
+    "description": "Generate an image from a text prompt using AI (Gemini). Returns the image inline and saves it to a file. The saved file path is included in the output.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "A detailed description of the image to generate"
+        }
+      },
+      "required": ["prompt"]
+    }
+  },
+  {
+    "name": "EditImage",
+    "description": "Edit an existing image using AI (Gemini). Accepts an image (file path or URL) and a text prompt describing the desired changes. Returns the modified image inline and saves it to a file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "Description of changes to make to the image"
+        },
+        "image_path": {
+          "type": "string",
+          "description": "Path to a local image file to edit"
+        },
+        "image_url": {
+          "type": "string",
+          "description": "URL of an image to download and edit"
+        }
+      },
+      "required": ["prompt"]
+    }
+  }
+]

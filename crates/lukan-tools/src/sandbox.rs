@@ -676,22 +676,21 @@ mod tests {
 
     #[test]
     fn test_build_bwrap_args_skips_nonexistent_dirs() {
+        let nonexistent = "/nonexistent/dir/that/should/not/exist";
         let config = BwrapConfig {
-            allowed_dirs: vec!["/nonexistent/dir/that/should/not/exist".to_string()],
+            allowed_dirs: vec![nonexistent.to_string()],
             sensitive_patterns: vec![],
             cwd: "/tmp".to_string(),
         };
         let args = build_bwrap_args(&config);
 
-        // The --bind for the nonexistent dir should NOT be present
-        let bind_positions: Vec<usize> = args
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| a.as_str() == "--bind")
-            .map(|(i, _)| i)
-            .collect();
+        // The nonexistent dir should NOT appear as a --bind target
+        // (cwd /tmp will still produce a --bind, which is expected)
+        let has_nonexistent_bind = args
+            .windows(3)
+            .any(|w| w[0] == "--bind" && w[1] == nonexistent);
         assert!(
-            bind_positions.is_empty(),
+            !has_nonexistent_bind,
             "Should not have --bind for nonexistent dirs"
         );
     }

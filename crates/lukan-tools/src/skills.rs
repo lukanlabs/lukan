@@ -236,6 +236,8 @@ mod tests {
             cancel: None,
             session_id: None,
             extra_env: std::collections::HashMap::new(),
+            agent_label: None,
+            tab_id: None,
         };
         let input = serde_json::json!({"name": "my-skill"});
         let result = tool.execute(input, &ctx).await.unwrap();

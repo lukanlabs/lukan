@@ -78,16 +78,18 @@ fn test_build_bwrap_args_includes_all_required_flags() {
 
 #[test]
 fn test_build_bwrap_args_skips_nonexistent_dirs() {
+    let nonexistent = "/nonexistent/path/xyz/abc/123";
     let config = BwrapConfig {
-        allowed_dirs: vec!["/nonexistent/path/xyz/abc/123".to_string()],
+        allowed_dirs: vec![nonexistent.to_string()],
         sensitive_patterns: vec![],
         cwd: "/tmp".to_string(),
     };
     let args = build_bwrap_args(&config);
 
-    // Count --bind flags (should be 0 since the dir doesn't exist)
-    let bind_count = args.iter().filter(|a| a.as_str() == "--bind").count();
-    assert_eq!(bind_count, 0, "Should not have --bind for nonexistent dirs");
+    // The nonexistent dir should NOT appear as a --bind target
+    // (cwd /tmp will still produce a --bind, which is expected)
+    let has_nonexistent_bind = args.windows(3).any(|w| w[0] == "--bind" && w[1] == nonexistent);
+    assert!(!has_nonexistent_bind, "Should not have --bind for nonexistent dirs");
 }
 
 #[test]

@@ -138,10 +138,10 @@ pub async fn initialize_chat(state: State<'_, ChatState>) -> Result<InitResponse
         if !old_provider.is_empty() && (old_provider != provider_name || old_model != model_name) {
             let mut sessions = state.sessions.lock().await;
             for session in sessions.values_mut() {
-                if let Some(ref mut agent) = session.agent {
-                    if let Ok(new_provider) = create_provider(&resolved) {
-                        agent.swap_provider(Arc::from(new_provider));
-                    }
+                if let Some(ref mut agent) = session.agent
+                    && let Ok(new_provider) = create_provider(&resolved)
+                {
+                    agent.swap_provider(Arc::from(new_provider));
                 }
             }
         }

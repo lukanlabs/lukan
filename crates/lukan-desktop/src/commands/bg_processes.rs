@@ -68,11 +68,11 @@ pub async fn send_to_background(
     session_id: String,
 ) -> Result<bool, String> {
     let sessions = state.sessions.lock().await;
-    if let Some(session) = sessions.get(&session_id) {
-        if let Some(ref tx) = session.bg_signal_tx {
-            tx.send(()).map_err(|e| e.to_string())?;
-            return Ok(true);
-        }
+    if let Some(session) = sessions.get(&session_id)
+        && let Some(ref tx) = session.bg_signal_tx
+    {
+        tx.send(()).map_err(|e| e.to_string())?;
+        return Ok(true);
     }
     Ok(false)
 }

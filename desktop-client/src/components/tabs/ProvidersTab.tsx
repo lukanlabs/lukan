@@ -6,6 +6,10 @@ import {
   fetchProviderModels,
   setProviderModels,
   getProviderStatus,
+  getConfig,
+  saveConfig,
+  getCredentials,
+  saveCredentials,
 } from "../../lib/tauri";
 import { useToast } from "../ui/Toast";
 import {
@@ -17,6 +21,10 @@ import {
   ChevronRight,
   Loader2,
   Save,
+  Globe,
+  Lock,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 export default function ProvidersTab() {
@@ -32,6 +40,11 @@ export default function ProvidersTab() {
   const [configuredModels, setConfiguredModels] = useState<string[]>([]);
   // Selected model entries for the picker (prefixed)
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
+  // OpenAI-compatible settings
+  const [compatBaseUrl, setCompatBaseUrl] = useState("");
+  const [compatApiKey, setCompatApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [compatSaving, setCompatSaving] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -57,9 +70,36 @@ export default function ProvidersTab() {
     }
   }, [selectedProvider, configuredModels]);
 
+  // Load openai-compatible settings when entering its detail view
+  useEffect(() => {
+    if (selectedProvider !== "openai-compatible") return;
+    (async () => {
+      try {
+        const [cfg, creds] = await Promise.all([getConfig(), getCredentials()]);
+        setCompatBaseUrl(cfg.openaiCompatibleBaseUrl ?? "");
+        setCompatApiKey(creds.openaiCompatibleApiKey ?? "");
+      } catch {}
+    })();
+  }, [selectedProvider]);
+
   const activeProvider = providers.find((p) => p.active);
   const selected = providers.find((p) => p.name === selectedProvider);
   const selectedStatus = statuses.find((s) => s.name === selectedProvider);
+
+  const handleSaveCompat = async () => {
+    setCompatSaving(true);
+    try {
+      const [cfg, creds] = await Promise.all([getConfig(), getCredentials()]);
+      cfg.openaiCompatibleBaseUrl = compatBaseUrl || undefined;
+      creds.openaiCompatibleApiKey = compatApiKey || undefined;
+      await Promise.all([saveConfig(cfg), saveCredentials(creds)]);
+      toast("success", "Settings saved");
+    } catch (e) {
+      toast("error", `${e}`);
+    } finally {
+      setCompatSaving(false);
+    }
+  };
 
   const handleFetchModels = async (providerName: string) => {
     setFetching(true);
@@ -160,6 +200,69 @@ export default function ProvidersTab() {
         <span className="text-[11px] font-mono block mb-4" style={{ color: "var(--text-muted)" }}>
           Default: {selected.defaultModel}
         </span>
+
+        {/* OpenAI-compatible: base URL + API key */}
+        {selectedProvider === "openai-compatible" && (
+          <div className="flex flex-col gap-2.5 mb-4 p-3 rounded-lg" style={{
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border)",
+          }}>
+            <div className="flex flex-col gap-1">
+              <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                <Globe size={10} /> Base URL
+              </label>
+              <input
+                className="w-full px-2.5 py-1.5 rounded-md text-xs font-mono outline-none"
+                style={{
+                  background: "var(--bg-tertiary)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text-primary)",
+                }}
+                value={compatBaseUrl}
+                placeholder="http://localhost:8080/v1"
+                onChange={(e) => setCompatBaseUrl(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                <Lock size={10} /> API Key
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  className="flex-1 px-2.5 py-1.5 rounded-md text-xs font-mono outline-none"
+                  style={{
+                    background: "var(--bg-tertiary)",
+                    border: "1px solid var(--border)",
+                    color: "var(--text-primary)",
+                  }}
+                  type={showApiKey ? "text" : "password"}
+                  value={compatApiKey}
+                  placeholder="Optional for local servers"
+                  onChange={(e) => setCompatApiKey(e.target.value)}
+                />
+                <button
+                  onClick={() => setShowApiKey((v) => !v)}
+                  className="px-1.5 rounded-md border-none cursor-pointer"
+                  style={{ background: "var(--bg-tertiary)", color: "var(--text-muted)" }}
+                >
+                  {showApiKey ? <EyeOff size={12} /> : <Eye size={12} />}
+                </button>
+              </div>
+            </div>
+            <button
+              onClick={handleSaveCompat}
+              disabled={compatSaving}
+              className="self-start inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium cursor-pointer border-none mt-1"
+              style={{
+                background: "#fafafa", color: "#09090b",
+                opacity: compatSaving ? 0.5 : 1,
+              }}
+            >
+              <Save size={10} />
+              {compatSaving ? "Saving..." : "Save"}
+            </button>
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex gap-2 mb-4">

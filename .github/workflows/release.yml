@@ -44,14 +44,17 @@ jobs:
           key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-release-
 
-      - name: Quality checks
-        run: |
-          cargo fmt --all --check
-          cargo clippy --workspace -- -D warnings
-          cargo test --workspace
+      - name: Check formatting
+        run: cargo fmt --all --check
 
-      - name: Frontend build check
+      - name: Frontend build
         run: cd desktop-client && bun install --frozen-lockfile && bun run build
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
 
       - name: Build release
         run: make release

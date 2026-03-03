@@ -29,6 +29,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -44,58 +47,14 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+      - name: Frontend build
+        run: cd desktop-client && bun install --frozen-lockfile && bun run build
+
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
 
       - name: Tests
         run: cargo test --workspace
-
-  frontend:
-    name: Frontend Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: cd desktop-client && bun install --frozen-lockfile
-
-      - name: Type check & build
-        run: cd desktop-client && bun run build
-
-  build:
-    name: Build Release
-    needs: [check, frontend]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf libssl-dev libasound2-dev
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-
 
       - name: Build release binaries
         run: make build

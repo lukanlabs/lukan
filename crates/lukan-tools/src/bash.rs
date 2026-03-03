@@ -261,6 +261,8 @@ impl Tool for BashTool {
                             command_str,
                             log_path,
                             ctx.session_id.clone(),
+                            ctx.agent_label.clone(),
+                            ctx.tab_id.clone(),
                         );
 
                         Ok(ToolResult::success(format!(
@@ -389,7 +391,14 @@ impl BashTool {
 
         let log_display = log_file.display().to_string();
 
-        bg_processes::add_bg_process(pid, command.to_string(), log_file, ctx.session_id.clone());
+        bg_processes::add_bg_process(
+            pid,
+            command.to_string(),
+            log_file,
+            ctx.session_id.clone(),
+            ctx.agent_label.clone(),
+            ctx.tab_id.clone(),
+        );
 
         Ok(ToolResult::success(format!(
             "Background process started. PID: {pid}\n\

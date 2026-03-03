@@ -14,6 +14,10 @@ const WS_COMMANDS = new Set([
   "load_session",
   "new_session",
   "set_permission_mode",
+  "create_agent_tab",
+  "destroy_agent_tab",
+  "rename_agent_tab",
+  "send_to_background",
   // Terminal (Phase 3)
   "terminal_create",
   "terminal_input",
@@ -33,6 +37,9 @@ const WS_VOID_COMMANDS = new Set([
   "reject_plan",
   "answer_question",
   "set_permission_mode",
+  "destroy_agent_tab",
+  "rename_agent_tab",
+  "send_to_background",
   "terminal_input",
   "terminal_resize",
   "terminal_destroy",
@@ -228,6 +235,16 @@ export class WebTransport implements Transport {
           #lukan-login-btn:active:not(:disabled) {
             transform: translateY(0);
           }
+          @media (max-width: 860px) {
+            #lukan-login-overlay .lukan-brand-panel {
+              display: none !important;
+            }
+            #lukan-login-overlay .lukan-login-panel {
+              width: 100% !important;
+              min-width: 0 !important;
+              border-left: none !important;
+            }
+          }
         </style>
         <div style="
           position:fixed;inset:0;z-index:99999;
@@ -235,7 +252,7 @@ export class WebTransport implements Transport {
           font-family:'Inter','SF Pro Display',system-ui,-apple-system,sans-serif;
         ">
           <!-- Left branding panel -->
-          <div style="
+          <div class="lukan-brand-panel" style="
             flex:1;
             background: linear-gradient(135deg, #0f0a1e 0%, #1a1145 40%, #0d1b3e 70%, #0a0e1f 100%);
             display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -283,7 +300,7 @@ export class WebTransport implements Transport {
           </div>
 
           <!-- Right login panel -->
-          <div style="
+          <div class="lukan-login-panel" style="
             width:460px;min-width:400px;
             background:#0a0a0b;
             display:flex;align-items:center;justify-content:center;
@@ -481,10 +498,21 @@ export class WebTransport implements Transport {
       return;
     }
 
-    // Processing complete → turn-complete
+    // Processing complete → turn-complete (session-scoped)
     if (type === "processing_complete") {
       this.processing = false;
-      this.dispatch("turn-complete", JSON.stringify(msg));
+      const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      if (routeId) {
+        this.dispatch(`turn-complete-${routeId}`, JSON.stringify(msg));
+      } else {
+        this.dispatch("turn-complete", JSON.stringify(msg));
+      }
+      return;
+    }
+
+    // Agent tab created → resolve pending create_agent_tab
+    if (type === "agent_tab_created") {
+      this.resolvePending("create_agent_tab", msg.sessionId);
       return;
     }
 
@@ -539,9 +567,15 @@ export class WebTransport implements Transport {
       return;
     }
 
-    // Stream events (during agent processing)
+    // Stream events (during agent processing) — route to session-scoped subscribers
     if (STREAM_EVENT_TYPES.has(type)) {
-      this.dispatch("stream-event", JSON.stringify(msg));
+      const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      if (routeId) {
+        this.dispatch(`stream-event-${routeId}`, JSON.stringify(msg));
+      } else {
+        // Fallback: broadcast to all stream-event-* subscribers
+        this.dispatch("stream-event", JSON.stringify(msg));
+      }
       return;
     }
   }
@@ -584,33 +618,42 @@ export class WebTransport implements Transport {
   ): object {
     switch (command) {
       case "send_message":
-        return { type: "send_message", content: args?.content };
+        return { type: "send_message", content: args?.content, sessionId: args?.sessionId };
       case "cancel_stream":
-        return { type: "abort" };
+        return { type: "abort", sessionId: args?.sessionId };
       case "approve_tools":
-        return { type: "approve", approvedIds: args?.approvedIds };
+        return { type: "approve", approvedIds: args?.approvedIds, sessionId: args?.sessionId };
       case "always_allow_tools":
         return {
           type: "always_allow",
           approvedIds: args?.approvedIds,
           tools: args?.tools,
+          sessionId: args?.sessionId,
         };
       case "deny_all_tools":
-        return { type: "deny_all" };
+        return { type: "deny_all", sessionId: args?.sessionId };
       case "accept_plan":
-        return { type: "plan_accept", tasks: args?.tasks ?? null };
+        return { type: "plan_accept", tasks: args?.tasks ?? null, sessionId: args?.sessionId };
       case "reject_plan":
-        return { type: "plan_reject", feedback: args?.feedback };
+        return { type: "plan_reject", feedback: args?.feedback, sessionId: args?.sessionId };
       case "answer_question":
-        return { type: "answer_question", answer: args?.answer };
+        return { type: "answer_question", answer: args?.answer, sessionId: args?.sessionId };
       case "list_sessions":
         return { type: "list_sessions" };
       case "load_session":
-        return { type: "load_session", sessionId: args?.id };
+        return { type: "load_session", sessionId: args?.sessionId, id: args?.id };
       case "new_session":
-        return { type: "new_session", name: null };
+        return { type: "new_session", name: null, sessionId: args?.sessionId };
       case "set_permission_mode":
         return { type: "set_permission_mode", mode: args?.mode };
+      case "create_agent_tab":
+        return { type: "create_agent_tab" };
+      case "destroy_agent_tab":
+        return { type: "destroy_agent_tab", sessionId: args?.sessionId };
+      case "rename_agent_tab":
+        return { type: "rename_agent_tab", sessionId: args?.sessionId, label: args?.label };
+      case "send_to_background":
+        return { type: "send_to_background", sessionId: args?.sessionId };
       // Terminal (Phase 3)
       case "terminal_create":
         return {

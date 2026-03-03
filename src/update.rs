@@ -3,16 +3,19 @@ use anyhow::Result;
 const INSTALL_URL: &str = "https://get.lukan.ai/install.sh";
 
 /// Self-update by downloading and running the install script
-pub async fn run_update() -> Result<()> {
-    println!("\n  \x1b[36mChecking for updates...\x1b[0m\n");
+pub async fn run_update(daily: bool) -> Result<()> {
+    let channel = if daily { "daily" } else { "stable" };
+    println!(
+        "\n  \x1b[36mChecking for updates ({channel} channel)...\x1b[0m\n"
+    );
 
     let shell = if which_exists("bash") { "bash" } else { "sh" };
 
-    // Build the pipe command: curl -fsSL <url> | bash (or wget equivalent)
+    // Build the pipe command: curl -fsSL <url> | bash -s -- <channel>
     let script = if which_exists("curl") {
-        format!("curl -fsSL {INSTALL_URL} | {shell}")
+        format!("curl -fsSL {INSTALL_URL} | {shell} -s -- {channel}")
     } else if which_exists("wget") {
-        format!("wget -qO- {INSTALL_URL} | {shell}")
+        format!("wget -qO- {INSTALL_URL} | {shell} -s -- {channel}")
     } else {
         anyhow::bail!("Either curl or wget is required for updates");
     };

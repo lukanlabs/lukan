@@ -109,7 +109,11 @@ enum Commands {
         command: sandbox_cmd::SandboxCommands,
     },
     /// Self-update to the latest version
-    Update,
+    Update {
+        /// Update from the daily (unstable) channel instead of stable
+        #[arg(long)]
+        daily: bool,
+    },
     /// Manage scheduled workers
     Worker {
         #[command(subcommand)]
@@ -189,8 +193,8 @@ async fn main() -> Result<()> {
         Some(Commands::Skill { command }) => {
             skills::handle_skill_command(command).await?;
         }
-        Some(Commands::Update) => {
-            update::run_update().await?;
+        Some(Commands::Update { daily }) => {
+            update::run_update(daily).await?;
         }
         Some(Commands::Sandbox { command }) => {
             sandbox_cmd::handle_sandbox_command(command).await?;

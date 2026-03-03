@@ -18,10 +18,9 @@ import {
 } from "lucide-react";
 import type { ToolStatus } from "../../hooks/useChat";
 import { DiffView } from "./DiffView";
-import { sendToBackground } from "../../lib/tauri";
-
 interface ToolCallCardProps {
   tool: ToolStatus;
+  onSendToBackground?: () => Promise<boolean>;
 }
 
 const toolIcons: Record<string, React.ReactNode> = {
@@ -76,7 +75,7 @@ function getToolSummary(name: string, input?: Record<string, unknown>): string |
   }
 }
 
-export function ToolCallCard({ tool }: ToolCallCardProps) {
+export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
   const [open, setOpen] = useState(false);
   const [sendingToBg, setSendingToBg] = useState(false);
   const [startedAt] = useState(() => Date.now());
@@ -99,7 +98,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
     e.stopPropagation();
     setSendingToBg(true);
     try {
-      await sendToBackground();
+      if (onSendToBackground) await onSendToBackground();
     } catch (err) {
       console.error("Failed to send to background:", err);
     }

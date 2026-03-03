@@ -15,6 +15,9 @@ pub struct BgProcessDto {
     pub started_at: String,
     pub exited_at: Option<String>,
     pub status: String,
+    pub label: Option<String>,
+    pub session_id: Option<String>,
+    pub tab_id: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -43,6 +46,9 @@ pub async fn list_bg_processes(Query(q): Query<SessionQuery>) -> Json<Vec<BgProc
                     BgProcessStatus::Completed => "completed".to_string(),
                     BgProcessStatus::Killed => "killed".to_string(),
                 },
+                label: p.label,
+                session_id: p.session_id,
+                tab_id: p.tab_id,
             })
             .collect(),
     )

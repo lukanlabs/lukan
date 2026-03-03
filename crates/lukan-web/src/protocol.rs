@@ -17,33 +17,67 @@ use lukan_core::workers::{
 )]
 #[allow(dead_code)] // Stub variants have unread fields
 pub enum ClientMessage {
-    // Chat
+    // Chat (per-session: sessionId in JSON = tab/agent instance ID)
     SendMessage {
         content: String,
+        #[serde(default)]
+        session_id: Option<String>,
     },
     Approve {
         approved_ids: Vec<String>,
+        #[serde(default)]
+        session_id: Option<String>,
     },
     AlwaysAllow {
         approved_ids: Vec<String>,
         tools: Vec<lukan_core::models::events::ToolApprovalRequest>,
+        #[serde(default)]
+        session_id: Option<String>,
     },
-    DenyAll,
+    DenyAll {
+        #[serde(default)]
+        session_id: Option<String>,
+    },
     AnswerQuestion {
         answer: String,
+        #[serde(default)]
+        session_id: Option<String>,
     },
-    Abort,
+    Abort {
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 
     // Sessions
     LoadSession {
-        session_id: String,
+        #[serde(default)]
+        session_id: Option<String>,
+        /// Saved session ID to load (new protocol); falls back to session_id if absent
+        #[serde(default)]
+        id: Option<String>,
     },
     NewSession {
         name: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
     },
     ListSessions,
     DeleteSession {
         session_id: String,
+    },
+
+    // Agent tabs (multi-agent)
+    CreateAgentTab,
+    DestroyAgentTab {
+        session_id: String,
+    },
+    RenameAgentTab {
+        session_id: String,
+        label: String,
+    },
+    SendToBackground {
+        #[serde(default)]
+        session_id: Option<String>,
     },
 
     // Model
@@ -103,13 +137,19 @@ pub enum ClientMessage {
     },
     PlanAccept {
         tasks: Option<serde_json::Value>,
+        #[serde(default)]
+        session_id: Option<String>,
     },
     PlanReject {
         feedback: String,
+        #[serde(default)]
+        session_id: Option<String>,
     },
     PlanTaskFeedback {
         task_index: u32,
         feedback: String,
+        #[serde(default)]
+        session_id: Option<String>,
     },
 
     // Terminal
@@ -159,6 +199,12 @@ pub enum ServerMessage {
         checkpoints: Vec<Checkpoint>,
         #[serde(skip_serializing_if = "Option::is_none")]
         context_size: Option<u64>,
+        /// Agent tab ID for routing (new multi-tab protocol)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
+    },
+    AgentTabCreated {
+        session_id: String,
     },
     SessionList {
         sessions: Vec<SessionSummary>,
@@ -333,14 +379,41 @@ mod tests {
 
     #[test]
     fn test_client_message_deserialize_camel_case() {
+        // Old protocol: sessionId = saved session to load
         let json = r#"{"type":"load_session","sessionId":"abc123"}"#;
         let msg: ClientMessage = serde_json::from_str(json).unwrap();
         match msg {
-            ClientMessage::LoadSession { session_id } => {
-                assert_eq!(session_id, "abc123");
+            ClientMessage::LoadSession { session_id, id } => {
+                assert_eq!(session_id, Some("abc123".to_string()));
+                assert_eq!(id, None);
             }
             _ => panic!("Expected LoadSession variant"),
         }
+
+        // New protocol: sessionId = tab ID, id = saved session
+        let json2 = r#"{"type":"load_session","sessionId":"tab-1","id":"saved-abc"}"#;
+        let msg2: ClientMessage = serde_json::from_str(json2).unwrap();
+        match msg2 {
+            ClientMessage::LoadSession { session_id, id } => {
+                assert_eq!(session_id, Some("tab-1".to_string()));
+                assert_eq!(id, Some("saved-abc".to_string()));
+            }
+            _ => panic!("Expected LoadSession variant"),
+        }
+
+        // DenyAll with optional session_id
+        let json3 = r#"{"type":"deny_all"}"#;
+        let msg3: ClientMessage = serde_json::from_str(json3).unwrap();
+        match msg3 {
+            ClientMessage::DenyAll { session_id } => {
+                assert_eq!(session_id, None);
+            }
+            _ => panic!("Expected DenyAll variant"),
+        }
+
+        // CreateAgentTab
+        let json4 = r#"{"type":"create_agent_tab"}"#;
+        let _msg4: ClientMessage = serde_json::from_str(json4).unwrap();
     }
 
     #[test]

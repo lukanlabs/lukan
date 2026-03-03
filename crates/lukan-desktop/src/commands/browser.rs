@@ -72,35 +72,34 @@ pub async fn browser_launch(
         .await
         .map_err(|e| format!("Failed to connect to browser: {e}"))?;
 
-    // Hot-reload the live agent with browser tools
+    // Hot-reload all live agents with browser tools
     {
-        let mut agent_lock = state.agent.lock().await;
-        if let Some(agent) = agent_lock.as_mut() {
-            // 1. Swap tool registry to include browser tools
-            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
-                .await
-                .ok()
-                .flatten()
-                .map(|(_, cfg)| cfg);
-            let permissions = project_cfg
-                .as_ref()
-                .map(|c| c.permissions.clone())
-                .unwrap_or_default();
-            let allowed = project_cfg
-                .as_ref()
-                .map(|c| c.resolve_allowed_paths(&cwd))
-                .unwrap_or_else(|| vec![cwd.clone()]);
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
+            .await
+            .ok()
+            .flatten()
+            .map(|(_, cfg)| cfg);
+        let permissions = project_cfg
+            .as_ref()
+            .map(|c| c.permissions.clone())
+            .unwrap_or_default();
+        let allowed = project_cfg
+            .as_ref()
+            .map(|c| c.resolve_allowed_paths(&cwd))
+            .unwrap_or_else(|| vec![cwd.clone()]);
 
-            let browser_registry = create_configured_browser_registry(&permissions, &allowed);
-            agent.reload_tools(browser_registry);
+        let prompt = build_system_prompt(true).await;
 
-            // 2. Enable browser tools in the permission matcher (auto-allow)
-            agent.enable_browser_tools();
-
-            // 3. Reload system prompt with browser tool instructions
-            let prompt = build_system_prompt(true).await;
-            agent.reload_system_prompt(prompt);
+        let mut sessions = state.sessions.lock().await;
+        for session in sessions.values_mut() {
+            if let Some(ref mut agent) = session.agent {
+                let browser_registry =
+                    create_configured_browser_registry(&permissions, &allowed);
+                agent.reload_tools(browser_registry);
+                agent.enable_browser_tools();
+                agent.reload_system_prompt(prompt.clone());
+            }
         }
     }
 

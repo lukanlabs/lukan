@@ -75,22 +75,30 @@ function StatusBadge({ status }: { status: BgProcessInfo["status"] }) {
 // ── Main Panel ──────────────────────────────────────────────────
 
 interface ProcessesPanelProps {
-  currentSessionId: string;
+  currentSessionId?: string;
   onOpenLog?: (process: BgProcessInfo) => void;
 }
 
-export function ProcessesPanel({ currentSessionId, onOpenLog }: ProcessesPanelProps) {
+export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
   const [processes, setProcesses] = useState<BgProcessInfo[]>([]);
   const [tick, setTick] = useState(0);
+  const [tabLabels, setTabLabels] = useState<Record<string, string>>({});
 
-  // Poll process list every 2s
+  // Listen for tab label broadcasts from AgentView
+  useEffect(() => {
+    const handler = (e: Event) => setTabLabels((e as CustomEvent).detail);
+    window.addEventListener("agent-tab-labels", handler);
+    return () => window.removeEventListener("agent-tab-labels", handler);
+  }, []);
+
+  // Poll process list every 2s (show all processes regardless of session/tab)
   const loadProcesses = useCallback(async () => {
     try {
-      setProcesses(await listBgProcesses(currentSessionId || undefined));
+      setProcesses(await listBgProcesses());
     } catch (e) {
       console.error("Failed to load bg processes:", e);
     }
-  }, [currentSessionId]);
+  }, []);
 
   useEffect(() => {
     loadProcesses();
@@ -148,6 +156,22 @@ export function ProcessesPanel({ currentSessionId, onOpenLog }: ProcessesPanelPr
                 </span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "var(--text-muted)" }}>
+                {(() => {
+                  const displayLabel = (p.tabId && tabLabels[p.tabId]) || p.label;
+                  return displayLabel ? (
+                    <span
+                      style={{
+                        background: "var(--surface-2, #2a2a2a)",
+                        borderRadius: 3,
+                        padding: "1px 4px",
+                        fontSize: 9,
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      {displayLabel}
+                    </span>
+                  ) : null;
+                })()}
                 <StatusBadge status={p.status} />
                 <span>{formatDuration(p.startedAt, p.exitedAt)}</span>
               </div>

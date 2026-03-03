@@ -181,6 +181,9 @@ export interface BgProcessInfo {
   startedAt: string;
   exitedAt: string | null;
   status: "running" | "completed" | "killed";
+  label?: string;
+  sessionId?: string;
+  tabId?: string;
 }
 
 export interface BrowserStatus {

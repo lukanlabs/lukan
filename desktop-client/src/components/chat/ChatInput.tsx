@@ -89,12 +89,12 @@ export function ChatInput({
   const micBlocked = !recorder.transcriptionAvailable;
 
   return (
-    <div className="border-t border-zinc-800 px-4 py-4 shrink-0 bg-zinc-950">
-      <div className="max-w-3xl mx-auto">
+    <div className="border-t border-zinc-800 px-4 py-4 shrink-0 bg-zinc-950 overflow-hidden w-full">
+      <div className="max-w-3xl mx-auto w-full min-w-0">
         {/* Permission mode selector */}
-        <div className="flex items-center gap-2 mb-3">
-          <Bot className="h-3.5 w-3.5 text-zinc-500" />
-          <div className="flex items-center gap-1 bg-white/[0.02] rounded-lg p-0.5 border border-white/5">
+        <div className="flex items-center gap-2 mb-3 min-w-0">
+          <Bot className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+          <div className="flex items-center gap-1 bg-white/[0.02] rounded-lg p-0.5 border border-white/5 overflow-x-auto min-w-0">
             {(Object.keys(modeLabels) as PermissionMode[]).map((mode) => (
               <button
                 key={mode}
@@ -212,7 +212,7 @@ export function ChatInput({
           )}
 
           {/* Keyboard hints */}
-          <div className="flex items-center justify-center gap-4 mt-2 text-[10px] text-zinc-600">
+          <div className="hidden sm:flex items-center justify-center gap-4 mt-2 text-[10px] text-zinc-600">
             <span>
               <kbd className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/5 text-zinc-500">
                 Enter

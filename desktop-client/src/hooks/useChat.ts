@@ -81,7 +81,7 @@ export interface ChatState {
 
 // ── Hook ─────────────────────────────────────────────────────────────
 
-export function useChat() {
+export function useChat(tabId: string) {
   const [state, setState] = useState<ChatState>({
     initialized: false,
     sessionId: "",
@@ -158,8 +158,6 @@ export function useChat() {
         case "tool_use_start": {
           flushRender();
           // Extract the last text block and save it as pending text.
-          // When the next text_delta arrives after the tool, it will be
-          // prepended — merging text that was split mid-word by tool calls.
           const lastBlock = blocksRef.current[blocksRef.current.length - 1];
           if (lastBlock?.type === "text" && lastBlock.text) {
             pendingTextRef.current += lastBlock.text;
@@ -316,38 +314,29 @@ export function useChat() {
     });
   }, []);
 
-  // Subscribe to Tauri events
+  // Subscribe to Tauri events (scoped by tabId)
   useEffect(() => {
     let mounted = true;
 
     const setup = async () => {
-      // Initialize chat
+      // Initialize chat (global — loads config/provider)
       try {
         const init = await api.initializeChat();
         if (!mounted) return;
         setState((s) => ({
           ...s,
           initialized: true,
-          sessionId: init.sessionId ?? "",
-          messages: init.messages ?? [],
           providerName: init.providerName ?? "",
           modelName: init.modelName ?? "",
           permissionMode: (init.permissionMode ?? "auto") as PermissionMode,
-          tokenUsage: {
-            input: init.tokenUsage?.input ?? 0,
-            output: init.tokenUsage?.output ?? 0,
-            cacheCreation: init.tokenUsage?.cacheCreation,
-            cacheRead: init.tokenUsage?.cacheRead,
-          },
-          contextSize: init.contextSize ?? 0,
         }));
       } catch (e) {
         if (!mounted) return;
         setState((s) => ({ ...s, error: `Init failed: ${e}`, initialized: true }));
       }
 
-      // Subscribe to stream events
-      const unlistenStream = await api.onStreamEvent((payload) => {
+      // Subscribe to session-scoped stream events
+      const unlistenStream = await api.onStreamEvent(tabId, (payload) => {
         if (!mounted) return;
         try {
           const event: StreamEvent = JSON.parse(payload);
@@ -357,7 +346,7 @@ export function useChat() {
         }
       });
 
-      const unlistenComplete = await api.onTurnComplete((payload) => {
+      const unlistenComplete = await api.onTurnComplete(tabId, (payload) => {
         if (!mounted) return;
         try {
           const complete: TurnComplete = JSON.parse(payload);
@@ -380,7 +369,7 @@ export function useChat() {
       mounted = false;
       cleanupPromise.then((cleanup) => cleanup?.());
     };
-  }, [handleStreamEvent, handleTurnComplete]);
+  }, [tabId, handleStreamEvent, handleTurnComplete]);
 
   // Listen for provider/model changes from Toolbar or ProvidersTab
   useEffect(() => {
@@ -401,7 +390,7 @@ export function useChat() {
     return () => window.removeEventListener("provider-changed", handleProviderChanged);
   }, []);
 
-  // ── Actions ──────────────────────────────────────────────────────
+  // ── Actions (all scoped to tabId) ──────────────────────────────────
 
   const sendMessage = useCallback((content: string) => {
     // Clear any leftover streaming blocks (e.g. from a cancelled turn)
@@ -414,28 +403,19 @@ export function useChat() {
       messages: [...s.messages, { role: "user" as const, content }],
       streamingBlocks: [],
     }));
-    api.sendMessage(content).catch((e) => {
+    api.sendMessage(tabId, content).catch((e) => {
       setState((s) => ({ ...s, error: `Send failed: ${e}` }));
     });
-  }, []);
+  }, [tabId]);
 
   const abort = useCallback(() => {
-    // cancel_stream waits for the agent to finish gracefully and emits
-    // turn-complete, which will update messages and clear streaming blocks.
-    // We immediately unlock the input (isProcessing=false) and mark running
-    // tools as done so the UI doesn't appear stuck. The turn-complete event
-    // will finalize messages when the agent actually stops.
-    api.cancelStream().catch(() => {});
-    // If there's a pending approval, send deny to unblock the agent from
-    // waiting on the approval channel. Without this the agent hangs on
-    // rx.recv() and cancel_stream times out.
+    api.cancelStream(tabId).catch(() => {});
     setState((s) => {
       if (s.pendingApproval) {
-        api.denyAllTools().catch(() => {});
+        api.denyAllTools(tabId).catch(() => {});
       }
       return s;
     });
-    // Mark all running tools as finished in the streaming blocks
     for (const block of blocksRef.current) {
       if (block.type === "tool" && block.tool.isRunning) {
         block.tool = { ...block.tool, isRunning: false };
@@ -449,7 +429,7 @@ export function useChat() {
       pendingQuestion: null,
       pendingPlanReview: null,
     }));
-  }, [flushRender]);
+  }, [tabId, flushRender]);
 
   const clearApprovalBlocks = useCallback(() => {
     blocksRef.current = blocksRef.current.filter((b) => b.type !== "approval");
@@ -457,22 +437,22 @@ export function useChat() {
   }, [flushRender]);
 
   const approveTools = useCallback((approvedIds: string[]) => {
-    api.approveTools(approvedIds).catch(() => {});
+    api.approveTools(tabId, approvedIds).catch(() => {});
     clearApprovalBlocks();
     setState((s) => ({ ...s, pendingApproval: null }));
-  }, [clearApprovalBlocks]);
+  }, [tabId, clearApprovalBlocks]);
 
   const alwaysAllowTools = useCallback((approvedIds: string[], tools: ToolApprovalRequest[]) => {
-    api.alwaysAllowTools(approvedIds, tools).catch(() => {});
+    api.alwaysAllowTools(tabId, approvedIds, tools).catch(() => {});
     clearApprovalBlocks();
     setState((s) => ({ ...s, pendingApproval: null }));
-  }, [clearApprovalBlocks]);
+  }, [tabId, clearApprovalBlocks]);
 
   const denyAllTools = useCallback(() => {
-    api.denyAllTools().catch(() => {});
+    api.denyAllTools(tabId).catch(() => {});
     clearApprovalBlocks();
     setState((s) => ({ ...s, pendingApproval: null }));
-  }, [clearApprovalBlocks]);
+  }, [tabId, clearApprovalBlocks]);
 
   const clearQuestionBlocks = useCallback(() => {
     blocksRef.current = blocksRef.current.filter((b) => b.type !== "question");
@@ -480,10 +460,10 @@ export function useChat() {
   }, [flushRender]);
 
   const answerQuestion = useCallback((answer: string) => {
-    api.answerQuestion(answer).catch(() => {});
+    api.answerQuestion(tabId, answer).catch(() => {});
     clearQuestionBlocks();
     setState((s) => ({ ...s, pendingQuestion: null }));
-  }, [clearQuestionBlocks]);
+  }, [tabId, clearQuestionBlocks]);
 
   const clearPlanBlocks = useCallback(() => {
     blocksRef.current = blocksRef.current.filter((b) => b.type !== "plan");
@@ -491,17 +471,17 @@ export function useChat() {
   }, [flushRender]);
 
   const acceptPlan = useCallback((tasks?: Array<{ title: string; detail: string }>, mode?: PermissionMode) => {
-    api.acceptPlan(tasks).catch(() => {});
+    api.acceptPlan(tabId, tasks).catch(() => {});
     if (mode) api.setPermissionMode(mode).catch(() => {});
     clearPlanBlocks();
     setState((s) => ({ ...s, pendingPlanReview: null, permissionMode: mode ?? s.permissionMode }));
-  }, [clearPlanBlocks]);
+  }, [tabId, clearPlanBlocks]);
 
   const rejectPlan = useCallback((feedback: string) => {
-    api.rejectPlan(feedback).catch(() => {});
+    api.rejectPlan(tabId, feedback).catch(() => {});
     clearPlanBlocks();
     setState((s) => ({ ...s, pendingPlanReview: null }));
-  }, [clearPlanBlocks]);
+  }, [tabId, clearPlanBlocks]);
 
   const doListSessions = useCallback(async () => {
     try {
@@ -515,7 +495,7 @@ export function useChat() {
   const doLoadSession = useCallback(async (id: string) => {
     try {
       imageCacheRef.current = {};
-      const init = await api.loadSession(id);
+      const init = await api.loadSession(tabId, id);
       setState((s) => ({
         ...s,
         sessionId: init.sessionId,
@@ -535,12 +515,12 @@ export function useChat() {
     } catch (e) {
       setState((s) => ({ ...s, error: `Failed to load session: ${e}` }));
     }
-  }, []);
+  }, [tabId]);
 
   const doNewSession = useCallback(async () => {
     try {
       imageCacheRef.current = {};
-      const init = await api.newSession();
+      const init = await api.newSession(tabId);
       setState((s) => ({
         ...s,
         sessionId: init.sessionId,
@@ -554,7 +534,7 @@ export function useChat() {
     } catch (e) {
       setState((s) => ({ ...s, error: `Failed to create session: ${e}` }));
     }
-  }, []);
+  }, [tabId]);
 
   const doSetPermissionMode = useCallback((mode: PermissionMode) => {
     api.setPermissionMode(mode).catch(() => {});

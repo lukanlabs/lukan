@@ -113,6 +113,9 @@ fn main() {
             commands::chat::new_session,
             commands::chat::set_permission_mode,
             commands::chat::list_tasks,
+            commands::chat::create_agent_tab,
+            commands::chat::destroy_agent_tab,
+            commands::chat::rename_agent_tab,
             // Terminal
             commands::terminal::terminal_create,
             commands::terminal::terminal_input,

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -18,93 +18,84 @@ use tokio_util::sync::CancellationToken;
 
 type AgentTurnHandle = tokio::task::JoinHandle<(AgentLoop, Result<()>)>;
 
-/// Shared chat state managed via tauri::State
-pub struct ChatState {
-    pub agent: Mutex<Option<AgentLoop>>,
-    pub config: Mutex<Option<ResolvedConfig>>,
-    pub is_processing: Mutex<bool>,
-    pub permission_mode: watch::Sender<PermissionMode>,
-    pub provider_name: Mutex<String>,
-    pub model_name: Mutex<String>,
-    pub approval_tx: Mutex<Option<mpsc::Sender<ApprovalResponse>>>,
-    pub plan_review_tx: Mutex<Option<mpsc::Sender<PlanReviewResponse>>>,
-    pub planner_answer_tx: Mutex<Option<mpsc::Sender<String>>>,
-    pub cancel_token: Mutex<Option<CancellationToken>>,
-    pub agent_handle: Mutex<Option<AgentTurnHandle>>,
-    /// Sender to signal "send to background" for the currently running Bash tool
-    pub bg_signal_tx: Mutex<Option<watch::Sender<()>>>,
-    /// Generation counter — incremented on each turn/session switch.
-    /// Prevents stale completion handlers from overwriting state.
+/// Per-tab agent session — each tab gets its own agent, channels, and cancel token.
+#[allow(dead_code)]
+pub struct AgentSession {
+    pub id: String,
+    pub agent: Option<AgentLoop>,
+    pub is_processing: bool,
+    pub approval_tx: Option<mpsc::Sender<ApprovalResponse>>,
+    pub plan_review_tx: Option<mpsc::Sender<PlanReviewResponse>>,
+    pub planner_answer_tx: Option<mpsc::Sender<String>>,
+    pub cancel_token: Option<CancellationToken>,
+    pub agent_handle: Option<AgentTurnHandle>,
+    pub bg_signal_tx: Option<watch::Sender<()>>,
     pub generation: AtomicU64,
+    /// Human-readable label for this tab (e.g. "Agent 2")
+    pub label: String,
 }
 
-impl Default for ChatState {
-    fn default() -> Self {
-        let (permission_mode_tx, _) = watch::channel(PermissionMode::Auto);
+impl AgentSession {
+    pub fn new(id: String) -> Self {
         Self {
-            agent: Mutex::new(None),
-            config: Mutex::new(None),
-            is_processing: Mutex::new(false),
-            permission_mode: permission_mode_tx,
-            provider_name: Mutex::new(String::new()),
-            model_name: Mutex::new(String::new()),
-            approval_tx: Mutex::new(None),
-            plan_review_tx: Mutex::new(None),
-            planner_answer_tx: Mutex::new(None),
-            cancel_token: Mutex::new(None),
-            agent_handle: Mutex::new(None),
-            bg_signal_tx: Mutex::new(None),
+            id,
+            agent: None,
+            is_processing: false,
+            approval_tx: None,
+            plan_review_tx: None,
+            planner_answer_tx: None,
+            cancel_token: None,
+            agent_handle: None,
+            bg_signal_tx: None,
             generation: AtomicU64::new(0),
+            label: "Agent 1".to_string(),
         }
     }
-}
 
-impl ChatState {
     /// Cancel any running turn and wait for it to finish (up to 5s).
     /// Returns the agent if it was recovered, otherwise None.
-    pub async fn cancel_running_turn(&self) -> Option<AgentLoop> {
+    pub async fn cancel_running_turn(&mut self) -> Option<AgentLoop> {
         // Signal cancellation
-        if let Some(token) = self.cancel_token.lock().await.take() {
+        if let Some(token) = self.cancel_token.take() {
             token.cancel();
         }
 
         // Wait for the handle to finish (don't abort — let it return gracefully)
-        let handle = self.agent_handle.lock().await.take();
+        let handle = self.agent_handle.take();
         if let Some(handle) = handle {
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
                 Ok(Ok((agent, _result))) => {
-                    *self.is_processing.lock().await = false;
+                    self.is_processing = false;
                     return Some(agent);
                 }
                 Ok(Err(_join_err)) => {
                     // Task panicked or was already aborted
                 }
                 Err(_timeout) => {
-                    // Agent didn't stop in time — it will be orphaned
                     eprintln!("[warn] Agent turn did not stop within 5s after cancellation");
                 }
             }
         }
 
-        *self.is_processing.lock().await = false;
+        self.is_processing = false;
         None
     }
 
     /// Refresh approval/plan/bg channels on an existing agent.
     /// Must be called before every turn when reusing an agent, so that
     /// stale receivers (whose senders were dropped) never cause auto-denial.
-    pub async fn refresh_channels(&self, agent: &mut AgentLoop) {
+    pub fn refresh_channels(&mut self, agent: &mut AgentLoop) {
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
-        *self.approval_tx.lock().await = Some(approval_tx);
+        self.approval_tx = Some(approval_tx);
 
         let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
-        *self.plan_review_tx.lock().await = Some(plan_review_tx);
+        self.plan_review_tx = Some(plan_review_tx);
 
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
-        *self.planner_answer_tx.lock().await = Some(planner_answer_tx);
+        self.planner_answer_tx = Some(planner_answer_tx);
 
         let (bg_signal_tx, bg_signal_rx) = watch::channel(());
-        *self.bg_signal_tx.lock().await = Some(bg_signal_tx);
+        self.bg_signal_tx = Some(bg_signal_tx);
 
         agent.set_channels(
             Some(approval_rx),
@@ -113,9 +104,37 @@ impl ChatState {
             Some(bg_signal_rx),
         );
     }
+}
 
-    /// Create a new agent, storing approval/plan channels in state
-    pub async fn create_agent(&self, config: &ResolvedConfig) -> anyhow::Result<AgentLoop> {
+/// Shared chat state managed via tauri::State.
+/// Sessions are stored in a HashMap keyed by tab ID.
+pub struct ChatState {
+    pub sessions: Mutex<HashMap<String, AgentSession>>,
+    pub config: Mutex<Option<ResolvedConfig>>,
+    pub permission_mode: watch::Sender<PermissionMode>,
+    pub provider_name: Mutex<String>,
+    pub model_name: Mutex<String>,
+}
+
+impl Default for ChatState {
+    fn default() -> Self {
+        let (permission_mode_tx, _) = watch::channel(PermissionMode::Auto);
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            config: Mutex::new(None),
+            permission_mode: permission_mode_tx,
+            provider_name: Mutex::new(String::new()),
+            model_name: Mutex::new(String::new()),
+        }
+    }
+}
+
+impl ChatState {
+    /// Create a new agent, returning approval/plan channel senders alongside it.
+    pub async fn create_agent(
+        &self,
+        config: &ResolvedConfig,
+    ) -> anyhow::Result<(AgentLoop, AgentChannels)> {
         let provider = create_provider(config)?;
         let has_browser = BrowserManager::get().is_some();
         let system_prompt = build_system_prompt(has_browser).await;
@@ -141,21 +160,10 @@ impl ChatState {
             .map(|c| c.resolve_allowed_paths(&cwd))
             .unwrap_or_else(|| vec![cwd.clone()]);
 
-        // Create approval channel
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
-        *self.approval_tx.lock().await = Some(approval_tx);
-
-        // Create plan review channel
         let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
-        *self.plan_review_tx.lock().await = Some(plan_review_tx);
-
-        // Create planner answer channel
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
-        *self.planner_answer_tx.lock().await = Some(planner_answer_tx);
-
-        // Create bg_signal channel (send-to-background for running Bash)
         let (bg_signal_tx, bg_signal_rx) = watch::channel(());
-        *self.bg_signal_tx.lock().await = Some(bg_signal_tx);
 
         let tools = if has_browser {
             create_configured_browser_registry(&permissions, &allowed)
@@ -192,7 +200,15 @@ impl ChatState {
         if let Some(disabled) = &config.config.disabled_tools {
             agent.set_disabled_tools(disabled.iter().cloned().collect::<HashSet<_>>());
         }
-        Ok(agent)
+
+        let channels = AgentChannels {
+            approval_tx,
+            plan_review_tx,
+            planner_answer_tx,
+            bg_signal_tx,
+        };
+
+        Ok((agent, channels))
     }
 
     /// Create an agent with a loaded session
@@ -200,7 +216,7 @@ impl ChatState {
         &self,
         config: &ResolvedConfig,
         session_id: &str,
-    ) -> anyhow::Result<AgentLoop> {
+    ) -> anyhow::Result<(AgentLoop, AgentChannels)> {
         let provider = create_provider(config)?;
         let has_browser = BrowserManager::get().is_some();
         let system_prompt = build_system_prompt(has_browser).await;
@@ -227,17 +243,9 @@ impl ChatState {
             .unwrap_or_else(|| vec![cwd.clone()]);
 
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
-        *self.approval_tx.lock().await = Some(approval_tx);
-
         let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
-        *self.plan_review_tx.lock().await = Some(plan_review_tx);
-
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
-        *self.planner_answer_tx.lock().await = Some(planner_answer_tx);
-
-        // Create bg_signal channel (send-to-background for running Bash)
         let (bg_signal_tx, bg_signal_rx) = watch::channel(());
-        *self.bg_signal_tx.lock().await = Some(bg_signal_tx);
 
         let tools = if has_browser {
             create_configured_browser_registry(&permissions, &allowed)
@@ -274,8 +282,24 @@ impl ChatState {
         if let Some(disabled) = &config.config.disabled_tools {
             agent.set_disabled_tools(disabled.iter().cloned().collect::<HashSet<_>>());
         }
-        Ok(agent)
+
+        let channels = AgentChannels {
+            approval_tx,
+            plan_review_tx,
+            planner_answer_tx,
+            bg_signal_tx,
+        };
+
+        Ok((agent, channels))
     }
+}
+
+/// Channel senders returned by create_agent — stored into the AgentSession by the caller.
+pub struct AgentChannels {
+    pub approval_tx: mpsc::Sender<ApprovalResponse>,
+    pub plan_review_tx: mpsc::Sender<PlanReviewResponse>,
+    pub planner_answer_tx: mpsc::Sender<String>,
+    pub bg_signal_tx: watch::Sender<()>,
 }
 
 /// Build system prompt (matches web/TUI logic).

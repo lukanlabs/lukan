@@ -18,7 +18,7 @@ use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::create_configured_registry;
 
 use crate::protocol::{ClientMessage, ServerMessage, TokenUsage};
-use crate::state::AppState;
+use crate::state::{AppState, WebAgentSession};
 
 /// WebSocket upgrade handler
 pub async fn ws_upgrade_handler(
@@ -153,7 +153,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>) {
         dispatch_message(client_msg, conn_id, &state, &mut ws_tx, &mut ws_rx).await;
     }
 
-    // On disconnect: release processing lock if owned, save session
+    // On disconnect: release processing lock if owned, save sessions
     {
         let mut owner = state.processing_owner.lock().await;
         if *owner == Some(conn_id) {
@@ -162,13 +162,25 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>) {
         }
     }
 
-    // Save session if agent exists
+    // Save legacy singleton session
     {
         let mut agent_lock = state.agent.lock().await;
         if let Some(ref mut agent) = *agent_lock
             && let Err(e) = agent.save_session_public().await
         {
             error!(conn_id, error = %e, "Failed to save session on disconnect");
+        }
+    }
+
+    // Save all multi-tab sessions
+    {
+        let mut sessions = state.sessions.lock().await;
+        for (tab_id, session) in sessions.iter_mut() {
+            if let Some(ref mut agent) = session.agent
+                && let Err(e) = agent.save_session_public().await
+            {
+                error!(conn_id, tab_id, error = %e, "Failed to save tab session on disconnect");
+            }
         }
     }
 
@@ -184,11 +196,15 @@ async fn dispatch_message(
     ws_rx: &mut futures::stream::SplitStream<WebSocket>,
 ) {
     match msg {
-        ClientMessage::SendMessage { content } => {
-            handle_send_message(conn_id, &content, state, ws_tx, ws_rx).await;
+        ClientMessage::SendMessage {
+            content,
+            session_id,
+        } => {
+            handle_send_message(conn_id, &content, session_id.as_deref(), state, ws_tx, ws_rx)
+                .await;
         }
 
-        ClientMessage::Abort => {
+        ClientMessage::Abort { session_id: _ } => {
             // Release processing lock
             let mut owner = state.processing_owner.lock().await;
             if *owner == Some(conn_id) {
@@ -199,12 +215,45 @@ async fn dispatch_message(
             // sender, which causes the agent's event_tx.send() to fail.
         }
 
-        ClientMessage::LoadSession { session_id } => {
-            handle_load_session(&session_id, state, ws_tx).await;
+        ClientMessage::LoadSession { session_id, id } => {
+            // `id` is the saved session to load (new protocol).
+            // Falls back to `session_id` for backward compat (old protocol).
+            let saved_session = id
+                .as_deref()
+                .or(session_id.as_deref())
+                .unwrap_or_default();
+            let tab_id = if id.is_some() {
+                session_id.as_deref()
+            } else {
+                None
+            };
+            handle_load_session(saved_session, tab_id, state, ws_tx).await;
         }
 
-        ClientMessage::NewSession { name: _ } => {
-            handle_new_session(state, ws_tx).await;
+        ClientMessage::NewSession {
+            name: _,
+            session_id,
+        } => {
+            handle_new_session(session_id.as_deref(), state, ws_tx).await;
+        }
+
+        ClientMessage::CreateAgentTab => {
+            handle_create_agent_tab(state, ws_tx).await;
+        }
+
+        ClientMessage::DestroyAgentTab { session_id } => {
+            handle_destroy_agent_tab(&session_id, state, ws_tx).await;
+        }
+
+        ClientMessage::RenameAgentTab { session_id, label } => {
+            let mut sessions = state.sessions.lock().await;
+            if let Some(session) = sessions.get_mut(&session_id) {
+                session.label = label;
+            }
+        }
+
+        ClientMessage::SendToBackground { session_id: _ } => {
+            // Background signal not yet implemented in web
         }
 
         ClientMessage::ListSessions => match SessionManager::list().await {
@@ -279,56 +328,60 @@ async fn dispatch_message(
             // Store in state
             *state.permission_mode.lock().await = parsed.clone();
 
-            // Update live agent if it exists
+            // Update legacy singleton agent
             {
                 let mut agent_lock = state.agent.lock().await;
                 if let Some(ref mut agent) = *agent_lock {
-                    agent.set_permission_mode(parsed);
+                    agent.set_permission_mode(parsed.clone());
+                }
+            }
+
+            // Update all session agents
+            {
+                let mut sessions = state.sessions.lock().await;
+                for session in sessions.values_mut() {
+                    if let Some(ref mut agent) = session.agent {
+                        agent.set_permission_mode(parsed.clone());
+                    }
                 }
             }
 
             send_json(ws_tx, &ServerMessage::ModeChanged { mode }).await;
         }
 
-        ClientMessage::Approve { approved_ids } => {
-            let tx = state.approval_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender
-                    .send(ApprovalResponse::Approved { approved_ids })
-                    .await;
-            }
+        ClientMessage::Approve {
+            approved_ids,
+            session_id,
+        } => {
+            send_approval(state, session_id.as_deref(), ApprovalResponse::Approved { approved_ids })
+                .await;
         }
 
         ClientMessage::AlwaysAllow {
             approved_ids,
             tools,
+            session_id,
         } => {
-            let tx = state.approval_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender
-                    .send(ApprovalResponse::AlwaysAllow {
-                        approved_ids,
-                        tools,
-                    })
-                    .await;
-            }
-        }
-
-        ClientMessage::DenyAll => {
-            let tx = state.approval_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender.send(ApprovalResponse::DeniedAll).await;
-            }
-        }
-
-        ClientMessage::AnswerQuestion { .. } => {
-            send_json(
-                ws_tx,
-                &ServerMessage::Error {
-                    error: "Question answering not yet implemented".to_string(),
+            send_approval(
+                state,
+                session_id.as_deref(),
+                ApprovalResponse::AlwaysAllow {
+                    approved_ids,
+                    tools,
                 },
             )
             .await;
+        }
+
+        ClientMessage::DenyAll { session_id } => {
+            send_approval(state, session_id.as_deref(), ApprovalResponse::DeniedAll).await;
+        }
+
+        ClientMessage::AnswerQuestion {
+            answer,
+            session_id,
+        } => {
+            send_planner_answer(state, session_id.as_deref(), answer).await;
         }
 
         ClientMessage::SetScreenshots { enabled } => {
@@ -514,37 +567,46 @@ async fn dispatch_message(
             }
         }
 
-        ClientMessage::PlanAccept { tasks } => {
+        ClientMessage::PlanAccept {
+            tasks,
+            session_id,
+        } => {
             let modified_tasks: Option<Vec<PlanTask>> =
                 tasks.and_then(|v| serde_json::from_value(v).ok());
-            let tx = state.plan_review_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender
-                    .send(PlanReviewResponse::Accepted { modified_tasks })
-                    .await;
-            }
+            send_plan_review(
+                state,
+                session_id.as_deref(),
+                PlanReviewResponse::Accepted { modified_tasks },
+            )
+            .await;
         }
 
-        ClientMessage::PlanReject { feedback } => {
-            let tx = state.plan_review_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender.send(PlanReviewResponse::Rejected { feedback }).await;
-            }
+        ClientMessage::PlanReject {
+            feedback,
+            session_id,
+        } => {
+            send_plan_review(
+                state,
+                session_id.as_deref(),
+                PlanReviewResponse::Rejected { feedback },
+            )
+            .await;
         }
 
         ClientMessage::PlanTaskFeedback {
             task_index,
             feedback,
+            session_id,
         } => {
-            let tx = state.plan_review_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender
-                    .send(PlanReviewResponse::TaskFeedback {
-                        task_index: task_index as usize,
-                        feedback,
-                    })
-                    .await;
-            }
+            send_plan_review(
+                state,
+                session_id.as_deref(),
+                PlanReviewResponse::TaskFeedback {
+                    task_index: task_index as usize,
+                    feedback,
+                },
+            )
+            .await;
         }
 
         ClientMessage::TerminalCreate { cwd, cols, rows } => {
@@ -640,6 +702,7 @@ async fn dispatch_message(
 async fn handle_send_message(
     conn_id: usize,
     content: &str,
+    tab_id: Option<&str>,
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     ws_rx: &mut futures::stream::SplitStream<WebSocket>,
@@ -662,8 +725,28 @@ async fn handle_send_message(
         *owner = Some(conn_id);
     }
 
-    // Ensure agent exists
-    {
+    // Determine whether to use a session or the legacy singleton
+    let use_session = tab_id.is_some();
+
+    // Ensure agent exists (session or singleton)
+    if use_session {
+        let tab = tab_id.unwrap();
+        let mut sessions = state.sessions.lock().await;
+        let session = sessions.entry(tab.to_string()).or_insert_with(WebAgentSession::new);
+        if session.agent.is_none() {
+            match create_agent(state).await {
+                Ok(agent) => {
+                    session.agent = Some(agent);
+                }
+                Err(e) => {
+                    drop(sessions);
+                    release_processing_lock(conn_id, state).await;
+                    send_agent_creation_error(e, state, ws_tx).await;
+                    return;
+                }
+            }
+        }
+    } else {
         let mut agent_lock = state.agent.lock().await;
         if agent_lock.is_none() {
             match create_agent(state).await {
@@ -671,55 +754,52 @@ async fn handle_send_message(
                     *agent_lock = Some(agent);
                 }
                 Err(e) => {
-                    let mut owner = state.processing_owner.lock().await;
-                    *owner = None;
-                    // No model selected → send a friendly assistant-like message
-                    let config = state.config.lock().await;
-                    if config.effective_model().is_none() {
-                        let hint = "No model selected. Open **Providers** in the sidebar and choose a model to get started.";
-                        let _ = ws_tx
-                            .send(Message::Text(
-                                serde_json::to_string(&StreamEvent::TextDelta {
-                                    text: hint.to_string(),
-                                })
-                                .unwrap()
-                                .into(),
-                            ))
-                            .await;
-                        let _ = ws_tx
-                            .send(Message::Text(
-                                serde_json::to_string(&StreamEvent::MessageEnd {
-                                    stop_reason: lukan_core::models::events::StopReason::EndTurn,
-                                })
-                                .unwrap()
-                                .into(),
-                            ))
-                            .await;
-                    } else {
-                        send_json(
-                            ws_tx,
-                            &ServerMessage::Error {
-                                error: format!("Failed to create agent: {e}"),
-                            },
-                        )
-                        .await;
-                    }
+                    drop(agent_lock);
+                    release_processing_lock(conn_id, state).await;
+                    send_agent_creation_error(e, state, ws_tx).await;
                     return;
                 }
             }
         }
     }
 
-    // Take the agent out of the mutex for the duration of the turn
-    let mut agent = {
+    // Take the agent out for the duration of the turn and set up channels
+    let mut agent = if use_session {
+        let tab = tab_id.unwrap();
+        let mut sessions = state.sessions.lock().await;
+        let session = sessions.get_mut(tab).unwrap();
+        // Create approval/plan/answer channels for this session
+        let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
+        let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
+        let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        session.approval_tx = Some(approval_tx);
+        session.plan_review_tx = Some(plan_review_tx);
+        session.planner_answer_tx = Some(planner_answer_tx);
+        let mut agent = session.agent.take().unwrap();
+        agent.set_channels(Some(approval_rx), Some(plan_review_rx), Some(planner_answer_rx), None);
+        agent.label = Some(session.label.clone());
+        agent.tab_id = Some(tab.to_string());
+        agent
+    } else {
+        // Legacy singleton: create channels and store in state
+        let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
+        let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
+        let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        *state.approval_tx.lock().await = Some(approval_tx);
+        *state.plan_review_tx.lock().await = Some(plan_review_tx);
+        *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
         let mut lock = state.agent.lock().await;
-        lock.take().unwrap()
+        let mut agent = lock.take().unwrap();
+        agent.set_channels(Some(approval_rx), Some(plan_review_rx), Some(planner_answer_rx), None);
+        agent.label = Some("Agent 1".to_string());
+        agent
     };
 
     // Create channel for streaming events
     let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
 
     let content_owned = content.to_string();
+    let tab_id_owned = tab_id.map(String::from);
 
     // Spawn the agent turn
     let agent_handle = tokio::spawn(async move {
@@ -737,9 +817,13 @@ async fn handle_send_message(
             event = event_rx.recv() => {
                 match event {
                     Some(ev) => {
-                        if let Ok(json) = serde_json::to_string(&ev)
-                            && ws_tx.send(Message::Text(json.into())).await.is_err()
-                        {
+                        // Inject tabId for session-scoped routing
+                        let json = if let Some(ref tid) = tab_id_owned {
+                            inject_tab_id(&ev, tid)
+                        } else {
+                            serde_json::to_string(&ev).unwrap_or_default()
+                        };
+                        if ws_tx.send(Message::Text(json.into())).await.is_err() {
                             warn!(conn_id, "WebSocket send failed, client likely disconnected");
                             client_disconnected = true;
                             break;
@@ -802,14 +886,23 @@ async fn handle_send_message(
                         messages,
                         checkpoints,
                         context_size: Some(context_size),
+                        tab_id: tab_id_owned.clone(),
                     },
                 )
                 .await;
             }
 
             // Put agent back
-            let mut lock = state.agent.lock().await;
-            *lock = Some(returned_agent);
+            if let Some(ref tid) = tab_id_owned {
+                let mut sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get_mut(tid) {
+                    session.agent = Some(returned_agent);
+                }
+                // If session was destroyed mid-turn, agent is dropped
+            } else {
+                let mut lock = state.agent.lock().await;
+                *lock = Some(returned_agent);
+            }
         }
         Err(e) => {
             error!(conn_id, error = %e, "Agent task panicked");
@@ -826,9 +919,69 @@ async fn handle_send_message(
     }
 
     // Release processing lock
+    release_processing_lock(conn_id, state).await;
+}
+
+/// Release the processing lock if owned by this connection.
+async fn release_processing_lock(conn_id: usize, state: &Arc<AppState>) {
     let mut owner = state.processing_owner.lock().await;
     if *owner == Some(conn_id) {
         *owner = None;
+    }
+}
+
+/// Send an appropriate error when agent creation fails.
+async fn send_agent_creation_error(
+    e: anyhow::Error,
+    state: &Arc<AppState>,
+    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+) {
+    use futures::SinkExt;
+    let config = state.config.lock().await;
+    if config.effective_model().is_none() {
+        let hint =
+            "No model selected. Open **Providers** in the sidebar and choose a model to get started.";
+        let _ = ws_tx
+            .send(Message::Text(
+                serde_json::to_string(&StreamEvent::TextDelta {
+                    text: hint.to_string(),
+                })
+                .unwrap()
+                .into(),
+            ))
+            .await;
+        let _ = ws_tx
+            .send(Message::Text(
+                serde_json::to_string(&StreamEvent::MessageEnd {
+                    stop_reason: lukan_core::models::events::StopReason::EndTurn,
+                })
+                .unwrap()
+                .into(),
+            ))
+            .await;
+    } else {
+        send_json(
+            ws_tx,
+            &ServerMessage::Error {
+                error: format!("Failed to create agent: {e}"),
+            },
+        )
+        .await;
+    }
+}
+
+/// Inject `tabId` into a serialized stream event for session-scoped routing.
+fn inject_tab_id(ev: &StreamEvent, tab_id: &str) -> String {
+    if let Ok(mut value) = serde_json::to_value(ev) {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "tabId".to_string(),
+                serde_json::Value::String(tab_id.to_string()),
+            );
+        }
+        serde_json::to_string(&value).unwrap_or_default()
+    } else {
+        serde_json::to_string(ev).unwrap_or_default()
     }
 }
 
@@ -843,65 +996,74 @@ async fn handle_mid_turn_message(
     _ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
     match msg {
-        ClientMessage::Approve { approved_ids } => {
-            let tx = state.approval_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender
-                    .send(ApprovalResponse::Approved { approved_ids })
-                    .await;
-            }
+        ClientMessage::Approve {
+            approved_ids,
+            session_id,
+        } => {
+            send_approval(
+                state,
+                session_id.as_deref(),
+                ApprovalResponse::Approved { approved_ids },
+            )
+            .await;
         }
 
         ClientMessage::AlwaysAllow {
             approved_ids,
             tools,
+            session_id,
         } => {
-            let tx = state.approval_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender
-                    .send(ApprovalResponse::AlwaysAllow {
-                        approved_ids,
-                        tools,
-                    })
-                    .await;
-            }
+            send_approval(
+                state,
+                session_id.as_deref(),
+                ApprovalResponse::AlwaysAllow {
+                    approved_ids,
+                    tools,
+                },
+            )
+            .await;
         }
 
-        ClientMessage::DenyAll => {
-            let tx = state.approval_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender.send(ApprovalResponse::DeniedAll).await;
-            }
+        ClientMessage::DenyAll { session_id } => {
+            send_approval(state, session_id.as_deref(), ApprovalResponse::DeniedAll).await;
         }
 
-        ClientMessage::PlanAccept { tasks } => {
-            let tx = state.plan_review_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let parsed_tasks: Option<Vec<PlanTask>> =
-                    tasks.and_then(|v| serde_json::from_value(v).ok());
-                let _ = sender
-                    .send(PlanReviewResponse::Accepted {
-                        modified_tasks: parsed_tasks,
-                    })
-                    .await;
-            }
+        ClientMessage::PlanAccept {
+            tasks,
+            session_id,
+        } => {
+            let parsed_tasks: Option<Vec<PlanTask>> =
+                tasks.and_then(|v| serde_json::from_value(v).ok());
+            send_plan_review(
+                state,
+                session_id.as_deref(),
+                PlanReviewResponse::Accepted {
+                    modified_tasks: parsed_tasks,
+                },
+            )
+            .await;
         }
 
-        ClientMessage::PlanReject { feedback } => {
-            let tx = state.plan_review_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender.send(PlanReviewResponse::Rejected { feedback }).await;
-            }
+        ClientMessage::PlanReject {
+            feedback,
+            session_id,
+        } => {
+            send_plan_review(
+                state,
+                session_id.as_deref(),
+                PlanReviewResponse::Rejected { feedback },
+            )
+            .await;
         }
 
-        ClientMessage::AnswerQuestion { answer } => {
-            let tx = state.planner_answer_tx.lock().await;
-            if let Some(ref sender) = *tx {
-                let _ = sender.send(answer).await;
-            }
+        ClientMessage::AnswerQuestion {
+            answer,
+            session_id,
+        } => {
+            send_planner_answer(state, session_id.as_deref(), answer).await;
         }
 
-        ClientMessage::Abort => {
+        ClientMessage::Abort { session_id: _ } => {
             let mut owner = state.processing_owner.lock().await;
             if *owner == Some(conn_id) {
                 *owner = None;
@@ -935,12 +1097,20 @@ async fn handle_mid_turn_message(
 
 /// Handle loading an existing session
 async fn handle_load_session(
-    session_id: &str,
+    saved_session_id: &str,
+    tab_id: Option<&str>,
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
-    // Save current session first
-    {
+    // Save current session first (session or legacy)
+    if let Some(tid) = tab_id {
+        let mut sessions = state.sessions.lock().await;
+        if let Some(session) = sessions.get_mut(tid)
+            && let Some(ref mut agent) = session.agent
+        {
+            let _ = agent.save_session_public().await;
+        }
+    } else {
         let mut agent_lock = state.agent.lock().await;
         if let Some(ref mut agent) = *agent_lock {
             let _ = agent.save_session_public().await;
@@ -948,7 +1118,7 @@ async fn handle_load_session(
     }
 
     // Create new agent with loaded session
-    match create_agent_with_session(state, session_id).await {
+    match create_agent_with_session(state, saved_session_id).await {
         Ok(agent) => {
             let messages = agent.messages_json();
             let checkpoints = agent.checkpoints().to_vec();
@@ -957,8 +1127,16 @@ async fn handle_load_session(
             let context_size = agent.last_context_size();
             let sid = agent.session_id().to_string();
 
-            let mut agent_lock = state.agent.lock().await;
-            *agent_lock = Some(agent);
+            // Store in session or legacy
+            if let Some(tid) = tab_id {
+                let mut sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get_mut(tid) {
+                    session.agent = Some(agent);
+                }
+            } else {
+                let mut agent_lock = state.agent.lock().await;
+                *agent_lock = Some(agent);
+            }
 
             send_json(
                 ws_tx,
@@ -991,11 +1169,19 @@ async fn handle_load_session(
 
 /// Handle creating a new session
 async fn handle_new_session(
+    tab_id: Option<&str>,
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
-    // Save current session
-    {
+    // Save current session (session or legacy)
+    if let Some(tid) = tab_id {
+        let mut sessions = state.sessions.lock().await;
+        if let Some(session) = sessions.get_mut(tid)
+            && let Some(ref mut agent) = session.agent
+        {
+            let _ = agent.save_session_public().await;
+        }
+    } else {
         let mut agent_lock = state.agent.lock().await;
         if let Some(ref mut agent) = *agent_lock {
             let _ = agent.save_session_public().await;
@@ -1005,8 +1191,15 @@ async fn handle_new_session(
     // Create new agent
     match create_agent(state).await {
         Ok(agent) => {
-            let mut agent_lock = state.agent.lock().await;
-            *agent_lock = Some(agent);
+            if let Some(tid) = tab_id {
+                let mut sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get_mut(tid) {
+                    session.agent = Some(agent);
+                }
+            } else {
+                let mut agent_lock = state.agent.lock().await;
+                *agent_lock = Some(agent);
+            }
         }
         Err(e) => {
             send_json(
@@ -1022,6 +1215,43 @@ async fn handle_new_session(
 
     // Send init with new session state
     send_init(state, ws_tx).await;
+}
+
+/// Handle creating a new agent tab
+async fn handle_create_agent_tab(
+    state: &Arc<AppState>,
+    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+) {
+    let tab_id = uuid::Uuid::new_v4().to_string();
+
+    let mut sessions = state.sessions.lock().await;
+    let tab_number = sessions.len() + 1; // +1 because we count the legacy singleton as Agent 1
+    let mut session = WebAgentSession::new();
+    session.label = format!("Agent {tab_number}");
+    sessions.insert(tab_id.clone(), session);
+
+    send_json(
+        ws_tx,
+        &ServerMessage::AgentTabCreated {
+            session_id: tab_id,
+        },
+    )
+    .await;
+}
+
+/// Handle destroying an agent tab
+async fn handle_destroy_agent_tab(
+    tab_id: &str,
+    state: &Arc<AppState>,
+    _ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+) {
+    let mut sessions = state.sessions.lock().await;
+    if let Some(mut session) = sessions.remove(tab_id) {
+        // Save session before destroying
+        if let Some(ref mut agent) = session.agent {
+            let _ = agent.save_session_public().await;
+        }
+    }
 }
 
 /// Handle model switching
@@ -1073,11 +1303,25 @@ async fn handle_set_model(
         }
     };
 
-    // Swap provider on agent if it exists
+    // Swap provider on legacy agent if it exists
+    let new_provider: Arc<dyn lukan_providers::Provider> = Arc::from(new_provider);
     {
         let mut agent_lock = state.agent.lock().await;
         if let Some(ref mut agent) = *agent_lock {
-            agent.swap_provider(Arc::from(new_provider));
+            agent.swap_provider(Arc::clone(&new_provider));
+        }
+    }
+
+    // Swap provider on all session agents
+    {
+        let config = state.config.lock().await;
+        let mut sessions = state.sessions.lock().await;
+        for session in sessions.values_mut() {
+            if let Some(ref mut agent) = session.agent
+                && let Ok(p) = create_provider(&config)
+            {
+                agent.swap_provider(Arc::from(p));
+            }
         }
     }
 
@@ -1203,6 +1447,62 @@ async fn send_init(
         },
     )
     .await;
+}
+
+/// Route an approval response to the right session or legacy singleton.
+async fn send_approval(state: &AppState, session_id: Option<&str>, response: ApprovalResponse) {
+    if let Some(sid) = session_id {
+        let sessions = state.sessions.lock().await;
+        if let Some(session) = sessions.get(sid)
+            && let Some(ref tx) = session.approval_tx
+        {
+            let _ = tx.send(response).await;
+            return;
+        }
+    }
+    // Fallback to legacy singleton
+    let tx = state.approval_tx.lock().await;
+    if let Some(ref sender) = *tx {
+        let _ = sender.send(response).await;
+    }
+}
+
+/// Route a plan review response to the right session or legacy singleton.
+async fn send_plan_review(
+    state: &AppState,
+    session_id: Option<&str>,
+    response: PlanReviewResponse,
+) {
+    if let Some(sid) = session_id {
+        let sessions = state.sessions.lock().await;
+        if let Some(session) = sessions.get(sid)
+            && let Some(ref tx) = session.plan_review_tx
+        {
+            let _ = tx.send(response).await;
+            return;
+        }
+    }
+    let tx = state.plan_review_tx.lock().await;
+    if let Some(ref sender) = *tx {
+        let _ = sender.send(response).await;
+    }
+}
+
+/// Route a planner answer to the right session or legacy singleton.
+async fn send_planner_answer(state: &AppState, session_id: Option<&str>, answer: String) {
+    if let Some(sid) = session_id {
+        let sessions = state.sessions.lock().await;
+        if let Some(session) = sessions.get(sid)
+            && let Some(ref tx) = session.planner_answer_tx
+        {
+            let _ = tx.send(answer).await;
+            return;
+        }
+    }
+    let tx = state.planner_answer_tx.lock().await;
+    if let Some(ref sender) = *tx {
+        let _ = sender.send(answer).await;
+    }
 }
 
 /// Create a new AgentLoop

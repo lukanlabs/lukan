@@ -28,7 +28,7 @@ else
 endif
 PLATFORM := $(OS)-$(ARCH)
 
-.PHONY: all build clean test check install release bundle-plugins package-plugins upload upload-gh help
+.PHONY: all build clean test check install release bundle-plugins package-plugins upload upload-daily upload-gh help
 
 all: build
 
@@ -142,6 +142,27 @@ upload: release
 	@echo ""
 	@echo "Upload complete!"
 	@echo "Install: curl -fsSL https://get.lukan.ai/install.sh | bash"
+
+## upload-daily: Upload release to R2 daily (unstable) channel
+upload-daily: release
+	@echo "Uploading $(VERSION) to R2:$(R2_BUCKET)/daily/..."
+	bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/$(BINARY_NAME)-$(PLATFORM) --file dist/$(BINARY_NAME)-$(PLATFORM)
+	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
+		bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/$(BINARY_NAME)-desktop-$(PLATFORM) --file dist/$(BINARY_NAME)-desktop-$(PLATFORM); \
+	fi
+	bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/checksums.txt --file dist/checksums.txt --cache-control "public, max-age=60"
+	bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/latest --file dist/latest --cache-control "public, max-age=60"
+	@# Upload plugins
+	@for f in dist/plugins/*.tar.gz; do \
+		name=$$(basename $$f); \
+		echo "Uploading plugin: $$name"; \
+		bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/plugins/$$name --file "$$f" --cache-control "public, max-age=60"; \
+	done
+	@# Upload registry
+	bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/registry.toml --file registry.toml
+	@echo ""
+	@echo "Daily upload complete!"
+	@echo "Install: lukan update --daily"
 
 ## upload-gh: Upload release to GitHub Releases
 upload-gh: release

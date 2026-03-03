@@ -142,39 +142,51 @@ export const startWebUi = (port: number) =>
   getTransport().call<void>("start_web_ui", { port });
 export const stopWebUi = () => getTransport().call<void>("stop_web_ui");
 
-// Chat
+// Chat — tab management
+export const createAgentTab = () =>
+  getTransport().call<string>("create_agent_tab");
+export const destroyAgentTab = (sessionId: string) =>
+  getTransport().call<void>("destroy_agent_tab", { sessionId });
+export const renameAgentTab = (sessionId: string, label: string) =>
+  getTransport().call<void>("rename_agent_tab", { sessionId, label });
+
+// Chat — global
 export const initializeChat = () =>
   getTransport().call<InitResponse>("initialize_chat");
-export const sendMessage = (content: string) =>
-  getTransport().call<void>("send_message", { content });
-export const cancelStream = () =>
-  getTransport().call<void>("cancel_stream");
-export const approveTools = (approvedIds: string[]) =>
-  getTransport().call<void>("approve_tools", { approvedIds });
+export const setPermissionMode = (mode: string) =>
+  getTransport().call<void>("set_permission_mode", { mode });
+export const listSessions = () =>
+  getTransport().call<SessionSummary[]>("list_sessions");
+export const listTasks = () =>
+  getTransport().call<TaskInfo[]>("list_tasks");
+
+// Chat — per-session (scoped by sessionId)
+export const sendMessage = (sessionId: string, content: string) =>
+  getTransport().call<void>("send_message", { sessionId, content });
+export const cancelStream = (sessionId: string) =>
+  getTransport().call<void>("cancel_stream", { sessionId });
+export const approveTools = (sessionId: string, approvedIds: string[]) =>
+  getTransport().call<void>("approve_tools", { sessionId, approvedIds });
 export const alwaysAllowTools = (
+  sessionId: string,
   approvedIds: string[],
   tools: ToolApprovalRequest[],
 ) =>
-  getTransport().call<void>("always_allow_tools", { approvedIds, tools });
-export const denyAllTools = () =>
-  getTransport().call<void>("deny_all_tools");
+  getTransport().call<void>("always_allow_tools", { sessionId, approvedIds, tools });
+export const denyAllTools = (sessionId: string) =>
+  getTransport().call<void>("deny_all_tools", { sessionId });
 export const acceptPlan = (
+  sessionId: string,
   tasks?: Array<{ title: string; detail: string }>,
-) => getTransport().call<void>("accept_plan", { tasks });
-export const rejectPlan = (feedback: string) =>
-  getTransport().call<void>("reject_plan", { feedback });
-export const answerQuestion = (answer: string) =>
-  getTransport().call<void>("answer_question", { answer });
-export const listSessions = () =>
-  getTransport().call<SessionSummary[]>("list_sessions");
-export const loadSession = (id: string) =>
-  getTransport().call<InitResponse>("load_session", { id });
-export const newSession = () =>
-  getTransport().call<InitResponse>("new_session");
-export const setPermissionMode = (mode: string) =>
-  getTransport().call<void>("set_permission_mode", { mode });
-export const listTasks = () =>
-  getTransport().call<TaskInfo[]>("list_tasks");
+) => getTransport().call<void>("accept_plan", { sessionId, tasks });
+export const rejectPlan = (sessionId: string, feedback: string) =>
+  getTransport().call<void>("reject_plan", { sessionId, feedback });
+export const answerQuestion = (sessionId: string, answer: string) =>
+  getTransport().call<void>("answer_question", { sessionId, answer });
+export const loadSession = (sessionId: string, id: string) =>
+  getTransport().call<InitResponse>("load_session", { sessionId, id });
+export const newSession = (sessionId: string) =>
+  getTransport().call<InitResponse>("new_session", { sessionId });
 
 // Terminal
 export const terminalCreate = (cwd?: string, cols?: number, rows?: number) =>
@@ -210,8 +222,8 @@ export const getBgProcessLog = (pid: number, maxLines: number) =>
   getTransport().call<string | null>("get_bg_process_log", { pid, maxLines });
 export const killBgProcess = (pid: number) =>
   getTransport().call<boolean>("kill_bg_process", { pid });
-export const sendToBackground = () =>
-  getTransport().call<boolean>("send_to_background");
+export const sendToBackground = (sessionId: string) =>
+  getTransport().call<boolean>("send_to_background", { sessionId });
 
 // Browser
 export const browserLaunch = (
@@ -288,10 +300,12 @@ export const isRecording = () =>
 export const listAudioDevices = () =>
   getTransport().call<string[]>("list_audio_devices");
 
-// Event listeners
-export const onStreamEvent = (cb: (payload: string) => void) =>
-  getTransport().subscribe("stream-event", cb as (p: unknown) => void);
-export const onTurnComplete = (cb: (payload: string) => void) =>
-  getTransport().subscribe("turn-complete", cb as (p: unknown) => void);
+// Event listeners (session-scoped)
+export const onStreamEvent = (sessionId: string, cb: (payload: string) => void) =>
+  getTransport().subscribe(`stream-event-${sessionId}`, cb as (p: unknown) => void);
+export const onTurnComplete = (sessionId: string, cb: (payload: string) => void) =>
+  getTransport().subscribe(`turn-complete-${sessionId}`, cb as (p: unknown) => void);
+
+// Event listeners (global)
 export const onWorkerNotification = (cb: (payload: string) => void) =>
   getTransport().subscribe("worker-notification", cb as (p: unknown) => void);

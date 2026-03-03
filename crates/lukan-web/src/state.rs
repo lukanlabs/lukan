@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lukan_agent::{AgentLoop, WorkerNotification};
@@ -9,9 +10,33 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 use crate::protocol::ServerMessage;
 use crate::terminal::TerminalManager;
 
+/// Per-session agent state (one per tab/agent instance).
+pub struct WebAgentSession {
+    pub agent: Option<AgentLoop>,
+    pub approval_tx: Option<mpsc::Sender<ApprovalResponse>>,
+    pub plan_review_tx: Option<mpsc::Sender<PlanReviewResponse>>,
+    pub planner_answer_tx: Option<mpsc::Sender<String>>,
+    /// Human-readable label for this tab (e.g. "Agent 2")
+    pub label: String,
+}
+
+impl WebAgentSession {
+    pub fn new() -> Self {
+        Self {
+            agent: None,
+            approval_tx: None,
+            plan_review_tx: None,
+            planner_answer_tx: None,
+            label: "Agent 1".to_string(),
+        }
+    }
+}
+
 /// Shared application state for the web server
 pub struct AppState {
-    /// The agent loop instance (None until first message or session load)
+    /// Agent sessions keyed by session/tab ID
+    pub sessions: Mutex<HashMap<String, WebAgentSession>>,
+    /// Legacy singleton agent for backward-compat (used when no sessionId is provided)
     pub agent: Mutex<Option<AgentLoop>>,
     /// Resolved configuration (provider + credentials)
     pub config: Mutex<ResolvedConfig>,
@@ -31,11 +56,11 @@ pub struct AppState {
     connection_counter: AtomicUsize,
     /// Current permission mode
     pub permission_mode: Mutex<PermissionMode>,
-    /// Sender half of the approval channel (sent to the agent)
+    /// Sender half of the approval channel (sent to the agent) — legacy singleton
     pub approval_tx: Mutex<Option<mpsc::Sender<ApprovalResponse>>>,
-    /// Sender half of the plan review channel
+    /// Sender half of the plan review channel — legacy singleton
     pub plan_review_tx: Mutex<Option<mpsc::Sender<PlanReviewResponse>>>,
-    /// Sender half of the planner answer channel
+    /// Sender half of the planner answer channel — legacy singleton
     pub planner_answer_tx: Mutex<Option<mpsc::Sender<String>>>,
     /// Broadcast channel for worker notifications from the daemon
     pub notification_tx: broadcast::Sender<WorkerNotification>,
@@ -63,6 +88,7 @@ impl AppState {
         let (terminal_tx, _) = broadcast::channel(256);
 
         Self {
+            sessions: Mutex::new(HashMap::new()),
             agent: Mutex::new(None),
             config: Mutex::new(resolved),
             processing_owner: Mutex::new(None),

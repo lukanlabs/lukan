@@ -12,6 +12,12 @@ pub struct BgProcessDto {
     pub exited_at: Option<String>,
     /// "running" | "completed" | "killed"
     pub status: String,
+    /// Agent/tab label that spawned this process (e.g. "Agent 2")
+    pub label: Option<String>,
+    /// Session/tab ID that spawned this process
+    pub session_id: Option<String>,
+    /// Frontend tab ID for matching with UI tab labels
+    pub tab_id: Option<String>,
 }
 
 #[tauri::command]
@@ -32,6 +38,9 @@ pub fn list_bg_processes(session_id: Option<String>) -> Vec<BgProcessDto> {
                 BgProcessStatus::Completed => "completed".to_string(),
                 BgProcessStatus::Killed => "killed".to_string(),
             },
+            label: p.label,
+            session_id: p.session_id,
+            tab_id: p.tab_id,
         })
         .collect()
 }
@@ -54,12 +63,16 @@ pub async fn kill_bg_process(pid: u32) -> bool {
 
 /// Send the currently running Bash tool to background (equivalent to Alt+B in TUI)
 #[tauri::command]
-pub async fn send_to_background(state: tauri::State<'_, ChatState>) -> Result<bool, String> {
-    let guard = state.bg_signal_tx.lock().await;
-    if let Some(tx) = guard.as_ref() {
-        tx.send(()).map_err(|e| e.to_string())?;
-        Ok(true)
-    } else {
-        Ok(false)
+pub async fn send_to_background(
+    state: tauri::State<'_, ChatState>,
+    session_id: String,
+) -> Result<bool, String> {
+    let sessions = state.sessions.lock().await;
+    if let Some(session) = sessions.get(&session_id) {
+        if let Some(ref tx) = session.bg_signal_tx {
+            tx.send(()).map_err(|e| e.to_string())?;
+            return Ok(true);
+        }
     }
+    Ok(false)
 }

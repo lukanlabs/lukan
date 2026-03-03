@@ -5,13 +5,23 @@ set -euo pipefail
 TARGET="${1:-}"
 
 # Validate target if provided
-if [[ -n "${TARGET}" ]] && [[ ! "${TARGET}" =~ ^(stable|latest|v?[0-9]+\.[0-9]+\.[0-9]+(-[^[:space:]]+)?)$ ]]; then
-  echo "Usage: $0 [stable|latest|VERSION]" >&2
+if [[ -n "${TARGET}" ]] && [[ ! "${TARGET}" =~ ^(stable|latest|daily|v?[0-9]+\.[0-9]+\.[0-9]+(-[^[:space:]]+)?)$ ]]; then
+  echo "Usage: $0 [stable|latest|daily|VERSION]" >&2
   exit 1
+fi
+
+# --- Channel selection ---
+CHANNEL=""
+if [ "${TARGET}" = "daily" ]; then
+  CHANNEL="daily"
+  TARGET=""  # Clear so version resolution uses "latest" from the daily channel
 fi
 
 # --- Download sources (primary + fallback) ---
 PRIMARY_URL="https://get.lukan.ai"
+if [ "${CHANNEL}" = "daily" ]; then
+  PRIMARY_URL="https://get.lukan.ai/daily"
+fi
 GH_REPO="lukanlabs/lukan"
 FALLBACK_URL="https://github.com/${GH_REPO}/releases/latest/download"
 
@@ -105,6 +115,9 @@ fi
 
 PLATFORM="${OS}-${ARCH}"
 info "Detected: ${PLATFORM}"
+if [ "${CHANNEL}" = "daily" ]; then
+  warn "Using daily (unstable) channel"
+fi
 
 # --- GitHub Releases download helper (uses gh CLI for private repos) ---
 gh_download() {

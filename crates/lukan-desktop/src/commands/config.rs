@@ -21,14 +21,19 @@ pub async fn save_config(state: State<'_, ChatState>, config: AppConfig) -> Resu
         resolved.config = config.clone();
     }
 
-    // Apply disabled tools to the live agent immediately
-    if let Some(ref mut agent) = *state.agent.lock().await {
+    // Apply disabled tools to all live agents immediately
+    {
         let disabled: HashSet<String> = config
             .disabled_tools
             .unwrap_or_default()
             .into_iter()
             .collect();
-        agent.set_disabled_tools(disabled);
+        let mut sessions = state.sessions.lock().await;
+        for session in sessions.values_mut() {
+            if let Some(ref mut agent) = session.agent {
+                agent.set_disabled_tools(disabled.clone());
+            }
+        }
     }
 
     Ok(())

@@ -124,13 +124,14 @@ export function Toolbar({
         <button
           className="model-selector"
           onClick={() => setShowModelMenu((v) => !v)}
+          style={{ maxWidth: 220 }}
         >
-          <span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {activeProvider
               ? `${activeProvider.name}:${activeProvider.currentModel || activeProvider.defaultModel}`
               : "No provider"}
           </span>
-          <ChevronDown size={12} />
+          <ChevronDown size={12} style={{ flexShrink: 0 }} />
         </button>
 
         {showModelMenu && (

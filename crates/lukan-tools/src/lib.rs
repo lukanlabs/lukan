@@ -47,6 +47,10 @@ pub struct ToolContext {
     pub session_id: Option<String>,
     /// Extra environment variables injected into Bash commands (e.g. skill credentials)
     pub extra_env: HashMap<String, String>,
+    /// Human-readable label for the agent/tab that owns this context (e.g. "Agent 2")
+    pub agent_label: Option<String>,
+    /// Tab ID for associating background processes with the frontend tab
+    pub tab_id: Option<String>,
 }
 
 impl ToolContext {
@@ -264,6 +268,8 @@ mod tests {
             cancel: None,
             session_id: None,
             extra_env: HashMap::new(),
+            agent_label: None,
+            tab_id: None,
         }
     }
 

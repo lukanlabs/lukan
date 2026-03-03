@@ -137,6 +137,10 @@ pub struct AgentLoop {
     vision_provider: Option<Arc<dyn Provider>>,
     /// Extra environment variables injected into Bash commands (e.g. skill credentials)
     extra_env: HashMap<String, String>,
+    /// Human-readable label for this agent (e.g. "Agent 2"), shown in bg process list
+    pub label: Option<String>,
+    /// Frontend tab ID for matching bg processes with UI tabs
+    pub tab_id: Option<String>,
 }
 
 /// A system event from a plugin, queued for injection into the agent context.
@@ -228,6 +232,8 @@ impl AgentLoop {
             skip_session_save,
             vision_provider: config.vision_provider,
             extra_env: config.extra_env,
+            label: None,
+            tab_id: None,
         })
     }
 
@@ -315,6 +321,8 @@ impl AgentLoop {
             skip_session_save,
             vision_provider: config.vision_provider,
             extra_env: config.extra_env,
+            label: None,
+            tab_id: None,
         })
     }
 
@@ -1839,6 +1847,8 @@ impl AgentLoop {
             let cancel_token = cancel.cloned();
             let session_id = Some(self.session.id.clone());
             let extra_env = self.extra_env.clone();
+            let agent_label = self.label.clone();
+            let tab_id = self.tab_id.clone();
 
             handles.push(tokio::spawn(async move {
                 // Send progress start
@@ -1862,6 +1872,8 @@ impl AgentLoop {
                     cancel: cancel_token,
                     session_id,
                     extra_env,
+                    agent_label,
+                    tab_id,
                 };
 
                 match registry.execute(&name, input, &ctx).await {

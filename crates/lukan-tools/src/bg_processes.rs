@@ -12,6 +12,10 @@ pub struct BgProcess {
     pub started_at: DateTime<Utc>,
     pub log_file: PathBuf,
     pub session_id: Option<String>,
+    /// Frontend tab ID (for matching with UI tab labels)
+    pub tab_id: Option<String>,
+    /// Human-readable label for the agent/tab that spawned this process
+    pub label: Option<String>,
     /// When the process was detected as no longer alive
     pub exited_at: Option<DateTime<Utc>>,
     /// Whether the process was explicitly killed via kill_bg_process
@@ -34,13 +38,22 @@ fn tracker() -> &'static Mutex<BgTracker> {
 }
 
 /// Register a new background process
-pub fn add_bg_process(pid: u32, command: String, log_file: PathBuf, session_id: Option<String>) {
+pub fn add_bg_process(
+    pid: u32,
+    command: String,
+    log_file: PathBuf,
+    session_id: Option<String>,
+    label: Option<String>,
+    tab_id: Option<String>,
+) {
     let process = BgProcess {
         pid,
         command,
         started_at: Utc::now(),
         log_file,
         session_id,
+        tab_id,
+        label,
         exited_at: None,
         killed: false,
     };
@@ -64,6 +77,9 @@ pub struct BgProcessSnapshot {
     pub started_at: DateTime<Utc>,
     pub exited_at: Option<DateTime<Utc>>,
     pub status: BgProcessStatus,
+    pub label: Option<String>,
+    pub session_id: Option<String>,
+    pub tab_id: Option<String>,
 }
 
 /// Check if a process is still alive using `kill(pid, 0)`
@@ -134,6 +150,9 @@ fn snapshot_process(p: &mut BgProcess) -> BgProcessSnapshot {
         started_at: p.started_at,
         exited_at: p.exited_at,
         status,
+        label: p.label.clone(),
+        session_id: p.session_id.clone(),
+        tab_id: p.tab_id.clone(),
     }
 }
 

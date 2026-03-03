@@ -417,6 +417,8 @@ async fn run_sub_agent(
                     cancel: None,
                     session_id: None,
                     extra_env: HashMap::new(),
+                    agent_label: None,
+                    tab_id: None,
                 };
                 match reg.execute(&n, inp, &ctx).await {
                     Ok(r) => r,
@@ -998,6 +1000,8 @@ pub async fn run_explore(
                         cancel: None,
                         session_id: None,
                         extra_env: HashMap::new(),
+                        agent_label: None,
+                        tab_id: None,
                     };
                     match reg.execute(&n, inp, &ctx).await {
                         Ok(r) => r,

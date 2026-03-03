@@ -3,8 +3,7 @@ import { AlertCircle } from "lucide-react";
 import logoUrl from "../assets/logo.png";
 import { useChat } from "../hooks/useChat";
 import type { ToolResultInfo } from "../components/chat/MessageBubble";
-import type { Message } from "../lib/types";
-import { StatusBar } from "../components/chat/StatusBar";
+import type { Message, TokenUsage } from "../lib/types";
 import { MessageBubble } from "../components/chat/MessageBubble";
 import { StreamingText } from "../components/chat/StreamingText";
 import { ToolCallCard } from "../components/chat/ToolCallCard";
@@ -13,6 +12,7 @@ import { InlineApproval } from "../components/chat/InlineApproval";
 import { InlinePlanReview } from "../components/chat/InlinePlanReview";
 import { QuestionPicker } from "../components/chat/QuestionPicker";
 import { TaskPanel } from "../components/chat/TaskPanel";
+import { sendToBackground } from "../lib/tauri";
 
 function buildToolResultsMap(
   messages: Message[],
@@ -35,17 +35,36 @@ function buildToolResultsMap(
   return map;
 }
 
-export default function ChatView() {
-  const chat = useChat();
+interface ChatPanelProps {
+  tabId: string;
+  isActive: boolean;
+  onStatsChange?: (tabId: string, tokenUsage: TokenUsage, contextSize: number) => void;
+  pendingSessionId?: string;
+  onPendingLoadConsumed?: (tabId: string) => void;
+}
+
+export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, onPendingLoadConsumed }: ChatPanelProps) {
+  const chat = useChat(tabId);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
-  // Listen for sidebar session events
+
+  // Report stats to parent whenever they change
   useEffect(() => {
-    const onLoad = (e: Event) => {
-      const id = (e as CustomEvent<string>).detail;
-      chat.loadSession(id);
-    };
+    onStatsChange?.(tabId, chat.tokenUsage, chat.contextSize);
+  }, [tabId, chat.tokenUsage, chat.contextSize, onStatsChange]);
+
+  // Load a pending session passed from AgentView (always opens in new tab)
+  useEffect(() => {
+    if (pendingSessionId) {
+      chat.loadSession(pendingSessionId);
+      onPendingLoadConsumed?.(tabId);
+    }
+  }, [pendingSessionId, tabId, chat.loadSession, onPendingLoadConsumed]);
+
+  // Listen for sidebar session events (only on the active panel)
+  useEffect(() => {
+    if (!isActive) return;
     const onNew = () => {
       chat.newSession();
     };
@@ -56,15 +75,13 @@ export default function ChatView() {
         chat.sendMessage(text);
       }
     };
-    window.addEventListener("load-session", onLoad);
     window.addEventListener("new-session", onNew);
     window.addEventListener("inject-event", onInjectEvent);
     return () => {
-      window.removeEventListener("load-session", onLoad);
       window.removeEventListener("new-session", onNew);
       window.removeEventListener("inject-event", onInjectEvent);
     };
-  }, [chat.loadSession, chat.newSession, chat.sendMessage, chat.isProcessing]);
+  }, [isActive, chat.newSession, chat.sendMessage, chat.isProcessing]);
 
   // Auto-scroll to bottom on new content
   useEffect(() => {
@@ -90,16 +107,13 @@ export default function ChatView() {
     [chat.sendMessage],
   );
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (only on the active panel)
   useEffect(() => {
+    if (!isActive) return;
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === "n") {
         e.preventDefault();
         chat.newSession();
-      }
-      if (e.ctrlKey && e.key === "k") {
-        e.preventDefault();
-        // Focus input — handled by ChatInput's own focus
       }
       if (e.key === "Escape" && chat.isProcessing) {
         chat.abort();
@@ -107,7 +121,7 @@ export default function ChatView() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [chat.newSession, chat.abort, chat.isProcessing]);
+  }, [isActive, chat.newSession, chat.abort, chat.isProcessing]);
 
   const isEmpty = chat.messages.length === 0 && chat.streamingBlocks.length === 0;
 
@@ -117,13 +131,10 @@ export default function ChatView() {
   );
 
   return (
-    <div className="flex flex-1 flex-col min-h-0 bg-zinc-950">
-      <StatusBar
-        tokenUsage={chat.tokenUsage}
-        contextSize={chat.contextSize}
-        onNewSession={chat.newSession}
-      />
-
+    <div
+      className="flex flex-1 flex-col min-h-0 bg-zinc-950 absolute inset-0"
+      style={{ display: isActive ? "flex" : "none" }}
+    >
       <div className="flex flex-1 min-h-0">
         {/* Main chat area */}
         <div className="flex flex-1 flex-col min-h-0">
@@ -180,7 +191,7 @@ export default function ChatView() {
                               </div>
                             );
                           case "tool":
-                            return <ToolCallCard key={block.id} tool={block.tool} />;
+                            return <ToolCallCard key={block.id} tool={block.tool} onSendToBackground={() => sendToBackground(tabId)} />;
                           case "approval":
                             return (
                               <InlineApproval
@@ -266,3 +277,12 @@ export default function ChatView() {
     </div>
   );
 }
+
+// Default export for backward compatibility (used by App.tsx routing)
+export default function ChatView() {
+  // Import here to avoid circular deps — AgentView is the real wrapper
+  return <AgentView />;
+}
+
+// Lazy import of AgentView
+import AgentView from "./AgentView";

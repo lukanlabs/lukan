@@ -200,8 +200,15 @@ async fn dispatch_message(
             content,
             session_id,
         } => {
-            handle_send_message(conn_id, &content, session_id.as_deref(), state, ws_tx, ws_rx)
-                .await;
+            handle_send_message(
+                conn_id,
+                &content,
+                session_id.as_deref(),
+                state,
+                ws_tx,
+                ws_rx,
+            )
+            .await;
         }
 
         ClientMessage::Abort { session_id: _ } => {
@@ -218,10 +225,7 @@ async fn dispatch_message(
         ClientMessage::LoadSession { session_id, id } => {
             // `id` is the saved session to load (new protocol).
             // Falls back to `session_id` for backward compat (old protocol).
-            let saved_session = id
-                .as_deref()
-                .or(session_id.as_deref())
-                .unwrap_or_default();
+            let saved_session = id.as_deref().or(session_id.as_deref()).unwrap_or_default();
             let tab_id = if id.is_some() {
                 session_id.as_deref()
             } else {
@@ -353,8 +357,12 @@ async fn dispatch_message(
             approved_ids,
             session_id,
         } => {
-            send_approval(state, session_id.as_deref(), ApprovalResponse::Approved { approved_ids })
-                .await;
+            send_approval(
+                state,
+                session_id.as_deref(),
+                ApprovalResponse::Approved { approved_ids },
+            )
+            .await;
         }
 
         ClientMessage::AlwaysAllow {
@@ -377,10 +385,7 @@ async fn dispatch_message(
             send_approval(state, session_id.as_deref(), ApprovalResponse::DeniedAll).await;
         }
 
-        ClientMessage::AnswerQuestion {
-            answer,
-            session_id,
-        } => {
+        ClientMessage::AnswerQuestion { answer, session_id } => {
             send_planner_answer(state, session_id.as_deref(), answer).await;
         }
 
@@ -567,10 +572,7 @@ async fn dispatch_message(
             }
         }
 
-        ClientMessage::PlanAccept {
-            tasks,
-            session_id,
-        } => {
+        ClientMessage::PlanAccept { tasks, session_id } => {
             let modified_tasks: Option<Vec<PlanTask>> =
                 tasks.and_then(|v| serde_json::from_value(v).ok());
             send_plan_review(
@@ -732,7 +734,9 @@ async fn handle_send_message(
     if use_session {
         let tab = tab_id.unwrap();
         let mut sessions = state.sessions.lock().await;
-        let session = sessions.entry(tab.to_string()).or_insert_with(WebAgentSession::new);
+        let session = sessions
+            .entry(tab.to_string())
+            .or_insert_with(WebAgentSession::new);
         if session.agent.is_none() {
             match create_agent(state).await {
                 Ok(agent) => {
@@ -776,7 +780,12 @@ async fn handle_send_message(
         session.plan_review_tx = Some(plan_review_tx);
         session.planner_answer_tx = Some(planner_answer_tx);
         let mut agent = session.agent.take().unwrap();
-        agent.set_channels(Some(approval_rx), Some(plan_review_rx), Some(planner_answer_rx), None);
+        agent.set_channels(
+            Some(approval_rx),
+            Some(plan_review_rx),
+            Some(planner_answer_rx),
+            None,
+        );
         agent.label = Some(session.label.clone());
         agent.tab_id = Some(tab.to_string());
         agent
@@ -790,7 +799,12 @@ async fn handle_send_message(
         *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
         let mut lock = state.agent.lock().await;
         let mut agent = lock.take().unwrap();
-        agent.set_channels(Some(approval_rx), Some(plan_review_rx), Some(planner_answer_rx), None);
+        agent.set_channels(
+            Some(approval_rx),
+            Some(plan_review_rx),
+            Some(planner_answer_rx),
+            None,
+        );
         agent.label = Some("Agent 1".to_string());
         agent
     };
@@ -939,8 +953,7 @@ async fn send_agent_creation_error(
     use futures::SinkExt;
     let config = state.config.lock().await;
     if config.effective_model().is_none() {
-        let hint =
-            "No model selected. Open **Providers** in the sidebar and choose a model to get started.";
+        let hint = "No model selected. Open **Providers** in the sidebar and choose a model to get started.";
         let _ = ws_tx
             .send(Message::Text(
                 serde_json::to_string(&StreamEvent::TextDelta {
@@ -1028,10 +1041,7 @@ async fn handle_mid_turn_message(
             send_approval(state, session_id.as_deref(), ApprovalResponse::DeniedAll).await;
         }
 
-        ClientMessage::PlanAccept {
-            tasks,
-            session_id,
-        } => {
+        ClientMessage::PlanAccept { tasks, session_id } => {
             let parsed_tasks: Option<Vec<PlanTask>> =
                 tasks.and_then(|v| serde_json::from_value(v).ok());
             send_plan_review(
@@ -1056,10 +1066,7 @@ async fn handle_mid_turn_message(
             .await;
         }
 
-        ClientMessage::AnswerQuestion {
-            answer,
-            session_id,
-        } => {
+        ClientMessage::AnswerQuestion { answer, session_id } => {
             send_planner_answer(state, session_id.as_deref(), answer).await;
         }
 
@@ -1232,9 +1239,7 @@ async fn handle_create_agent_tab(
 
     send_json(
         ws_tx,
-        &ServerMessage::AgentTabCreated {
-            session_id: tab_id,
-        },
+        &ServerMessage::AgentTabCreated { session_id: tab_id },
     )
     .await;
 }

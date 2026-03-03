@@ -5,9 +5,7 @@ const INSTALL_URL: &str = "https://get.lukan.ai/install.sh";
 /// Self-update by downloading and running the install script
 pub async fn run_update(daily: bool) -> Result<()> {
     let channel = if daily { "daily" } else { "stable" };
-    println!(
-        "\n  \x1b[36mChecking for updates ({channel} channel)...\x1b[0m\n"
-    );
+    println!("\n  \x1b[36mChecking for updates ({channel} channel)...\x1b[0m\n");
 
     let shell = if which_exists("bash") { "bash" } else { "sh" };
 

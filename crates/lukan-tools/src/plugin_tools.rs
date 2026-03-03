@@ -13,7 +13,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{debug, warn};
 
-use crate::{bg_processes, Tool, ToolContext, ToolRegistry};
+use crate::{Tool, ToolContext, ToolRegistry, bg_processes};
 
 /// A tool definition as declared in a plugin's `tools.json`.
 #[derive(Debug, Clone, Deserialize)]

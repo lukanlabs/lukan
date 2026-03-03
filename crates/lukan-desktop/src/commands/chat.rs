@@ -184,9 +184,7 @@ pub async fn send_message(
     // Check if already processing
     {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or("Session not found")?;
+        let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
         if session.is_processing {
             return Err("Already processing a message".to_string());
         }
@@ -196,9 +194,7 @@ pub async fn send_message(
     // Ensure agent exists
     {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or("Session not found")?;
+        let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
         if session.agent.is_none() {
             let config_lock = state.config.lock().await;
             let config = config_lock
@@ -245,9 +241,7 @@ pub async fn send_message(
     // Refresh channels so a reused agent never has stale receivers
     {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or("Session not found")?;
+        let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
         if let Some(mut agent) = session.agent.take() {
             session.refresh_channels(&mut agent);
             session.agent = Some(agent);
@@ -257,9 +251,7 @@ pub async fn send_message(
     // Take agent out of session for the turn
     let mut agent = {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or("Session not found")?;
+        let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
         let mut a = session.agent.take().unwrap();
         a.label = Some(session.label.clone());
         a.tab_id = Some(session_id.clone());
@@ -282,9 +274,7 @@ pub async fn send_message(
     let cancel_token = CancellationToken::new();
     {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or("Session not found")?;
+        let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
         session.cancel_token = Some(cancel_token.clone());
     }
 
@@ -299,9 +289,7 @@ pub async fn send_message(
     // Store handle
     {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or("Session not found")?;
+        let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
         session.agent_handle = Some(agent_handle);
     }
 
@@ -418,9 +406,7 @@ pub async fn cancel_stream(
 ) -> Result<(), String> {
     let (cancel_token, agent_handle) = {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or("Session not found")?;
+        let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
         (session.cancel_token.take(), session.agent_handle.take())
     };
 
@@ -509,10 +495,7 @@ pub async fn always_allow_tools(
 }
 
 #[tauri::command]
-pub async fn deny_all_tools(
-    state: State<'_, ChatState>,
-    session_id: String,
-) -> Result<(), String> {
+pub async fn deny_all_tools(state: State<'_, ChatState>, session_id: String) -> Result<(), String> {
     let sessions = state.sessions.lock().await;
     let session = sessions.get(&session_id).ok_or("Session not found")?;
     if let Some(ref sender) = session.approval_tx {
@@ -599,9 +582,7 @@ pub async fn load_session(
 ) -> Result<InitResponse, String> {
     {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or("Session not found")?;
+        let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
 
         // Cancel any running turn and recover the agent
         session.generation.fetch_add(1, Ordering::SeqCst);
@@ -636,9 +617,7 @@ pub async fn load_session(
 
     {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or("Session not found")?;
+        let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
         session.agent = Some(agent);
         session.approval_tx = Some(channels.approval_tx);
         session.plan_review_tx = Some(channels.plan_review_tx);
@@ -669,9 +648,7 @@ pub async fn new_session(
 ) -> Result<InitResponse, String> {
     {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or("Session not found")?;
+        let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
 
         // Cancel any running turn
         session.generation.fetch_add(1, Ordering::SeqCst);

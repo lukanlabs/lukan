@@ -94,8 +94,7 @@ pub async fn browser_launch(
         let mut sessions = state.sessions.lock().await;
         for session in sessions.values_mut() {
             if let Some(ref mut agent) = session.agent {
-                let browser_registry =
-                    create_configured_browser_registry(&permissions, &allowed);
+                let browser_registry = create_configured_browser_registry(&permissions, &allowed);
                 agent.reload_tools(browser_registry);
                 agent.enable_browser_tools();
                 agent.reload_system_prompt(prompt.clone());

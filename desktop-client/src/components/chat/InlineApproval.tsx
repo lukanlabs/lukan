@@ -96,13 +96,13 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
   return (
     <div className="rounded-lg bg-white/[0.02] overflow-hidden">
       {/* Header with tool info + Approve / Deny */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs font-medium text-zinc-300">{tool.name}</span>
+      <div className="flex flex-wrap items-center justify-between gap-1 px-3 py-1.5 border-b border-white/5">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="text-xs font-medium text-zinc-300 shrink-0">{tool.name}</span>
           {filePath && <span className="text-[11px] text-zinc-500 font-mono truncate">{filePath}</span>}
           {isBash && command && <span className="text-[11px] text-zinc-500 font-mono truncate">{command.slice(0, 80)}</span>}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={() => onApprove(allIds)}
             className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors"
@@ -123,7 +123,7 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
       {/* EditFile diff with line numbers */}
       {diffLines && (
         <div className="max-h-56 overflow-auto">
-          <table className="text-xs font-mono w-full border-collapse">
+          <table className="text-xs font-mono w-full border-collapse" style={{ tableLayout: "fixed" }}>
             <tbody>
               {diffLines.map((line, i) => {
                 if (line.type === "sep") {
@@ -155,7 +155,7 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
                     <td className="px-2 py-0 text-right text-zinc-600 select-none w-8 border-r border-white/5 text-[10px]">
                       {line.lineNo}
                     </td>
-                    <td className={`px-3 py-0 whitespace-pre ${textCls}`}>
+                    <td className={`px-3 py-0 whitespace-pre-wrap break-all overflow-hidden ${textCls}`}>
                       {prefix}{line.text}
                     </td>
                   </tr>
@@ -168,14 +168,14 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
 
       {/* Bash command */}
       {isBash && command && (
-        <pre className="max-h-28 overflow-auto px-3 py-2 text-xs font-mono text-yellow-400/80 whitespace-pre-wrap">
+        <pre className="max-h-28 overflow-auto px-3 py-2 text-xs font-mono text-yellow-400/80 whitespace-pre-wrap break-words">
           $ {command}
         </pre>
       )}
 
       {/* WriteFile content */}
       {isWrite && content && (
-        <pre className="max-h-36 overflow-auto px-3 py-2 text-xs font-mono text-zinc-400 whitespace-pre-wrap">
+        <pre className="max-h-36 overflow-auto px-3 py-2 text-xs font-mono text-zinc-400 whitespace-pre-wrap break-words">
           {content.length > 800 ? content.slice(0, 800) + "\n..." : content}
         </pre>
       )}

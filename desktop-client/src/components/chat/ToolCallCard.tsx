@@ -149,14 +149,14 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
 
       {/* Live progress for agents (Explore/SubAgent) — always visible while running */}
       {isAgent && tool.isRunning && tool.content && (
-        <pre className="mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] text-purple-400/50 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
+        <pre className="mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] text-purple-400/50 font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto overflow-x-hidden">
           {tool.content}
         </pre>
       )}
 
       {/* Collapsible content */}
       {open && tool.rawInput && !isAgent && (
-        <pre className="mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap max-h-36 overflow-y-auto">
+        <pre className="mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap break-words max-h-36 overflow-y-auto overflow-x-hidden">
           {JSON.stringify(tool.rawInput, null, 2)}
         </pre>
       )}
@@ -168,14 +168,14 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
       {tool.image && (
         <div className="mt-1.5 mx-2 rounded-md overflow-hidden">
           <img src={tool.image} alt="Tool result"
-               className="max-w-full max-h-96 object-contain" />
+               className="max-w-full max-h-64 sm:max-h-96 object-contain" />
         </div>
       )}
 
       {/* Text result */}
       {!tool.isRunning && tool.content && !tool.diff && (
         <pre
-          className={`mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto ${
+          className={`mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto overflow-x-hidden ${
             tool.isError ? "text-red-400/70" : "text-zinc-600"
           }`}
         >

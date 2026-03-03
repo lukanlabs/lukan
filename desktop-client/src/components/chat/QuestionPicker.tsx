@@ -138,31 +138,31 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
           </div>
 
           {/* Footer actions */}
-          <div className="flex items-center gap-1 px-1">
+          <div className="flex flex-wrap items-center gap-1 px-1">
             {isMulti ? (
               <button
                 onClick={confirmMulti}
                 disabled={selected.size === 0}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Check className="h-3 w-3" />
                 Confirm ({selected.size})
               </button>
             ) : null}
-            <div className="flex-1" />
-            <div className="flex items-center gap-1.5">
+            <div className="flex-1 min-w-4" />
+            <div className="flex items-center gap-1.5 min-w-0 flex-1 sm:flex-none">
               <input
                 type="text"
                 value={customInput}
                 onChange={(e) => setCustomInput(e.target.value)}
                 placeholder={isMulti ? "Custom option..." : "Custom answer..."}
-                className="w-40 rounded-md border border-white/5 bg-white/[0.02] px-2 py-1 text-[11px] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                className="flex-1 sm:w-40 min-w-0 rounded-md border border-white/5 bg-white/[0.02] px-2 py-1.5 text-[11px] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
                 onKeyDown={(e) => e.key === "Enter" && submitCustom()}
               />
               <button
                 onClick={submitCustom}
                 disabled={!customInput.trim()}
-                className="flex items-center px-1.5 py-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center px-1.5 py-1.5 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Send className="h-3 w-3" />
               </button>

@@ -356,12 +356,7 @@ select {
 
 /* ── Mobile: hide activity bar & sidebar, full-width main ────────── */
 @media (max-width: 640px) {
-  .workspace-grid {
-    grid-template:
-      "toolbar" 40px
-      "main" 1fr
-      / 1fr;
-  }
+  .workspace-grid,
   .workspace-grid.sidebar-collapsed {
     grid-template:
       "toolbar" 40px
@@ -372,6 +367,29 @@ select {
     display: none;
   }
   .side-panel {
+    display: none;
+  }
+
+  /* Toolbar: tighter spacing */
+  .workspace-toolbar {
+    padding: 0 8px;
+    gap: 6px;
+  }
+  .toolbar-logo {
+    height: 18px;
+    width: 18px;
+  }
+  .mode-toggle button {
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+  .model-selector {
+    max-width: 140px;
+  }
+  .toolbar-btn.window-ctrl {
+    display: none;
+  }
+  .toolbar-divider {
     display: none;
   }
 }
@@ -470,6 +488,8 @@ select {
   font-family: var(--font-mono);
   cursor: pointer;
   transition: all var(--transition-fast);
+  max-width: 220px;
+  overflow: hidden;
 }
 
 .model-selector:hover {

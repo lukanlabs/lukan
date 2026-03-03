@@ -102,7 +102,7 @@ export function Toolbar({
       {/* Left: logo + mode toggle */}
       <div className="toolbar-section">
         <img src={logoUrl} alt="lukan" className="toolbar-logo" />
-        <img src={logoTextUrl} alt="lukan" style={{ height: 16, objectFit: "contain" }} />
+        <img src={logoTextUrl} alt="lukan" className="hidden sm:block" style={{ height: 16, objectFit: "contain" }} />
         <div className="mode-toggle">
           <button
             className={mode === "agent" ? "active" : ""}
@@ -124,7 +124,6 @@ export function Toolbar({
         <button
           className="model-selector"
           onClick={() => setShowModelMenu((v) => !v)}
-          style={{ maxWidth: 220 }}
         >
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {activeProvider
@@ -151,7 +150,8 @@ export function Toolbar({
                 border: "1px solid var(--border)",
                 borderRadius: 8,
                 padding: 4,
-                minWidth: 220,
+                minWidth: "min(220px, 80vw)",
+                maxWidth: "90vw",
                 maxHeight: 320,
                 overflowY: "auto",
                 zIndex: 51,

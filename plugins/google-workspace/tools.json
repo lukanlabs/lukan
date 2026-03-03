@@ -255,7 +255,7 @@
   },
   {
     "name": "SlidesRead",
-    "description": "Read a Google Slides presentation's content as plain text",
+    "description": "Read a Google Slides presentation including text, images, tables, backgrounds, and speaker notes",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -269,7 +269,7 @@
   },
   {
     "name": "SlidesCreate",
-    "description": "Create a new Google Slides presentation with optional initial slides",
+    "description": "Create a Google Slides presentation with slides supporting text, backgrounds, images, and speaker notes",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -289,10 +289,46 @@
               "body": {
                 "type": "string",
                 "description": "Slide body text"
+              },
+              "layout": {
+                "type": "string",
+                "description": "Layout: TITLE_AND_BODY, TITLE_ONLY, BLANK, etc. Auto-detected if omitted."
+              },
+              "backgroundColor": {
+                "type": "string",
+                "description": "Background color as hex (e.g. '#1a1a2e')"
+              },
+              "backgroundImageUrl": {
+                "type": "string",
+                "description": "URL for background image (stretched to fill)"
+              },
+              "imageUrl": {
+                "type": "string",
+                "description": "URL of image to place on the slide"
+              },
+              "imageX": {
+                "type": "number",
+                "description": "Image X position as % of slide width (0-100, default 10)"
+              },
+              "imageY": {
+                "type": "number",
+                "description": "Image Y position as % of slide height (0-100, default 10)"
+              },
+              "imageWidth": {
+                "type": "number",
+                "description": "Image width as % of slide width (0-100, default 80)"
+              },
+              "imageHeight": {
+                "type": "number",
+                "description": "Image height as % of slide height (0-100, default 80)"
+              },
+              "notes": {
+                "type": "string",
+                "description": "Speaker notes for this slide"
               }
             }
           },
-          "description": "Optional array of slides to create, each with title and/or body"
+          "description": "Array of slides with text, layout, backgrounds, images, and notes"
         }
       },
       "required": ["title"]
@@ -300,7 +336,7 @@
   },
   {
     "name": "SlidesUpdate",
-    "description": "Update a Google Slides presentation (add slide, replace text, or delete slide)",
+    "description": "Update a Google Slides presentation: add/delete slides, insert images, set backgrounds, add shapes/tables, style text",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -311,16 +347,19 @@
         "addSlide": {
           "type": "object",
           "properties": {
-            "title": {
-              "type": "string",
-              "description": "Title for the new slide"
-            },
-            "body": {
-              "type": "string",
-              "description": "Body text for the new slide"
-            }
+            "title": { "type": "string", "description": "Slide title" },
+            "body": { "type": "string", "description": "Slide body text" },
+            "layout": { "type": "string", "description": "Layout (auto-detected if omitted)" },
+            "backgroundColor": { "type": "string", "description": "Background hex color" },
+            "backgroundImageUrl": { "type": "string", "description": "Background image URL" },
+            "imageUrl": { "type": "string", "description": "Image URL to place on slide" },
+            "imageX": { "type": "number" },
+            "imageY": { "type": "number" },
+            "imageWidth": { "type": "number" },
+            "imageHeight": { "type": "number" },
+            "notes": { "type": "string", "description": "Speaker notes" }
           },
-          "description": "Add a new slide at the end of the presentation"
+          "description": "Add a new slide at the end"
         },
         "replaceText": {
           "type": "string",
@@ -333,6 +372,78 @@
         "deleteSlideIndex": {
           "type": "number",
           "description": "0-based index of the slide to delete"
+        },
+        "insertImage": {
+          "type": "object",
+          "properties": {
+            "slideIndex": { "type": "number", "description": "0-based slide index" },
+            "imageUrl": { "type": "string", "description": "Image URL" },
+            "x": { "type": "number", "description": "X position as % (0-100, default 10)" },
+            "y": { "type": "number", "description": "Y position as % (0-100, default 10)" },
+            "width": { "type": "number", "description": "Width as % (0-100, default 80)" },
+            "height": { "type": "number", "description": "Height as % (0-100, default 80)" }
+          },
+          "required": ["slideIndex", "imageUrl"],
+          "description": "Insert an image on an existing slide"
+        },
+        "setBackground": {
+          "type": "object",
+          "properties": {
+            "slideIndex": { "type": "number", "description": "0-based slide index" },
+            "color": { "type": "string", "description": "Hex color (e.g. '#1a1a2e')" },
+            "imageUrl": { "type": "string", "description": "Image URL for background" }
+          },
+          "required": ["slideIndex"],
+          "description": "Set slide background color or image"
+        },
+        "addShape": {
+          "type": "object",
+          "properties": {
+            "slideIndex": { "type": "number", "description": "0-based slide index" },
+            "shapeType": { "type": "string", "description": "RECTANGLE, TEXT_BOX, ELLIPSE, etc. (default RECTANGLE)" },
+            "x": { "type": "number", "description": "X position as % (0-100)" },
+            "y": { "type": "number", "description": "Y position as % (0-100)" },
+            "width": { "type": "number", "description": "Width as % (0-100)" },
+            "height": { "type": "number", "description": "Height as % (0-100)" },
+            "fillColor": { "type": "string", "description": "Fill hex color" },
+            "borderColor": { "type": "string", "description": "Border hex color" },
+            "text": { "type": "string", "description": "Text inside the shape" }
+          },
+          "required": ["slideIndex", "x", "y", "width", "height"],
+          "description": "Add a shape to a slide"
+        },
+        "addTable": {
+          "type": "object",
+          "properties": {
+            "slideIndex": { "type": "number", "description": "0-based slide index" },
+            "rows": { "type": "number", "description": "Number of rows" },
+            "columns": { "type": "number", "description": "Number of columns" },
+            "data": {
+              "type": "array",
+              "items": { "type": "array", "items": { "type": "string" } },
+              "description": "2D array of cell text"
+            },
+            "x": { "type": "number", "description": "X position as % (0-100)" },
+            "y": { "type": "number", "description": "Y position as % (0-100)" },
+            "width": { "type": "number", "description": "Width as % (0-100)" },
+            "height": { "type": "number", "description": "Height as % (0-100)" }
+          },
+          "required": ["slideIndex", "rows", "columns"],
+          "description": "Add a table to a slide"
+        },
+        "updateTextStyle": {
+          "type": "object",
+          "properties": {
+            "slideIndex": { "type": "number", "description": "0-based slide index" },
+            "bold": { "type": "boolean" },
+            "italic": { "type": "boolean" },
+            "underline": { "type": "boolean" },
+            "fontFamily": { "type": "string", "description": "Font name (e.g. 'Arial')" },
+            "fontSize": { "type": "number", "description": "Font size in points" },
+            "color": { "type": "string", "description": "Text color as hex" }
+          },
+          "required": ["slideIndex"],
+          "description": "Style all text on a slide"
         }
       },
       "required": ["presentationId"]

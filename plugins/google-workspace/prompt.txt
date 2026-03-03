@@ -15,8 +15,23 @@ These API tools are faster, more reliable, and use less tokens than browser navi
 - Use real newlines for line breaks, not escaped `\n`.
 
 ### Google Slides
-- Use `SlidesCreate` to create new presentations with optional initial slides (each with `title` and `body`).
-- Use `SlidesRead` to read all slide content as plain text.
-- Use `SlidesUpdate` to add slides (`addSlide`), find-and-replace text (`replaceText` + `replacementText`), or delete slides by index (`deleteSlideIndex`).
+- Use `SlidesRead` to read presentations — returns text, images, tables, backgrounds, and speaker notes.
+- Use `SlidesCreate` to create presentations. Each slide supports:
+  - `title`, `body` — text content
+  - `layout` — "TITLE_AND_BODY" (default if title+body), "TITLE_ONLY", "BLANK", etc. Auto-detected if omitted.
+  - `backgroundColor` — hex color (e.g. "#1a1a2e")
+  - `backgroundImageUrl` — URL stretched to fill slide background
+  - `imageUrl` — image placed on slide; position with `imageX`, `imageY`, `imageWidth`, `imageHeight` (all % 0-100)
+  - `notes` — speaker notes
+- Use `SlidesUpdate` for modifications. All operations are optional and combinable:
+  - `replaceText` + `replacementText` — find & replace across all slides
+  - `addSlide` — add slide at end (same fields as SlidesCreate slides)
+  - `deleteSlideIndex` — delete by 0-based index
+  - `insertImage` — `{slideIndex, imageUrl, x?, y?, width?, height?}` — image on existing slide (% positions)
+  - `setBackground` — `{slideIndex, color?, imageUrl?}` — set slide background
+  - `addShape` — `{slideIndex, shapeType?, x, y, width, height, fillColor?, borderColor?, text?}` — add RECTANGLE, TEXT_BOX, ELLIPSE, etc.
+  - `addTable` — `{slideIndex, rows, columns, data?, x?, y?, width?, height?}` — table with optional 2D cell data
+  - `updateTextStyle` — `{slideIndex, bold?, italic?, underline?, fontFamily?, fontSize?, color?}` — style all text on a slide
+- All positions/sizes are percentages (0-100) relative to slide dimensions. Colors are hex strings (e.g. "#FF0000").
 
 If a tool returns "Google not configured", tell the user to run: `lukan google auth`

@@ -250,6 +250,138 @@ function stripTzSuffix(dt) {
   return dt.replace(/Z$/i, "").replace(/[+-]\d{2}:\d{2}$/, "");
 }
 
+// ── Slides helpers ──────────────────────────────────────────────────────
+
+const SLIDE_WIDTH_EMU = 9144000;
+const SLIDE_HEIGHT_EMU = 5143500;
+
+function hexToRgb(hex) {
+  const h = hex.replace(/^#/, "");
+  const n = parseInt(h, 16);
+  return {
+    red: ((n >> 16) & 255) / 255,
+    green: ((n >> 8) & 255) / 255,
+    blue: (n & 255) / 255,
+  };
+}
+
+function percentToEmu(pct, totalEmu) {
+  return Math.round((pct / 100) * totalEmu);
+}
+
+function buildTransform(x, y, width, height) {
+  return {
+    size: {
+      width: { magnitude: percentToEmu(width, SLIDE_WIDTH_EMU), unit: "EMU" },
+      height: { magnitude: percentToEmu(height, SLIDE_HEIGHT_EMU), unit: "EMU" },
+    },
+    transform: {
+      scaleX: 1,
+      scaleY: 1,
+      translateX: percentToEmu(x, SLIDE_WIDTH_EMU),
+      translateY: percentToEmu(y, SLIDE_HEIGHT_EMU),
+      unit: "EMU",
+    },
+  };
+}
+
+function buildSlideRequests(slideData, slideId, ts) {
+  const requests = [];
+  const titleId = `title_${ts}`;
+  const bodyId = `body_${ts}`;
+
+  // Auto-detect layout
+  let layout = slideData.layout;
+  if (!layout) {
+    if (slideData.title && slideData.body) layout = "TITLE_AND_BODY";
+    else if (slideData.title) layout = "TITLE_ONLY";
+    else layout = "BLANK";
+  }
+
+  const createReq = {
+    createSlide: {
+      objectId: slideId,
+      slideLayoutReference: { predefinedLayout: layout },
+    },
+  };
+
+  if (layout === "TITLE_AND_BODY") {
+    createReq.createSlide.placeholderIdMappings = [
+      { layoutPlaceholder: { type: "TITLE", index: 0 }, objectId: titleId },
+      { layoutPlaceholder: { type: "BODY", index: 0 }, objectId: bodyId },
+    ];
+  } else if (layout === "TITLE_ONLY") {
+    createReq.createSlide.placeholderIdMappings = [
+      { layoutPlaceholder: { type: "TITLE", index: 0 }, objectId: titleId },
+    ];
+  }
+
+  requests.push(createReq);
+
+  // Insert title text
+  if (slideData.title && layout !== "BLANK") {
+    requests.push({
+      insertText: { objectId: titleId, text: slideData.title, insertionIndex: 0 },
+    });
+  }
+
+  // Insert body text
+  if (slideData.body && layout === "TITLE_AND_BODY") {
+    requests.push({
+      insertText: { objectId: bodyId, text: slideData.body, insertionIndex: 0 },
+    });
+  }
+
+  // Background color
+  if (slideData.backgroundColor) {
+    requests.push({
+      updatePageProperties: {
+        objectId: slideId,
+        pageProperties: {
+          pageBackgroundFill: {
+            solidFill: { color: { rgbColor: hexToRgb(slideData.backgroundColor) } },
+          },
+        },
+        fields: "pageBackgroundFill.solidFill.color",
+      },
+    });
+  }
+
+  // Background image
+  if (slideData.backgroundImageUrl) {
+    requests.push({
+      updatePageProperties: {
+        objectId: slideId,
+        pageProperties: {
+          pageBackgroundFill: {
+            stretchedPictureFill: { contentUrl: slideData.backgroundImageUrl },
+          },
+        },
+        fields: "pageBackgroundFill.stretchedPictureFill",
+      },
+    });
+  }
+
+  // Image element
+  if (slideData.imageUrl) {
+    const imgX = slideData.imageX ?? 10;
+    const imgY = slideData.imageY ?? 10;
+    const imgW = slideData.imageWidth ?? 80;
+    const imgH = slideData.imageHeight ?? 80;
+    requests.push({
+      createImage: {
+        url: slideData.imageUrl,
+        elementProperties: {
+          pageObjectId: slideId,
+          ...buildTransform(imgX, imgY, imgW, imgH),
+        },
+      },
+    });
+  }
+
+  return requests;
+}
+
 // ── Tool handlers ───────────────────────────────────────────────────────
 
 const handlers = {
@@ -479,18 +611,70 @@ const handlers = {
 
     for (let i = 0; i < slides.length; i++) {
       const slide = slides[i];
-      let slideText = "";
+      lines.push(`--- Slide ${i + 1} ---`);
 
+      // Background
+      const bg = slide.slideProperties?.pageBackgroundFill;
+      if (bg?.solidFill?.color?.rgbColor) {
+        const c = bg.solidFill.color.rgbColor;
+        const toHex = (v) => Math.round((v || 0) * 255).toString(16).padStart(2, "0");
+        lines.push(`Background: #${toHex(c.red)}${toHex(c.green)}${toHex(c.blue)}`);
+      } else if (bg?.stretchedPictureFill?.contentUrl) {
+        lines.push(`Background image: ${bg.stretchedPictureFill.contentUrl}`);
+      }
+
+      // Page elements
       for (const el of slide.pageElements || []) {
+        // Text from shapes
         if (el.shape?.text?.textElements) {
+          let text = "";
           for (const te of el.shape.text.textElements) {
-            if (te.textRun?.content) slideText += te.textRun.content;
+            if (te.textRun?.content) text += te.textRun.content;
+          }
+          const trimmed = text.trim();
+          if (trimmed) lines.push(trimmed);
+        }
+
+        // Images
+        if (el.image?.sourceUrl) {
+          lines.push(`[Image: ${el.image.sourceUrl}]`);
+        } else if (el.image?.contentUrl) {
+          lines.push(`[Image: ${el.image.contentUrl}]`);
+        }
+
+        // Tables
+        if (el.table) {
+          const rows = el.table.rows || 0;
+          const cols = el.table.columns || 0;
+          lines.push(`[Table: ${rows}x${cols}]`);
+          for (const row of el.table.tableRows || []) {
+            const cells = (row.tableCells || []).map((cell) => {
+              let cellText = "";
+              for (const te of cell.text?.textElements || []) {
+                if (te.textRun?.content) cellText += te.textRun.content;
+              }
+              return cellText.trim();
+            });
+            lines.push(`  | ${cells.join(" | ")} |`);
           }
         }
       }
 
-      lines.push(`--- Slide ${i + 1} ---`);
-      lines.push(slideText.trim() || "(empty slide)");
+      // Speaker notes
+      const notesPage = slide.slideProperties?.notesPage;
+      if (notesPage?.pageElements) {
+        for (const el of notesPage.pageElements) {
+          if (el.shape?.shapeType === "TEXT_BOX" && el.shape?.text?.textElements) {
+            let notesText = "";
+            for (const te of el.shape.text.textElements) {
+              if (te.textRun?.content) notesText += te.textRun.content;
+            }
+            const trimmed = notesText.trim();
+            if (trimmed) lines.push(`Notes: ${trimmed}`);
+          }
+        }
+      }
+
       lines.push("");
     }
 
@@ -508,37 +692,14 @@ const handlers = {
     if (slides && slides.length > 0) {
       const batchUrl = `${baseUrl}/${presId}:batchUpdate`;
 
+      // Phase 1: Create all slides with content, backgrounds, images
       for (let i = 0; i < slides.length; i++) {
         const slideData = slides[i];
-        const slideId = `slide_${i}`;
-        const titleId = `title_${i}`;
-        const bodyId = `body_${i}`;
+        const ts = `${Date.now()}_${i}`;
+        const slideId = `slide_${ts}`;
 
-        const requests = [
-          {
-            createSlide: {
-              objectId: slideId,
-              insertionIndex: i + 1,
-              slideLayoutReference: { predefinedLayout: "TITLE_AND_BODY" },
-              placeholderIdMappings: [
-                { layoutPlaceholder: { type: "TITLE", index: 0 }, objectId: titleId },
-                { layoutPlaceholder: { type: "BODY", index: 0 }, objectId: bodyId },
-              ],
-            },
-          },
-        ];
-
-        if (slideData.title) {
-          requests.push({
-            insertText: { objectId: titleId, text: slideData.title, insertionIndex: 0 },
-          });
-        }
-        if (slideData.body) {
-          requests.push({
-            insertText: { objectId: bodyId, text: slideData.body, insertionIndex: 0 },
-          });
-        }
-
+        const requests = buildSlideRequests(slideData, slideId, ts);
+        requests[0].createSlide.insertionIndex = i + 1;
         await googlePost(batchUrl, { requests }, token);
       }
 
@@ -553,9 +714,33 @@ const handlers = {
           // Default slide may already be gone
         }
       }
+
+      // Phase 2: Add speaker notes (requires fetching created slide objectIds for notesPage)
+      const slidesWithNotes = slides
+        .map((s, i) => (s.notes ? { index: i, notes: s.notes } : null))
+        .filter(Boolean);
+
+      if (slidesWithNotes.length > 0) {
+        const updated = await googleGet(`${baseUrl}/${presId}`, token);
+        for (const { index, notes } of slidesWithNotes) {
+          const slide = updated.slides?.[index];
+          if (!slide) continue;
+          const notesPage = slide.slideProperties?.notesPage;
+          if (!notesPage?.pageElements) continue;
+          const notesBox = notesPage.pageElements.find(
+            (el) => el.shape?.shapeType === "TEXT_BOX" && el.shape?.placeholder?.type === "BODY"
+          );
+          if (!notesBox) continue;
+          await googlePost(batchUrl, {
+            requests: [
+              { insertText: { objectId: notesBox.objectId, text: notes, insertionIndex: 0 } },
+            ],
+          }, token);
+        }
+      }
     }
 
-    return `Created presentation: ${title}\nID: ${presId}\nURL: https://docs.google.com/presentation/d/${presId}/edit`;
+    return `Created presentation: ${title}\nID: ${presId}\nSlides: ${slides?.length || 0}\nURL: https://docs.google.com/presentation/d/${presId}/edit`;
   },
 
   async SlidesUpdate(input, token) {
@@ -563,6 +748,16 @@ const handlers = {
     const baseUrl = `https://slides.googleapis.com/v1/presentations/${presentationId}`;
     const batchUrl = `${baseUrl}:batchUpdate`;
     const actions = [];
+
+    // Helper to get slide objectId by index
+    const getSlideId = async (idx) => {
+      const pres = await googleGet(baseUrl, token);
+      const slides = pres.slides || [];
+      if (idx < 0 || idx >= slides.length) {
+        throw new Error(`Slide index ${idx} out of range (0-${slides.length - 1})`);
+      }
+      return slides[idx].objectId;
+    };
 
     // Replace text across all slides
     if (input.replaceText && input.replacementText !== undefined) {
@@ -579,58 +774,249 @@ const handlers = {
       actions.push(`Replaced "${input.replaceText}" with "${input.replacementText}"`);
     }
 
-    // Add a new slide
+    // Add a new slide (uses buildSlideRequests for full feature support)
     if (input.addSlide) {
       const pres = await googleGet(baseUrl, token);
       const insertionIndex = (pres.slides || []).length;
-      const slideId = `added_slide_${Date.now()}`;
-      const titleId = `added_title_${Date.now()}`;
-      const bodyId = `added_body_${Date.now()}`;
+      const ts = `add_${Date.now()}`;
+      const slideId = `slide_${ts}`;
 
-      const requests = [
-        {
-          createSlide: {
-            objectId: slideId,
-            insertionIndex,
-            slideLayoutReference: { predefinedLayout: "TITLE_AND_BODY" },
-            placeholderIdMappings: [
-              { layoutPlaceholder: { type: "TITLE", index: 0 }, objectId: titleId },
-              { layoutPlaceholder: { type: "BODY", index: 0 }, objectId: bodyId },
-            ],
-          },
-        },
-      ];
-
-      if (input.addSlide.title) {
-        requests.push({
-          insertText: { objectId: titleId, text: input.addSlide.title, insertionIndex: 0 },
-        });
-      }
-      if (input.addSlide.body) {
-        requests.push({
-          insertText: { objectId: bodyId, text: input.addSlide.body, insertionIndex: 0 },
-        });
-      }
-
+      const requests = buildSlideRequests(input.addSlide, slideId, ts);
+      requests[0].createSlide.insertionIndex = insertionIndex;
       await googlePost(batchUrl, { requests }, token);
+
+      // Speaker notes for added slide
+      if (input.addSlide.notes) {
+        const updated = await googleGet(baseUrl, token);
+        const slide = updated.slides?.[insertionIndex];
+        const notesBox = slide?.slideProperties?.notesPage?.pageElements?.find(
+          (el) => el.shape?.shapeType === "TEXT_BOX" && el.shape?.placeholder?.type === "BODY"
+        );
+        if (notesBox) {
+          await googlePost(batchUrl, {
+            requests: [
+              { insertText: { objectId: notesBox.objectId, text: input.addSlide.notes, insertionIndex: 0 } },
+            ],
+          }, token);
+        }
+      }
+
       actions.push(`Added slide "${input.addSlide.title || "(untitled)"}"`);
     }
 
     // Delete a slide by index
     if (input.deleteSlideIndex !== undefined) {
-      const pres = await googleGet(baseUrl, token);
-      const slides = pres.slides || [];
-      const idx = input.deleteSlideIndex;
-
-      if (idx < 0 || idx >= slides.length) {
-        throw new Error(`Slide index ${idx} out of range (0-${slides.length - 1})`);
-      }
-
-      const slideObjectId = slides[idx].objectId;
+      const slideObjectId = await getSlideId(input.deleteSlideIndex);
       await googlePost(batchUrl, {
         requests: [{ deleteObject: { objectId: slideObjectId } }],
       }, token);
-      actions.push(`Deleted slide at index ${idx}`);
+      actions.push(`Deleted slide at index ${input.deleteSlideIndex}`);
+    }
+
+    // Insert image on existing slide
+    if (input.insertImage) {
+      const { slideIndex, imageUrl, x, y, width, height } = input.insertImage;
+      const pageId = await getSlideId(slideIndex);
+      const imgX = x ?? 10;
+      const imgY = y ?? 10;
+      const imgW = width ?? 80;
+      const imgH = height ?? 80;
+      await googlePost(batchUrl, {
+        requests: [
+          {
+            createImage: {
+              url: imageUrl,
+              elementProperties: {
+                pageObjectId: pageId,
+                ...buildTransform(imgX, imgY, imgW, imgH),
+              },
+            },
+          },
+        ],
+      }, token);
+      actions.push(`Inserted image on slide ${slideIndex}`);
+    }
+
+    // Set slide background
+    if (input.setBackground) {
+      const { slideIndex, color, imageUrl } = input.setBackground;
+      const pageId = await getSlideId(slideIndex);
+      const props = {};
+      let fields;
+      if (imageUrl) {
+        props.pageBackgroundFill = {
+          stretchedPictureFill: { contentUrl: imageUrl },
+        };
+        fields = "pageBackgroundFill.stretchedPictureFill";
+      } else if (color) {
+        props.pageBackgroundFill = {
+          solidFill: { color: { rgbColor: hexToRgb(color) } },
+        };
+        fields = "pageBackgroundFill.solidFill.color";
+      }
+      if (fields) {
+        await googlePost(batchUrl, {
+          requests: [{ updatePageProperties: { objectId: pageId, pageProperties: props, fields } }],
+        }, token);
+        actions.push(`Set background on slide ${slideIndex}`);
+      }
+    }
+
+    // Add shape to a slide
+    if (input.addShape) {
+      const { slideIndex, shapeType, x, y, width, height, fillColor, borderColor, text } = input.addShape;
+      const pageId = await getSlideId(slideIndex);
+      const shapeId = `shape_${Date.now()}`;
+      const requests = [
+        {
+          createShape: {
+            objectId: shapeId,
+            shapeType: shapeType || "RECTANGLE",
+            elementProperties: {
+              pageObjectId: pageId,
+              ...buildTransform(x, y, width, height),
+            },
+          },
+        },
+      ];
+
+      if (fillColor) {
+        requests.push({
+          updateShapeProperties: {
+            objectId: shapeId,
+            shapeProperties: {
+              shapeBackgroundFill: {
+                solidFill: { color: { rgbColor: hexToRgb(fillColor) } },
+              },
+            },
+            fields: "shapeBackgroundFill.solidFill.color",
+          },
+        });
+      }
+      if (borderColor) {
+        requests.push({
+          updateShapeProperties: {
+            objectId: shapeId,
+            shapeProperties: {
+              outline: {
+                outlineFill: {
+                  solidFill: { color: { rgbColor: hexToRgb(borderColor) } },
+                },
+              },
+            },
+            fields: "outline.outlineFill.solidFill.color",
+          },
+        });
+      }
+      if (text) {
+        requests.push({
+          insertText: { objectId: shapeId, text, insertionIndex: 0 },
+        });
+      }
+
+      await googlePost(batchUrl, { requests }, token);
+      actions.push(`Added ${shapeType || "RECTANGLE"} shape on slide ${slideIndex}`);
+    }
+
+    // Add table to a slide
+    if (input.addTable) {
+      const { slideIndex, rows, columns, data, x, y, width, height } = input.addTable;
+      const pageId = await getSlideId(slideIndex);
+      const tableId = `table_${Date.now()}`;
+      const tableReq = {
+        createTable: {
+          objectId: tableId,
+          rows,
+          columns,
+          elementProperties: { pageObjectId: pageId },
+        },
+      };
+
+      // Position if specified
+      if (x !== undefined && y !== undefined && width !== undefined && height !== undefined) {
+        tableReq.createTable.elementProperties = {
+          pageObjectId: pageId,
+          ...buildTransform(x, y, width, height),
+        };
+      }
+
+      const requests = [tableReq];
+
+      // Fill cell data (2D array of strings)
+      if (data && Array.isArray(data)) {
+        for (let r = 0; r < data.length && r < rows; r++) {
+          for (let c = 0; c < (data[r]?.length || 0) && c < columns; c++) {
+            const cellText = String(data[r][c] ?? "");
+            if (cellText) {
+              requests.push({
+                insertText: {
+                  objectId: tableId,
+                  cellLocation: { rowIndex: r, columnIndex: c },
+                  text: cellText,
+                  insertionIndex: 0,
+                },
+              });
+            }
+          }
+        }
+      }
+
+      await googlePost(batchUrl, { requests }, token);
+      actions.push(`Added ${rows}x${columns} table on slide ${slideIndex}`);
+    }
+
+    // Update text style on a slide
+    if (input.updateTextStyle) {
+      const { slideIndex, bold, italic, underline, fontFamily, fontSize, color } = input.updateTextStyle;
+      const pres = await googleGet(baseUrl, token);
+      const slides = pres.slides || [];
+      const idx = slideIndex;
+      if (idx < 0 || idx >= slides.length) {
+        throw new Error(`Slide index ${idx} out of range (0-${slides.length - 1})`);
+      }
+      const slide = slides[idx];
+      const requests = [];
+
+      for (const el of slide.pageElements || []) {
+        if (!el.shape?.text?.textElements) continue;
+        // Calculate total text length
+        let textLen = 0;
+        for (const te of el.shape.text.textElements) {
+          if (te.textRun?.content) textLen += te.textRun.content.length;
+        }
+        if (textLen === 0) continue;
+
+        const style = {};
+        const fields = [];
+        if (bold !== undefined) { style.bold = bold; fields.push("bold"); }
+        if (italic !== undefined) { style.italic = italic; fields.push("italic"); }
+        if (underline !== undefined) { style.underline = underline; fields.push("underline"); }
+        if (fontFamily) { style.fontFamily = fontFamily; fields.push("fontFamily"); }
+        if (fontSize) {
+          style.fontSize = { magnitude: fontSize, unit: "PT" };
+          fields.push("fontSize");
+        }
+        if (color) {
+          style.foregroundColor = { opaqueColor: { rgbColor: hexToRgb(color) } };
+          fields.push("foregroundColor");
+        }
+
+        if (fields.length > 0) {
+          requests.push({
+            updateTextStyle: {
+              objectId: el.objectId,
+              textRange: { type: "ALL" },
+              style,
+              fields: fields.join(","),
+            },
+          });
+        }
+      }
+
+      if (requests.length > 0) {
+        await googlePost(batchUrl, { requests }, token);
+        actions.push(`Updated text style on slide ${slideIndex}`);
+      }
     }
 
     if (actions.length === 0) return "No update operations specified.";

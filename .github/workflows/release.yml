@@ -59,19 +59,39 @@ jobs:
       - name: Build release
         run: make release
 
-      - name: Generate release tag
-        id: tag
+      - name: Generate release info
+        id: release
         run: |
           VERSION="v0.2.0-$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+          # Generate changelog from commits since last tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log "$PREV_TAG"..HEAD --pretty=format:"- %s" --no-merges | grep -v "^- style:" | grep -v "^- Merge")
+          else
+            CHANGES=$(git log --pretty=format:"- %s" -20 --no-merges | grep -v "^- style:" | grep -v "^- Merge")
+          fi
+
+          # Write body to file (avoids quoting issues)
+          cat > /tmp/release-body.md << ENDOFBODY
+          ## Changes
+
+          $CHANGES
+
+          ## Assets
+          - \`lukan-linux-amd64\` — CLI binary
+          - \`lukan-desktop-linux-amd64\` — Desktop app binary
+          - Plugin archives (\`.tar.gz\`)
+          ENDOFBODY
+
       - name: Create GitHub prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.version }}
-          name: ${{ steps.tag.outputs.version }}
+          tag_name: ${{ steps.release.outputs.version }}
+          name: ${{ steps.release.outputs.version }}
           prerelease: true
-          generate_release_notes: true
+          body_path: /tmp/release-body.md
           files: |
             dist/lukan-linux-amd64
             dist/lukan-desktop-linux-amd64

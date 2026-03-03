@@ -6,7 +6,7 @@ export function DiffView({ diff }: DiffViewProps) {
   const lines = diff.split("\n");
 
   return (
-    <div className="my-2 max-h-72 rounded-md overflow-auto border border-white/5">
+    <div className="my-1.5 mx-2 max-h-72 rounded-md overflow-auto bg-white/[0.02]">
       <pre className="text-xs font-mono">
         {lines.map((line, i) => {
           let cls = "px-2 whitespace-pre";

@@ -94,25 +94,25 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
     ? buildCompactDiff(oldText, newText) : null;
 
   return (
-    <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/60 overflow-hidden">
+    <div className="rounded-lg bg-white/[0.02] overflow-hidden">
       {/* Header with tool info + Approve / Deny */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800/50 bg-zinc-800/60">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs font-semibold text-blue-400">{tool.name}</span>
+          <span className="text-xs font-medium text-zinc-300">{tool.name}</span>
           {filePath && <span className="text-[11px] text-zinc-500 font-mono truncate">{filePath}</span>}
           {isBash && command && <span className="text-[11px] text-zinc-500 font-mono truncate">{command.slice(0, 80)}</span>}
         </div>
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => onApprove(allIds)}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-zinc-100 text-zinc-900 hover:bg-zinc-200 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors"
           >
             <Check className="h-3 w-3" />
             Approve
           </button>
           <button
             onClick={onDenyAll}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-red-400/70 hover:text-red-300 hover:bg-red-500/10 transition-colors"
           >
             <X className="h-3 w-3" />
             Deny
@@ -129,7 +129,7 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
                 if (line.type === "sep") {
                   return (
                     <tr key={i}>
-                      <td className="px-2 py-0.5 text-right text-zinc-700 select-none w-8 border-r border-zinc-800/50">
+                      <td className="px-2 py-0.5 text-right text-zinc-700 select-none w-8 border-r border-white/5">
                         ···
                       </td>
                       <td className="px-3 py-0.5 text-zinc-700 italic">
@@ -152,7 +152,7 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
                 }
                 return (
                   <tr key={i} className={rowCls}>
-                    <td className="px-2 py-0 text-right text-zinc-600 select-none w-8 border-r border-zinc-800/50 text-[10px]">
+                    <td className="px-2 py-0 text-right text-zinc-600 select-none w-8 border-r border-white/5 text-[10px]">
                       {line.lineNo}
                     </td>
                     <td className={`px-3 py-0 whitespace-pre ${textCls}`}>
@@ -188,10 +188,10 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
       )}
 
       {/* Always approve footer */}
-      <div className="flex justify-end px-3 py-1.5 border-t border-zinc-800/50">
+      <div className="flex justify-end px-3 py-1.5 border-t border-white/5">
         <button
           onClick={() => onAlwaysAllow(allIds, tools)}
-          className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors"
         >
           Always approve edits in this project
         </button>

@@ -105,74 +105,59 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
     }
   };
 
-  const borderColor = tool.isRunning
-    ? isAgent
-      ? "border-purple-500/60"
-      : "border-yellow-500/60"
-    : tool.isError
-      ? "border-red-500/60"
-      : tool.isHistorical && !tool.content && !tool.diff
-        ? "border-zinc-600"
-        : "border-green-500/60";
-
-  const statusBadge = tool.isRunning ? (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">
-      <Loader2 className="h-3 w-3 animate-spin" />
-      {isAgent ? "working" : "running"}
-    </span>
+  const statusIndicator = tool.isRunning ? (
+    <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
   ) : tool.isError ? (
-    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/10 text-red-400 border border-red-500/20">
-      error
-    </span>
+    <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+  ) : tool.isHistorical && !tool.content && !tool.diff ? (
+    <span className="h-1.5 w-1.5 rounded-full bg-zinc-600" />
   ) : (
-    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-500/10 text-green-400 border border-green-500/20">
-      done
-    </span>
+    <span className="h-1.5 w-1.5 rounded-full bg-green-500/50" />
   );
 
   return (
-    <div className={`my-1.5 rounded-lg border-l-2 bg-zinc-900/50 px-3 py-2 text-sm ${borderColor}`}>
+    <div className="my-1 rounded-md text-sm">
       {/* Header */}
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 w-full text-left cursor-pointer"
+        className="flex items-center gap-2 w-full text-left cursor-pointer rounded-md px-2 py-1.5 hover:bg-white/5 transition-colors"
       >
-        <span className="text-zinc-500 shrink-0">
+        <span className="text-zinc-600 shrink-0">
           {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         </span>
-        <span className={`text-zinc-500 shrink-0 ${isAgent ? "text-purple-400" : ""}`}>
+        <span className={`shrink-0 ${isAgent ? "text-purple-400/70" : "text-zinc-500"}`}>
           {icon}
         </span>
-        <span className={`text-xs font-semibold ${isAgent ? "text-purple-300" : "text-zinc-200"}`}>
+        <span className={`text-xs font-medium ${isAgent ? "text-purple-300/80" : "text-zinc-400"}`}>
           {displayName}
         </span>
         {summary && (
-          <span className="text-xs text-zinc-500 truncate font-mono flex-1 min-w-0">{summary}</span>
+          <span className="text-xs text-zinc-600 truncate font-mono flex-1 min-w-0">{summary}</span>
         )}
         <span className="shrink-0 ml-auto flex items-center gap-1.5">
           {isBashRunning && !sendingToBg && tool.content && elapsed >= 5000 && (
             <button
               onClick={handleSendToBackground}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-zinc-100 text-zinc-900 hover:bg-zinc-200 transition-colors"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors"
             >
-              <ArrowUpRight className="h-3 w-3" />
+              <ArrowUpRight className="h-2.5 w-2.5" />
               Background
             </button>
           )}
-          {statusBadge}
+          {statusIndicator}
         </span>
       </button>
 
       {/* Live progress for agents (Explore/SubAgent) — always visible while running */}
       {isAgent && tool.isRunning && tool.content && (
-        <pre className="mt-2 rounded-md bg-black/30 p-2.5 text-[11px] text-purple-400/70 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto border border-purple-500/10">
+        <pre className="mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] text-purple-400/50 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
           {tool.content}
         </pre>
       )}
 
       {/* Collapsible content */}
       {open && tool.rawInput && !isAgent && (
-        <pre className="mt-2 rounded-md bg-black/30 p-2.5 text-[11px] text-zinc-400 font-mono whitespace-pre-wrap max-h-36 overflow-y-auto border border-white/5">
+        <pre className="mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap max-h-36 overflow-y-auto">
           {JSON.stringify(tool.rawInput, null, 2)}
         </pre>
       )}
@@ -182,7 +167,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
 
       {/* Image result */}
       {tool.image && (
-        <div className="mt-2 rounded-md overflow-hidden border border-white/5">
+        <div className="mt-1.5 mx-2 rounded-md overflow-hidden">
           <img src={tool.image} alt="Tool result"
                className="max-w-full max-h-96 object-contain" />
         </div>
@@ -191,8 +176,8 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
       {/* Text result */}
       {!tool.isRunning && tool.content && !tool.diff && (
         <pre
-          className={`mt-2 rounded-md bg-black/30 p-2.5 text-[11px] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto border border-white/5 ${
-            tool.isError ? "text-red-400" : "text-zinc-500"
+          className={`mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto ${
+            tool.isError ? "text-red-400/70" : "text-zinc-600"
           }`}
         >
           {tool.content.length > 500 ? tool.content.slice(0, 500) + "..." : tool.content}

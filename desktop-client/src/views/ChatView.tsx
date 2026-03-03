@@ -170,7 +170,7 @@ export default function ChatView() {
                             return (
                               <div
                                 key={block.id}
-                                className="rounded-lg bg-zinc-900/30 border border-zinc-800/50 px-3 py-2 text-xs text-zinc-500 italic max-h-48 overflow-y-auto whitespace-pre-wrap break-words"
+                                className="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2 text-xs text-zinc-500 italic max-h-48 overflow-y-auto whitespace-pre-wrap break-words"
                                 ref={(el) => {
                                   if (el) el.scrollTop = el.scrollHeight;
                                 }}
@@ -247,7 +247,7 @@ export default function ChatView() {
               </div>
             )}
 
-            <div ref={scrollRef} className="h-4" />
+            <div ref={scrollRef} className="h-14" />
           </div>
 
           <ChatInput

@@ -23,8 +23,7 @@ export function StatusBar({
 
   return (
     <div
-      className="flex items-center justify-between px-4 py-2 shrink-0 border-b"
-      style={{ borderColor: "rgba(60, 60, 60, 0.4)", background: "rgba(10, 10, 10, 0.9)" }}
+      className="flex items-center justify-between px-4 py-2 shrink-0 border-b border-white/5 bg-zinc-950"
     >
       {/* Left: spacer */}
       <div />
@@ -43,7 +42,7 @@ export function StatusBar({
         )}
         <button
           onClick={onNewSession}
-          className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+          className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-white/5 transition-colors"
           title="New Chat"
         >
           <Plus className="h-3.5 w-3.5" />

@@ -102,6 +102,9 @@ export function useChat(tabId: string) {
     tasks: [],
   });
 
+  const modelNameRef = useRef(state.modelName);
+  modelNameRef.current = state.modelName;
+
   const blocksRef = useRef<StreamingBlock[]>([]);
   const blockIdCounter = useRef(0);
   const renderTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -375,12 +378,18 @@ export function useChat(tabId: string) {
   useEffect(() => {
     const handleProviderChanged = async () => {
       try {
-        const init = await api.initializeChat();
-        // Only update provider/model name — session and history are preserved
+        // Tell the backend to hot-swap provider/model (important for desktop/Tauri)
+        api.initializeChat().catch(() => {});
+        // Fetch fresh provider list for accurate UI state (initializeChat may return stale cache)
+        const providers = await api.listProviders();
+        const active = providers.find((p) => p.active);
+        const providerName = active?.name ?? "";
+        const modelName = active?.currentModel ?? "";
         setState((s) => ({
           ...s,
-          providerName: init.providerName,
-          modelName: init.modelName,
+          providerName,
+          modelName,
+          error: modelName ? null : s.error,
         }));
       } catch {
         // ignore
@@ -393,6 +402,11 @@ export function useChat(tabId: string) {
   // ── Actions (all scoped to tabId) ──────────────────────────────────
 
   const sendMessage = useCallback((content: string) => {
+    // Block sending when no model is configured
+    if (!modelNameRef.current) {
+      setState((s) => ({ ...s, error: "No model selected. Go to Settings → Providers to pick a model." }));
+      return;
+    }
     // Clear any leftover streaming blocks (e.g. from a cancelled turn)
     blocksRef.current = [];
     blockIdCounter.current = 0;

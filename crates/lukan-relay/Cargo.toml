@@ -30,3 +30,4 @@ base64.workspace = true
 urlencoding.workspace = true
 url.workspace = true
 rand.workspace = true
+subtle = "2"

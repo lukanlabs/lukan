@@ -32,8 +32,8 @@ pub async fn e2e_rest_tunnel_handler(
     });
 
     let claims = match token {
-        Some(t) => auth::verify_jwt(&state.browser_jwt_secret(), &t)
-            .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t))
+        Some(t) => auth::verify_jwt(&state.browser_jwt_secret(), &t, &state.public_url)
+            .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t, &state.public_url))
             .map_err(|_| ()),
         None => Err(()),
     };
@@ -119,8 +119,8 @@ pub async fn rest_tunnel_handler(
     let claims = match token {
         Some(t) => {
             // Try browser secret first (cookie), then base secret (daemon)
-            auth::verify_jwt(&state.browser_jwt_secret(), &t)
-                .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t))
+            auth::verify_jwt(&state.browser_jwt_secret(), &t, &state.public_url)
+                .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t, &state.public_url))
                 .map_err(|_| ())
         }
         None => Err(()),

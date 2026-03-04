@@ -7,6 +7,7 @@ mod static_files;
 mod ws_client;
 mod ws_daemon;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
@@ -16,7 +17,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use tower_http::cors::CorsLayer;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::state::{RelayState, SharedState};
 
@@ -33,8 +34,19 @@ async fn main() -> anyhow::Result<()> {
 
     let state = Arc::new(RelayState::new());
 
+    // Dev mode warnings
     if state.dev_mode {
-        info!("DEV MODE enabled — /auth/dev endpoints are active (do NOT use in production)");
+        warn!("========================================================");
+        warn!("  WARNING: DEV MODE is enabled!");
+        warn!("  /auth/dev endpoints are active — do NOT use in production");
+        warn!("========================================================");
+        if state.dev_secret.is_none() {
+            warn!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            warn!("  CRITICAL: No RELAY_DEV_SECRET set!");
+            warn!("  Anyone can obtain tokens without authentication.");
+            warn!("  Set RELAY_DEV_SECRET to require a secret for dev login.");
+            warn!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        }
     }
     info!(
         "Boot ID: {} (browser tokens from previous boots are now invalid)",
@@ -53,7 +65,11 @@ async fn main() -> anyhow::Result<()> {
     info!("Public URL: {}", state.public_url);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, router).await?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -69,6 +85,7 @@ fn create_router(state: SharedState) -> Router {
         .route("/auth/callback", get(auth::google_callback))
         .route("/auth/status", get(auth::auth_status))
         .route("/auth/logout", post(auth::auth_logout))
+        .route("/auth/exchange", post(auth::auth_code_exchange))
         // Dev auth (only active when RELAY_DEV_MODE=true)
         .route("/auth/dev", get(auth::dev_login).post(auth::dev_login_post))
         .route("/auth/dev/token", post(auth::dev_token))
@@ -87,7 +104,7 @@ fn create_router(state: SharedState) -> Router {
         .route("/api/{*path}", any(rest_tunnel::rest_tunnel_handler))
         // Health check
         .route("/health", get(health))
-        // Status (shows connected daemons/browsers)
+        // Status (requires auth)
         .route("/status", get(status))
         // Static files (SPA fallback)
         .fallback(get(static_files::serve_static))
@@ -100,8 +117,17 @@ async fn health() -> &'static str {
     "ok"
 }
 
-/// GET /status — relay connection overview (for debugging)
-async fn status(State(state): State<SharedState>) -> impl IntoResponse {
+/// GET /status — relay connection overview (requires browser cookie auth)
+async fn status(State(state): State<SharedState>, headers: axum::http::HeaderMap) -> Response {
+    // Require browser cookie authentication
+    let token = match auth::extract_token_from_cookie(&headers) {
+        Some(t) => t,
+        None => return (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
+    };
+    if auth::verify_jwt(&state.browser_jwt_secret(), &token, &state.public_url).is_err() {
+        return (StatusCode::UNAUTHORIZED, "Invalid or expired session").into_response();
+    }
+
     let daemon_count = state.daemon_connections.len();
     let browser_count = state.browser_connections.len();
     let pending_rest = state.pending_rest.len();
@@ -111,6 +137,7 @@ async fn status(State(state): State<SharedState>) -> impl IntoResponse {
         "browsers": browser_count,
         "pendingRestRequests": pending_rest,
     }))
+    .into_response()
 }
 
 /// WebSocket upgrade for browser clients.
@@ -125,7 +152,7 @@ async fn ws_client_upgrade(
         None => return (StatusCode::UNAUTHORIZED, "Missing authentication cookie").into_response(),
     };
 
-    let claims = match auth::verify_jwt(&state.browser_jwt_secret(), &token) {
+    let claims = match auth::verify_jwt(&state.browser_jwt_secret(), &token, &state.public_url) {
         Ok(c) => c,
         Err(e) => return (StatusCode::UNAUTHORIZED, format!("Invalid token: {e}")).into_response(),
     };
@@ -146,7 +173,7 @@ async fn ws_daemon_upgrade(
     };
 
     // Daemon tokens use base jwt_secret (survive relay restarts)
-    let claims = match auth::verify_jwt(&state.jwt_secret, &token) {
+    let claims = match auth::verify_jwt(&state.jwt_secret, &token, &state.public_url) {
         Ok(c) => c,
         Err(e) => return (StatusCode::UNAUTHORIZED, format!("Invalid token: {e}")).into_response(),
     };

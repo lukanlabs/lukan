@@ -8,7 +8,7 @@ use lukan_core::relay::RelayConfig;
 /// - Without `--remote`: opens browser + localhost callback (default relay)
 /// - With `--remote <url>`: asks user to choose browser or device code flow
 pub async fn run_login(relay_url: Option<&str>) -> Result<()> {
-    let relay_url = relay_url.unwrap_or("https://app.lukan.ai");
+    let relay_url = relay_url.unwrap_or("https://remote.lukan.ai");
 
     let selection = dialoguer::Select::new()
         .with_prompt("How would you like to authenticate?")
@@ -137,11 +137,11 @@ async fn run_local_login(relay_url: &str) -> Result<()> {
     println!("  If the browser doesn't open, visit: {auth_url}");
     let _ = open::that(&auth_url);
 
-    // Start local HTTP server to receive the callback
-    let (token_tx, mut token_rx) = tokio::sync::mpsc::channel::<(String, String, String)>(1);
+    // Start local HTTP server to receive the callback (now receives a code, not a token)
+    let (code_tx, mut code_rx) = tokio::sync::mpsc::channel::<(String, String, String)>(1);
 
     let callback_server = {
-        let token_tx = token_tx.clone();
+        let code_tx = code_tx.clone();
         async move {
             use axum::extract::Query;
             use axum::response::Html;
@@ -149,7 +149,7 @@ async fn run_local_login(relay_url: &str) -> Result<()> {
 
             #[derive(serde::Deserialize)]
             struct CallbackParams {
-                token: String,
+                code: String,
                 user_id: String,
                 email: String,
             }
@@ -158,9 +158,9 @@ async fn run_local_login(relay_url: &str) -> Result<()> {
                 "/callback",
                 get(
                     move |Query(params): Query<CallbackParams>| {
-                        let tx = token_tx.clone();
+                        let tx = code_tx.clone();
                         async move {
-                            let _ = tx.send((params.token, params.user_id, params.email)).await;
+                            let _ = tx.send((params.code, params.user_id, params.email)).await;
                             Html(
                                 "<html><body style='font-family: system-ui; text-align: center; padding-top: 100px'>\
                                  <h1>Logged in to lukan</h1>\
@@ -188,12 +188,40 @@ async fn run_local_login(relay_url: &str) -> Result<()> {
     // Run callback server in background
     let server_handle = tokio::spawn(callback_server);
 
-    // Wait for the token callback
+    // Wait for the auth code callback
     println!("  Waiting for authentication...");
-    let (jwt_token, user_id, email) = token_rx
+    let (auth_code, _user_id_hint, _email_hint) = code_rx
         .recv()
         .await
         .context("Login timed out or was cancelled")?;
+
+    // Exchange the short-lived auth code for the actual JWT token
+    let client = reqwest::Client::new();
+    let exchange_resp = client
+        .post(format!("{relay_url}/auth/exchange"))
+        .json(&serde_json::json!({ "code": auth_code }))
+        .send()
+        .await
+        .context("Failed to exchange auth code")?;
+
+    if !exchange_resp.status().is_success() {
+        let text = exchange_resp.text().await.unwrap_or_default();
+        anyhow::bail!("Auth code exchange failed: {text}");
+    }
+
+    let data: serde_json::Value = exchange_resp.json().await?;
+    let jwt_token = data["token"]
+        .as_str()
+        .context("Missing token in exchange response")?
+        .to_string();
+    let user_id = data["userId"]
+        .as_str()
+        .context("Missing userId in exchange response")?
+        .to_string();
+    let email = data["email"]
+        .as_str()
+        .context("Missing email in exchange response")?
+        .to_string();
 
     // Save relay config
     let config = RelayConfig {

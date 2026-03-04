@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -52,6 +53,65 @@ pub struct RestTunnelResponse {
     pub body: Vec<u8>,
 }
 
+// ── OAuth CSRF State ────────────────────────────────────────────────
+
+/// A pending OAuth state nonce (CSRF protection).
+pub struct OAuthStateEntry {
+    pub flow_info: String,
+    pub expires_at: Instant,
+}
+
+// ── Auth Code Exchange ──────────────────────────────────────────────
+
+/// A short-lived auth code that can be exchanged for a JWT (replaces token-in-URL).
+pub struct AuthCodeEntry {
+    pub token: String,
+    pub user_id: String,
+    pub email: String,
+    pub expires_at: Instant,
+}
+
+// ── Rate Limiter ────────────────────────────────────────────────────
+
+/// Simple per-IP sliding-window rate limiter.
+pub struct RateLimiter {
+    /// IP → (request count, window start)
+    windows: DashMap<IpAddr, (u32, Instant)>,
+    /// Maximum requests per window
+    max_requests: u32,
+    /// Window duration
+    window_duration: std::time::Duration,
+}
+
+impl RateLimiter {
+    pub fn new(max_requests: u32, window_secs: u64) -> Self {
+        Self {
+            windows: DashMap::new(),
+            max_requests,
+            window_duration: std::time::Duration::from_secs(window_secs),
+        }
+    }
+
+    /// Returns true if the request is allowed, false if rate-limited.
+    pub fn check(&self, ip: IpAddr) -> bool {
+        let now = Instant::now();
+        let mut entry = self.windows.entry(ip).or_insert((0, now));
+        let (count, window_start) = entry.value_mut();
+
+        if now.duration_since(*window_start) >= self.window_duration {
+            // Reset window
+            *count = 1;
+            *window_start = now;
+            true
+        } else if *count < self.max_requests {
+            *count += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// Shared relay server state.
 pub struct RelayState {
     /// user_id → daemon connection (one daemon per user for now)
@@ -77,6 +137,15 @@ pub struct RelayState {
     pub boot_id: String,
     /// device_code → DeviceCodeEntry (for headless device code login flow)
     pub device_codes: DashMap<String, DeviceCodeEntry>,
+    /// OAuth CSRF state nonces (nonce → OAuthStateEntry)
+    pub oauth_states: DashMap<String, OAuthStateEntry>,
+    /// Short-lived auth codes for CLI code exchange (code → AuthCodeEntry)
+    pub auth_codes: DashMap<String, AuthCodeEntry>,
+    /// Rate limiters for various endpoints
+    pub rate_device_start: RateLimiter,
+    pub rate_device_verify: RateLimiter,
+    pub rate_device_poll: RateLimiter,
+    pub rate_dev_token: RateLimiter,
 }
 
 impl RelayState {
@@ -105,6 +174,12 @@ impl RelayState {
             dev_secret,
             boot_id,
             device_codes: DashMap::new(),
+            oauth_states: DashMap::new(),
+            auth_codes: DashMap::new(),
+            rate_device_start: RateLimiter::new(10, 60),
+            rate_device_verify: RateLimiter::new(5, 60),
+            rate_device_poll: RateLimiter::new(30, 60),
+            rate_dev_token: RateLimiter::new(5, 60),
         }
     }
 
@@ -158,22 +233,77 @@ impl RelayState {
         format!("{}.{}", self.jwt_secret, self.boot_id)
     }
 
+    // ── OAuth CSRF helpers ──────────────────────────────────────────
+
+    /// Create a CSRF-protected OAuth state parameter.
+    /// Returns a string like "{nonce}:{flow_info}" with a 10-minute TTL.
+    pub fn create_oauth_state(&self, flow_info: &str) -> String {
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let entry = OAuthStateEntry {
+            flow_info: flow_info.to_string(),
+            expires_at: Instant::now() + std::time::Duration::from_secs(10 * 60),
+        };
+        self.oauth_states.insert(nonce.clone(), entry);
+        format!("{nonce}:{flow_info}")
+    }
+
+    /// Verify and consume an OAuth state parameter (single-use).
+    /// Returns the flow_info if valid, None otherwise.
+    pub fn verify_oauth_state(&self, state_param: &str) -> Option<String> {
+        let nonce = state_param.split(':').next()?;
+        let (_, entry) = self.oauth_states.remove(nonce)?;
+        if entry.expires_at > Instant::now() {
+            Some(entry.flow_info)
+        } else {
+            None
+        }
+    }
+
+    // ── Auth Code Exchange helpers ──────────────────────────────────
+
+    /// Create a short-lived auth code that can be exchanged for credentials.
+    /// Returns the code string (60-second TTL, single-use).
+    pub fn create_auth_code(&self, token: String, user_id: String, email: String) -> String {
+        let code = uuid::Uuid::new_v4().to_string();
+        let entry = AuthCodeEntry {
+            token,
+            user_id,
+            email,
+            expires_at: Instant::now() + std::time::Duration::from_secs(60),
+        };
+        self.auth_codes.insert(code.clone(), entry);
+        code
+    }
+
+    /// Exchange an auth code for credentials (single-use).
+    pub fn exchange_auth_code(&self, code: &str) -> Option<AuthCodeEntry> {
+        let (_, entry) = self.auth_codes.remove(code)?;
+        if entry.expires_at > Instant::now() {
+            Some(entry)
+        } else {
+            None
+        }
+    }
+
     // ── Device Code helpers ──────────────────────────────────────────
 
+    /// Charset for device user codes: A-Z 0-9 (36 chars).
+    const USER_CODE_CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
     /// Create a new device code entry with a 15-minute TTL.
-    /// Returns (device_code, user_code).
+    /// Returns (device_code, user_code) where user_code is 8 alphanumeric chars (XXXX-XXXX).
     pub fn create_device_code(&self) -> (String, String) {
         use rand::Rng;
         let device_code = uuid::Uuid::new_v4().to_string();
         let user_code = {
             let mut rng = rand::rng();
-            let a: String = (0..3)
-                .map(|_| rng.random_range(b'A'..=b'Z') as char)
+            let chars: String = (0..8)
+                .map(|_| {
+                    let idx = rng.random_range(0..Self::USER_CODE_CHARSET.len());
+                    Self::USER_CODE_CHARSET[idx] as char
+                })
                 .collect();
-            let b: String = (0..3)
-                .map(|_| rng.random_range(b'A'..=b'Z') as char)
-                .collect();
-            format!("{a}-{b}")
+            format!("{}-{}", &chars[..4], &chars[4..])
         };
         let entry = DeviceCodeEntry {
             user_code: user_code.clone(),
@@ -187,9 +317,20 @@ impl RelayState {
 
     /// Find a device code entry by its user-facing code. Returns the device_code key if found.
     pub fn find_by_user_code(&self, user_code: &str) -> Option<String> {
-        let upper = user_code.to_uppercase();
+        // Normalize: uppercase and strip non-alphanumeric, then re-insert dash
+        let normalized: String = user_code
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_uppercase();
+        let formatted = if normalized.len() == 8 {
+            format!("{}-{}", &normalized[..4], &normalized[4..])
+        } else {
+            normalized
+        };
+
         for entry in self.device_codes.iter() {
-            if entry.user_code == upper && entry.expires_at > Instant::now() {
+            if entry.user_code == formatted && entry.expires_at > Instant::now() {
                 return Some(entry.device_code.clone());
             }
         }

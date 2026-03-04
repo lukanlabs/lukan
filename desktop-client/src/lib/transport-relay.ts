@@ -780,7 +780,7 @@ export class RelayTransport implements Transport {
         return {
           method: "PUT",
           url: "/api/providers/active",
-          body: { provider: args?.provider },
+          body: { provider: args?.provider, model: args?.model },
         };
       case "list_remote_plugins":
         return { method: "GET", url: "/api/plugins/remote" };
@@ -801,13 +801,13 @@ export class RelayTransport implements Transport {
       case "fetch_provider_models":
         return {
           method: "GET",
-          url: `/api/providers/${encodeURIComponent(args?.name as string)}/models`,
+          url: `/api/providers/${encodeURIComponent(args?.provider as string)}/models`,
         };
       case "set_provider_models":
         return {
           method: "PUT",
-          url: `/api/providers/${encodeURIComponent(args?.name as string)}/models`,
-          body: args?.models,
+          url: `/api/providers/${encodeURIComponent(args?.provider as string)}/models`,
+          body: { entries: args?.entries, visionIds: args?.visionIds },
         };
       case "get_global_memory":
         return { method: "GET", url: "/api/memory/global" };

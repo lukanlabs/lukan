@@ -243,23 +243,22 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
               </div>
             )}
 
-            {/* Error display */}
-            {chat.error && (
-              <div
-                className="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300 cursor-pointer hover:bg-red-500/15 transition-colors my-4 max-w-2xl mx-auto"
-                onClick={chat.dismissError}
-              >
-                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <p className="font-medium text-red-200">Error</p>
-                  <p className="text-red-400/80 mt-1">{chat.error}</p>
-                </div>
-                <span className="text-[10px] text-red-400/50">Click to dismiss</span>
-              </div>
-            )}
-
             <div ref={scrollRef} className="h-14" />
           </div>
+
+          {/* Error display — pinned above the input */}
+          {chat.error && (
+            <div
+              className="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm text-red-300 cursor-pointer hover:bg-red-500/15 transition-colors mx-4 mb-2 max-w-2xl self-center"
+              onClick={chat.dismissError}
+            >
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-red-400/80">{chat.error}</p>
+              </div>
+              <span className="text-[10px] text-red-400/50 shrink-0">✕</span>
+            </div>
+          )}
 
           <ChatInput
             onSend={handleSend}

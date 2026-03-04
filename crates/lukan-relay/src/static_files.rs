@@ -121,12 +121,12 @@ const DEVICE_PAGE_HTML: &str = r##"<!DOCTYPE html>
   .login-header p { font-size: 14px; color: #64748b; margin: 0; }
 
   /* Code inputs */
-  .code-group { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 28px; }
+  .code-group { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 28px; }
   .code-input {
-    width: 48px; height: 56px; text-align: center; font-size: 22px; font-weight: 600;
+    width: 36px; height: 44px; text-align: center; font-size: 18px; font-weight: 600;
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
     text-transform: uppercase; background: #111113; border: 1px solid #1e1e24;
-    border-radius: 10px; color: #f1f5f9; outline: none;
+    border-radius: 8px; color: #f1f5f9; outline: none;
     transition: border-color 0.2s, box-shadow 0.2s;
     caret-color: #6366f1;
   }
@@ -136,8 +136,8 @@ const DEVICE_PAGE_HTML: &str = r##"<!DOCTYPE html>
   }
   .code-input.filled { border-color: #2e2e38; }
   .code-separator {
-    font-size: 20px; font-weight: 600; color: #475569;
-    user-select: none; margin: 0 2px;
+    font-size: 16px; font-weight: 600; color: #475569;
+    user-select: none; margin: 0 1px;
   }
 
   /* Dev fields */
@@ -251,10 +251,12 @@ const DEVICE_PAGE_HTML: &str = r##"<!DOCTYPE html>
           <input class="code-input" type="text" maxlength="1" data-idx="0" autocomplete="off" autofocus inputmode="text">
           <input class="code-input" type="text" maxlength="1" data-idx="1" autocomplete="off" inputmode="text">
           <input class="code-input" type="text" maxlength="1" data-idx="2" autocomplete="off" inputmode="text">
-          <span class="code-separator">&mdash;</span>
           <input class="code-input" type="text" maxlength="1" data-idx="3" autocomplete="off" inputmode="text">
+          <span class="code-separator">&mdash;</span>
           <input class="code-input" type="text" maxlength="1" data-idx="4" autocomplete="off" inputmode="text">
           <input class="code-input" type="text" maxlength="1" data-idx="5" autocomplete="off" inputmode="text">
+          <input class="code-input" type="text" maxlength="1" data-idx="6" autocomplete="off" inputmode="text">
+          <input class="code-input" type="text" maxlength="1" data-idx="7" autocomplete="off" inputmode="text">
         </div>
 
         <div id="dev-fields" class="dev-section" style="display:none">
@@ -281,7 +283,7 @@ const msg = document.getElementById('msg');
 // Focus management & auto-advance
 inputs.forEach((inp, i) => {
   inp.addEventListener('input', (e) => {
-    const v = e.target.value.replace(/[^a-zA-Z]/g, '').toUpperCase();
+    const v = e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     e.target.value = v.slice(0, 1);
     if (v && i < inputs.length - 1) inputs[i + 1].focus();
     e.target.classList.toggle('filled', !!v);
@@ -297,7 +299,7 @@ inputs.forEach((inp, i) => {
   inp.addEventListener('paste', (e) => {
     e.preventDefault();
     const text = (e.clipboardData || window.clipboardData).getData('text')
-      .replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 6);
+      .replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 8);
     text.split('').forEach((ch, j) => {
       if (inputs[j]) {
         inputs[j].value = ch;
@@ -354,12 +356,12 @@ function getCode() {
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const code = getCode();
-  if (code.length < 6) {
+  if (code.length < 8) {
     msg.className = 'msg error';
-    msg.textContent = 'Please enter the full 6-letter code';
+    msg.textContent = 'Please enter the full 8-character code';
     return;
   }
-  const userCode = code.slice(0, 3) + '-' + code.slice(3);
+  const userCode = code.slice(0, 4) + '-' + code.slice(4);
   const btn = form.querySelector('button');
   btn.disabled = true;
   msg.className = 'msg';

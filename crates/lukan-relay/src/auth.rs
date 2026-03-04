@@ -1,10 +1,13 @@
+use std::net::IpAddr;
+
 use anyhow::{Context, Result};
-use axum::extract::Query;
+use axum::extract::{ConnectInfo, Query};
 use axum::http::header;
 use axum::response::{IntoResponse, Redirect, Response};
 use chrono::Utc;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 use crate::state::SharedState;
 
@@ -19,16 +22,19 @@ pub struct RelayClaims {
     pub exp: usize,
     /// Issued at
     pub iat: usize,
+    /// Audience (relay public URL)
+    pub aud: String,
 }
 
 /// Create a signed JWT for a user.
-pub fn create_jwt(secret: &str, user_id: &str, email: &str) -> Result<String> {
+pub fn create_jwt(secret: &str, user_id: &str, email: &str, audience: &str) -> Result<String> {
     let now = Utc::now().timestamp() as usize;
     let claims = RelayClaims {
         sub: user_id.to_string(),
         email: email.to_string(),
         exp: now + 30 * 24 * 60 * 60, // 30 days
         iat: now,
+        aud: audience.to_string(),
     };
     let token = encode(
         &Header::default(),
@@ -39,14 +45,31 @@ pub fn create_jwt(secret: &str, user_id: &str, email: &str) -> Result<String> {
 }
 
 /// Verify and decode a JWT, returning the claims.
-pub fn verify_jwt(secret: &str, token: &str) -> Result<RelayClaims> {
+pub fn verify_jwt(secret: &str, token: &str, expected_audience: &str) -> Result<RelayClaims> {
+    let mut validation = Validation::default();
+    validation.set_audience(&[expected_audience]);
     let data = decode::<RelayClaims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::default(),
+        &validation,
     )
     .context("Invalid or expired JWT")?;
     Ok(data.claims)
+}
+
+/// Constant-time comparison of two secret strings (prevents timing attacks).
+fn secrets_equal(a: &str, b: &str) -> bool {
+    a.as_bytes().ct_eq(b.as_bytes()).into()
+}
+
+// ── Rate limit helper ──────────────────────────────────────────────
+
+fn rate_limit_response() -> Response {
+    (
+        axum::http::StatusCode::TOO_MANY_REQUESTS,
+        "Rate limit exceeded — try again later",
+    )
+        .into_response()
 }
 
 // ── Cookie helpers ──────────────────────────────────────────────────
@@ -86,26 +109,69 @@ pub fn extract_token_from_cookie(headers: &axum::http::HeaderMap) -> Option<Stri
     None
 }
 
+// ── Client IP helper ────────────────────────────────────────────────
+
+/// Extract the client IP from X-Forwarded-For header or ConnectInfo.
+pub fn client_ip(
+    headers: &axum::http::HeaderMap,
+    connect_info: Option<&axum::extract::ConnectInfo<std::net::SocketAddr>>,
+) -> IpAddr {
+    // Try X-Forwarded-For first (first IP in the chain is the client)
+    if let Some(forwarded) = headers.get("x-forwarded-for") {
+        if let Ok(val) = forwarded.to_str() {
+            if let Some(first) = val.split(',').next() {
+                if let Ok(ip) = first.trim().parse::<IpAddr>() {
+                    return ip;
+                }
+            }
+        }
+    }
+
+    // Fall back to ConnectInfo
+    if let Some(info) = connect_info {
+        return info.0.ip();
+    }
+
+    // Last resort
+    IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+}
+
 // ── Auth status & logout ────────────────────────────────────────────
 
 /// GET /auth/status — check if the browser has a valid auth cookie.
+/// Requires valid browser cookie auth; returns 401 if not authenticated.
 pub async fn auth_status(
     axum::extract::State(state): axum::extract::State<SharedState>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let (authenticated, daemon_connected) = match extract_token_from_cookie(&headers) {
-        Some(token) => match verify_jwt(&state.browser_jwt_secret(), &token) {
-            Ok(claims) => (true, state.has_daemon(&claims.sub)),
-            Err(_) => (false, false),
+    match extract_token_from_cookie(&headers) {
+        Some(token) => match verify_jwt(&state.browser_jwt_secret(), &token, &state.public_url) {
+            Ok(claims) => {
+                let daemon_connected = state.has_daemon(&claims.sub);
+                axum::Json(serde_json::json!({
+                    "authenticated": true,
+                    "daemonConnected": daemon_connected,
+                }))
+                .into_response()
+            }
+            Err(_) => (
+                axum::http::StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({
+                    "authenticated": false,
+                    "daemonConnected": false,
+                })),
+            )
+                .into_response(),
         },
-        None => (false, false),
-    };
-
-    axum::Json(serde_json::json!({
-        "authenticated": authenticated,
-        "daemonConnected": daemon_connected,
-    }))
-    .into_response()
+        None => (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({
+                "authenticated": false,
+                "daemonConnected": false,
+            })),
+        )
+            .into_response(),
+    }
 }
 
 /// POST /auth/logout — clear the auth cookie.
@@ -154,14 +220,15 @@ pub async fn google_login(
 ) -> Response {
     let redirect_uri = format!("{}/auth/callback", state.public_url);
 
-    // Encode flow info in OAuth state parameter
-    let oauth_state = if let Some(port) = params.cli_port {
+    // Encode flow info in OAuth state parameter with CSRF nonce
+    let flow_info = if let Some(port) = params.cli_port {
         format!("cli_port={port}")
     } else if let Some(redirect) = &params.redirect {
         format!("redirect={redirect}")
     } else {
         String::new()
     };
+    let oauth_state = state.create_oauth_state(&flow_info);
 
     let url = format!(
         "https://accounts.google.com/o/oauth2/v2/auth?\
@@ -201,6 +268,13 @@ async fn handle_google_callback(
     state: &SharedState,
     params: &OAuthCallbackParams,
 ) -> Result<Response> {
+    // Verify CSRF state parameter (single-use nonce)
+    let flow_info = params
+        .state
+        .as_deref()
+        .and_then(|s| state.verify_oauth_state(s))
+        .context("Invalid or expired OAuth state parameter (CSRF check failed)")?;
+
     let redirect_uri = format!("{}/auth/callback", state.public_url);
 
     // Exchange authorization code for tokens
@@ -231,19 +305,24 @@ async fn handle_google_callback(
     // Decode the ID token (we trust Google's signature since we just received it)
     let payload = decode_google_id_token(&id_token)?;
 
-    // Parse flow info from OAuth state parameter
-    let oauth_state = params.state.as_deref().unwrap_or_default();
-    let cli_port = oauth_state
+    // Parse flow info from verified OAuth state
+    let cli_port = flow_info
         .strip_prefix("cli_port=")
         .and_then(|p| p.parse::<u16>().ok());
-    let redirect_path = oauth_state.strip_prefix("redirect=");
+    let redirect_path = flow_info.strip_prefix("redirect=");
 
     if let Some(port) = cli_port {
-        // CLI/daemon login — use base jwt_secret (survives relay restarts)
-        let jwt = create_jwt(&state.jwt_secret, &payload.sub, &payload.email)?;
+        // CLI/daemon login — create a short-lived auth code instead of passing token in URL
+        let jwt = create_jwt(
+            &state.jwt_secret,
+            &payload.sub,
+            &payload.email,
+            &state.public_url,
+        )?;
+        let auth_code = state.create_auth_code(jwt, payload.sub.clone(), payload.email.clone());
         let redirect = format!(
-            "http://localhost:{port}/callback?token={}&user_id={}&email={}",
-            urlencoding::encode(&jwt),
+            "http://localhost:{port}/callback?code={}&user_id={}&email={}",
+            urlencoding::encode(&auth_code),
             urlencoding::encode(&payload.sub),
             urlencoding::encode(&payload.email),
         );
@@ -251,7 +330,12 @@ async fn handle_google_callback(
     } else {
         // Browser login — use browser_jwt_secret (invalidated on restart)
         // Set HttpOnly cookie instead of passing token in URL
-        let jwt = create_jwt(&state.browser_jwt_secret(), &payload.sub, &payload.email)?;
+        let jwt = create_jwt(
+            &state.browser_jwt_secret(),
+            &payload.sub,
+            &payload.email,
+            &state.public_url,
+        )?;
         let cookie = build_auth_cookie(&jwt, &state.public_url);
         let target = if let Some(path) = redirect_path {
             format!("{}{path}", state.public_url)
@@ -262,6 +346,34 @@ async fn handle_google_callback(
         resp.headers_mut()
             .insert(header::SET_COOKIE, cookie.parse().unwrap());
         Ok(resp)
+    }
+}
+
+// ── Auth Code Exchange ──────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AuthCodeExchangeBody {
+    pub code: String,
+}
+
+/// POST /auth/exchange — Exchange a short-lived auth code for a JWT token.
+/// Used by CLI after OAuth callback redirects with ?code= instead of ?token=.
+pub async fn auth_code_exchange(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+    axum::Json(body): axum::Json<AuthCodeExchangeBody>,
+) -> Response {
+    match state.exchange_auth_code(&body.code) {
+        Some(entry) => axum::Json(serde_json::json!({
+            "token": entry.token,
+            "userId": entry.user_id,
+            "email": entry.email,
+        }))
+        .into_response(),
+        None => (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({ "error": "Invalid or expired auth code" })),
+        )
+            .into_response(),
     }
 }
 
@@ -298,7 +410,7 @@ pub async fn dev_login_post(
 
     if let Some(expected) = &state.dev_secret {
         match &body.secret {
-            Some(provided) if provided == expected => {}
+            Some(provided) if secrets_equal(provided, expected) => {}
             _ => {
                 return (
                     axum::http::StatusCode::UNAUTHORIZED,
@@ -313,7 +425,12 @@ pub async fn dev_login_post(
     let user_id = format!("dev-{}", email.replace(['@', '.'], "-"));
 
     // Browser token — uses browser_jwt_secret (invalidated on relay restart)
-    match create_jwt(&state.browser_jwt_secret(), &user_id, &email) {
+    match create_jwt(
+        &state.browser_jwt_secret(),
+        &user_id,
+        &email,
+        &state.public_url,
+    ) {
         Ok(jwt) => {
             let cookie = build_auth_cookie(&jwt, &state.public_url);
             let mut resp = axum::Json(serde_json::json!({
@@ -337,15 +454,23 @@ pub async fn dev_login_post(
 /// Uses base jwt_secret (survives relay restarts) since daemon needs persistent auth.
 pub async fn dev_token(
     axum::extract::State(state): axum::extract::State<SharedState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     axum::Json(body): axum::Json<DevLoginBody>,
 ) -> Response {
     if !state.dev_mode {
         return (axum::http::StatusCode::NOT_FOUND, "Dev mode not enabled").into_response();
     }
 
+    // Rate limit
+    let ip = client_ip(&headers, Some(&ConnectInfo(addr)));
+    if !state.rate_dev_token.check(ip) {
+        return rate_limit_response();
+    }
+
     if let Some(expected) = &state.dev_secret {
         match &body.secret {
-            Some(provided) if provided == expected => {}
+            Some(provided) if secrets_equal(provided, expected) => {}
             _ => {
                 return (
                     axum::http::StatusCode::UNAUTHORIZED,
@@ -360,7 +485,7 @@ pub async fn dev_token(
     let user_id = format!("dev-{}", email.replace(['@', '.'], "-"));
 
     // Daemon token — uses base jwt_secret (survives relay restarts)
-    match create_jwt(&state.jwt_secret, &user_id, &email) {
+    match create_jwt(&state.jwt_secret, &user_id, &email, &state.public_url) {
         Ok(jwt) => {
             let resp = serde_json::json!({
                 "token": jwt,
@@ -383,7 +508,14 @@ pub async fn dev_token(
 /// Returns a device_code (for polling) and user_code (for the user to enter in a browser).
 pub async fn device_code_start(
     axum::extract::State(state): axum::extract::State<SharedState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
+    let ip = client_ip(&headers, Some(&ConnectInfo(addr)));
+    if !state.rate_device_start.check(ip) {
+        return rate_limit_response();
+    }
+
     let (device_code, user_code) = state.create_device_code();
     let verification_url = format!("{}/device", state.public_url);
 
@@ -406,9 +538,16 @@ pub struct DeviceCodePollBody {
 /// POST /auth/device/poll — CLI polls this to check if the user has authorized.
 pub async fn device_code_poll(
     axum::extract::State(state): axum::extract::State<SharedState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     axum::Json(body): axum::Json<DeviceCodePollBody>,
 ) -> Response {
     use crate::state::DeviceCodePollResult;
+
+    let ip = client_ip(&headers, Some(&ConnectInfo(addr)));
+    if !state.rate_device_poll.check(ip) {
+        return rate_limit_response();
+    }
 
     match state.poll_device_code(&body.device_code) {
         Some(DeviceCodePollResult::Pending) => {
@@ -448,9 +587,15 @@ pub struct DeviceCodeVerifyBody {
 /// is already authenticated via cookie), so we verify the cookie instead.
 pub async fn device_code_verify(
     axum::extract::State(state): axum::extract::State<SharedState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
     axum::Json(body): axum::Json<DeviceCodeVerifyBody>,
 ) -> Response {
+    let ip = client_ip(&headers, Some(&ConnectInfo(addr)));
+    if !state.rate_device_verify.check(ip) {
+        return rate_limit_response();
+    }
+
     // Find the device code entry by user_code
     let device_code = match state.find_by_user_code(&body.user_code) {
         Some(dc) => dc,
@@ -466,7 +611,7 @@ pub async fn device_code_verify(
     // Determine user identity: try browser cookie first, then dev mode
     let (user_id, email) = if let Some(token) = extract_token_from_cookie(&headers) {
         // Browser is authenticated — use their identity
-        match verify_jwt(&state.browser_jwt_secret(), &token) {
+        match verify_jwt(&state.browser_jwt_secret(), &token, &state.public_url) {
             Ok(claims) => (claims.sub, claims.email),
             Err(_) => {
                 return (
@@ -480,7 +625,7 @@ pub async fn device_code_verify(
         // Dev mode: use email from body
         if let Some(expected) = &state.dev_secret {
             match &body.secret {
-                Some(provided) if provided == expected => {}
+                Some(provided) if secrets_equal(provided, expected) => {}
                 _ => {
                     return (
                         axum::http::StatusCode::UNAUTHORIZED,
@@ -502,7 +647,7 @@ pub async fn device_code_verify(
     };
 
     // Create a daemon JWT (uses base jwt_secret, survives relay restarts)
-    let jwt = match create_jwt(&state.jwt_secret, &user_id, &email) {
+    let jwt = match create_jwt(&state.jwt_secret, &user_id, &email, &state.public_url) {
         Ok(t) => t,
         Err(e) => {
             return (

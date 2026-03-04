@@ -82,7 +82,11 @@ pub async fn fetch_provider_models(Path(provider): Path<String>) -> impl IntoRes
     };
 
     let api_key = CredentialsManager::get_api_key(&creds, &provider_name);
-    if api_key.is_none() && provider_name != ProviderName::OpenaiCompatible {
+    if api_key.is_none()
+        && provider_name != ProviderName::OpenaiCompatible
+        && provider_name != ProviderName::OpenaiCodex
+        && provider_name != ProviderName::Zai
+    {
         return (
             StatusCode::BAD_REQUEST,
             format!("No API key configured for {provider}"),
@@ -164,6 +168,43 @@ pub async fn fetch_provider_models(Path(provider): Path<String>) -> impl IntoRes
                 )),
             }
         }
+        ProviderName::OpenaiCodex => Ok(lukan_providers::openai_codex::codex_models()
+            .into_iter()
+            .map(|id| FetchedModelDto {
+                name: id.clone(),
+                id,
+            })
+            .collect()),
+        ProviderName::Zai => Ok(vec![
+            FetchedModelDto {
+                id: "glm-5".into(),
+                name: "GLM-5".into(),
+            },
+            FetchedModelDto {
+                id: "glm-4.7".into(),
+                name: "GLM-4.7".into(),
+            },
+            FetchedModelDto {
+                id: "glm-4.6".into(),
+                name: "GLM-4.6".into(),
+            },
+            FetchedModelDto {
+                id: "glm-4.5".into(),
+                name: "GLM-4.5".into(),
+            },
+            FetchedModelDto {
+                id: "glm-4.5v".into(),
+                name: "GLM-4.5V (vision)".into(),
+            },
+            FetchedModelDto {
+                id: "glm-4.1v".into(),
+                name: "GLM-4.1V (vision)".into(),
+            },
+            FetchedModelDto {
+                id: "glm-4".into(),
+                name: "GLM-4".into(),
+            },
+        ]),
         _ => Ok(vec![]),
     };
 

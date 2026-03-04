@@ -112,6 +112,11 @@ export class RelayTransport implements Transport {
   private processing = false;
   private relayOrigin: string;
 
+  // Audio recording state (browser MediaRecorder)
+  private mediaRecorder: MediaRecorder | null = null;
+  private audioChunks: Blob[] = [];
+  private recording = false;
+
   // E2E encryption state
   private e2eSession: E2ESession | null = null;
   private e2eReady = false;
@@ -983,11 +988,70 @@ export class RelayTransport implements Transport {
         return new Promise<T>((resolve) => {
           this.initResolvers.push(resolve as (v: unknown) => void);
         }) as T;
+      case "start_recording":
+        return this.startBrowserRecording() as T;
+      case "stop_recording":
+        return this.stopBrowserRecording() as T;
+      case "cancel_recording":
+        return this.cancelBrowserRecording() as T;
       case "is_recording":
-        return false as T;
+        return this.recording as T;
+      case "list_audio_devices":
+        return this.listBrowserAudioDevices() as T;
       default:
         return undefined as T;
     }
+  }
+
+  // ── Audio Recording (Browser MediaRecorder) ────────────────────
+
+  private async startBrowserRecording(): Promise<void> {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    this.audioChunks = [];
+    this.mediaRecorder = new MediaRecorder(stream, {
+      mimeType: "audio/webm;codecs=opus",
+    });
+    this.mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) this.audioChunks.push(e.data);
+    };
+    this.mediaRecorder.start(100);
+    this.recording = true;
+  }
+
+  private async stopBrowserRecording(): Promise<number[]> {
+    return new Promise((resolve) => {
+      if (!this.mediaRecorder) {
+        resolve([]);
+        return;
+      }
+      this.mediaRecorder.onstop = async () => {
+        const blob = new Blob(this.audioChunks, { type: "audio/webm" });
+        const buffer = await blob.arrayBuffer();
+        const bytes = Array.from(new Uint8Array(buffer));
+        this.recording = false;
+        this.mediaRecorder?.stream.getTracks().forEach((t) => t.stop());
+        this.mediaRecorder = null;
+        resolve(bytes);
+      };
+      this.mediaRecorder.stop();
+    });
+  }
+
+  private async cancelBrowserRecording(): Promise<void> {
+    if (this.mediaRecorder) {
+      this.mediaRecorder.stop();
+      this.mediaRecorder.stream.getTracks().forEach((t) => t.stop());
+      this.mediaRecorder = null;
+    }
+    this.audioChunks = [];
+    this.recording = false;
+  }
+
+  private async listBrowserAudioDevices(): Promise<string[]> {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices
+      .filter((d) => d.kind === "audioinput")
+      .map((d) => d.label || d.deviceId);
   }
 
   // ── Helpers ────────────────────────────────────────────────────

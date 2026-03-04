@@ -804,6 +804,10 @@ async fn tunnel_rest_request(
     }
 
     if !body.is_empty() {
+        // Default to application/json if no content-type was provided
+        if !headers.keys().any(|k| k.eq_ignore_ascii_case("content-type")) {
+            builder = builder.header("content-type", "application/json");
+        }
         builder = builder.body(body.to_vec());
     }
 

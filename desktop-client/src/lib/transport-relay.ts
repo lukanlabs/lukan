@@ -908,7 +908,15 @@ export class RelayTransport implements Transport {
           body: args,
         };
       case "browser_launch":
-        return { method: "POST", url: "/api/browser/launch" };
+        return {
+          method: "POST",
+          url: "/api/browser/launch",
+          body: {
+            visible: args?.visible,
+            profile: args?.profile,
+            port: args?.port,
+          },
+        };
       case "browser_status":
         return { method: "GET", url: "/api/browser/status" };
       case "browser_navigate":

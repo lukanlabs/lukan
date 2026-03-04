@@ -96,6 +96,22 @@ async fn run_daemon() -> Result<()> {
         }
     });
 
+    // Start relay bridge if relay credentials exist
+    let mut relay_bridge = None;
+    if let Some(relay_config) = lukan_core::relay::RelayConfig::load().await {
+        let relay_port = std::env::var("LUKAN_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(3000u16);
+        info!(
+            relay_url = %relay_config.relay_url,
+            "Starting relay bridge"
+        );
+        let mut bridge = crate::relay_bridge::RelayBridge::new(relay_config, relay_port);
+        bridge.start();
+        relay_bridge = Some(bridge);
+    }
+
     info!("Worker daemon running, polling workers.json for changes");
 
     // Track file mtime for change detection
@@ -142,6 +158,9 @@ async fn run_daemon() -> Result<()> {
     }
 
     // Cleanup
+    if let Some(mut bridge) = relay_bridge {
+        bridge.stop();
+    }
     scheduler.stop();
     let _ = std::fs::remove_file(&pid_path);
     info!("Worker daemon stopped");
@@ -182,7 +201,7 @@ fn start_detached() -> Result<()> {
 }
 
 /// Stop the running daemon by sending SIGTERM.
-fn stop_daemon() -> Result<()> {
+pub fn stop_daemon() -> Result<()> {
     let pid = match read_pid_file() {
         Some(pid) => pid,
         None => {

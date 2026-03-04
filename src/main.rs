@@ -10,10 +10,12 @@ use lukan_providers::create_provider;
 use lukan_tui::app::App;
 
 mod daemon;
+mod login;
 mod models;
 mod plugin;
 mod plugin_config;
 mod plugin_exec;
+mod relay_bridge;
 mod sandbox_cmd;
 mod setup;
 mod skills;
@@ -124,9 +126,30 @@ enum Commands {
         #[command(subcommand)]
         command: daemon::DaemonCommands,
     },
+    /// Log in to lukan relay (Google OAuth)
+    Login {
+        /// Relay server URL (default: https://app.lukan.ai)
+        #[arg(long)]
+        remote: Option<String>,
+    },
+    /// Log out from lukan relay
+    Logout,
+    /// Relay connection management
+    Relay {
+        #[command(subcommand)]
+        command: RelayCommands,
+    },
     /// Catch-all for plugin aliases (e.g. `lukan wa ...`)
     #[command(external_subcommand)]
     External(Vec<String>),
+}
+
+#[derive(Subcommand)]
+enum RelayCommands {
+    /// Show relay connection status
+    Status,
+    /// Disconnect from relay (same as logout)
+    Disconnect,
 }
 
 #[tokio::main]
@@ -205,6 +228,20 @@ async fn main() -> Result<()> {
         Some(Commands::Daemon { command }) => {
             daemon::handle_daemon_command(command).await?;
         }
+        Some(Commands::Login { remote }) => {
+            login::run_login(remote.as_deref()).await?;
+        }
+        Some(Commands::Logout) => {
+            login::run_logout().await?;
+        }
+        Some(Commands::Relay { command }) => match command {
+            RelayCommands::Status => {
+                login::show_relay_status().await?;
+            }
+            RelayCommands::Disconnect => {
+                login::run_logout().await?;
+            }
+        },
         Some(Commands::External(args)) => {
             dispatch_alias_command(&args).await?;
         }

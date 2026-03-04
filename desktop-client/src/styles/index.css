@@ -54,8 +54,16 @@
   --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
 }
 
-body {
+html, body, #root {
   margin: 0;
+  padding: 0;
+  overflow: hidden;
+  width: 100%;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+body {
   background: var(--bg-base);
   color: var(--text-primary);
   font-family: var(--font-sans);
@@ -63,7 +71,6 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow: hidden;
 }
 
 * {
@@ -256,6 +263,8 @@ select {
   line-height: 1.65;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .prose-chat h1,
@@ -342,7 +351,8 @@ select {
     / 44px auto 1fr;
   height: 100vh;
   height: 100dvh;
-  width: 100vw;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
   background: var(--bg-base);
 }
@@ -354,7 +364,7 @@ select {
     / 44px 1fr;
 }
 
-/* ── Mobile: hide activity bar & sidebar, full-width main ────────── */
+/* ── Mobile: logo menu, side panel as overlay ────────────────────── */
 @media (max-width: 640px) {
   .workspace-grid,
   .workspace-grid.sidebar-collapsed {
@@ -364,10 +374,18 @@ select {
       / 1fr;
   }
   .activity-bar {
-    display: none;
+    display: none !important;
   }
+
+  /* Side panel → fullscreen overlay */
   .side-panel {
-    display: none;
+    position: fixed;
+    inset: 0;
+    top: 40px;
+    width: 100% !important;
+    z-index: 60;
+    border-right: none;
+    animation: none;
   }
 
   /* Toolbar: tighter spacing */
@@ -378,6 +396,7 @@ select {
   .toolbar-logo {
     height: 18px;
     width: 18px;
+    cursor: pointer;
   }
   .mode-toggle button {
     padding: 5px 8px;
@@ -440,6 +459,7 @@ select {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 /* Mode toggle pill */

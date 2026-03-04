@@ -1,9 +1,21 @@
 import { useState, useEffect, useCallback } from "react";
-import { Globe, Settings, ExternalLink, ChevronDown, Minus, X } from "lucide-react";
+import {
+  Globe,
+  Settings,
+  ExternalLink,
+  ChevronDown,
+  Minus,
+  X,
+  FolderOpen,
+  Puzzle,
+  Terminal,
+  MessageSquare,
+  LogOut,
+} from "lucide-react";
 import logoUrl from "../../assets/logo.png";
 import logoTextUrl from "../../assets/lukan_text.png";
-import type { WorkspaceMode, ProviderInfo } from "../../lib/types";
-import { IS_TAURI } from "../../lib/transport";
+import type { WorkspaceMode, ProviderInfo, SidePanelId } from "../../lib/types";
+import { IS_TAURI, isRelayMode } from "../../lib/transport";
 import {
   listProviders,
   getModels,
@@ -13,12 +25,22 @@ import {
   stopWebUi,
 } from "../../lib/tauri";
 
+const MOBILE_MENU_ITEMS: { id: SidePanelId; icon: typeof FolderOpen; label: string }[] = [
+  { id: "files", icon: FolderOpen, label: "Files" },
+  { id: "workers", icon: Puzzle, label: "Workers" },
+  { id: "processes", icon: Terminal, label: "Processes" },
+  { id: "sessions", icon: MessageSquare, label: "Sessions" },
+  { id: "browser", icon: Globe, label: "Browser" },
+];
+
 interface ToolbarProps {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
   browserRunning: boolean;
   onBrowserClick: () => void;
   onSettingsClick: () => void;
+  onPanelToggle?: (panel: SidePanelId) => void;
+  activePanel?: SidePanelId | null;
 }
 
 export function Toolbar({
@@ -27,10 +49,13 @@ export function Toolbar({
   browserRunning,
   onBrowserClick,
   onSettingsClick,
+  onPanelToggle,
+  activePanel,
 }: ToolbarProps) {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [showModelMenu, setShowModelMenu] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [webUiRunning, setWebUiRunning] = useState(false);
 
   const activeProvider = providers.find((p) => p.active);
@@ -99,9 +124,14 @@ export function Toolbar({
 
   return (
     <div className="workspace-toolbar" {...(IS_TAURI ? { "data-tauri-drag-region": true } : {})}>
-      {/* Left: logo + mode toggle */}
-      <div className="toolbar-section">
-        <img src={logoUrl} alt="lukan" className="toolbar-logo" />
+      {/* Left: logo (menu on mobile) + mode toggle */}
+      <div className="toolbar-section" style={{ position: "relative", flexShrink: 0, overflow: "visible" }}>
+        <img
+          src={logoUrl}
+          alt="lukan"
+          className="toolbar-logo"
+          onClick={() => setShowMobileMenu((v) => !v)}
+        />
         <img src={logoTextUrl} alt="lukan" className="hidden sm:block" style={{ height: 16, objectFit: "contain" }} />
         <div className="mode-toggle">
           <button
@@ -117,10 +147,63 @@ export function Toolbar({
             Terminal
           </button>
         </div>
+
+        {/* Mobile menu dropdown */}
+        {showMobileMenu && onPanelToggle && (
+          <>
+            <div
+              className="sm:hidden"
+              style={{ position: "fixed", inset: 0, zIndex: 9998 }}
+              onClick={() => setShowMobileMenu(false)}
+            />
+            <div
+              className="sm:hidden"
+              style={{
+                position: "fixed",
+                top: 44,
+                left: 8,
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: 4,
+                minWidth: 180,
+                zIndex: 9999,
+                boxShadow: "var(--shadow-lg)",
+              }}
+            >
+              {MOBILE_MENU_ITEMS.map(({ id, icon: Icon, label }) => (
+                <button
+                  key={id}
+                  onClick={() => {
+                    onPanelToggle(id);
+                    setShowMobileMenu(false);
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    padding: "8px 12px",
+                    fontSize: 13,
+                    color: activePanel === id ? "var(--text-primary)" : "var(--text-secondary)",
+                    background: activePanel === id ? "var(--bg-active)" : "transparent",
+                    border: "none",
+                    borderRadius: 6,
+                    textAlign: "left",
+                    cursor: "pointer",
+                  }}
+                >
+                  <Icon size={16} />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Center: model selector */}
-      <div className="toolbar-section" style={{ position: "relative" }}>
+      <div className="toolbar-section" style={{ position: "relative", flex: "1 1 0", justifyContent: "center" }}>
         <button
           className="model-selector"
           onClick={() => setShowModelMenu((v) => !v)}
@@ -230,7 +313,7 @@ export function Toolbar({
       </div>
 
       {/* Right: browser, web UI, settings, window controls */}
-      <div className="toolbar-section">
+      <div className="toolbar-section" style={{ flexShrink: 0, overflow: "visible" }}>
         <button className="toolbar-btn" onClick={onBrowserClick} title="Browser">
           <Globe size={14} />
           <span className={`status-dot ${browserRunning ? "active" : ""}`} />
@@ -255,6 +338,19 @@ export function Toolbar({
         <button className="toolbar-btn" onClick={onSettingsClick} title="Settings">
           <Settings size={14} />
         </button>
+
+        {isRelayMode() && (
+          <button
+            className="toolbar-btn"
+            onClick={async () => {
+              await fetch("/auth/logout", { method: "POST" }).catch(() => {});
+              window.location.reload();
+            }}
+            title="Logout"
+          >
+            <LogOut size={14} />
+          </button>
+        )}
 
         {IS_TAURI && (
           <>

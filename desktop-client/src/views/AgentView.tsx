@@ -61,7 +61,7 @@ export default function AgentView() {
   const activeStats = activeTabId ? statsRef.current.get(activeTabId) : undefined;
 
   return (
-    <div className="flex flex-1 flex-col min-h-0">
+    <div className="flex flex-1 flex-col min-h-0 min-w-0 w-full overflow-hidden">
       <AgentTabBar
         tabs={tabs}
         activeTabId={activeTabId}
@@ -72,7 +72,7 @@ export default function AgentView() {
         tokenUsage={activeStats?.tokenUsage}
         contextSize={activeStats?.contextSize}
       />
-      <div className="flex-1 min-h-0 relative">
+      <div className="flex-1 min-h-0 min-w-0 relative overflow-hidden">
         {tabs.map((tab) => (
           <ChatPanel
             key={tab.id}

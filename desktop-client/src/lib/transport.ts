@@ -15,7 +15,7 @@ export function isRelayMode(): boolean {
   }
 
   // Known relay hosts
-  if (host === "app.lukan.ai" || host.endsWith(".vm.kiteploy.com")) {
+  if (host === "app.lukan.ai" || host === "remote.lukan.ai" || host.endsWith(".kiteploy.com")) {
     return true;
   }
 

@@ -839,8 +839,12 @@ export class RelayTransport implements Transport {
         return { method: "GET", url: "/api/events/history" };
       case "clear_event_history":
         return { method: "DELETE", url: "/api/events/history" };
-      case "list_directory":
-        return { method: "GET", url: "/api/files" };
+      case "list_directory": {
+        const qs = args?.path
+          ? `?path=${encodeURIComponent(args.path as string)}`
+          : "";
+        return { method: "GET", url: `/api/files${qs}` };
+      }
       case "get_cwd":
         return { method: "GET", url: "/api/cwd" };
       case "list_bg_processes":

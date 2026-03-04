@@ -22,15 +22,14 @@ pub async fn e2e_rest_tunnel_handler(
     request: Request<Body>,
 ) -> Response {
     // Auth: same as regular REST tunnel
-    let token = auth::extract_token_from_cookie(request.headers())
-        .or_else(|| {
-            request
-                .headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string())
-        });
+    let token = auth::extract_token_from_cookie(request.headers()).or_else(|| {
+        request
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string())
+    });
 
     let claims = match token {
         Some(t) => auth::verify_jwt(&state.browser_jwt_secret(), &t)
@@ -42,7 +41,7 @@ pub async fn e2e_rest_tunnel_handler(
     let claims = match claims {
         Ok(c) => c,
         Err(()) => {
-            return (StatusCode::UNAUTHORIZED, "Missing or invalid authorization").into_response()
+            return (StatusCode::UNAUTHORIZED, "Missing or invalid authorization").into_response();
         }
     };
 
@@ -108,15 +107,14 @@ pub async fn rest_tunnel_handler(
     request: Request<Body>,
 ) -> Response {
     // Extract JWT from HttpOnly cookie (browser) or Authorization header (fallback)
-    let token = auth::extract_token_from_cookie(request.headers())
-        .or_else(|| {
-            request
-                .headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string())
-        });
+    let token = auth::extract_token_from_cookie(request.headers()).or_else(|| {
+        request
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string())
+    });
 
     let claims = match token {
         Some(t) => {
@@ -130,7 +128,9 @@ pub async fn rest_tunnel_handler(
 
     let claims = match claims {
         Ok(c) => c,
-        Err(()) => return (StatusCode::UNAUTHORIZED, "Missing or invalid authorization").into_response(),
+        Err(()) => {
+            return (StatusCode::UNAUTHORIZED, "Missing or invalid authorization").into_response();
+        }
     };
 
     // Check if daemon is connected

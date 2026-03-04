@@ -36,7 +36,10 @@ async fn main() -> anyhow::Result<()> {
     if state.dev_mode {
         info!("DEV MODE enabled — /auth/dev endpoints are active (do NOT use in production)");
     }
-    info!("Boot ID: {} (browser tokens from previous boots are now invalid)", &state.boot_id[..8]);
+    info!(
+        "Boot ID: {} (browser tokens from previous boots are now invalid)",
+        &state.boot_id[..8]
+    );
 
     let router = create_router(state.clone());
 
@@ -69,6 +72,12 @@ fn create_router(state: SharedState) -> Router {
         // Dev auth (only active when RELAY_DEV_MODE=true)
         .route("/auth/dev", get(auth::dev_login).post(auth::dev_login_post))
         .route("/auth/dev/token", post(auth::dev_token))
+        // Device code flow (for headless/remote login)
+        .route("/auth/device", post(auth::device_code_start))
+        .route("/auth/device/poll", post(auth::device_code_poll))
+        .route("/auth/device/verify", post(auth::device_code_verify))
+        // Device code verification page
+        .route("/device", get(static_files::serve_device_page))
         // WebSocket endpoints
         .route("/ws/client", get(ws_client_upgrade))
         .route("/ws/daemon", get(ws_daemon_upgrade))

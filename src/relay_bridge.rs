@@ -205,6 +205,7 @@ enum E2EState {
 /// A local WebSocket connection to the web server, representing one browser client session.
 struct LocalWsConnection {
     tx: mpsc::UnboundedSender<String>,
+    #[allow(dead_code)]
     e2e: Arc<tokio::sync::Mutex<E2EState>>,
 }
 
@@ -231,7 +232,14 @@ async fn handle_relay_message(
             connection_id,
             message,
         } => {
-            handle_forward(&connection_id, message, local_connections, e2e_states, response_tx).await;
+            handle_forward(
+                &connection_id,
+                message,
+                local_connections,
+                e2e_states,
+                response_tx,
+            )
+            .await;
         }
         RelayToDaemon::RestRequest {
             request_id,
@@ -296,8 +304,15 @@ async fn handle_relay_message(
             let e2e_for_conn = Arc::clone(&e2e);
             let e2e_states_clone = Arc::clone(e2e_states);
             tokio::spawn(async move {
-                if let Err(e) =
-                    open_local_ws_connection(&connection_id, port, &conns, &response_tx, e2e_for_conn, &e2e_states_clone).await
+                if let Err(e) = open_local_ws_connection(
+                    &connection_id,
+                    port,
+                    &conns,
+                    &response_tx,
+                    e2e_for_conn,
+                    &e2e_states_clone,
+                )
+                .await
                 {
                     error!(
                         connection_id = %connection_id,
@@ -430,16 +445,15 @@ async fn handle_forward(
                 match &*state {
                     E2EState::Established(session) => match session.decrypt(nonce, ciphertext) {
                         Ok(plaintext) => {
-                            let plaintext_str =
-                                String::from_utf8(plaintext).unwrap_or_default();
+                            let plaintext_str = String::from_utf8(plaintext).unwrap_or_default();
                             // Forward to local WS if connected
                             drop(state);
                             drop(states);
                             let conns = local_connections.lock().await;
-                            if let Some(conn) = conns.get(connection_id) {
-                                if conn.tx.send(plaintext_str).is_err() {
-                                    warn!(connection_id = %connection_id, "Local WS connection dead");
-                                }
+                            if let Some(conn) = conns.get(connection_id)
+                                && conn.tx.send(plaintext_str).is_err()
+                            {
+                                warn!(connection_id = %connection_id, "Local WS connection dead");
                             }
                         }
                         Err(e) => {
@@ -474,7 +488,7 @@ async fn handle_e2e_rest(
     request_id: String,
     body: &[u8],
     local_port: u16,
-    local_connections: &Arc<tokio::sync::Mutex<HashMap<String, LocalWsConnection>>>,
+    _local_connections: &Arc<tokio::sync::Mutex<HashMap<String, LocalWsConnection>>>,
     e2e_states: &E2EStates,
     response_tx: &mpsc::UnboundedSender<String>,
 ) {
@@ -556,10 +570,7 @@ async fn handle_e2e_rest(
         .get("method")
         .and_then(|v| v.as_str())
         .unwrap_or("GET");
-    let path = inner
-        .get("path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("/");
+    let path = inner.get("path").and_then(|v| v.as_str()).unwrap_or("/");
     let inner_body = inner
         .get("body")
         .map(|v| v.to_string().into_bytes())
@@ -640,7 +651,7 @@ async fn open_local_ws_connection(
     connections: &Arc<tokio::sync::Mutex<HashMap<String, LocalWsConnection>>>,
     response_tx: &mpsc::UnboundedSender<String>,
     e2e: Arc<tokio::sync::Mutex<E2EState>>,
-    e2e_states: &E2EStates,
+    _e2e_states: &E2EStates,
 ) -> Result<()> {
     let ws_url = format!("ws://127.0.0.1:{local_port}/ws");
     let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)

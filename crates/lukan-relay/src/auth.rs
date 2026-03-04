@@ -111,10 +111,8 @@ pub async fn auth_status(
 /// POST /auth/logout — clear the auth cookie.
 pub async fn auth_logout() -> Response {
     let mut resp = axum::Json(serde_json::json!({ "ok": true })).into_response();
-    resp.headers_mut().insert(
-        header::SET_COOKIE,
-        build_clear_cookie().parse().unwrap(),
-    );
+    resp.headers_mut()
+        .insert(header::SET_COOKIE, build_clear_cookie().parse().unwrap());
     resp
 }
 
@@ -131,6 +129,8 @@ pub struct OAuthCallbackParams {
 pub struct GoogleLoginParams {
     /// Optional localhost redirect port for CLI login flow.
     pub cli_port: Option<u16>,
+    /// Optional path to redirect to after login (e.g. "/device").
+    pub redirect: Option<String>,
 }
 
 /// Google OAuth token exchange response.
@@ -154,11 +154,14 @@ pub async fn google_login(
 ) -> Response {
     let redirect_uri = format!("{}/auth/callback", state.public_url);
 
-    // Include cli_port in state if present (for local callback redirect)
-    let oauth_state = params
-        .cli_port
-        .map(|p| format!("cli_port={p}"))
-        .unwrap_or_default();
+    // Encode flow info in OAuth state parameter
+    let oauth_state = if let Some(port) = params.cli_port {
+        format!("cli_port={port}")
+    } else if let Some(redirect) = &params.redirect {
+        format!("redirect={redirect}")
+    } else {
+        String::new()
+    };
 
     let url = format!(
         "https://accounts.google.com/o/oauth2/v2/auth?\
@@ -228,12 +231,12 @@ async fn handle_google_callback(
     // Decode the ID token (we trust Google's signature since we just received it)
     let payload = decode_google_id_token(&id_token)?;
 
-    // Check if this was a CLI login flow (has cli_port in state)
-    let cli_port = params
-        .state
-        .as_deref()
-        .and_then(|s| s.strip_prefix("cli_port="))
+    // Parse flow info from OAuth state parameter
+    let oauth_state = params.state.as_deref().unwrap_or_default();
+    let cli_port = oauth_state
+        .strip_prefix("cli_port=")
         .and_then(|p| p.parse::<u16>().ok());
+    let redirect_path = oauth_state.strip_prefix("redirect=");
 
     if let Some(port) = cli_port {
         // CLI/daemon login — use base jwt_secret (survives relay restarts)
@@ -250,11 +253,14 @@ async fn handle_google_callback(
         // Set HttpOnly cookie instead of passing token in URL
         let jwt = create_jwt(&state.browser_jwt_secret(), &payload.sub, &payload.email)?;
         let cookie = build_auth_cookie(&jwt, &state.public_url);
-        let mut resp = Redirect::temporary(&state.public_url).into_response();
-        resp.headers_mut().insert(
-            header::SET_COOKIE,
-            cookie.parse().unwrap(),
-        );
+        let target = if let Some(path) = redirect_path {
+            format!("{}{path}", state.public_url)
+        } else {
+            state.public_url.clone()
+        };
+        let mut resp = Redirect::temporary(&target).into_response();
+        resp.headers_mut()
+            .insert(header::SET_COOKIE, cookie.parse().unwrap());
         Ok(resp)
     }
 }
@@ -268,9 +274,7 @@ pub struct DevLoginBody {
 }
 
 /// GET /auth/dev — Returns whether dev login is available (for frontend to show the form).
-pub async fn dev_login(
-    axum::extract::State(state): axum::extract::State<SharedState>,
-) -> Response {
+pub async fn dev_login(axum::extract::State(state): axum::extract::State<SharedState>) -> Response {
     if !state.dev_mode {
         return (axum::http::StatusCode::NOT_FOUND, "Dev login not enabled").into_response();
     }
@@ -317,10 +321,8 @@ pub async fn dev_login_post(
                 "email": email,
             }))
             .into_response();
-            resp.headers_mut().insert(
-                header::SET_COOKIE,
-                cookie.parse().unwrap(),
-            );
+            resp.headers_mut()
+                .insert(header::SET_COOKIE, cookie.parse().unwrap());
             resp
         }
         Err(e) => (
@@ -373,6 +375,148 @@ pub async fn dev_token(
         )
             .into_response(),
     }
+}
+
+// ── Device code flow ─────────────────────────────────────────────────
+
+/// POST /auth/device — Start a device code login flow.
+/// Returns a device_code (for polling) and user_code (for the user to enter in a browser).
+pub async fn device_code_start(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+) -> Response {
+    let (device_code, user_code) = state.create_device_code();
+    let verification_url = format!("{}/device", state.public_url);
+
+    axum::Json(serde_json::json!({
+        "deviceCode": device_code,
+        "userCode": user_code,
+        "verificationUrl": verification_url,
+        "expiresIn": 900,
+        "interval": 5,
+    }))
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeviceCodePollBody {
+    #[serde(rename = "deviceCode")]
+    pub device_code: String,
+}
+
+/// POST /auth/device/poll — CLI polls this to check if the user has authorized.
+pub async fn device_code_poll(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+    axum::Json(body): axum::Json<DeviceCodePollBody>,
+) -> Response {
+    use crate::state::DeviceCodePollResult;
+
+    match state.poll_device_code(&body.device_code) {
+        Some(DeviceCodePollResult::Pending) => {
+            axum::Json(serde_json::json!({ "status": "pending" })).into_response()
+        }
+        Some(DeviceCodePollResult::Authorized {
+            token,
+            user_id,
+            email,
+        }) => axum::Json(serde_json::json!({
+            "status": "authorized",
+            "token": token,
+            "userId": user_id,
+            "email": email,
+        }))
+        .into_response(),
+        Some(DeviceCodePollResult::Expired) | None => axum::Json(serde_json::json!({
+            "status": "expired",
+        }))
+        .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeviceCodeVerifyBody {
+    #[serde(rename = "userCode")]
+    pub user_code: String,
+    /// For dev mode: email
+    pub email: Option<String>,
+    /// For dev mode: secret
+    pub secret: Option<String>,
+}
+
+/// POST /auth/device/verify — Browser sends the user_code + credentials to authorize.
+/// In dev mode: accepts email + optional secret (same as /auth/dev/token).
+/// In production: this endpoint is called after Google OAuth completes (the browser
+/// is already authenticated via cookie), so we verify the cookie instead.
+pub async fn device_code_verify(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+    headers: axum::http::HeaderMap,
+    axum::Json(body): axum::Json<DeviceCodeVerifyBody>,
+) -> Response {
+    // Find the device code entry by user_code
+    let device_code = match state.find_by_user_code(&body.user_code) {
+        Some(dc) => dc,
+        None => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({ "error": "Invalid or expired code" })),
+            )
+                .into_response();
+        }
+    };
+
+    // Determine user identity: try browser cookie first, then dev mode
+    let (user_id, email) = if let Some(token) = extract_token_from_cookie(&headers) {
+        // Browser is authenticated — use their identity
+        match verify_jwt(&state.browser_jwt_secret(), &token) {
+            Ok(claims) => (claims.sub, claims.email),
+            Err(_) => {
+                return (
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({ "error": "Invalid browser session" })),
+                )
+                    .into_response();
+            }
+        }
+    } else if state.dev_mode {
+        // Dev mode: use email from body
+        if let Some(expected) = &state.dev_secret {
+            match &body.secret {
+                Some(provided) if provided == expected => {}
+                _ => {
+                    return (
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        axum::Json(serde_json::json!({ "error": "Invalid or missing secret" })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+        let email = body.email.unwrap_or_else(|| "dev@localhost".to_string());
+        let user_id = format!("dev-{}", email.replace(['@', '.'], "-"));
+        (user_id, email)
+    } else {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Not authenticated" })),
+        )
+            .into_response();
+    };
+
+    // Create a daemon JWT (uses base jwt_secret, survives relay restarts)
+    let jwt = match create_jwt(&state.jwt_secret, &user_id, &email) {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": format!("Failed to create token: {e}") })),
+            )
+                .into_response();
+        }
+    };
+
+    // Mark the device code as authorized
+    state.complete_device_code(&device_code, jwt, user_id, email);
+
+    axum::Json(serde_json::json!({ "ok": true })).into_response()
 }
 
 /// Decode a Google ID token's payload without verifying the signature.

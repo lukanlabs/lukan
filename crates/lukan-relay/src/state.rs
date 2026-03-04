@@ -2,9 +2,30 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 /// Sender half for writing to a WebSocket connection.
 pub type WsSender = mpsc::UnboundedSender<String>;
+
+// ── Device Code Flow ─────────────────────────────────────────────────
+
+/// Status of a device code authorization request.
+pub enum DeviceCodeStatus {
+    Pending,
+    Authorized {
+        token: String,
+        user_id: String,
+        email: String,
+    },
+}
+
+/// A pending device code entry (for headless login flow).
+pub struct DeviceCodeEntry {
+    pub user_code: String,
+    pub device_code: String,
+    pub expires_at: Instant,
+    pub status: DeviceCodeStatus,
+}
 
 /// A connected daemon (user's local machine).
 pub struct DaemonConnection {
@@ -54,6 +75,8 @@ pub struct RelayState {
     /// Random ID generated on each boot — browser tokens signed with this become
     /// invalid when the relay restarts, forcing re-authentication.
     pub boot_id: String,
+    /// device_code → DeviceCodeEntry (for headless device code login flow)
+    pub device_codes: DashMap<String, DeviceCodeEntry>,
 }
 
 impl RelayState {
@@ -81,6 +104,7 @@ impl RelayState {
             dev_mode,
             dev_secret,
             boot_id,
+            device_codes: DashMap::new(),
         }
     }
 
@@ -133,6 +157,105 @@ impl RelayState {
     pub fn browser_jwt_secret(&self) -> String {
         format!("{}.{}", self.jwt_secret, self.boot_id)
     }
+
+    // ── Device Code helpers ──────────────────────────────────────────
+
+    /// Create a new device code entry with a 15-minute TTL.
+    /// Returns (device_code, user_code).
+    pub fn create_device_code(&self) -> (String, String) {
+        use rand::Rng;
+        let device_code = uuid::Uuid::new_v4().to_string();
+        let user_code = {
+            let mut rng = rand::rng();
+            let a: String = (0..3)
+                .map(|_| rng.random_range(b'A'..=b'Z') as char)
+                .collect();
+            let b: String = (0..3)
+                .map(|_| rng.random_range(b'A'..=b'Z') as char)
+                .collect();
+            format!("{a}-{b}")
+        };
+        let entry = DeviceCodeEntry {
+            user_code: user_code.clone(),
+            device_code: device_code.clone(),
+            expires_at: Instant::now() + std::time::Duration::from_secs(15 * 60),
+            status: DeviceCodeStatus::Pending,
+        };
+        self.device_codes.insert(device_code.clone(), entry);
+        (device_code, user_code)
+    }
+
+    /// Find a device code entry by its user-facing code. Returns the device_code key if found.
+    pub fn find_by_user_code(&self, user_code: &str) -> Option<String> {
+        let upper = user_code.to_uppercase();
+        for entry in self.device_codes.iter() {
+            if entry.user_code == upper && entry.expires_at > Instant::now() {
+                return Some(entry.device_code.clone());
+            }
+        }
+        None
+    }
+
+    /// Poll a device code. Returns None if not found/expired.
+    pub fn poll_device_code(&self, device_code: &str) -> Option<DeviceCodePollResult> {
+        let entry = self.device_codes.get(device_code)?;
+        if entry.expires_at <= Instant::now() {
+            drop(entry);
+            self.device_codes.remove(device_code);
+            return Some(DeviceCodePollResult::Expired);
+        }
+        match &entry.status {
+            DeviceCodeStatus::Pending => Some(DeviceCodePollResult::Pending),
+            DeviceCodeStatus::Authorized {
+                token,
+                user_id,
+                email,
+            } => {
+                let result = DeviceCodePollResult::Authorized {
+                    token: token.clone(),
+                    user_id: user_id.clone(),
+                    email: email.clone(),
+                };
+                drop(entry);
+                self.device_codes.remove(device_code);
+                Some(result)
+            }
+        }
+    }
+
+    /// Mark a device code as authorized (called after user authenticates in browser).
+    pub fn complete_device_code(
+        &self,
+        device_code: &str,
+        token: String,
+        user_id: String,
+        email: String,
+    ) -> bool {
+        if let Some(mut entry) = self.device_codes.get_mut(device_code) {
+            if entry.expires_at <= Instant::now() {
+                return false;
+            }
+            entry.status = DeviceCodeStatus::Authorized {
+                token,
+                user_id,
+                email,
+            };
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Result of polling a device code.
+pub enum DeviceCodePollResult {
+    Pending,
+    Expired,
+    Authorized {
+        token: String,
+        user_id: String,
+        email: String,
+    },
 }
 
 /// Convenience type for sharing state via Axum.

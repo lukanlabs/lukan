@@ -103,4 +103,3 @@ pub async fn handle_browser_ws(socket: WebSocket, state: Arc<RelayState>, user_i
     writer_task.abort();
     info!(connection_id = %connection_id, "Browser client disconnected");
 }
-

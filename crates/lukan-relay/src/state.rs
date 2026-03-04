@@ -227,10 +227,10 @@ impl RelayState {
         self.daemon_connections.contains_key(user_id)
     }
 
-    /// JWT secret for browser tokens. Includes boot_id so all browser
-    /// tokens are invalidated when the relay restarts.
+    /// JWT secret for browser tokens.
+    /// Uses the same stable secret so sessions survive relay restarts.
     pub fn browser_jwt_secret(&self) -> String {
-        format!("{}.{}", self.jwt_secret, self.boot_id)
+        self.jwt_secret.clone()
     }
 
     // ── OAuth CSRF helpers ──────────────────────────────────────────

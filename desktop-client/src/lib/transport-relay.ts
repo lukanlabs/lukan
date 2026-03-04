@@ -179,9 +179,8 @@ export class RelayTransport implements Transport {
           return;
         }
 
-        // If closed due to auth error, reload (cookie is invalid, shows login page)
+        // If closed due to auth error, stop reconnecting
         if (event.code === 4001 || event.code === 1008) {
-          window.location.reload();
           return;
         }
 
@@ -366,8 +365,9 @@ export class RelayTransport implements Transport {
     }
     if (type === "auth_error") {
       this.dispatch("auth-error", msg.error as string);
-      // Cookie is invalid — reload shows login page
-      window.location.reload();
+      // Don't reload — it can cause an infinite reload loop.
+      // Instead, disconnect and let the user re-login manually.
+      this.ws?.close();
       return;
     }
 
@@ -595,16 +595,18 @@ export class RelayTransport implements Transport {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     // Auth is via HttpOnly cookie — sent automatically by browser
 
-    const resp = await fetch(`${this.baseUrl}${url}`, {
+    const resp = await fetch(url, {
       method,
       headers,
+      credentials: "include",
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
 
     if (resp.status === 401 && !isRetry) {
-      // Cookie expired or invalid — reload shows login page
-      window.location.reload();
-      return new Promise(() => {}); // Never resolves (page will reload)
+      // Clear stale cookie and signal the app to show login
+      await fetch("/auth/logout", { method: "POST" }).catch(() => {});
+      window.dispatchEvent(new Event("auth-expired"));
+      throw new Error("Authentication expired");
     }
 
     if (!resp.ok) {
@@ -642,15 +644,17 @@ export class RelayTransport implements Transport {
     const { n, d } = await this.e2eSession!.encrypt(innerRequest);
 
     // POST to /api/_e2e with connection_id so daemon can find the right E2E session
-    const resp = await fetch(`${this.baseUrl}/api/_e2e`, {
+    const resp = await fetch("/api/_e2e", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ connection_id: this.connectionId, n, d }),
     });
 
     if (resp.status === 401) {
-      window.location.reload();
-      return new Promise(() => {});
+      await fetch("/auth/logout", { method: "POST" }).catch(() => {});
+      window.dispatchEvent(new Event("auth-expired"));
+      throw new Error("Authentication expired");
     }
 
     if (!resp.ok) {

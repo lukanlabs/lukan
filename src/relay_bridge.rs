@@ -207,6 +207,7 @@ struct LocalWsConnection {
     tx: mpsc::UnboundedSender<String>,
     #[allow(dead_code)]
     e2e: Arc<tokio::sync::Mutex<E2EState>>,
+    task: tokio::task::JoinHandle<()>,
 }
 
 type E2EStates = Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<E2EState>>>>>;
@@ -323,9 +324,10 @@ async fn handle_relay_message(
             });
         }
         RelayToDaemon::ConnectionClosed { connection_id } => {
-            // Close the local WebSocket for this browser connection
+            // Close the local WebSocket for this browser connection and abort its forwarding task
             let mut conns = local_connections.lock().await;
-            if conns.remove(&connection_id).is_some() {
+            if let Some(conn) = conns.remove(&connection_id) {
+                conn.task.abort();
                 info!(connection_id = %connection_id, "Closed local WS connection");
             }
             // Clean up E2E state
@@ -654,24 +656,23 @@ async fn open_local_ws_connection(
     _e2e_states: &E2EStates,
 ) -> Result<()> {
     let ws_url = format!("ws://127.0.0.1:{local_port}/ws");
-    let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)
+    // Add x-relay-internal header so daemon skips web_password auth
+    let request = tungstenite::http::Request::builder()
+        .uri(&ws_url)
+        .header("x-relay-internal", "true")
+        .header("sec-websocket-key", tungstenite::handshake::client::generate_key())
+        .header("sec-websocket-version", "13")
+        .header("connection", "Upgrade")
+        .header("upgrade", "websocket")
+        .header("host", format!("127.0.0.1:{local_port}"))
+        .body(())
+        .context("Failed to build WS request")?;
+    let (ws_stream, _) = tokio_tungstenite::connect_async(request)
         .await
         .context("Failed to connect to local web server")?;
 
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-
-    // Register the connection (E2E state was pre-created in ConnectionOpened)
-    {
-        let mut conns = connections.lock().await;
-        conns.insert(
-            connection_id.to_string(),
-            LocalWsConnection {
-                tx,
-                e2e: Arc::clone(&e2e),
-            },
-        );
-    }
 
     // Spawn a 5s timeout: if no e2e_hello received, fall back to Passthrough
     let e2e_timeout = Arc::clone(&e2e);
@@ -700,10 +701,11 @@ async fn open_local_ws_connection(
 
     let conn_id = connection_id.to_string();
     let response_tx = response_tx.clone();
-    let connections = Arc::clone(connections);
+    let connections_clone = Arc::clone(connections);
+    let e2e_for_insert = Arc::clone(&e2e);
 
     // Spawn a task to handle bidirectional message forwarding
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         loop {
             tokio::select! {
                 // Messages from the browser (via relay) → local web server
@@ -752,9 +754,22 @@ async fn open_local_ws_connection(
         }
 
         // Cleanup
-        let mut conns = connections.lock().await;
+        let mut conns = connections_clone.lock().await;
         conns.remove(&conn_id);
     });
+
+    // Register the connection with its task handle so it can be aborted on ConnectionClosed
+    {
+        let mut conns = connections.lock().await;
+        conns.insert(
+            connection_id.to_string(),
+            LocalWsConnection {
+                tx,
+                e2e: e2e_for_insert,
+                task,
+            },
+        );
+    }
 
     info!(connection_id = %connection_id, "Local WS connection opened");
     Ok(())
@@ -780,6 +795,9 @@ async fn tunnel_rest_request(
         "HEAD" => client.head(&url),
         _ => client.get(&url),
     };
+
+    // Mark as relay-internal so daemon skips web_password auth
+    builder = builder.header("x-relay-internal", "true");
 
     for (k, v) in headers {
         builder = builder.header(k.as_str(), v.as_str());

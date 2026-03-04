@@ -31,26 +31,44 @@ export interface Transport {
 }
 
 let transport: Transport | null = null;
+let initPromise: Promise<void> | null = null;
 
 export async function initTransport(): Promise<void> {
-  if (IS_TAURI) {
-    const { TauriTransport } = await import("./transport-tauri");
-    transport = new TauriTransport();
-  } else if (isRelayMode()) {
-    const { RelayTransport } = await import("./transport-relay");
-    const origin = `${window.location.protocol}//${window.location.host}`;
-    const rt = new RelayTransport(origin);
-    await rt.connect();
-    transport = rt;
-  } else {
-    const { WebTransport } = await import("./transport-web");
-    const wt = new WebTransport();
-    await wt.connect();
-    transport = wt;
+  // Prevent multiple concurrent initializations
+  if (initPromise) return initPromise;
+  if (transport) return;
+
+  initPromise = (async () => {
+    if (IS_TAURI) {
+      const { TauriTransport } = await import("./transport-tauri");
+      transport = new TauriTransport();
+    } else if (isRelayMode()) {
+      const { RelayTransport } = await import("./transport-relay");
+      const origin = `${window.location.protocol}//${window.location.host}`;
+      const rt = new RelayTransport(origin);
+      await rt.connect();
+      transport = rt;
+    } else {
+      const { WebTransport } = await import("./transport-web");
+      const wt = new WebTransport();
+      await wt.connect();
+      transport = wt;
+    }
+  })();
+
+  try {
+    await initPromise;
+  } finally {
+    initPromise = null;
   }
 }
 
 export function getTransport(): Transport {
   if (!transport) throw new Error("Transport not initialized");
   return transport;
+}
+
+export function resetTransport(): void {
+  transport = null;
+  initPromise = null;
 }

@@ -22,19 +22,16 @@ pub struct RelayClaims {
     pub exp: usize,
     /// Issued at
     pub iat: usize,
-    /// Audience (relay public URL)
-    pub aud: String,
 }
 
 /// Create a signed JWT for a user.
-pub fn create_jwt(secret: &str, user_id: &str, email: &str, audience: &str) -> Result<String> {
+pub fn create_jwt(secret: &str, user_id: &str, email: &str) -> Result<String> {
     let now = Utc::now().timestamp() as usize;
     let claims = RelayClaims {
         sub: user_id.to_string(),
         email: email.to_string(),
         exp: now + 30 * 24 * 60 * 60, // 30 days
         iat: now,
-        aud: audience.to_string(),
     };
     let token = encode(
         &Header::default(),
@@ -45,9 +42,9 @@ pub fn create_jwt(secret: &str, user_id: &str, email: &str, audience: &str) -> R
 }
 
 /// Verify and decode a JWT, returning the claims.
-pub fn verify_jwt(secret: &str, token: &str, expected_audience: &str) -> Result<RelayClaims> {
+pub fn verify_jwt(secret: &str, token: &str) -> Result<RelayClaims> {
     let mut validation = Validation::default();
-    validation.set_audience(&[expected_audience]);
+    validation.validate_aud = false;
     let data = decode::<RelayClaims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
@@ -77,17 +74,13 @@ fn rate_limit_response() -> Response {
 /// Build a `Set-Cookie` header value for the auth token.
 /// Uses HttpOnly (no JS access), SameSite=Lax (allows OAuth redirects),
 /// and Secure when the relay is behind HTTPS.
-pub fn build_auth_cookie(token: &str, public_url: &str) -> String {
-    let secure = public_url.starts_with("https://");
-    let mut cookie = format!(
-        "lukan_token={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
+pub fn build_auth_cookie(token: &str) -> String {
+    // Always set Secure since relay runs behind HTTPS in production
+    format!(
+        "lukan_token={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}; Secure",
         token,
         30 * 24 * 60 * 60 // 30 days
-    );
-    if secure {
-        cookie.push_str("; Secure");
-    }
-    cookie
+    )
 }
 
 /// Build a `Set-Cookie` header that clears the auth cookie.
@@ -145,7 +138,7 @@ pub async fn auth_status(
     headers: axum::http::HeaderMap,
 ) -> Response {
     match extract_token_from_cookie(&headers) {
-        Some(token) => match verify_jwt(&state.browser_jwt_secret(), &token, &state.public_url) {
+        Some(token) => match verify_jwt(&state.browser_jwt_secret(), &token) {
             Ok(claims) => {
                 let daemon_connected = state.has_daemon(&claims.sub);
                 axum::Json(serde_json::json!({
@@ -317,7 +310,6 @@ async fn handle_google_callback(
             &state.jwt_secret,
             &payload.sub,
             &payload.email,
-            &state.public_url,
         )?;
         let auth_code = state.create_auth_code(jwt, payload.sub.clone(), payload.email.clone());
         let redirect = format!(
@@ -334,9 +326,8 @@ async fn handle_google_callback(
             &state.browser_jwt_secret(),
             &payload.sub,
             &payload.email,
-            &state.public_url,
         )?;
-        let cookie = build_auth_cookie(&jwt, &state.public_url);
+        let cookie = build_auth_cookie(&jwt);
         let target = if let Some(path) = redirect_path {
             format!("{}{path}", state.public_url)
         } else {
@@ -429,10 +420,9 @@ pub async fn dev_login_post(
         &state.browser_jwt_secret(),
         &user_id,
         &email,
-        &state.public_url,
     ) {
         Ok(jwt) => {
-            let cookie = build_auth_cookie(&jwt, &state.public_url);
+            let cookie = build_auth_cookie(&jwt);
             let mut resp = axum::Json(serde_json::json!({
                 "ok": true,
                 "email": email,
@@ -485,7 +475,7 @@ pub async fn dev_token(
     let user_id = format!("dev-{}", email.replace(['@', '.'], "-"));
 
     // Daemon token — uses base jwt_secret (survives relay restarts)
-    match create_jwt(&state.jwt_secret, &user_id, &email, &state.public_url) {
+    match create_jwt(&state.jwt_secret, &user_id, &email) {
         Ok(jwt) => {
             let resp = serde_json::json!({
                 "token": jwt,
@@ -611,7 +601,7 @@ pub async fn device_code_verify(
     // Determine user identity: try browser cookie first, then dev mode
     let (user_id, email) = if let Some(token) = extract_token_from_cookie(&headers) {
         // Browser is authenticated — use their identity
-        match verify_jwt(&state.browser_jwt_secret(), &token, &state.public_url) {
+        match verify_jwt(&state.browser_jwt_secret(), &token) {
             Ok(claims) => (claims.sub, claims.email),
             Err(_) => {
                 return (
@@ -647,7 +637,7 @@ pub async fn device_code_verify(
     };
 
     // Create a daemon JWT (uses base jwt_secret, survives relay restarts)
-    let jwt = match create_jwt(&state.jwt_secret, &user_id, &email, &state.public_url) {
+    let jwt = match create_jwt(&state.jwt_secret, &user_id, &email) {
         Ok(t) => t,
         Err(e) => {
             return (

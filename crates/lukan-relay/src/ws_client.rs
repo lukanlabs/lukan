@@ -45,12 +45,28 @@ pub async fn handle_browser_ws(socket: WebSocket, state: Arc<RelayState>, user_i
     .unwrap();
     state.send_to_daemon(&user_id, &opened_msg);
 
-    // Spawn writer: relay → browser
+    // Spawn writer: relay → browser (with periodic pings to keep Cloudflare alive)
     let conn_id_writer = connection_id.clone();
     let writer_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if ws_tx.send(Message::Text(msg.into())).await.is_err() {
-                break;
+        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        ping_interval.tick().await; // skip first tick
+        loop {
+            tokio::select! {
+                msg = rx.recv() => {
+                    match msg {
+                        Some(text) => {
+                            if ws_tx.send(Message::Text(text.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                _ = ping_interval.tick() => {
+                    if ws_tx.send(Message::Ping(vec![].into())).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
         let _ = ws_tx.close().await;
@@ -60,7 +76,14 @@ pub async fn handle_browser_ws(socket: WebSocket, state: Arc<RelayState>, user_i
     // Reader: browser → relay → daemon
     let conn_id_reader = connection_id.clone();
     let user_id_reader = user_id.clone();
-    while let Some(Ok(msg)) = ws_rx.next().await {
+    while let Some(result) = ws_rx.next().await {
+        let msg = match result {
+            Ok(m) => m,
+            Err(e) => {
+                info!(connection_id = %conn_id_reader, error = %e, "Browser WS read error");
+                break;
+            }
+        };
         match msg {
             Message::Text(text) => {
                 // Wrap the client message in a relay Forward envelope
@@ -85,7 +108,10 @@ pub async fn handle_browser_ws(socket: WebSocket, state: Arc<RelayState>, user_i
                     state.send_to_browser(&conn_id_reader, &err.to_string());
                 }
             }
-            Message::Close(_) => break,
+            Message::Close(frame) => {
+                info!(connection_id = %conn_id_reader, close_frame = ?frame, "Browser sent Close frame");
+                break;
+            }
             _ => {}
         }
     }

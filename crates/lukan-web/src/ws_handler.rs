@@ -24,20 +24,23 @@ use crate::state::{AppState, WebAgentSession};
 pub async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_connection(socket, state))
+    let is_relay = headers.get("x-relay-internal").is_some();
+    ws.on_upgrade(move |socket| handle_connection(socket, state, is_relay))
 }
 
 /// Handle a single WebSocket connection
-async fn handle_connection(socket: WebSocket, state: Arc<AppState>) {
+async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bool) {
     let conn_id = state.next_connection_id();
-    info!(conn_id, "WebSocket connected");
+    info!(conn_id, is_relay, "WebSocket connected");
 
     let (mut ws_tx, mut ws_rx) = socket.split();
     use futures::SinkExt;
     use futures::StreamExt;
 
-    let mut authenticated = !state.auth_required();
+    // Skip auth for relay bridge connections (already authenticated by the relay)
+    let mut authenticated = !state.auth_required() || is_relay;
     let mut notify_rx = state.notification_tx.subscribe();
     let mut terminal_rx = state.terminal_tx.subscribe();
 

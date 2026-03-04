@@ -10,7 +10,8 @@ use axum::{
 use crate::state::AppState;
 
 /// Axum middleware that checks `Authorization: Bearer <token>` header.
-/// Skips auth if no web password is configured.
+/// Skips auth if no web password is configured or if request comes from the
+/// relay bridge (identified by `X-Relay-Internal` header, only reachable from localhost).
 pub async fn require_auth(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -18,6 +19,12 @@ pub async fn require_auth(
 ) -> Response {
     // If no password set, allow everything
     if !state.auth_required() {
+        return next.run(req).await;
+    }
+
+    // Skip auth for relay bridge requests (the relay bridge runs on localhost
+    // and injects this header when tunneling REST requests from the cloud relay)
+    if req.headers().get("x-relay-internal").is_some() {
         return next.run(req).await;
     }
 

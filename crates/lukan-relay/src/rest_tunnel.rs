@@ -32,8 +32,8 @@ pub async fn e2e_rest_tunnel_handler(
     });
 
     let claims = match token {
-        Some(t) => auth::verify_jwt(&state.browser_jwt_secret(), &t, &state.public_url)
-            .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t, &state.public_url))
+        Some(t) => auth::verify_jwt(&state.browser_jwt_secret(), &t)
+            .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t))
             .map_err(|_| ()),
         None => Err(()),
     };
@@ -119,11 +119,19 @@ pub async fn rest_tunnel_handler(
     let claims = match token {
         Some(t) => {
             // Try browser secret first (cookie), then base secret (daemon)
-            auth::verify_jwt(&state.browser_jwt_secret(), &t, &state.public_url)
-                .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t, &state.public_url))
-                .map_err(|_| ())
+            auth::verify_jwt(&state.browser_jwt_secret(), &t)
+                .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t))
+                .map_err(|e| {
+                    let path = request.uri().path();
+                    tracing::warn!(path = %path, error = %e, "REST tunnel auth failed");
+                    ()
+                })
         }
-        None => Err(()),
+        None => {
+            let path = request.uri().path();
+            tracing::warn!(path = %path, "REST tunnel: no token found in cookie or header");
+            Err(())
+        }
     };
 
     let claims = match claims {

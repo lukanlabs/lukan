@@ -124,7 +124,7 @@ async fn status(State(state): State<SharedState>, headers: axum::http::HeaderMap
         Some(t) => t,
         None => return (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
     };
-    if auth::verify_jwt(&state.browser_jwt_secret(), &token, &state.public_url).is_err() {
+    if auth::verify_jwt(&state.browser_jwt_secret(), &token).is_err() {
         return (StatusCode::UNAUTHORIZED, "Invalid or expired session").into_response();
     }
 
@@ -152,7 +152,7 @@ async fn ws_client_upgrade(
         None => return (StatusCode::UNAUTHORIZED, "Missing authentication cookie").into_response(),
     };
 
-    let claims = match auth::verify_jwt(&state.browser_jwt_secret(), &token, &state.public_url) {
+    let claims = match auth::verify_jwt(&state.browser_jwt_secret(), &token) {
         Ok(c) => c,
         Err(e) => return (StatusCode::UNAUTHORIZED, format!("Invalid token: {e}")).into_response(),
     };
@@ -173,7 +173,7 @@ async fn ws_daemon_upgrade(
     };
 
     // Daemon tokens use base jwt_secret (survive relay restarts)
-    let claims = match auth::verify_jwt(&state.jwt_secret, &token, &state.public_url) {
+    let claims = match auth::verify_jwt(&state.jwt_secret, &token) {
         Ok(c) => c,
         Err(e) => return (StatusCode::UNAUTHORIZED, format!("Invalid token: {e}")).into_response(),
     };

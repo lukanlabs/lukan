@@ -197,7 +197,6 @@ pub async fn fetch_provider_models(provider: String) -> Result<Vec<FetchedModel>
                 name: "GLM-4".into(),
             },
         ]),
-        _ => Ok(vec![]),
     }
 }
 

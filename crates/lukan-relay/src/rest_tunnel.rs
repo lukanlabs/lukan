@@ -124,7 +124,6 @@ pub async fn rest_tunnel_handler(
                 .map_err(|e| {
                     let path = request.uri().path();
                     tracing::warn!(path = %path, error = %e, "REST tunnel auth failed");
-                    ()
                 })
         }
         None => {

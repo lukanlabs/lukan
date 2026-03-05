@@ -110,14 +110,12 @@ pub fn client_ip(
     connect_info: Option<&axum::extract::ConnectInfo<std::net::SocketAddr>>,
 ) -> IpAddr {
     // Try X-Forwarded-For first (first IP in the chain is the client)
-    if let Some(forwarded) = headers.get("x-forwarded-for") {
-        if let Ok(val) = forwarded.to_str() {
-            if let Some(first) = val.split(',').next() {
-                if let Ok(ip) = first.trim().parse::<IpAddr>() {
-                    return ip;
-                }
-            }
-        }
+    if let Some(forwarded) = headers.get("x-forwarded-for")
+        && let Ok(val) = forwarded.to_str()
+        && let Some(first) = val.split(',').next()
+        && let Ok(ip) = first.trim().parse::<IpAddr>()
+    {
+        return ip;
     }
 
     // Fall back to ConnectInfo

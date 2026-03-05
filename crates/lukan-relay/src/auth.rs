@@ -306,11 +306,7 @@ async fn handle_google_callback(
 
     if let Some(port) = cli_port {
         // CLI/daemon login — create a short-lived auth code instead of passing token in URL
-        let jwt = create_jwt(
-            &state.jwt_secret,
-            &payload.sub,
-            &payload.email,
-        )?;
+        let jwt = create_jwt(&state.jwt_secret, &payload.sub, &payload.email)?;
         let auth_code = state.create_auth_code(jwt, payload.sub.clone(), payload.email.clone());
         let redirect = format!(
             "http://localhost:{port}/callback?code={}&user_id={}&email={}",
@@ -322,11 +318,7 @@ async fn handle_google_callback(
     } else {
         // Browser login — use browser_jwt_secret (invalidated on restart)
         // Set HttpOnly cookie instead of passing token in URL
-        let jwt = create_jwt(
-            &state.browser_jwt_secret(),
-            &payload.sub,
-            &payload.email,
-        )?;
+        let jwt = create_jwt(&state.browser_jwt_secret(), &payload.sub, &payload.email)?;
         let cookie = build_auth_cookie(&jwt);
         let target = if let Some(path) = redirect_path {
             format!("{}{path}", state.public_url)
@@ -416,11 +408,7 @@ pub async fn dev_login_post(
     let user_id = format!("dev-{}", email.replace(['@', '.'], "-"));
 
     // Browser token — uses browser_jwt_secret (invalidated on relay restart)
-    match create_jwt(
-        &state.browser_jwt_secret(),
-        &user_id,
-        &email,
-    ) {
+    match create_jwt(&state.browser_jwt_secret(), &user_id, &email) {
         Ok(jwt) => {
             let cookie = build_auth_cookie(&jwt);
             let mut resp = axum::Json(serde_json::json!({

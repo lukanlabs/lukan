@@ -660,7 +660,10 @@ async fn open_local_ws_connection(
     let request = tungstenite::http::Request::builder()
         .uri(&ws_url)
         .header("x-relay-internal", "true")
-        .header("sec-websocket-key", tungstenite::handshake::client::generate_key())
+        .header(
+            "sec-websocket-key",
+            tungstenite::handshake::client::generate_key(),
+        )
         .header("sec-websocket-version", "13")
         .header("connection", "Upgrade")
         .header("upgrade", "websocket")
@@ -805,7 +808,10 @@ async fn tunnel_rest_request(
 
     if !body.is_empty() {
         // Default to application/json if no content-type was provided
-        if !headers.keys().any(|k| k.eq_ignore_ascii_case("content-type")) {
+        if !headers
+            .keys()
+            .any(|k| k.eq_ignore_ascii_case("content-type"))
+        {
             builder = builder.header("content-type", "application/json");
         }
         builder = builder.body(body.to_vec());

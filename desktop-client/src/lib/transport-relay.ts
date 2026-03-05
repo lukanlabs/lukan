@@ -680,7 +680,8 @@ export class RelayTransport implements Transport {
     const innerResp = JSON.parse(decrypted);
 
     if (innerResp.status >= 400) {
-      throw new Error(`${command} failed: ${innerResp.status}`);
+      const errBody = innerResp.body ? atob(innerResp.body) : "";
+      throw new Error(`${command} failed: ${innerResp.status} ${errBody}`);
     }
 
     // Decode body (base64 → parse as JSON if applicable)

@@ -89,7 +89,6 @@ impl MessageHistory {
         sanitize_orphaned_tool_use(&mut messages);
         self.messages = messages;
     }
-
 }
 
 impl Default for MessageHistory {

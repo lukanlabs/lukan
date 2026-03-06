@@ -3,28 +3,21 @@ use std::collections::HashSet;
 use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
 use tracing::debug;
 
-const DEFAULT_MAX_MESSAGES: usize = 100;
-/// When truncating, keep the first message + the last N messages
-const KEEP_TAIL: usize = 75;
-
-/// Manages conversation message history with sanitization and truncation
+/// Manages conversation message history with sanitization
 pub struct MessageHistory {
     messages: Vec<Message>,
-    max_messages: usize,
 }
 
 impl MessageHistory {
     pub fn new() -> Self {
         Self {
             messages: Vec::new(),
-            max_messages: DEFAULT_MAX_MESSAGES,
         }
     }
 
     /// Add any message to history
     pub fn add(&mut self, msg: Message) {
         self.messages.push(msg);
-        self.truncate_if_needed();
     }
 
     /// Add a user text message
@@ -95,63 +88,13 @@ impl MessageHistory {
     pub fn load_from_json(&mut self, mut messages: Vec<Message>) {
         sanitize_orphaned_tool_use(&mut messages);
         self.messages = messages;
-        self.truncate_if_needed();
     }
 
-    /// Truncate if over max_messages, keeping first message + last KEEP_TAIL.
-    /// Never cuts between a tool_use and its tool_result.
-    fn truncate_if_needed(&mut self) {
-        if self.messages.len() <= self.max_messages {
-            return;
-        }
-
-        let total = self.messages.len();
-        // We want to keep: [0] + [total - KEEP_TAIL .. total]
-        // But we need to make sure we don't split a tool_use/tool_result pair
-        let keep_from = total.saturating_sub(KEEP_TAIL);
-
-        // Find a safe cut point: don't cut right after an assistant message with tool_use blocks
-        let mut safe_cut = keep_from;
-        if safe_cut > 1 && safe_cut < total {
-            // Check if the message just before the cut point is an assistant with tool_use
-            if has_tool_use(&self.messages[safe_cut - 1]) {
-                // Include the tool result that follows
-                // Actually we need to go back further - include this assistant message
-                safe_cut -= 1;
-            }
-        }
-
-        if safe_cut <= 1 {
-            return; // Nothing useful to truncate
-        }
-
-        let before = self.messages.len();
-        let mut kept = Vec::with_capacity(1 + total - safe_cut);
-        kept.push(self.messages[0].clone()); // Keep first message
-        kept.extend(self.messages[safe_cut..].iter().cloned());
-        self.messages = kept;
-
-        debug!(
-            before,
-            after = self.messages.len(),
-            "Truncated message history"
-        );
-    }
 }
 
 impl Default for MessageHistory {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Check if a message contains any ToolUse blocks
-fn has_tool_use(msg: &Message) -> bool {
-    match &msg.content {
-        MessageContent::Blocks(blocks) => blocks
-            .iter()
-            .any(|b| matches!(b, ContentBlock::ToolUse { .. })),
-        MessageContent::Text(_) => false,
     }
 }
 

@@ -1,7 +1,13 @@
-use axum::{Json, extract::Path, http::StatusCode, response::IntoResponse};
+use std::sync::Arc;
+
+use axum::{Json, extract::Path, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
+use tracing::error;
 
 use lukan_core::config::{ConfigManager, CredentialsManager, ProviderName};
+use lukan_providers::create_provider;
+
+use crate::state::AppState;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +39,7 @@ pub async fn list_providers() -> impl IntoResponse {
         ProviderName::GithubCopilot,
         ProviderName::OpenaiCodex,
         ProviderName::Zai,
+        ProviderName::OllamaCloud,
         ProviderName::OpenaiCompatible,
     ];
 
@@ -215,27 +222,26 @@ pub async fn fetch_provider_models(Path(provider): Path<String>) -> impl IntoRes
 }
 
 /// PUT /api/providers/active
-pub async fn set_active_provider(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
-    let provider = body["provider"].as_str().unwrap_or_default().to_string();
-    let model = body["model"].as_str().map(|s| s.to_string());
+pub async fn set_active_provider(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let provider_str = body["provider"].as_str().unwrap_or_default().to_string();
+    let model_raw = body["model"].as_str().map(|s| s.to_string());
 
-    let mut config = match ConfigManager::load().await {
-        Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    };
+    let provider_name: ProviderName =
+        match serde_json::from_value(serde_json::Value::String(provider_str.clone())) {
+            Ok(p) => p,
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid provider: {provider_str}"),
+                )
+                    .into_response();
+            }
+        };
 
-    config.provider = match serde_json::from_value(serde_json::Value::String(provider.clone())) {
-        Ok(p) => p,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("Invalid provider: {provider}"),
-            )
-                .into_response();
-        }
-    };
-
-    config.model = model.map(|m| {
+    let model_str = model_raw.map(|m| {
         if let Some((_prefix, raw)) = m.split_once(':') {
             raw.to_string()
         } else {
@@ -243,10 +249,59 @@ pub async fn set_active_provider(Json(body): Json<serde_json::Value>) -> impl In
         }
     });
 
-    match ConfigManager::save(&config).await {
-        Ok(()) => StatusCode::OK.into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    // 1. Save to disk config
+    let mut disk_config = match ConfigManager::load().await {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    disk_config.provider = provider_name.clone();
+    disk_config.model = model_str.clone();
+    if let Err(e) = ConfigManager::save(&disk_config).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
+
+    // 2. Hot-swap provider on running agents (same as WS handle_set_model)
+    {
+        let mut config = state.config.lock().await;
+        config.config.provider = provider_name;
+        config.config.model = model_str.clone();
+
+        match create_provider(&config) {
+            Ok(new_provider) => {
+                let new_provider: Arc<dyn lukan_providers::Provider> = Arc::from(new_provider);
+
+                // Swap on legacy agent
+                {
+                    let mut agent_lock = state.agent.lock().await;
+                    if let Some(ref mut agent) = *agent_lock {
+                        agent.swap_provider(Arc::clone(&new_provider));
+                    }
+                }
+
+                // Swap on all session agents
+                {
+                    let mut sessions = state.sessions.lock().await;
+                    for session in sessions.values_mut() {
+                        if let Some(ref mut agent) = session.agent
+                            && let Ok(p) = create_provider(&config)
+                        {
+                            agent.swap_provider(Arc::from(p));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to create provider for hot-swap: {e}");
+                // Config was saved, but agent won't use new model until restart
+            }
+        }
+    }
+
+    // 3. Update state names
+    *state.provider_name.lock().await = provider_str;
+    *state.model_name.lock().await = model_str.unwrap_or_default();
+
+    StatusCode::OK.into_response()
 }
 
 /// POST /api/models

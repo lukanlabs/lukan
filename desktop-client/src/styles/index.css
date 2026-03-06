@@ -427,7 +427,10 @@ select {
   -webkit-app-region: drag;
 }
 
-.workspace-toolbar > * {
+.workspace-toolbar button,
+.workspace-toolbar img,
+.workspace-toolbar select,
+.workspace-toolbar input {
   -webkit-app-region: no-drag;
 }
 

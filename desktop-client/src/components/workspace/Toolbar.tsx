@@ -122,10 +122,12 @@ export function Toolbar({
     getCurrentWindow().close();
   };
 
+  const dragProps = IS_TAURI ? { "data-tauri-drag-region": true } : {};
+
   return (
-    <div className="workspace-toolbar" {...(IS_TAURI ? { "data-tauri-drag-region": true } : {})}>
+    <div className="workspace-toolbar" {...dragProps}>
       {/* Left: logo (menu on mobile) + mode toggle */}
-      <div className="toolbar-section" style={{ position: "relative", flexShrink: 0, overflow: "visible" }}>
+      <div className="toolbar-section" style={{ position: "relative", flexShrink: 0, overflow: "visible" }} {...dragProps}>
         <img
           src={logoUrl}
           alt="lukan"
@@ -133,7 +135,7 @@ export function Toolbar({
           onClick={() => setShowMobileMenu((v) => !v)}
         />
         <img src={logoTextUrl} alt="lukan" className="hidden sm:block" style={{ height: 16, objectFit: "contain" }} />
-        <div className="mode-toggle">
+        <div className="mode-toggle" {...dragProps}>
           <button
             className={mode === "agent" ? "active" : ""}
             onClick={() => onModeChange("agent")}
@@ -203,7 +205,7 @@ export function Toolbar({
       </div>
 
       {/* Center: model selector */}
-      <div className="toolbar-section" style={{ position: "relative", flex: "1 1 0", justifyContent: "center" }}>
+      <div className="toolbar-section" style={{ position: "relative", flex: "1 1 0", justifyContent: "center" }} {...dragProps}>
         <button
           className="model-selector"
           onClick={() => setShowModelMenu((v) => !v)}
@@ -313,7 +315,7 @@ export function Toolbar({
       </div>
 
       {/* Right: browser, web UI, settings, window controls */}
-      <div className="toolbar-section" style={{ flexShrink: 0, overflow: "visible" }}>
+      <div className="toolbar-section" style={{ flexShrink: 0, overflow: "visible" }} {...dragProps}>
         <button className="toolbar-btn" onClick={onBrowserClick} title="Browser">
           <Globe size={14} />
           <span className={`status-dot ${browserRunning ? "active" : ""}`} />

@@ -119,6 +119,16 @@ impl ConfigManager {
             }
         }
 
+        // If the active model was from this provider and is no longer in the list, clear it
+        if config.provider.to_string() == provider_prefix
+            && let Some(ref current_model) = config.model
+        {
+            let full_entry = format!("{prefix}{current_model}");
+            if !new_entries.contains(&full_entry) {
+                config.model = None;
+            }
+        }
+
         Self::save(&config).await
     }
 

@@ -56,7 +56,7 @@ export default function AgentTabBar({
 
   return (
     <div
-      className="flex items-center gap-0.5 px-2 h-9 flex-shrink-0"
+      className="flex items-center gap-0.5 px-2 h-9 flex-shrink-0 overflow-x-auto min-w-0"
       style={{
         background: "#0c0c0c",
         borderBottom: "1px solid rgba(60, 60, 60, 0.4)",
@@ -147,8 +147,8 @@ export default function AgentTabBar({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Context / token stats */}
-      <div className="flex items-center gap-3">
+      {/* Context / token stats — hidden on mobile */}
+      <div className="hidden sm:flex items-center gap-3">
         {hasCtx && (
           <span className="text-[10px] text-zinc-600 font-mono">
             ctx {formatTokens(contextSize)}

@@ -200,6 +200,8 @@ export default function App() {
           browserRunning={browser.status.running}
           onBrowserClick={handleBrowserClick}
           onSettingsClick={() => workspace.openSettings()}
+          onPanelToggle={handleTogglePanel}
+          activePanel={workspace.sidePanel}
         />
 
         <ActivityBar
@@ -221,6 +223,7 @@ export default function App() {
             activePluginName={activePluginName}
             activePluginViews={activePluginName ? runningMonitors.find((m) => m.name === activePluginName)?.views : undefined}
             activePluginRunning={activePluginName ? runningMonitors.some((m) => m.name === activePluginName && m.running) : undefined}
+            onClose={() => workspace.setSidePanel(null)}
           />
         )}
 

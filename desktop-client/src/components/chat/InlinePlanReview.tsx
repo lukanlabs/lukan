@@ -113,7 +113,7 @@ export function InlinePlanReview({ plan, onAccept, onReject }: InlinePlanReviewP
                 placeholder="Describe what changes you'd like..."
                 rows={3}
                 autoFocus
-                className="w-full rounded-md border border-white/5 bg-white/[0.02] px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 resize-y"
+                className="w-full rounded-md border border-white/5 bg-white/[0.02] px-3 py-2 text-sm sm:text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 resize-y"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && feedback.trim()) {
                     handleReject();
@@ -138,32 +138,32 @@ export function InlinePlanReview({ plan, onAccept, onReject }: InlinePlanReviewP
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-1 px-1">
+            <div className="flex flex-wrap items-center gap-1 px-1">
               <button
                 onClick={() => handleAccept("manual")}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors"
               >
                 <Play className="h-3 w-3" />
                 Manual
               </button>
               <button
                 onClick={() => handleAccept("auto")}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors"
               >
                 <Zap className="h-3 w-3" />
                 Auto
               </button>
               <button
                 onClick={() => handleAccept("skip")}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors"
               >
                 <SkipForward className="h-3 w-3" />
                 Skip
               </button>
-              <span className="w-px h-4 bg-white/10 mx-1" />
+              <span className="hidden sm:block w-px h-4 bg-white/10 mx-1" />
               <button
                 onClick={() => setShowFeedback(true)}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-red-400/70 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-red-400/70 hover:text-red-300 hover:bg-red-500/10 transition-colors"
               >
                 <MessageSquare className="h-3 w-3" />
                 Request Changes

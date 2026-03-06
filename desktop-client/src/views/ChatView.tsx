@@ -132,21 +132,21 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
 
   return (
     <div
-      className="flex flex-1 flex-col min-h-0 bg-zinc-950 absolute inset-0"
+      className="flex flex-1 flex-col min-h-0 min-w-0 bg-zinc-950 absolute inset-0 overflow-hidden"
       style={{ display: isActive ? "flex" : "none" }}
     >
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 min-w-0 w-full overflow-hidden">
         {/* Main chat area */}
-        <div className="flex flex-1 flex-col min-h-0">
+        <div className="flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
           <div
             ref={scrollContainerRef}
-            className="flex-1 overflow-y-auto px-4 py-6"
+            className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-6"
             onScroll={handleScroll}
           >
             {isEmpty && (
-              <div className="flex flex-col items-center justify-center h-full text-zinc-400 gap-4 pt-32">
+              <div className="flex flex-col items-center justify-center h-full text-zinc-400 gap-4 pt-16 sm:pt-32">
                 <div className="relative">
-                  <img src={logoUrl} alt="lukan" className="h-32 w-32 animate-pulse-subtle" style={{ imageRendering: "auto" }} />
+                  <img src={logoUrl} alt="lukan" className="h-20 w-20 sm:h-32 sm:w-32 animate-pulse-subtle" style={{ imageRendering: "auto" }} />
                 </div>
                 <div className="text-center space-y-2">
                   <h2 className="text-xl font-semibold text-zinc-200">Welcome to lukan</h2>
@@ -243,23 +243,22 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
               </div>
             )}
 
-            {/* Error display */}
-            {chat.error && (
-              <div
-                className="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300 cursor-pointer hover:bg-red-500/15 transition-colors my-4 max-w-2xl mx-auto"
-                onClick={chat.dismissError}
-              >
-                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <p className="font-medium text-red-200">Error</p>
-                  <p className="text-red-400/80 mt-1">{chat.error}</p>
-                </div>
-                <span className="text-[10px] text-red-400/50">Click to dismiss</span>
-              </div>
-            )}
-
             <div ref={scrollRef} className="h-14" />
           </div>
+
+          {/* Error display — pinned above the input */}
+          {chat.error && (
+            <div
+              className="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm text-red-300 cursor-pointer hover:bg-red-500/15 transition-colors mx-4 mb-2 max-w-2xl self-center"
+              onClick={chat.dismissError}
+            >
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-red-400/80">{chat.error}</p>
+              </div>
+              <span className="text-[10px] text-red-400/50 shrink-0">✕</span>
+            </div>
+          )}
 
           <ChatInput
             onSend={handleSend}

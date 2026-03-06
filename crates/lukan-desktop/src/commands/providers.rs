@@ -65,8 +65,12 @@ pub async fn fetch_provider_models(provider: String) -> Result<Vec<FetchedModel>
         .map_err(|e| e.to_string())?;
     let api_key = CredentialsManager::get_api_key(&creds, &provider_name);
 
-    // OpenAI-compatible doesn't require an API key (local servers)
-    if api_key.is_none() && provider_name != ProviderName::OpenaiCompatible {
+    // Some providers don't need an API key to list models (static lists or local servers)
+    if api_key.is_none()
+        && provider_name != ProviderName::OpenaiCompatible
+        && provider_name != ProviderName::OpenaiCodex
+        && provider_name != ProviderName::Zai
+    {
         return Err(format!("No API key configured for {provider}"));
     }
     let api_key = api_key.unwrap_or_default();
@@ -156,7 +160,43 @@ pub async fn fetch_provider_models(provider: String) -> Result<Vec<FetchedModel>
                 })
                 .collect())
         }
-        _ => Ok(vec![]),
+        ProviderName::OpenaiCodex => Ok(lukan_providers::openai_codex::codex_models()
+            .into_iter()
+            .map(|id| FetchedModel {
+                name: id.clone(),
+                id,
+            })
+            .collect()),
+        ProviderName::Zai => Ok(vec![
+            FetchedModel {
+                id: "glm-5".into(),
+                name: "GLM-5".into(),
+            },
+            FetchedModel {
+                id: "glm-4.7".into(),
+                name: "GLM-4.7".into(),
+            },
+            FetchedModel {
+                id: "glm-4.6".into(),
+                name: "GLM-4.6".into(),
+            },
+            FetchedModel {
+                id: "glm-4.5".into(),
+                name: "GLM-4.5".into(),
+            },
+            FetchedModel {
+                id: "glm-4.5v".into(),
+                name: "GLM-4.5V (vision)".into(),
+            },
+            FetchedModel {
+                id: "glm-4.1v".into(),
+                name: "GLM-4.1V (vision)".into(),
+            },
+            FetchedModel {
+                id: "glm-4".into(),
+                name: "GLM-4".into(),
+            },
+        ]),
     }
 }
 

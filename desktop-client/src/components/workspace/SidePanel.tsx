@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import type { SidePanelId, BgProcessInfo, ViewDeclaration } from "../../lib/types";
 import { FilesPanel } from "./panels/FilesPanel";
 import { WorkersPanel } from "./panels/WorkersPanel";
@@ -19,6 +20,7 @@ interface SidePanelProps {
   activePluginName?: string | null;
   activePluginViews?: ViewDeclaration[];
   activePluginRunning?: boolean;
+  onClose?: () => void;
 }
 
 const PANEL_TITLES: Record<SidePanelId, string> = {
@@ -41,6 +43,7 @@ export function SidePanel({
   activePluginName,
   activePluginViews,
   activePluginRunning,
+  onClose,
 }: SidePanelProps) {
   const title =
     activePanel === "plugin" && activePluginName
@@ -53,6 +56,14 @@ export function SidePanel({
     <div className="side-panel">
       <div className="side-panel-header">
         <h3>{title}</h3>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="sm:hidden flex items-center justify-center h-6 w-6 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors ml-auto"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
       <div className="side-panel-content">
         {activePanel === "files" && <FilesPanel />}

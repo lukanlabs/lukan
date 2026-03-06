@@ -68,6 +68,9 @@ url = "2"
 tokio-tungstenite = { version = "0.26", features = ["connect", "native-tls"] }
 libc = "0.2"
 sha2 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+aes-gcm = "0.10"
+hkdf = "0.12"
 open = "5"
 urlencoding = "2"
 toml = "0.8"
@@ -126,5 +129,10 @@ libc.workspace = true
 chrono.workspace = true
 lukan-browser.workspace = true
 base64.workspace = true
+sha2.workspace = true
+x25519-dalek.workspace = true
+axum.workspace = true
 dialoguer = "0.11"
 console = "0.15"
+urlencoding.workspace = true
+open.workspace = true

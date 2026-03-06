@@ -1,0 +1,33 @@
+[package]
+name = "lukan-relay"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "lukan-relay"
+path = "src/main.rs"
+
+[dependencies]
+lukan-core.workspace = true
+axum = { workspace = true, features = ["ws"] }
+tower-http = { workspace = true, features = ["cors"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+anyhow.workspace = true
+reqwest.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+futures.workspace = true
+rust-embed.workspace = true
+mime_guess = "2"
+jsonwebtoken = "9"
+dashmap = "6"
+dotenvy.workspace = true
+base64.workspace = true
+urlencoding.workspace = true
+url.workspace = true
+rand.workspace = true
+subtle = "2"

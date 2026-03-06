@@ -13,7 +13,7 @@ export function TaskPanel({ tasks }: TaskPanelProps) {
   const progress = tasks.length > 0 ? (doneCount / tasks.length) * 100 : 0;
 
   return (
-    <div className="flex flex-col border-l border-zinc-800 bg-zinc-950 w-56 min-w-36 shrink overflow-hidden">
+    <div className="hidden sm:flex flex-col border-l border-zinc-800 bg-zinc-950 w-56 min-w-36 shrink overflow-hidden">
       {/* Progress bar */}
       <div className="h-0.5 bg-zinc-800">
         <div

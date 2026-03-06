@@ -15,13 +15,13 @@ export function MainArea({ mode, processLog, processLogSessionId, onCloseProcess
     <div className="main-area" style={{ position: "relative" }}>
       {/* Both always mounted — display toggle preserves state */}
       <div
-        className="flex flex-col h-full min-h-0"
+        className="flex flex-col h-full min-h-0 min-w-0 overflow-hidden"
         style={{ display: mode === "agent" ? "flex" : "none" }}
       >
         <ChatView />
       </div>
       <div
-        className="flex flex-col h-full min-h-0"
+        className="flex flex-col h-full min-h-0 min-w-0 overflow-hidden"
         style={{ display: mode === "terminal" ? "flex" : "none" }}
       >
         <TerminalView />

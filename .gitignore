@@ -12,3 +12,6 @@ dist/
 plugins/*/dist/
 bun.lock
 .wrangler/
+.tmp/
+.plan.md
+*.tsbuildinfo

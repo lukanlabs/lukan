@@ -779,7 +779,7 @@ export class RelayTransport implements Transport {
           method: "GET",
           url: `/api/plugins/${encodeURIComponent(args?.name as string)}/config`,
         };
-      case "set_plugin_config":
+      case "set_plugin_config_field":
         return {
           method: "PUT",
           url: `/api/plugins/${encodeURIComponent(args?.name as string)}/config`,
@@ -788,7 +788,7 @@ export class RelayTransport implements Transport {
       case "get_plugin_logs":
         return {
           method: "GET",
-          url: `/api/plugins/${encodeURIComponent(args?.name as string)}/logs`,
+          url: `/api/plugins/${encodeURIComponent(args?.name as string)}/logs?lines=${args?.lines ?? 100}`,
         };
       case "list_providers":
         return { method: "GET", url: "/api/providers" };
@@ -813,7 +813,7 @@ export class RelayTransport implements Transport {
       case "get_models":
         return { method: "GET", url: "/api/models" };
       case "add_model":
-        return { method: "POST", url: "/api/models", body: args };
+        return { method: "POST", url: "/api/models", body: { entry: args?.entry } };
       case "fetch_provider_models":
         return {
           method: "GET",
@@ -834,27 +834,40 @@ export class RelayTransport implements Transport {
           body: { content: args?.content },
         };
       case "get_project_memory":
-        return { method: "GET", url: "/api/memory/project" };
+        return {
+          method: "GET",
+          url: `/api/memory/project?path=${encodeURIComponent(args?.path as string)}`,
+        };
       case "save_project_memory":
         return {
           method: "PUT",
           url: "/api/memory/project",
-          body: { content: args?.content },
+          body: { path: args?.path, content: args?.content },
         };
       case "is_project_memory_active":
-        return { method: "GET", url: "/api/memory/project/active" };
+        return {
+          method: "GET",
+          url: `/api/memory/project/active?path=${encodeURIComponent(args?.path as string)}`,
+        };
       case "toggle_project_memory":
         return {
           method: "PUT",
           url: "/api/memory/project/active",
-          body: { active: args?.active },
+          body: { path: args?.path, active: args?.active },
         };
       case "consume_pending_events":
         return { method: "POST", url: "/api/events/consume" };
       case "get_event_history":
-        return { method: "GET", url: "/api/events/history" };
-      case "clear_event_history":
-        return { method: "DELETE", url: "/api/events/history" };
+        return {
+          method: "GET",
+          url: `/api/events/history?count=${args?.count ?? 50}`,
+        };
+      case "clear_event_history": {
+        const qs = args?.source
+          ? `?source=${encodeURIComponent(args.source as string)}`
+          : "";
+        return { method: "DELETE", url: `/api/events/history${qs}` };
+      }
       case "list_directory": {
         const qs = args?.path
           ? `?path=${encodeURIComponent(args.path as string)}`
@@ -863,12 +876,16 @@ export class RelayTransport implements Transport {
       }
       case "get_cwd":
         return { method: "GET", url: "/api/cwd" };
-      case "list_bg_processes":
-        return { method: "GET", url: "/api/processes" };
+      case "list_bg_processes": {
+        const qs = args?.sessionId
+          ? `?sessionId=${encodeURIComponent(args.sessionId as string)}`
+          : "";
+        return { method: "GET", url: `/api/processes${qs}` };
+      }
       case "get_bg_process_log":
         return {
           method: "GET",
-          url: `/api/processes/${encodeURIComponent(args?.pid as string)}/log`,
+          url: `/api/processes/${args?.pid}/log?maxLines=${args?.maxLines ?? 100}`,
         };
       case "kill_bg_process":
         return {
@@ -883,7 +900,7 @@ export class RelayTransport implements Transport {
       case "list_workers":
         return { method: "GET", url: "/api/workers" };
       case "create_worker":
-        return { method: "POST", url: "/api/workers", body: args?.worker };
+        return { method: "POST", url: "/api/workers", body: args?.input };
       case "get_worker_detail":
         return {
           method: "GET",
@@ -909,7 +926,7 @@ export class RelayTransport implements Transport {
       case "get_worker_run":
         return {
           method: "GET",
-          url: `/api/workers/${encodeURIComponent(args?.id as string)}/runs/${encodeURIComponent(args?.runId as string)}`,
+          url: `/api/workers/${encodeURIComponent(args?.workerId as string)}/runs/${encodeURIComponent(args?.runId as string)}`,
         };
       case "check_transcription_status":
         return { method: "GET", url: "/api/transcription/status" };
@@ -917,7 +934,7 @@ export class RelayTransport implements Transport {
         return {
           method: "POST",
           url: "/api/transcription/transcribe",
-          body: args,
+          body: { audio: args?.audio },
         };
       case "browser_launch":
         return {
@@ -952,7 +969,6 @@ export class RelayTransport implements Transport {
         return {
           method: "POST",
           url: `/api/plugins/${encodeURIComponent(args?.name as string)}/commands/${encodeURIComponent(args?.command as string)}`,
-          body: { args: args?.args },
         };
       case "get_plugin_manifest_info":
         return {
@@ -967,14 +983,10 @@ export class RelayTransport implements Transport {
       case "get_plugin_view_data":
         return {
           method: "GET",
-          url: `/api/plugins/${encodeURIComponent(args?.name as string)}/views/${encodeURIComponent(args?.viewId as string)}`,
+          url: `/api/plugins/${encodeURIComponent(args?.pluginName as string)}/views/${encodeURIComponent(args?.viewId as string)}`,
         };
-      case "send_to_bg_process":
-        return {
-          method: "POST",
-          url: "/api/processes/background",
-          body: args,
-        };
+      case "send_to_background":
+        return { method: "POST", url: "/api/processes/background" };
       default:
         return { method: "GET", url: `/api/${command}` };
     }

@@ -161,11 +161,25 @@ async fn connect_and_run(
     // Channel for daemon → relay messages (responses from local processing)
     let (response_tx, mut response_rx) = mpsc::unbounded_channel::<String>();
 
+    // Spawn a dedicated writer task so large messages don't block the main
+    // select! loop (which must keep processing incoming relay messages and pings).
+    // Use a bounded channel for write requests so backpressure is applied
+    // to per-connection tasks rather than stalling the reader.
+    let (write_tx, mut write_rx) = mpsc::channel::<tungstenite::Message>(64);
+    let writer_task = tokio::spawn(async move {
+        while let Some(msg) = write_rx.recv().await {
+            if ws_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+        let _ = ws_tx.close().await;
+    });
+
     // Reset backoff on successful connection
     let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
     ping_interval.tick().await; // skip first tick
 
-    loop {
+    let result = loop {
         tokio::select! {
             // Incoming message from relay
             msg = ws_rx.next() => {
@@ -181,10 +195,10 @@ async fn connect_and_run(
                     }
                     Some(Ok(tungstenite::Message::Close(_))) | None => {
                         info!("Relay connection closed");
-                        return Err(anyhow::anyhow!("Connection closed"));
+                        break Err(anyhow::anyhow!("Connection closed"));
                     }
                     Some(Err(e)) => {
-                        return Err(anyhow::anyhow!("WebSocket error: {e}"));
+                        break Err(anyhow::anyhow!("WebSocket error: {e}"));
                     }
                     _ => {}
                 }
@@ -192,26 +206,32 @@ async fn connect_and_run(
 
             // Outgoing message to relay (forwarded responses)
             Some(msg) = response_rx.recv() => {
-                if ws_tx.send(tungstenite::Message::Text(msg.into())).await.is_err() {
-                    return Err(anyhow::anyhow!("Failed to send to relay"));
+                if write_tx.send(tungstenite::Message::Text(msg.into())).await.is_err() {
+                    break Err(anyhow::anyhow!("Failed to send to relay"));
                 }
             }
 
             // Periodic ping
             _ = ping_interval.tick() => {
                 let ping = serde_json::to_string(&DaemonToRelay::Ping).unwrap();
-                if ws_tx.send(tungstenite::Message::Text(ping.into())).await.is_err() {
-                    return Err(anyhow::anyhow!("Ping failed"));
+                if write_tx.send(tungstenite::Message::Text(ping.into())).await.is_err() {
+                    break Err(anyhow::anyhow!("Ping failed"));
                 }
             }
 
             // Shutdown signal
             _ = shutdown_rx.recv() => {
-                let _ = ws_tx.close().await;
+                drop(write_tx);
+                let _ = writer_task.await;
                 return Ok(());
             }
         }
-    }
+    };
+
+    // Cleanup: drop writer channel and wait for task to finish
+    drop(write_tx);
+    writer_task.abort();
+    result
 }
 
 // ── E2E encryption state machine ──────────────────────────────

@@ -6,6 +6,7 @@ pub mod contracts;
 pub mod copilot_auth;
 pub mod copilot_token;
 pub mod fireworks;
+pub mod gemini;
 pub mod github_copilot;
 pub mod lukan_cloud;
 pub mod nebius;
@@ -177,9 +178,23 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
                 api_key, model, max_tokens,
             )))
         }
+        ProviderName::Gemini => {
+            let api_key = CredentialsManager::get_api_key(
+                &config.credentials,
+                &ProviderName::Gemini,
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing Gemini API key. Set it via `lukan setup` or GEMINI_API_KEY env var"
+                )
+            })?;
+            Ok(Box::new(gemini::GeminiProvider::new(
+                api_key, model, max_tokens,
+            )))
+        }
         provider => {
             bail!(
-                "Provider '{}' is not yet implemented. Available: anthropic, openai-codex, nebius, fireworks, github-copilot, ollama-cloud, openai-compatible, lukan-cloud",
+                "Provider '{}' is not yet implemented. Available: anthropic, openai-codex, nebius, fireworks, github-copilot, ollama-cloud, openai-compatible, lukan-cloud, gemini",
                 provider
             );
         }
@@ -256,6 +271,7 @@ fn is_vision_model(model: &str, config: &ResolvedConfig) -> bool {
         || lower.contains("llava")
         || lower.contains("gemma-3")
         || lower.contains("llama-4")
+        || lower.contains("gemini")
 }
 
 /// Generic OpenAI-compatible provider for custom endpoints (vLLM, Ollama, LM Studio, etc.)

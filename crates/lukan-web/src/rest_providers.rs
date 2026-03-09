@@ -42,6 +42,7 @@ pub async fn list_providers() -> impl IntoResponse {
         ProviderName::OllamaCloud,
         ProviderName::OpenaiCompatible,
         ProviderName::LukanCloud,
+        ProviderName::Gemini,
     ];
 
     let current_model = config.model.clone();
@@ -225,6 +226,16 @@ pub async fn fetch_provider_models(Path(provider): Path<String>) -> impl IntoRes
                         .collect()
                 })
         }
+        ProviderName::Gemini => lukan_providers::gemini::fetch_gemini_models(&api_key)
+            .await
+            .map(|m| {
+                m.into_iter()
+                    .map(|m| FetchedModelDto {
+                        name: m.display_name,
+                        id: m.id,
+                    })
+                    .collect()
+            }),
         _ => Ok(vec![]),
     };
 

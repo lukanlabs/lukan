@@ -47,7 +47,10 @@ export interface Credentials {
   codexRefreshToken?: string;
   codexTokenExpiry?: number;
   zaiApiKey?: string;
+  ollamaCloudApiKey?: string;
   openaiCompatibleApiKey?: string;
+  lukanCloudApiKey?: string;
+  geminiApiKey?: string;
 }
 
 export interface ProviderStatus {

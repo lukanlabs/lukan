@@ -15,6 +15,7 @@ pub enum ProviderName {
     OllamaCloud,
     OpenaiCompatible,
     LukanCloud,
+    Gemini,
 }
 
 impl fmt::Display for ProviderName {
@@ -29,6 +30,7 @@ impl fmt::Display for ProviderName {
             ProviderName::OllamaCloud => write!(f, "ollama-cloud"),
             ProviderName::OpenaiCompatible => write!(f, "openai-compatible"),
             ProviderName::LukanCloud => write!(f, "lukan-cloud"),
+            ProviderName::Gemini => write!(f, "gemini"),
         }
     }
 }
@@ -139,6 +141,8 @@ pub struct Credentials {
     pub openai_compatible_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lukan_cloud_api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gemini_api_key: Option<String>,
     /// Per-skill environment variables (e.g. {"nano-banana-pro": {"GEMINI_API_KEY": "..."}})
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub skill_credentials: HashMap<String, HashMap<String, String>>,

@@ -62,6 +62,7 @@ impl CredentialsManager {
         env_fallback!(ollama_cloud_api_key, "OLLAMA_API_KEY");
         env_fallback!(openai_compatible_api_key, "OPENAI_COMPATIBLE_API_KEY");
         env_fallback!(lukan_cloud_api_key, "LUKAN_CLOUD_API_KEY");
+        env_fallback!(gemini_api_key, "GEMINI_API_KEY");
     }
 
     /// Save credentials to disk with restricted permissions (0o600)
@@ -97,6 +98,7 @@ impl CredentialsManager {
             super::types::ProviderName::OllamaCloud => creds.ollama_cloud_api_key.clone(),
             super::types::ProviderName::OpenaiCompatible => creds.openai_compatible_api_key.clone(),
             super::types::ProviderName::LukanCloud => creds.lukan_cloud_api_key.clone(),
+            super::types::ProviderName::Gemini => creds.gemini_api_key.clone(),
         }
     }
 }

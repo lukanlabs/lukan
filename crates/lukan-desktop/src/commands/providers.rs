@@ -32,6 +32,7 @@ pub async fn list_providers() -> Result<Vec<ProviderInfo>, String> {
         ProviderName::OllamaCloud,
         ProviderName::OpenaiCompatible,
         ProviderName::LukanCloud,
+        ProviderName::Gemini,
     ];
 
     let current_model = config.model.clone();
@@ -210,6 +211,18 @@ pub async fn fetch_provider_models(provider: String) -> Result<Vec<FetchedModel>
                 name: "GLM-4".into(),
             },
         ]),
+        ProviderName::Gemini => {
+            let models = lukan_providers::gemini::fetch_gemini_models(&api_key)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(models
+                .into_iter()
+                .map(|m| FetchedModel {
+                    name: m.display_name,
+                    id: m.id,
+                })
+                .collect())
+        }
     }
 }
 

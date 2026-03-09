@@ -87,6 +87,7 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
         ("ollama-cloud", "Ollama Cloud"),
         ("openai-compatible", "OpenAI-compatible endpoint"),
         ("lukan-cloud", "Lukan Cloud"),
+        ("gemini", "Google Gemini"),
     ];
 
     let current_str = config.provider.to_string();
@@ -226,6 +227,14 @@ fn setup_credentials(provider: &ProviderName, mut creds: Credentials) -> Result<
                 creds.lukan_cloud_api_key.as_deref(),
             )?
             .or(creds.lukan_cloud_api_key);
+        }
+        ProviderName::Gemini => {
+            creds.gemini_api_key = prompt_credential(
+                "Gemini API key",
+                "GEMINI_API_KEY",
+                creds.gemini_api_key.as_deref(),
+            )?
+            .or(creds.gemini_api_key);
         }
     }
 
@@ -570,5 +579,6 @@ fn env_var_for_provider(provider: &ProviderName) -> &'static str {
         ProviderName::OllamaCloud => "OLLAMA_API_KEY",
         ProviderName::OpenaiCompatible => "OPENAI_COMPATIBLE_API_KEY",
         ProviderName::LukanCloud => "LUKAN_CLOUD_API_KEY",
+        ProviderName::Gemini => "GEMINI_API_KEY",
     }
 }

@@ -242,6 +242,7 @@ pub async fn run_models(provider: Option<&str>, model_entry: Option<&str>) -> Re
         "ollama-cloud" | "ollama" => select_ollama_cloud().await,
         "openai-compatible" | "oai-compatible" => select_openai_compatible().await,
         "lukan-cloud" | "lukan" => select_lukan_cloud().await,
+        "gemini" | "google" => select_gemini().await,
         other => {
             eprintln!("{RED}Error:{RESET} Provider \"{other}\" does not have a catalog API.");
             println!("\nAdd models manually:");
@@ -266,6 +267,7 @@ fn print_usage() {
     println!("  {CYAN}openai-compatible{RESET}  Generic OpenAI-compatible endpoint");
     println!("  {CYAN}zai{RESET}               z.ai (GLM models)");
     println!("  {CYAN}lukan-cloud{RESET}       Lukan Cloud (requires API key)");
+    println!("  {CYAN}gemini{RESET}            Google Gemini models (requires API key)");
     println!();
     println!("{BOLD}Examples:{RESET}");
     println!("  lukan models anthropic");
@@ -655,6 +657,67 @@ async fn select_lukan_cloud() -> Result<()> {
         );
         for &idx in &selected {
             println!("  - lukan-cloud:{}", models[idx].id);
+        }
+    }
+    println!("\nUse /model in chat to switch between models.");
+    Ok(())
+}
+
+// ── Gemini (API fetch) ──────────────────────────────────────────────────────
+
+async fn select_gemini() -> Result<()> {
+    let creds = CredentialsManager::load().await?;
+    let api_key = creds.gemini_api_key.as_deref().unwrap_or("");
+
+    if api_key.is_empty() {
+        eprintln!(
+            "{RED}Error:{RESET} Gemini API key not found. Set GEMINI_API_KEY or run: lukan setup"
+        );
+        return Ok(());
+    }
+
+    println!("{DIM}Fetching models from Gemini API...{RESET}");
+    let models = lukan_providers::gemini::fetch_gemini_models(api_key).await?;
+
+    if models.is_empty() {
+        println!("No models found.");
+        return Ok(());
+    }
+
+    let existing = get_existing_model_ids("gemini").await;
+    let model_ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
+    let checked = defaults_for(&model_ids, &existing);
+
+    let items: Vec<String> = models
+        .iter()
+        .map(|m| format!("{:<40} {}", m.display_name, m.id))
+        .collect();
+
+    let selected = MultiSelect::with_theme(&picker_theme())
+        .with_prompt("Select models (space to toggle, enter to confirm)")
+        .items(&items)
+        .defaults(&checked)
+        .interact()?;
+
+    let entries: Vec<String> = selected
+        .iter()
+        .map(|&i| format!("gemini:{}", models[i].id))
+        .collect();
+
+    // All Gemini models support vision natively
+    let vision_ids: Vec<String> = selected.iter().map(|&i| models[i].id.clone()).collect();
+
+    ConfigManager::set_provider_models("gemini", &entries, &vision_ids).await?;
+
+    if selected.is_empty() {
+        println!("{GREEN}✓{RESET} Cleared all gemini models.");
+    } else {
+        println!(
+            "\n{GREEN}✓{RESET} Set {} model(s) for gemini:",
+            selected.len()
+        );
+        for &idx in &selected {
+            println!("  - gemini:{}", models[idx].id);
         }
     }
     println!("\nUse /model in chat to switch between models.");

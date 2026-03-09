@@ -36,6 +36,7 @@ pub async fn get_provider_status() -> Result<Vec<ProviderStatus>, String> {
         ProviderName::Zai,
         ProviderName::OllamaCloud,
         ProviderName::OpenaiCompatible,
+        ProviderName::Gemini,
     ];
 
     let statuses = providers
@@ -95,6 +96,12 @@ pub async fn test_provider(provider: String) -> Result<String, String> {
                 .openai_compatible_base_url
                 .ok_or("No base URL configured for openai-compatible")?;
             Ok(format!("Configured with base URL: {base_url}"))
+        }
+        ProviderName::Gemini => {
+            let models = lukan_providers::gemini::fetch_gemini_models(&api_key)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(format!("Connected. {} models available.", models.len()))
         }
         _ => Ok(format!("Provider {provider} configured.")),
     }

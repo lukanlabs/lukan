@@ -874,6 +874,11 @@ export class RelayTransport implements Transport {
           : "";
         return { method: "GET", url: `/api/files${qs}` };
       }
+      case "read_file":
+        return {
+          method: "GET",
+          url: `/api/files/read?path=${encodeURIComponent(args?.path as string)}`,
+        };
       case "get_cwd":
         return { method: "GET", url: "/api/cwd" };
       case "list_bg_processes": {

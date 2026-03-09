@@ -61,6 +61,7 @@ export default function App() {
   const browser = useBrowser();
   const [currentSessionId, setCurrentSessionId] = useState("");
   const [processLog, setProcessLog] = useState<BgProcessInfo | null>(null);
+  const [filePreview, setFilePreview] = useState<string | null>(null);
   const [runningMonitors, setRunningMonitors] = useState<PluginInfo[]>([]);
   const [unreadSources, setUnreadSources] = useState<Set<string>>(new Set());
   const [eventSourceFilter, setEventSourceFilter] = useState<string | null>(null);
@@ -220,6 +221,7 @@ export default function App() {
             onLoadSession={handleLoadSession}
             onNewSession={handleNewSession}
             onOpenProcessLog={handleOpenProcessLog}
+            onPreviewFile={setFilePreview}
             activePluginName={activePluginName}
             activePluginViews={activePluginName ? runningMonitors.find((m) => m.name === activePluginName)?.views : undefined}
             activePluginRunning={activePluginName ? runningMonitors.some((m) => m.name === activePluginName && m.running) : undefined}
@@ -232,6 +234,8 @@ export default function App() {
           processLog={processLog}
           processLogSessionId={currentSessionId}
           onCloseProcessLog={handleCloseProcessLog}
+          filePreview={filePreview}
+          onCloseFilePreview={() => setFilePreview(null)}
         />
 
         {workspace.showSettings && (

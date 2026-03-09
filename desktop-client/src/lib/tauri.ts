@@ -25,6 +25,7 @@ import type {
   BrowserStatus,
   BrowserTab,
   DirectoryListing,
+  FileContent,
   WorkerSummary,
   WorkerDetail,
   WorkerDefinition,
@@ -250,6 +251,8 @@ export const browserClose = () =>
 // Files
 export const listDirectory = (path?: string) =>
   getTransport().call<DirectoryListing>("list_directory", { path });
+export const readFile = (path: string) =>
+  getTransport().call<FileContent>("read_file", { path });
 export const openInEditor = (path: string, editor?: string) =>
   getTransport().call<void>("open_in_editor", { path, editor });
 export const getCwd = () => getTransport().call<string>("get_cwd");

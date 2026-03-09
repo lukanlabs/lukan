@@ -214,6 +214,16 @@ export interface DirectoryListing {
   entries: FileEntry[];
 }
 
+export interface FileContent {
+  path: string;
+  name: string;
+  content: string;
+  encoding: "utf8" | "base64";
+  size: number;
+  language?: string;
+  mimeType?: string;
+}
+
 // ── Worker types ──────────────────────────────────────────────────────
 
 export interface WorkerDefinition {

@@ -16,6 +16,7 @@ interface SidePanelProps {
   onLoadSession: (id: string) => void;
   onNewSession: () => void;
   onOpenProcessLog?: (process: BgProcessInfo) => void;
+  onPreviewFile?: (path: string) => void;
   // Plugin view props
   activePluginName?: string | null;
   activePluginViews?: ViewDeclaration[];
@@ -40,6 +41,7 @@ export function SidePanel({
   onLoadSession,
   onNewSession,
   onOpenProcessLog,
+  onPreviewFile,
   activePluginName,
   activePluginViews,
   activePluginRunning,
@@ -66,7 +68,7 @@ export function SidePanel({
         )}
       </div>
       <div className="side-panel-content">
-        {activePanel === "files" && <FilesPanel />}
+        {activePanel === "files" && <FilesPanel onPreviewFile={onPreviewFile} />}
         {activePanel === "workers" && <WorkersPanel />}
         {activePanel === "sessions" && (
           <SessionsPanel

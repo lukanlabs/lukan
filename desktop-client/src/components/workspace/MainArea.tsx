@@ -2,15 +2,18 @@ import type { WorkspaceMode, BgProcessInfo } from "../../lib/types";
 import ChatView from "../../views/ChatView";
 import TerminalView from "../../views/TerminalView";
 import { ProcessLogOverlay } from "./ProcessLogOverlay";
+import { FileViewer } from "./FileViewer";
 
 interface MainAreaProps {
   mode: WorkspaceMode;
   processLog?: BgProcessInfo | null;
   processLogSessionId?: string;
   onCloseProcessLog?: () => void;
+  filePreview?: string | null;
+  onCloseFilePreview?: () => void;
 }
 
-export function MainArea({ mode, processLog, processLogSessionId, onCloseProcessLog }: MainAreaProps) {
+export function MainArea({ mode, processLog, processLogSessionId, onCloseProcessLog, filePreview, onCloseFilePreview }: MainAreaProps) {
   return (
     <div className="main-area" style={{ position: "relative" }}>
       {/* Both always mounted — display toggle preserves state */}
@@ -34,6 +37,11 @@ export function MainArea({ mode, processLog, processLogSessionId, onCloseProcess
           sessionId={processLogSessionId ?? ""}
           onClose={onCloseProcessLog}
         />
+      )}
+
+      {/* File preview overlay */}
+      {filePreview && onCloseFilePreview && (
+        <FileViewer path={filePreview} onClose={onCloseFilePreview} />
       )}
     </div>
   );

@@ -161,6 +161,7 @@ fn main() {
             commands::audio::list_audio_devices,
             // Files
             commands::files::list_directory,
+            commands::files::read_file,
             commands::files::open_in_editor,
             commands::files::get_cwd,
             commands::files::open_url,

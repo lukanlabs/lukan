@@ -132,6 +132,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/events/history", delete(rest_events::clear_event_history))
         // Files
         .route("/files", get(rest_files::list_directory))
+        .route("/files/read", get(rest_files::read_file))
         .route("/cwd", get(rest_files::get_cwd))
         // Background processes
         .route("/processes", get(rest_processes::list_bg_processes))

@@ -77,10 +77,8 @@ async fn main() -> anyhow::Result<()> {
 fn create_router(state: SharedState) -> Router {
     // CORS: allow the relay's own origin + any additional origins from RELAY_CORS_ORIGINS env var.
     // This lets external UIs (self-hosted dashboards, etc.) call the relay API with credentials.
-    let mut origins: Vec<axum::http::HeaderValue> = vec![state
-        .public_url
-        .parse::<axum::http::HeaderValue>()
-        .unwrap()];
+    let mut origins: Vec<axum::http::HeaderValue> =
+        vec![state.public_url.parse::<axum::http::HeaderValue>().unwrap()];
     if let Ok(extra) = std::env::var("RELAY_CORS_ORIGINS") {
         for origin in extra.split(',') {
             let origin = origin.trim();
@@ -257,9 +255,7 @@ async fn ws_client_upgrade(
 
     let ip = auth::client_ip(&headers, Some(&ConnectInfo(addr))).to_string();
 
-    ws.on_upgrade(move |socket| {
-        ws_client::handle_browser_ws(socket, state, claims.sub, device, ip)
-    })
+    ws.on_upgrade(move |socket| ws_client::handle_browser_ws(socket, state, claims.sub, device, ip))
 }
 
 /// WebSocket upgrade for daemon connections.
@@ -281,7 +277,7 @@ async fn ws_daemon_upgrade(
                 StatusCode::UNAUTHORIZED,
                 "Missing Authorization header. Use: Authorization: Bearer <token>",
             )
-                .into_response()
+                .into_response();
         }
     };
 

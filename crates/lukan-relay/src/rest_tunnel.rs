@@ -133,14 +133,12 @@ pub async fn rest_tunnel_handler(
     };
 
     let claims = match token {
-        Some(t) => {
-            auth::verify_jwt(&state.browser_jwt_secret(), &t)
-                .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t))
-                .map_err(|e| {
-                    let path = request.uri().path();
-                    tracing::warn!(path = %path, error = %e, "REST tunnel auth failed");
-                })
-        }
+        Some(t) => auth::verify_jwt(&state.browser_jwt_secret(), &t)
+            .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t))
+            .map_err(|e| {
+                let path = request.uri().path();
+                tracing::warn!(path = %path, error = %e, "REST tunnel auth failed");
+            }),
         None => {
             let path = request.uri().path();
             tracing::warn!(path = %path, "REST tunnel: no token found in cookie or header");

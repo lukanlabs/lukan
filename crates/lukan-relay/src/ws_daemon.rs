@@ -95,7 +95,9 @@ pub async fn handle_daemon_ws(socket: WebSocket, state: Arc<RelayState>, user_id
     let browser_ids: Vec<String> = state
         .browser_connections
         .iter()
-        .filter(|entry| entry.value().user_id == user_id && entry.value().device_name == device_name)
+        .filter(|entry| {
+            entry.value().user_id == user_id && entry.value().device_name == device_name
+        })
         .map(|entry| entry.key().clone())
         .collect();
 

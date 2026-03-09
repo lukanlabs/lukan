@@ -139,7 +139,11 @@ async fn connect_and_run(
     let register = serde_json::to_string(&DaemonToRelay::Register {
         user_id: config.user_id.clone(),
         device_name: hostname(),
-        os: Some(format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)),
+        os: Some(format!(
+            "{} {}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )),
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
     })?;
     ws_tx

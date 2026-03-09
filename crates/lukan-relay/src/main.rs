@@ -82,10 +82,10 @@ fn create_router(state: SharedState) -> Router {
     if let Ok(extra) = std::env::var("RELAY_CORS_ORIGINS") {
         for origin in extra.split(',') {
             let origin = origin.trim();
-            if !origin.is_empty() {
-                if let Ok(val) = origin.parse::<axum::http::HeaderValue>() {
-                    origins.push(val);
-                }
+            if !origin.is_empty()
+                && let Ok(val) = origin.parse::<axum::http::HeaderValue>()
+            {
+                origins.push(val);
             }
         }
     }

@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo, useRef } from "react";
-import { X, File, Loader2, AlertCircle } from "lucide-react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { MarkdownRenderer } from "../chat/MarkdownRenderer";
-import { readFile } from "../../lib/tauri";
+import { readFile, writeFile } from "../../lib/tauri";
 import type { FileContent } from "../../lib/types";
 
 function formatSize(bytes: number): string {
@@ -112,8 +112,236 @@ function PdfViewer({ file }: { file: FileContent }) {
   );
 }
 
-function FileContentView({ file }: { file: FileContent }) {
+function isEditable(fileType: ReturnType<typeof getFileType>): boolean {
+  return fileType === "code" || fileType === "json" || fileType === "markdown" || fileType === "csv";
+}
+
+function CodeEditor({
+  value,
+  onChange,
+  language,
+  initialLine,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  language?: string;
+  initialLine?: number;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const lineNumRef = useRef<HTMLDivElement>(null);
+  const didFocus = useRef(false);
+
+  // On mount (or when initialLine changes), place cursor at the target line
+  useEffect(() => {
+    if (didFocus.current) return;
+    didFocus.current = true;
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.focus();
+    if (initialLine != null && initialLine > 0) {
+      const lines = value.split("\n");
+      let offset = 0;
+      for (let i = 0; i < Math.min(initialLine - 1, lines.length); i++) {
+        offset += lines[i].length + 1;
+      }
+      ta.selectionStart = ta.selectionEnd = offset;
+      // Scroll to the line
+      const lineHeight = 13 * 1.5; // fontSize * lineHeight
+      const scrollTarget = (initialLine - 1) * lineHeight - ta.clientHeight / 2;
+      ta.scrollTop = Math.max(0, scrollTarget);
+    }
+  }, [initialLine, value]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const ta = e.currentTarget;
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        const newVal = value.substring(0, start) + "  " + value.substring(end);
+        onChange(newVal);
+        requestAnimationFrame(() => {
+          ta.selectionStart = ta.selectionEnd = start + 2;
+        });
+      }
+    },
+    [value, onChange],
+  );
+
+  const syncScroll = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    if (backdropRef.current) {
+      backdropRef.current.scrollTop = ta.scrollTop;
+      backdropRef.current.scrollLeft = ta.scrollLeft;
+    }
+    if (lineNumRef.current) {
+      lineNumRef.current.scrollTop = ta.scrollTop;
+    }
+  }, []);
+
+  const lineCount = value.split("\n").length;
+
+  const sharedStyle: React.CSSProperties = {
+    fontSize: 13,
+    fontFamily: "var(--font-mono)",
+    lineHeight: "1.5",
+    padding: "12px 16px",
+    margin: 0,
+    whiteSpace: "pre",
+    tabSize: 2,
+    wordWrap: "normal",
+    overflowWrap: "normal",
+  };
+
+  return (
+    <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      {/* Line numbers */}
+      <div
+        ref={lineNumRef}
+        style={{
+          padding: "12px 0",
+          textAlign: "right",
+          userSelect: "none",
+          color: "var(--text-muted)",
+          fontSize: 13,
+          fontFamily: "var(--font-mono)",
+          lineHeight: "1.5",
+          minWidth: 48,
+          paddingRight: 12,
+          paddingLeft: 12,
+          borderRight: "1px solid var(--border-subtle)",
+          flexShrink: 0,
+          overflow: "hidden",
+        }}
+      >
+        {Array.from({ length: lineCount }, (_, i) => (
+          <div key={i}>{i + 1}</div>
+        ))}
+      </div>
+      {/* Code area with overlay */}
+      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        {/* Syntax highlighted backdrop */}
+        <div
+          ref={backdropRef}
+          style={{
+            position: "absolute",
+            inset: 0,
+            overflow: "hidden",
+            pointerEvents: "none",
+          }}
+        >
+          <SyntaxHighlighter
+            language={language ?? "text"}
+            style={oneDark}
+            customStyle={{
+              ...sharedStyle,
+              background: "transparent",
+              border: "none",
+              overflow: "visible",
+            }}
+            codeTagProps={{ style: { background: "transparent" } }}
+          >
+            {value + "\n"}
+          </SyntaxHighlighter>
+        </div>
+        {/* Transparent textarea for input */}
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onScroll={syncScroll}
+          spellCheck={false}
+          style={{
+            ...sharedStyle,
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            resize: "none",
+            border: "none",
+            outline: "none",
+            background: "transparent",
+            color: "transparent",
+            caretColor: "#fff",
+            overflow: "auto",
+            zIndex: 1,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function editorLanguage(file: FileContent, fileType: ReturnType<typeof getFileType>): string | undefined {
+  switch (fileType) {
+    case "json": return "json";
+    case "markdown": return "markdown";
+    case "csv": return undefined;
+    default: return file.language ?? undefined;
+  }
+}
+
+/** Detect which line was double-clicked inside a SyntaxHighlighter container. */
+function getLineFromDblClick(e: React.MouseEvent): number {
+  // With wrapLines, each line is a direct child <span> of <code>.
+  // Walk up from the click target to find the line span.
+  let el = e.target as HTMLElement | null;
+  while (el) {
+    const parent = el.parentElement;
+    if (parent?.tagName === "CODE") {
+      const idx = Array.from(parent.children).indexOf(el);
+      if (idx >= 0) return idx + 1;
+    }
+    // Stop if we hit the container
+    if (el.tagName === "PRE") break;
+    el = parent;
+  }
+  // Fallback: estimate from Y offset using line height
+  const container = e.currentTarget;
+  const rect = container.getBoundingClientRect();
+  const y = e.clientY - rect.top + container.scrollTop;
+  const lineHeight = 13 * 1.5; // matches our fontSize * lineHeight
+  return Math.max(1, Math.ceil(y / lineHeight));
+}
+
+function FileContentView({
+  file,
+  editing,
+  editContent,
+  onEditChange,
+  onDoubleClickLine,
+  initialLine,
+}: {
+  file: FileContent;
+  editing: boolean;
+  editContent: string;
+  onEditChange: (v: string) => void;
+  onDoubleClickLine?: (line: number) => void;
+  initialLine?: number;
+}) {
   const fileType = getFileType(file);
+
+  if (editing && isEditable(fileType)) {
+    return (
+      <CodeEditor
+        value={editContent}
+        onChange={onEditChange}
+        language={editorLanguage(file, fileType)}
+        initialLine={initialLine}
+      />
+    );
+  }
+
+  const handleDblClick = isEditable(fileType) && onDoubleClickLine
+    ? (e: React.MouseEvent) => {
+        const line = getLineFromDblClick(e);
+        onDoubleClickLine(line ?? 1);
+      }
+    : undefined;
 
   switch (fileType) {
     case "image":
@@ -132,7 +360,10 @@ function FileContentView({ file }: { file: FileContent }) {
 
     case "markdown":
       return (
-        <div style={{ padding: "16px 24px", overflow: "auto", flex: 1 }}>
+        <div
+          style={{ padding: "16px 24px", overflow: "auto", flex: 1, cursor: "default" }}
+          onDoubleClick={handleDblClick ? () => onDoubleClickLine!(1) : undefined}
+        >
           <MarkdownRenderer content={file.content} />
         </div>
       );
@@ -145,11 +376,12 @@ function FileContentView({ file }: { file: FileContent }) {
         formatted = file.content;
       }
       return (
-        <div style={{ overflow: "auto", flex: 1 }}>
+        <div style={{ overflow: "auto", flex: 1 }} onDoubleClick={handleDblClick}>
           <SyntaxHighlighter
             language="json"
             style={oneDark}
             showLineNumbers
+            wrapLines
             customStyle={{ margin: 0, background: "transparent", fontSize: 13, border: "none" }}
             codeTagProps={{ style: { background: "transparent" } }}
           >
@@ -160,15 +392,20 @@ function FileContentView({ file }: { file: FileContent }) {
     }
 
     case "csv":
-      return <CsvTable content={file.content} />;
+      return (
+        <div onDoubleClick={handleDblClick ? () => onDoubleClickLine!(1) : undefined}>
+          <CsvTable content={file.content} />
+        </div>
+      );
 
     case "code":
       return (
-        <div style={{ overflow: "auto", flex: 1 }}>
+        <div style={{ overflow: "auto", flex: 1 }} onDoubleClick={handleDblClick}>
           <SyntaxHighlighter
             language={file.language ?? "text"}
             style={oneDark}
             showLineNumbers
+            wrapLines
             customStyle={{ margin: 0, background: "transparent", fontSize: 13, border: "none" }}
             codeTagProps={{ style: { background: "transparent" } }}
           >
@@ -198,12 +435,19 @@ export function FileViewer({ path, onClose }: FileViewerProps) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [initialLine, setInitialLine] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError(null);
     setFile(null);
+    setEditing(false);
+    setDirty(false);
     readFile(path)
       .then((fc) => { if (active) setFile(fc); })
       .catch((e) => { if (active) setError(String(e)); })
@@ -211,13 +455,80 @@ export function FileViewer({ path, onClose }: FileViewerProps) {
     return () => { active = false; };
   }, [path]);
 
+  const canEdit = file ? isEditable(getFileType(file)) : false;
+
+  const handleEdit = useCallback((line?: number) => {
+    if (!file) return;
+    setEditContent(file.content);
+    setInitialLine(line);
+    setEditing(true);
+    setDirty(false);
+  }, [file]);
+
+  const handleDoubleClickLine = useCallback((line: number) => {
+    handleEdit(line);
+  }, [handleEdit]);
+
+  const handleEditChange = useCallback(
+    (v: string) => {
+      setEditContent(v);
+      setDirty(v !== file?.content);
+    },
+    [file],
+  );
+
+  const handleCancel = useCallback(() => {
+    setEditing(false);
+    setDirty(false);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    if (!file || !dirty) return;
+    setSaving(true);
+    try {
+      await writeFile(file.path, editContent);
+      // Refresh
+      const updated = await readFile(path);
+      setFile(updated);
+      setEditing(false);
+      setDirty(false);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [file, editContent, dirty, path]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        if (editing) {
+          handleCancel();
+        } else {
+          onClose();
+        }
+      }
+      if (editing && (e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        handleSave();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+  }, [onClose, editing, handleCancel, handleSave]);
+
+  const headerBtnStyle: React.CSSProperties = {
+    border: "none",
+    background: "transparent",
+    color: "var(--text-muted)",
+    cursor: "pointer",
+    padding: 4,
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    fontSize: 11,
+    fontFamily: "var(--font-mono)",
+  };
 
   return (
     <div
@@ -238,7 +549,7 @@ export function FileViewer({ path, onClose }: FileViewerProps) {
           justifyContent: "space-between",
           padding: "8px 16px",
           background: "var(--bg-secondary)",
-          borderBottom: "1px solid var(--border)",
+          borderBottom: `1px solid ${editing ? "var(--accent)" : "var(--border)"}`,
           flexShrink: 0,
           gap: 12,
         }}
@@ -256,6 +567,7 @@ export function FileViewer({ path, onClose }: FileViewerProps) {
             }}
           >
             {file?.name ?? path.split("/").pop()}
+            {dirty && " *"}
           </span>
           {file && (
             <span
@@ -269,22 +581,61 @@ export function FileViewer({ path, onClose }: FileViewerProps) {
               {formatSize(file.size)}
             </span>
           )}
+          {editing && (
+            <span
+              style={{
+                fontSize: 10,
+                color: "var(--accent)",
+                fontFamily: "var(--font-mono)",
+                flexShrink: 0,
+              }}
+            >
+              EDITING
+            </span>
+          )}
         </div>
-        <button
-          onClick={onClose}
-          style={{
-            border: "none",
-            background: "transparent",
-            color: "var(--text-muted)",
-            cursor: "pointer",
-            padding: 4,
-            display: "flex",
-            alignItems: "center",
-          }}
-          title="Close (Esc)"
-        >
-          <X size={16} />
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {editing ? (
+            <>
+              <button
+                onClick={handleCancel}
+                style={headerBtnStyle}
+                title="Cancel (Esc)"
+              >
+                <RotateCcw size={14} />
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={!dirty || saving}
+                style={{
+                  ...headerBtnStyle,
+                  color: dirty ? "var(--accent)" : "var(--text-muted)",
+                  opacity: saving ? 0.5 : 1,
+                }}
+                title="Save (Ctrl+S)"
+              >
+                {saving ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={14} />}
+              </button>
+            </>
+          ) : (
+            canEdit && (
+              <button
+                onClick={() => handleEdit()}
+                style={headerBtnStyle}
+                title="Edit"
+              >
+                <Pencil size={14} />
+              </button>
+            )
+          )}
+          <button
+            onClick={onClose}
+            style={headerBtnStyle}
+            title="Close (Esc)"
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
 
       {/* Body */}
@@ -303,7 +654,16 @@ export function FileViewer({ path, onClose }: FileViewerProps) {
         </div>
       )}
 
-      {file && <FileContentView file={file} />}
+      {file && (
+        <FileContentView
+          file={file}
+          editing={editing}
+          editContent={editContent}
+          onEditChange={handleEditChange}
+          onDoubleClickLine={handleDoubleClickLine}
+          initialLine={initialLine}
+        />
+      )}
     </div>
   );
 }

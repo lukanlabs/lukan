@@ -216,6 +216,26 @@ pub async fn read_file(path: String) -> Result<FileContent, String> {
     })
 }
 
+/// Write text content to a file.
+#[tauri::command]
+pub async fn write_file(path: String, content: String) -> Result<(), String> {
+    let file_path = PathBuf::from(&path);
+
+    if file_path.is_dir() {
+        return Err("Path is a directory".to_string());
+    }
+
+    if let Some(parent) = file_path.parent()
+        && !parent.exists()
+    {
+        return Err("Parent directory does not exist".to_string());
+    }
+
+    tokio::fs::write(&file_path, content.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to write file: {e}"))
+}
+
 /// Open a file in an editor (defaults to vscode).
 #[tauri::command]
 pub async fn open_in_editor(path: String, editor: Option<String>) -> Result<(), String> {

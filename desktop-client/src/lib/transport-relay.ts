@@ -16,6 +16,13 @@ import {
   performHandshake,
 } from "./e2e-crypto";
 
+/** Decode a base64 string to a proper UTF-8 string (handles multibyte chars like accents). */
+function b64ToUtf8(b64: string): string {
+  const binary = atob(b64);
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 // Commands routed through WebSocket (same as WebTransport)
 const WS_COMMANDS = new Set([
   "send_message",
@@ -686,18 +693,18 @@ export class RelayTransport implements Transport {
     const innerResp = JSON.parse(decrypted);
 
     if (innerResp.status >= 400) {
-      const errBody = innerResp.body ? atob(innerResp.body) : "";
+      const errBody = innerResp.body ? b64ToUtf8(innerResp.body) : "";
       throw new Error(`${command} failed: ${innerResp.status} ${errBody}`);
     }
 
-    // Decode body (base64 → parse as JSON if applicable)
+    // Decode body (base64 → UTF-8 string, then parse as JSON if applicable)
     if (innerResp.body) {
-      const bodyBytes = atob(innerResp.body);
+      const bodyText = b64ToUtf8(innerResp.body);
       const ct = innerResp.headers?.["content-type"] || "";
       if (ct.includes("application/json")) {
-        return JSON.parse(bodyBytes);
+        return JSON.parse(bodyText);
       }
-      return (bodyBytes || undefined) as T;
+      return (bodyText || undefined) as T;
     }
     return undefined as T;
   }
@@ -878,6 +885,12 @@ export class RelayTransport implements Transport {
         return {
           method: "GET",
           url: `/api/files/read?path=${encodeURIComponent(args?.path as string)}`,
+        };
+      case "write_file":
+        return {
+          method: "PUT",
+          url: "/api/files/write",
+          body: { path: args?.path, content: args?.content },
         };
       case "get_cwd":
         return { method: "GET", url: "/api/cwd" };

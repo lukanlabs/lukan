@@ -162,6 +162,7 @@ fn main() {
             // Files
             commands::files::list_directory,
             commands::files::read_file,
+            commands::files::write_file,
             commands::files::open_in_editor,
             commands::files::get_cwd,
             commands::files::open_url,

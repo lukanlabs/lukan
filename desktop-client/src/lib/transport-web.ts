@@ -966,6 +966,12 @@ export class WebTransport implements Transport {
           method: "GET",
           url: `/api/files/read?path=${encodeURIComponent(args?.path as string)}`,
         };
+      case "write_file":
+        return {
+          method: "PUT",
+          url: "/api/files/write",
+          body: { path: args?.path, content: args?.content },
+        };
       case "get_cwd":
         return { method: "GET", url: "/api/cwd" };
 

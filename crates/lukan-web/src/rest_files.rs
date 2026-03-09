@@ -273,6 +273,42 @@ pub async fn read_file(Query(q): Query<PathQuery>) -> impl IntoResponse {
     .into_response()
 }
 
+#[derive(serde::Deserialize)]
+pub struct WriteFileBody {
+    path: String,
+    content: String,
+}
+
+/// PUT /api/files/write
+pub async fn write_file(Json(body): Json<WriteFileBody>) -> impl IntoResponse {
+    let file_path = PathBuf::from(&body.path);
+
+    // Refuse to write to directories
+    if file_path.is_dir() {
+        return (StatusCode::BAD_REQUEST, "Path is a directory".to_string()).into_response();
+    }
+
+    // Ensure parent directory exists
+    if let Some(parent) = file_path.parent()
+        && !parent.exists()
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Parent directory does not exist".to_string(),
+        )
+            .into_response();
+    }
+
+    match tokio::fs::write(&file_path, body.content.as_bytes()).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to write file: {e}"),
+        )
+            .into_response(),
+    }
+}
+
 /// GET /api/cwd
 pub async fn get_cwd() -> impl IntoResponse {
     match std::env::current_dir() {

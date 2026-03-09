@@ -7,6 +7,7 @@ use axum::{
     response::IntoResponse,
 };
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
@@ -215,14 +216,13 @@ async fn dispatch_message(
         }
 
         ClientMessage::Abort { session_id: _ } => {
-            // Release processing lock
+            // Release processing lock (outside a turn — mid-turn abort is handled
+            // directly in handle_send_message's select loop with CancellationToken).
             let mut owner = state.processing_owner.lock().await;
             if *owner == Some(conn_id) {
                 *owner = None;
                 info!(conn_id, "Aborted processing");
             }
-            // Note: the actual abort mechanism works by dropping the event channel
-            // sender, which causes the agent's event_tx.send() to fail.
         }
 
         ClientMessage::LoadSession { session_id, id } => {
@@ -818,9 +818,15 @@ async fn handle_send_message(
     let content_owned = content.to_string();
     let tab_id_owned = tab_id.map(String::from);
 
+    // Create cancellation token so abort can signal the agent to stop
+    let cancel_token = CancellationToken::new();
+    let cancel_for_agent = cancel_token.clone();
+
     // Spawn the agent turn
     let agent_handle = tokio::spawn(async move {
-        let result = agent.run_turn(&content_owned, event_tx, None, None).await;
+        let result = agent
+            .run_turn(&content_owned, event_tx, Some(cancel_for_agent), None)
+            .await;
         (agent, result)
     });
 
@@ -828,6 +834,7 @@ async fn handle_send_message(
     // client messages so that approval / abort / plan / terminal messages
     // are processed without deadlocking.
     let mut client_disconnected = false;
+    let mut aborted = false;
     loop {
         tokio::select! {
             // Agent produced a stream event → forward to client
@@ -843,6 +850,7 @@ async fn handle_send_message(
                         if ws_tx.send(Message::Text(json.into())).await.is_err() {
                             warn!(conn_id, "WebSocket send failed, client likely disconnected");
                             client_disconnected = true;
+                            cancel_token.cancel();
                             break;
                         }
                     }
@@ -855,6 +863,12 @@ async fn handle_send_message(
                     Some(Ok(Message::Text(text))) => {
                         let text = text.to_string();
                         match serde_json::from_str::<ClientMessage>(&text) {
+                            Ok(ClientMessage::Abort { .. }) => {
+                                info!(conn_id, "Abort received mid-turn, cancelling agent");
+                                cancel_token.cancel();
+                                aborted = true;
+                                break;
+                            }
                             Ok(client_msg) => {
                                 handle_mid_turn_message(client_msg, conn_id, state, ws_tx).await;
                             }
@@ -865,6 +879,7 @@ async fn handle_send_message(
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
                         client_disconnected = true;
+                        cancel_token.cancel();
                         break;
                     }
                     _ => {} // ping/pong/binary — ignore
@@ -873,9 +888,21 @@ async fn handle_send_message(
         }
     }
 
-    // Wait for agent turn to complete
-    match agent_handle.await {
-        Ok((returned_agent, result)) => {
+    // Wait for agent turn to complete (with timeout for abort/disconnect cases)
+    let wait_result = if aborted || client_disconnected {
+        match tokio::time::timeout(std::time::Duration::from_secs(10), agent_handle).await {
+            Ok(result) => Some(result),
+            Err(_) => {
+                warn!(conn_id, "Agent did not stop within 10s after cancellation");
+                None
+            }
+        }
+    } else {
+        Some(agent_handle.await)
+    };
+
+    match wait_result {
+        Some(Ok((returned_agent, result))) => {
             if let Err(e) = result {
                 error!(conn_id, error = %e, "Agent turn error");
                 if !client_disconnected {
@@ -890,7 +917,7 @@ async fn handle_send_message(
             }
 
             if !client_disconnected {
-                // Send processing_complete with updated state
+                // Send processing_complete so the UI resets its state
                 let session_id = returned_agent.session_id().to_string();
                 let messages = returned_agent.messages_json();
                 let checkpoints = returned_agent.checkpoints().to_vec();
@@ -921,7 +948,7 @@ async fn handle_send_message(
                 *lock = Some(returned_agent);
             }
         }
-        Err(e) => {
+        Some(Err(e)) => {
             error!(conn_id, error = %e, "Agent task panicked");
             if !client_disconnected {
                 send_json(
@@ -932,6 +959,11 @@ async fn handle_send_message(
                 )
                 .await;
             }
+        }
+        None => {
+            // Timeout: agent didn't stop after cancellation — agent is lost,
+            // session will recreate it on the next message.
+            warn!(conn_id, "Agent lost after cancellation timeout");
         }
     }
 
@@ -1073,12 +1105,11 @@ async fn handle_mid_turn_message(
             send_planner_answer(state, session_id.as_deref(), answer).await;
         }
 
-        ClientMessage::Abort { session_id: _ } => {
-            let mut owner = state.processing_owner.lock().await;
-            if *owner == Some(conn_id) {
-                *owner = None;
-                info!(conn_id, "Aborted processing (mid-turn)");
-            }
+        ClientMessage::Abort { .. } => {
+            // Abort is now handled directly in the select loop of handle_send_message
+            // (cancels the CancellationToken and breaks the loop). This arm should
+            // not be reached, but is kept for safety.
+            warn!(conn_id, "Unexpected Abort in handle_mid_turn_message");
         }
 
         // Terminal messages are valid mid-turn

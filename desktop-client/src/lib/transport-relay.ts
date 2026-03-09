@@ -111,6 +111,7 @@ export class RelayTransport implements Transport {
   private initResolvers: Array<(v: unknown) => void> = [];
   private processing = false;
   private relayOrigin: string;
+  private device: string;
 
   // Audio recording state (browser MediaRecorder)
   private mediaRecorder: MediaRecorder | null = null;
@@ -124,8 +125,9 @@ export class RelayTransport implements Transport {
   private e2eAckResolver: ((ack: { pk: string; safety_number: string }) => void) | null = null;
   private connectionId: string | null = null;
 
-  constructor(relayOrigin: string) {
+  constructor(relayOrigin: string, device: string) {
     this.relayOrigin = relayOrigin;
+    this.device = device;
   }
 
   private get baseUrl(): string {
@@ -135,7 +137,7 @@ export class RelayTransport implements Transport {
   private get wsUrl(): string {
     const url = new URL(this.relayOrigin);
     const proto = url.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${url.host}/ws/client`;
+    return `${proto}//${url.host}/ws/client?device=${encodeURIComponent(this.device)}`;
   }
 
   async connect(): Promise<void> {
@@ -596,9 +598,10 @@ export class RelayTransport implements Transport {
 
     const { method, url, body } = this.buildRestCall(command, args);
 
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      "x-lukan-device": this.device,
+    };
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    // Auth is via HttpOnly cookie — sent automatically by browser
 
     const resp = await fetch(url, {
       method,
@@ -651,7 +654,10 @@ export class RelayTransport implements Transport {
     // POST to /api/_e2e with connection_id so daemon can find the right E2E session
     const resp = await fetch("/api/_e2e", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-lukan-device": this.device,
+      },
       credentials: "include",
       body: JSON.stringify({ connection_id: this.connectionId, n, d }),
     });

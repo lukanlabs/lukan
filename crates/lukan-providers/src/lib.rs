@@ -7,6 +7,7 @@ pub mod copilot_auth;
 pub mod copilot_token;
 pub mod fireworks;
 pub mod github_copilot;
+pub mod lukan_cloud;
 pub mod nebius;
 pub mod ollama_cloud;
 pub mod openai_codex;
@@ -164,9 +165,21 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
                 base: openai_compat::OpenAiCompatBase::new(compat_config),
             }))
         }
+        ProviderName::LukanCloud => {
+            let api_key =
+                CredentialsManager::get_api_key(&config.credentials, &ProviderName::LukanCloud)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                        "Missing Lukan Cloud API key. Set it via `lukan setup` or LUKAN_CLOUD_API_KEY env var"
+                    )
+                    })?;
+            Ok(Box::new(lukan_cloud::LukanCloudProvider::new(
+                api_key, model, max_tokens,
+            )))
+        }
         provider => {
             bail!(
-                "Provider '{}' is not yet implemented. Available: anthropic, openai-codex, nebius, fireworks, github-copilot, ollama-cloud, openai-compatible",
+                "Provider '{}' is not yet implemented. Available: anthropic, openai-codex, nebius, fireworks, github-copilot, ollama-cloud, openai-compatible, lukan-cloud",
                 provider
             );
         }

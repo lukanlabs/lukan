@@ -86,6 +86,7 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
         ("zai", "z.ai (GLM models)"),
         ("ollama-cloud", "Ollama Cloud"),
         ("openai-compatible", "OpenAI-compatible endpoint"),
+        ("lukan-cloud", "Lukan Cloud"),
     ];
 
     let current_str = config.provider.to_string();
@@ -217,6 +218,14 @@ fn setup_credentials(provider: &ProviderName, mut creds: Credentials) -> Result<
                 creds.openai_compatible_api_key.as_deref(),
             )?
             .or(creds.openai_compatible_api_key);
+        }
+        ProviderName::LukanCloud => {
+            creds.lukan_cloud_api_key = prompt_credential(
+                "Lukan Cloud API key",
+                "LUKAN_CLOUD_API_KEY",
+                creds.lukan_cloud_api_key.as_deref(),
+            )?
+            .or(creds.lukan_cloud_api_key);
         }
     }
 
@@ -401,11 +410,7 @@ pub async fn run_doctor() -> Result<()> {
         creds.copilot_token.as_deref(),
         "lukan copilot-auth",
     );
-    print_key_status(
-        "GitHub token",
-        creds.github_token.as_deref(),
-        "GITHUB_TOKEN",
-    );
+
     print_key_status(
         "Codex",
         creds.codex_access_token.as_deref(),
@@ -421,6 +426,11 @@ pub async fn run_doctor() -> Result<()> {
         "OpenAI-compat",
         creds.openai_compatible_api_key.as_deref(),
         "OPENAI_COMPATIBLE_API_KEY",
+    );
+    print_key_status(
+        "Lukan Cloud",
+        creds.lukan_cloud_api_key.as_deref(),
+        "LUKAN_CLOUD_API_KEY",
     );
     print_key_status(
         "Brave Search",
@@ -559,5 +569,6 @@ fn env_var_for_provider(provider: &ProviderName) -> &'static str {
         ProviderName::Zai => "ZAI_API_KEY",
         ProviderName::OllamaCloud => "OLLAMA_API_KEY",
         ProviderName::OpenaiCompatible => "OPENAI_COMPATIBLE_API_KEY",
+        ProviderName::LukanCloud => "LUKAN_CLOUD_API_KEY",
     }
 }

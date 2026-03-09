@@ -97,6 +97,44 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
       terminalInput(sessionId, btoa(String.fromCharCode(...bytes))).catch(() => {});
     });
 
+    // Clipboard paste → PTY (Ctrl+V / right-click / OS paste)
+    const onPaste = (e: ClipboardEvent) => {
+      if (!container.contains(document.activeElement) && document.activeElement !== term.element) return;
+      const text = e.clipboardData?.getData("text");
+      if (text) {
+        e.preventDefault();
+        terminalInput(sessionId, btoa(text)).catch(() => {});
+      }
+    };
+    document.addEventListener("paste", onPaste);
+
+    // Terminal keyboard shortcuts
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown") return true;
+      // Ctrl+Shift+C → copy selection to clipboard
+      if (e.key === "c" && e.ctrlKey && e.shiftKey) {
+        const sel = term.getSelection();
+        if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+        return false;
+      }
+      // Ctrl+C → copy if there's a selection, otherwise send SIGINT
+      if (e.key === "c" && e.ctrlKey && !e.shiftKey && term.hasSelection()) {
+        return false;
+      }
+      // Ctrl+Shift+V → paste from clipboard
+      if (e.key === "v" && e.ctrlKey && e.shiftKey) {
+        navigator.clipboard.readText().then((text) => {
+          if (text) terminalInput(sessionId, btoa(text)).catch(() => {});
+        }).catch(() => {});
+        return false;
+      }
+      // Ctrl+V → let browser fire native paste event
+      if (e.key === "v" && e.ctrlKey && !e.shiftKey) {
+        return false;
+      }
+      return true;
+    });
+
     // PTY output → xterm
     let unlisten: (() => void) | null = null;
     onTerminalOutput(sessionId, (event: TerminalOutputEvent) => {
@@ -128,6 +166,7 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
     return () => {
       inputDisposable.dispose();
       binaryDisposable.dispose();
+      document.removeEventListener("paste", onPaste);
       if (unlisten) unlisten();
       observer.disconnect();
       term.dispose();

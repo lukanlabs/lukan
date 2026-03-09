@@ -31,6 +31,7 @@ pub async fn list_providers() -> Result<Vec<ProviderInfo>, String> {
         ProviderName::Zai,
         ProviderName::OllamaCloud,
         ProviderName::OpenaiCompatible,
+        ProviderName::LukanCloud,
     ];
 
     let current_model = config.model.clone();
@@ -167,6 +168,18 @@ pub async fn fetch_provider_models(provider: String) -> Result<Vec<FetchedModel>
                 id,
             })
             .collect()),
+        ProviderName::LukanCloud => {
+            let models = lukan_providers::lukan_cloud::fetch_lukan_cloud_models(&api_key)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(models
+                .into_iter()
+                .map(|m| FetchedModel {
+                    name: format!("{} ({})", m.name, m.tier),
+                    id: m.id,
+                })
+                .collect())
+        }
         ProviderName::Zai => Ok(vec![
             FetchedModel {
                 id: "glm-5".into(),

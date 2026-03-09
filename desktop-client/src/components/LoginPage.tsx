@@ -4,6 +4,10 @@ import logoUrl from "../assets/logo.png";
 interface LoginPageProps {
   onAuthenticated: (token: string) => void;
   message?: string;
+  /** When set, user is already authenticated — show device picker instead of login form. */
+  devices?: string[];
+  /** Called when user clicks "Sign out" from the device picker. */
+  onLogout?: () => void;
 }
 
 /** Google "G" logo as inline SVG */
@@ -18,7 +22,8 @@ function GoogleIcon() {
   );
 }
 
-export default function LoginPage({ onAuthenticated, message }: LoginPageProps) {
+export default function LoginPage({ onAuthenticated, message, devices, onLogout }: LoginPageProps) {
+  const isDevicePicker = devices !== undefined;
   const [email, setEmail] = useState("");
   const [secret, setSecret] = useState("");
   const [error, setError] = useState("");
@@ -294,188 +299,329 @@ export default function LoginPage({ onAuthenticated, message }: LoginPageProps) 
               </div>
             )}
 
-            {/* Header */}
-            <div style={{ marginBottom: 36 }}>
-              <h2
-                style={{
-                  fontSize: 24,
-                  fontWeight: 600,
-                  color: "#f1f5f9",
-                  margin: "0 0 8px",
-                  letterSpacing: -0.3,
-                }}
-              >
-                Welcome back
-              </h2>
-              <p style={{ fontSize: 14, color: "#64748b", margin: 0 }}>
-                Sign in to access your agent dashboard
-              </p>
-            </div>
-
-            {/* Google Login */}
-            <button
-              className="login-btn-google"
-              onClick={handleGoogleLogin}
-              style={{
-                width: "100%",
-                padding: 12,
-                border: "none",
-                borderRadius: 10,
-                background: "#ffffff",
-                color: "#1f1f1f",
-                fontSize: 15,
-                fontWeight: 500,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 10,
-                transition: "all 0.2s ease",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-              }}
-            >
-              <GoogleIcon />
-              Sign in with Google
-            </button>
-
-            {/* Dev mode form */}
-            {devMode?.available && (
+            {isDevicePicker ? (
               <>
-                {/* Divider */}
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 16,
-                    margin: "28px 0",
-                  }}
-                >
-                  <div
-                    style={{ flex: 1, height: 1, background: "#1e1e24" }}
-                  />
-                  <span
+                {/* Device picker header */}
+                <div style={{ marginBottom: 28 }}>
+                  <h2
                     style={{
-                      fontSize: 12,
-                      color: "#475569",
-                      textTransform: "uppercase" as const,
-                      letterSpacing: 1,
-                      fontWeight: 500,
+                      fontSize: 24,
+                      fontWeight: 600,
+                      color: "#f1f5f9",
+                      margin: "0 0 8px",
+                      letterSpacing: -0.3,
                     }}
                   >
-                    or
-                  </span>
-                  <div
-                    style={{ flex: 1, height: 1, background: "#1e1e24" }}
-                  />
+                    Select a device
+                  </h2>
+                  <p style={{ fontSize: 14, color: "#64748b", margin: 0 }}>
+                    Choose which machine to connect to
+                  </p>
                 </div>
 
-                <form onSubmit={handleDevLogin}>
-                  {/* Email */}
-                  <div style={{ marginBottom: 16 }}>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: 13,
-                        fontWeight: 500,
-                        color: "#94a3b8",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Email
-                    </label>
-                    <input
-                      type="email"
-                      className="login-pw"
-                      placeholder="dev@localhost"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      style={{
-                        width: "100%",
-                        padding: "12px 16px",
-                        background: "#111113",
-                        border: "1px solid #1e1e24",
-                        borderRadius: 10,
-                        color: "#f1f5f9",
-                        fontSize: 15,
-                        outline: "none",
-                        transition: "border-color 0.2s, box-shadow 0.2s",
-                      }}
-                    />
-                  </div>
-
-                  {/* Secret */}
-                  {devMode.requiresSecret && (
-                    <div style={{ marginBottom: 20 }}>
-                      <label
-                        style={{
-                          display: "block",
-                          fontSize: 13,
-                          fontWeight: 500,
-                          color: "#94a3b8",
-                          marginBottom: 8,
-                        }}
-                      >
-                        Secret
-                      </label>
-                      <input
-                        type="password"
-                        className="login-pw"
-                        placeholder="Enter dev secret"
-                        value={secret}
-                        onChange={(e) => setSecret(e.target.value)}
-                        autoComplete="off"
-                        style={{
-                          width: "100%",
-                          padding: "12px 16px",
-                          background: "#111113",
-                          border: "1px solid #1e1e24",
-                          borderRadius: 10,
-                          color: "#f1f5f9",
-                          fontSize: 15,
-                          outline: "none",
-                          transition: "border-color 0.2s, box-shadow 0.2s",
-                        }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Error */}
+                {devices.length === 0 ? (
                   <div
                     style={{
-                      color: "#f87171",
-                      fontSize: 13,
-                      marginBottom: 16,
-                      minHeight: 20,
+                      padding: "24px 16px",
+                      background: "#111113",
+                      borderRadius: 12,
+                      border: "1px solid #1e1e24",
+                      textAlign: "center",
                     }}
                   >
-                    {error}
+                    <p
+                      style={{
+                        fontSize: 14,
+                        color: "#94a3b8",
+                        margin: "0 0 8px",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      No devices connected
+                    </p>
+                    <p style={{ fontSize: 13, color: "#475569", margin: 0 }}>
+                      Run{" "}
+                      <code
+                        style={{
+                          background: "#1e1e24",
+                          padding: "2px 6px",
+                          borderRadius: 4,
+                          fontSize: 12,
+                        }}
+                      >
+                        lukan daemon start
+                      </code>{" "}
+                      on your machine
+                    </p>
                   </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {devices.map((device) => (
+                      <a
+                        key={device}
+                        href={`/${encodeURIComponent(device)}`}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 12,
+                          padding: "14px 16px",
+                          background: "#111113",
+                          borderRadius: 12,
+                          border: "1px solid #1e1e24",
+                          color: "#f1f5f9",
+                          textDecoration: "none",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          transition: "all 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = "#6366f1";
+                          e.currentTarget.style.background = "rgba(99,102,241,0.06)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = "#1e1e24";
+                          e.currentTarget.style.background = "#111113";
+                        }}
+                      >
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="#6366f1"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                          <line x1="8" y1="21" x2="16" y2="21" />
+                          <line x1="12" y1="17" x2="12" y2="21" />
+                        </svg>
+                        {device}
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="#475569"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          style={{ marginLeft: "auto" }}
+                        >
+                          <polyline points="9 18 15 12 9 6" />
+                        </svg>
+                      </a>
+                    ))}
+                  </div>
+                )}
 
-                  {/* Submit */}
+                {/* Sign out */}
+                <div style={{ textAlign: "center", marginTop: 24 }}>
                   <button
-                    type="submit"
-                    className="login-btn-primary"
-                    disabled={loading}
+                    onClick={onLogout}
                     style={{
-                      width: "100%",
-                      padding: 12,
+                      background: "none",
                       border: "none",
-                      borderRadius: 10,
-                      background:
-                        "linear-gradient(135deg, #6366f1, #4f46e5)",
-                      color: "white",
-                      fontSize: 15,
+                      color: "#475569",
+                      fontSize: 13,
+                      cursor: "pointer",
+                      padding: "8px 16px",
+                      transition: "color 0.15s ease",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = "#94a3b8"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = "#475569"; }}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Header */}
+                <div style={{ marginBottom: 36 }}>
+                  <h2
+                    style={{
+                      fontSize: 24,
                       fontWeight: 600,
-                      cursor: loading ? "default" : "pointer",
-                      letterSpacing: 0.3,
-                      transition: "all 0.2s ease",
-                      opacity: loading ? 0.6 : 1,
-                      boxShadow: "0 4px 14px rgba(99,102,241,0.25)",
+                      color: "#f1f5f9",
+                      margin: "0 0 8px",
+                      letterSpacing: -0.3,
                     }}
                   >
-                    {loading ? "Signing in..." : "Sign in"}
-                  </button>
-                </form>
+                    Welcome back
+                  </h2>
+                  <p style={{ fontSize: 14, color: "#64748b", margin: 0 }}>
+                    Sign in to access your agent dashboard
+                  </p>
+                </div>
+
+                {/* Google Login */}
+                <button
+                  className="login-btn-google"
+                  onClick={handleGoogleLogin}
+                  style={{
+                    width: "100%",
+                    padding: 12,
+                    border: "none",
+                    borderRadius: 10,
+                    background: "#ffffff",
+                    color: "#1f1f1f",
+                    fontSize: 15,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                    transition: "all 0.2s ease",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                  }}
+                >
+                  <GoogleIcon />
+                  Sign in with Google
+                </button>
+
+                {/* Dev mode form */}
+                {devMode?.available && (
+                  <>
+                    {/* Divider */}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 16,
+                        margin: "28px 0",
+                      }}
+                    >
+                      <div
+                        style={{ flex: 1, height: 1, background: "#1e1e24" }}
+                      />
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: "#475569",
+                          textTransform: "uppercase" as const,
+                          letterSpacing: 1,
+                          fontWeight: 500,
+                        }}
+                      >
+                        or
+                      </span>
+                      <div
+                        style={{ flex: 1, height: 1, background: "#1e1e24" }}
+                      />
+                    </div>
+
+                    <form onSubmit={handleDevLogin}>
+                      {/* Email */}
+                      <div style={{ marginBottom: 16 }}>
+                        <label
+                          style={{
+                            display: "block",
+                            fontSize: 13,
+                            fontWeight: 500,
+                            color: "#94a3b8",
+                            marginBottom: 8,
+                          }}
+                        >
+                          Email
+                        </label>
+                        <input
+                          type="email"
+                          className="login-pw"
+                          placeholder="dev@localhost"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          style={{
+                            width: "100%",
+                            padding: "12px 16px",
+                            background: "#111113",
+                            border: "1px solid #1e1e24",
+                            borderRadius: 10,
+                            color: "#f1f5f9",
+                            fontSize: 15,
+                            outline: "none",
+                            transition: "border-color 0.2s, box-shadow 0.2s",
+                          }}
+                        />
+                      </div>
+
+                      {/* Secret */}
+                      {devMode.requiresSecret && (
+                        <div style={{ marginBottom: 20 }}>
+                          <label
+                            style={{
+                              display: "block",
+                              fontSize: 13,
+                              fontWeight: 500,
+                              color: "#94a3b8",
+                              marginBottom: 8,
+                            }}
+                          >
+                            Secret
+                          </label>
+                          <input
+                            type="password"
+                            className="login-pw"
+                            placeholder="Enter dev secret"
+                            value={secret}
+                            onChange={(e) => setSecret(e.target.value)}
+                            autoComplete="off"
+                            style={{
+                              width: "100%",
+                              padding: "12px 16px",
+                              background: "#111113",
+                              border: "1px solid #1e1e24",
+                              borderRadius: 10,
+                              color: "#f1f5f9",
+                              fontSize: 15,
+                              outline: "none",
+                              transition: "border-color 0.2s, box-shadow 0.2s",
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Error */}
+                      <div
+                        style={{
+                          color: "#f87171",
+                          fontSize: 13,
+                          marginBottom: 16,
+                          minHeight: 20,
+                        }}
+                      >
+                        {error}
+                      </div>
+
+                      {/* Submit */}
+                      <button
+                        type="submit"
+                        className="login-btn-primary"
+                        disabled={loading}
+                        style={{
+                          width: "100%",
+                          padding: 12,
+                          border: "none",
+                          borderRadius: 10,
+                          background:
+                            "linear-gradient(135deg, #6366f1, #4f46e5)",
+                          color: "white",
+                          fontSize: 15,
+                          fontWeight: 600,
+                          cursor: loading ? "default" : "pointer",
+                          letterSpacing: 0.3,
+                          transition: "all 0.2s ease",
+                          opacity: loading ? 0.6 : 1,
+                          boxShadow: "0 4px 14px rgba(99,102,241,0.25)",
+                        }}
+                      >
+                        {loading ? "Signing in..." : "Sign in"}
+                      </button>
+                    </form>
+                  </>
+                )}
               </>
             )}
 

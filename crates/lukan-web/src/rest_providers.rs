@@ -41,6 +41,7 @@ pub async fn list_providers() -> impl IntoResponse {
         ProviderName::Zai,
         ProviderName::OllamaCloud,
         ProviderName::OpenaiCompatible,
+        ProviderName::LukanCloud,
     ];
 
     let current_model = config.model.clone();
@@ -212,6 +213,18 @@ pub async fn fetch_provider_models(Path(provider): Path<String>) -> impl IntoRes
                 name: "GLM-4".into(),
             },
         ]),
+        ProviderName::LukanCloud => {
+            lukan_providers::lukan_cloud::fetch_lukan_cloud_models(&api_key)
+                .await
+                .map(|m| {
+                    m.into_iter()
+                        .map(|m| FetchedModelDto {
+                            name: format!("{} ({})", m.name, m.tier),
+                            id: m.id,
+                        })
+                        .collect()
+                })
+        }
         _ => Ok(vec![]),
     };
 

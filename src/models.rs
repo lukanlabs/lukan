@@ -241,6 +241,7 @@ pub async fn run_models(provider: Option<&str>, model_entry: Option<&str>) -> Re
         "zai" | "z.ai" => select_static("zai", ZAI_MODELS, false).await,
         "ollama-cloud" | "ollama" => select_ollama_cloud().await,
         "openai-compatible" | "oai-compatible" => select_openai_compatible().await,
+        "lukan-cloud" | "lukan" => select_lukan_cloud().await,
         other => {
             eprintln!("{RED}Error:{RESET} Provider \"{other}\" does not have a catalog API.");
             println!("\nAdd models manually:");
@@ -264,10 +265,12 @@ fn print_usage() {
     println!("  {CYAN}ollama-cloud{RESET}      Ollama Cloud (requires API key)");
     println!("  {CYAN}openai-compatible{RESET}  Generic OpenAI-compatible endpoint");
     println!("  {CYAN}zai{RESET}               z.ai (GLM models)");
+    println!("  {CYAN}lukan-cloud{RESET}       Lukan Cloud (requires API key)");
     println!();
     println!("{BOLD}Examples:{RESET}");
     println!("  lukan models anthropic");
     println!("  lukan models github-copilot");
+    println!("  lukan models lukan");
     println!("  lukan models add nebius:deepseek-ai/DeepSeek-R1");
 }
 
@@ -588,6 +591,70 @@ async fn select_ollama_cloud() -> Result<()> {
         }
         if vision_count > 0 {
             println!("\n{MAGENTA}✓{RESET} Auto-tagged {vision_count} vision-capable model(s).");
+        }
+    }
+    println!("\nUse /model in chat to switch between models.");
+    Ok(())
+}
+
+// ── Lukan Cloud (API fetch) ─────────────────────────────────────────────────
+
+async fn select_lukan_cloud() -> Result<()> {
+    let creds = CredentialsManager::load().await?;
+    let api_key = creds.lukan_cloud_api_key.as_deref().unwrap_or("");
+
+    if api_key.is_empty() {
+        eprintln!(
+            "{RED}Error:{RESET} Lukan Cloud API key not found. Set LUKAN_CLOUD_API_KEY or run: lukan setup"
+        );
+        return Ok(());
+    }
+
+    println!("{DIM}Fetching models from Lukan Cloud...{RESET}");
+    let models = lukan_providers::lukan_cloud::fetch_lukan_cloud_models(api_key).await?;
+
+    if models.is_empty() {
+        println!("No models found.");
+        return Ok(());
+    }
+
+    let existing = get_existing_model_ids("lukan-cloud").await;
+    let model_ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
+    let checked = defaults_for(&model_ids, &existing);
+
+    let items: Vec<String> = models
+        .iter()
+        .map(|m| {
+            let tier = format!("[{}]", m.tier);
+            format!("{:<30} {:<12} {}", m.name, tier, m.id)
+        })
+        .collect();
+
+    let selected = MultiSelect::with_theme(&picker_theme())
+        .with_prompt("Select models (space to toggle, enter to confirm)")
+        .items(&items)
+        .defaults(&checked)
+        .interact()?;
+
+    let entries: Vec<String> = selected
+        .iter()
+        .map(|&i| format!("lukan-cloud:{}", models[i].id))
+        .collect();
+
+    // All models on Lukan Cloud support vision (proxied Anthropic/OpenAI)
+    let vision_ids: Vec<String> = selected.iter().map(|&i| models[i].id.clone()).collect();
+
+    ConfigManager::set_provider_models("lukan-cloud", &entries, &vision_ids).await?;
+
+    if selected.is_empty() {
+        println!("{GREEN}✓{RESET} Cleared all lukan-cloud models.");
+    } else {
+        println!(
+            "\n{GREEN}✓{RESET} Set {} model(s) for lukan-cloud:",
+            selected.len()
+        );
+        for &idx in &selected {
+            println!("  - lukan-cloud:{}", models[idx].id);
         }
     }
     println!("\nUse /model in chat to switch between models.");

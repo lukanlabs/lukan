@@ -14,6 +14,7 @@ pub enum ProviderName {
     Zai,
     OllamaCloud,
     OpenaiCompatible,
+    LukanCloud,
 }
 
 impl fmt::Display for ProviderName {
@@ -27,6 +28,7 @@ impl fmt::Display for ProviderName {
             ProviderName::Zai => write!(f, "zai"),
             ProviderName::OllamaCloud => write!(f, "ollama-cloud"),
             ProviderName::OpenaiCompatible => write!(f, "openai-compatible"),
+            ProviderName::LukanCloud => write!(f, "lukan-cloud"),
         }
     }
 }
@@ -114,8 +116,6 @@ pub struct Credentials {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fireworks_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub github_token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub copilot_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub copilot_client_id: Option<String>,
@@ -137,6 +137,8 @@ pub struct Credentials {
     pub ollama_cloud_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openai_compatible_api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lukan_cloud_api_key: Option<String>,
     /// Per-skill environment variables (e.g. {"nano-banana-pro": {"GEMINI_API_KEY": "..."}})
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub skill_credentials: HashMap<String, HashMap<String, String>>,

@@ -54,13 +54,14 @@ impl CredentialsManager {
         env_fallback!(nebius_api_key, "NEBIUS_API_KEY");
         env_fallback!(anthropic_api_key, "ANTHROPIC_API_KEY");
         env_fallback!(fireworks_api_key, "FIREWORKS_API_KEY");
-        env_fallback!(github_token, "GITHUB_TOKEN");
+
         env_fallback!(brave_api_key, "BRAVE_API_KEY");
         env_fallback!(tavily_api_key, "TAVILY_API_KEY");
         env_fallback!(openai_api_key, "OPENAI_API_KEY");
         env_fallback!(zai_api_key, "ZAI_API_KEY");
         env_fallback!(ollama_cloud_api_key, "OLLAMA_API_KEY");
         env_fallback!(openai_compatible_api_key, "OPENAI_COMPATIBLE_API_KEY");
+        env_fallback!(lukan_cloud_api_key, "LUKAN_CLOUD_API_KEY");
     }
 
     /// Save credentials to disk with restricted permissions (0o600)
@@ -90,14 +91,12 @@ impl CredentialsManager {
             super::types::ProviderName::Nebius => creds.nebius_api_key.clone(),
             super::types::ProviderName::Anthropic => creds.anthropic_api_key.clone(),
             super::types::ProviderName::Fireworks => creds.fireworks_api_key.clone(),
-            super::types::ProviderName::GithubCopilot => creds
-                .copilot_token
-                .clone()
-                .or_else(|| creds.github_token.clone()),
+            super::types::ProviderName::GithubCopilot => creds.copilot_token.clone(),
             super::types::ProviderName::OpenaiCodex => creds.codex_access_token.clone(),
             super::types::ProviderName::Zai => creds.zai_api_key.clone(),
             super::types::ProviderName::OllamaCloud => creds.ollama_cloud_api_key.clone(),
             super::types::ProviderName::OpenaiCompatible => creds.openai_compatible_api_key.clone(),
+            super::types::ProviderName::LukanCloud => creds.lukan_cloud_api_key.clone(),
         }
     }
 }

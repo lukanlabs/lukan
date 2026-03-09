@@ -72,12 +72,12 @@ fn rate_limit_response() -> Response {
 // ── Cookie helpers ──────────────────────────────────────────────────
 
 /// Build a `Set-Cookie` header value for the auth token.
-/// Uses HttpOnly (no JS access), SameSite=Lax (allows OAuth redirects),
-/// and Secure when the relay is behind HTTPS.
+/// Uses HttpOnly (no JS access), SameSite=None (allows cross-origin requests
+/// from authorized dashboards), and Secure (required by SameSite=None).
+/// CSRF is mitigated by restrictive CORS (only whitelisted origins via RELAY_CORS_ORIGINS).
 pub fn build_auth_cookie(token: &str) -> String {
-    // Always set Secure since relay runs behind HTTPS in production
     format!(
-        "lukan_token={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}; Secure",
+        "lukan_token={}; HttpOnly; SameSite=None; Path=/; Max-Age={}; Secure",
         token,
         30 * 24 * 60 * 60 // 30 days
     )
@@ -85,7 +85,7 @@ pub fn build_auth_cookie(token: &str) -> String {
 
 /// Build a `Set-Cookie` header that clears the auth cookie.
 fn build_clear_cookie() -> String {
-    "lukan_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0".to_string()
+    "lukan_token=; HttpOnly; SameSite=None; Path=/; Max-Age=0; Secure".to_string()
 }
 
 /// Extract the `lukan_token` value from the `Cookie` request header.
@@ -105,26 +105,31 @@ pub fn extract_token_from_cookie(headers: &axum::http::HeaderMap) -> Option<Stri
 // ── Client IP helper ────────────────────────────────────────────────
 
 /// Extract the client IP from X-Forwarded-For header or ConnectInfo.
+/// Converts IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) to plain IPv4.
 pub fn client_ip(
     headers: &axum::http::HeaderMap,
     connect_info: Option<&axum::extract::ConnectInfo<std::net::SocketAddr>>,
 ) -> IpAddr {
-    // Try X-Forwarded-For first (first IP in the chain is the client)
-    if let Some(forwarded) = headers.get("x-forwarded-for")
+    let raw = if let Some(forwarded) = headers.get("x-forwarded-for")
         && let Ok(val) = forwarded.to_str()
         && let Some(first) = val.split(',').next()
         && let Ok(ip) = first.trim().parse::<IpAddr>()
     {
-        return ip;
-    }
+        ip
+    } else if let Some(info) = connect_info {
+        info.0.ip()
+    } else {
+        return IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+    };
 
-    // Fall back to ConnectInfo
-    if let Some(info) = connect_info {
-        return info.0.ip();
+    // Convert IPv4-mapped IPv6 (::ffff:x.x.x.x) to plain IPv4
+    match raw {
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(v6)),
+        ip => ip,
     }
-
-    // Last resort
-    IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
 }
 
 // ── Auth status & logout ────────────────────────────────────────────
@@ -138,10 +143,11 @@ pub async fn auth_status(
     match extract_token_from_cookie(&headers) {
         Some(token) => match verify_jwt(&state.browser_jwt_secret(), &token) {
             Ok(claims) => {
-                let daemon_connected = state.has_daemon(&claims.sub);
+                let devices = state.list_device_names(&claims.sub);
                 axum::Json(serde_json::json!({
                     "authenticated": true,
-                    "daemonConnected": daemon_connected,
+                    "daemonConnected": !devices.is_empty(),
+                    "devices": devices,
                 }))
                 .into_response()
             }

@@ -15,13 +15,20 @@ use crate::state::{PendingRestRequest, SharedState};
 /// Timeout for REST tunnel requests (seconds).
 const TUNNEL_TIMEOUT_SECS: u64 = 60;
 
+/// Extract device name from request header.
+fn extract_device(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get("x-lukan-device")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
+
 /// E2E encrypted REST tunnel: passes encrypted blobs to/from the daemon.
 /// The relay cannot decrypt the content — it's just a pass-through.
 pub async fn e2e_rest_tunnel_handler(
     State(state): State<SharedState>,
     request: Request<Body>,
 ) -> Response {
-    // Auth: same as regular REST tunnel
     let token = auth::extract_token_from_cookie(request.headers()).or_else(|| {
         request
             .headers()
@@ -30,6 +37,11 @@ pub async fn e2e_rest_tunnel_handler(
             .and_then(|v| v.strip_prefix("Bearer "))
             .map(|s| s.to_string())
     });
+
+    let device = match extract_device(request.headers()) {
+        Some(d) => d,
+        None => return (StatusCode::BAD_REQUEST, "Missing x-lukan-device header").into_response(),
+    };
 
     let claims = match token {
         Some(t) => auth::verify_jwt(&state.browser_jwt_secret(), &t)
@@ -45,7 +57,7 @@ pub async fn e2e_rest_tunnel_handler(
         }
     };
 
-    if !state.has_daemon(&claims.sub) {
+    if !state.has_daemon(&claims.sub, &device) {
         return (StatusCode::BAD_GATEWAY, "Daemon not connected").into_response();
     }
 
@@ -72,7 +84,7 @@ pub async fn e2e_rest_tunnel_handler(
     })
     .unwrap();
 
-    if !state.send_to_daemon(&claims.sub, &relay_msg) {
+    if !state.send_to_daemon(&claims.sub, &device, &relay_msg) {
         state.pending_rest.remove(&request_id);
         return (StatusCode::BAD_GATEWAY, "Failed to send to daemon").into_response();
     }
@@ -106,7 +118,6 @@ pub async fn rest_tunnel_handler(
     State(state): State<SharedState>,
     request: Request<Body>,
 ) -> Response {
-    // Extract JWT from HttpOnly cookie (browser) or Authorization header (fallback)
     let token = auth::extract_token_from_cookie(request.headers()).or_else(|| {
         request
             .headers()
@@ -116,9 +127,13 @@ pub async fn rest_tunnel_handler(
             .map(|s| s.to_string())
     });
 
+    let device = match extract_device(request.headers()) {
+        Some(d) => d,
+        None => return (StatusCode::BAD_REQUEST, "Missing x-lukan-device header").into_response(),
+    };
+
     let claims = match token {
         Some(t) => {
-            // Try browser secret first (cookie), then base secret (daemon)
             auth::verify_jwt(&state.browser_jwt_secret(), &t)
                 .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t))
                 .map_err(|e| {
@@ -140,8 +155,7 @@ pub async fn rest_tunnel_handler(
         }
     };
 
-    // Check if daemon is connected
-    if !state.has_daemon(&claims.sub) {
+    if !state.has_daemon(&claims.sub, &device) {
         return (
             StatusCode::BAD_GATEWAY,
             "Your local lukan daemon is not connected. Run `lukan daemon start` and `lukan login`.",
@@ -188,7 +202,7 @@ pub async fn rest_tunnel_handler(
     })
     .unwrap();
 
-    if !state.send_to_daemon(&claims.sub, &relay_msg) {
+    if !state.send_to_daemon(&claims.sub, &device, &relay_msg) {
         state.pending_rest.remove(&request_id);
         return (StatusCode::BAD_GATEWAY, "Failed to send to daemon").into_response();
     }

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
@@ -75,9 +75,35 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn create_router(state: SharedState) -> Router {
-    // Permissive CORS — the SPA is same-origin so cookies work without CORS.
-    // This layer is mainly for potential external API consumers.
-    let cors = CorsLayer::permissive();
+    // CORS: allow the relay's own origin + any additional origins from RELAY_CORS_ORIGINS env var.
+    // This lets external UIs (self-hosted dashboards, etc.) call the relay API with credentials.
+    let mut origins: Vec<axum::http::HeaderValue> = vec![state
+        .public_url
+        .parse::<axum::http::HeaderValue>()
+        .unwrap()];
+    if let Ok(extra) = std::env::var("RELAY_CORS_ORIGINS") {
+        for origin in extra.split(',') {
+            let origin = origin.trim();
+            if !origin.is_empty() {
+                if let Ok(val) = origin.parse::<axum::http::HeaderValue>() {
+                    origins.push(val);
+                }
+            }
+        }
+    }
+    let cors = CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::COOKIE,
+        ])
+        .allow_credentials(true);
 
     Router::new()
         // Auth
@@ -104,6 +130,8 @@ fn create_router(state: SharedState) -> Router {
         .route("/api/{*path}", any(rest_tunnel::rest_tunnel_handler))
         // Health check
         .route("/health", get(health))
+        // List user's connected devices (requires auth)
+        .route("/devices", get(list_devices))
         // Status (requires auth)
         .route("/status", get(status))
         // Static files (SPA fallback)
@@ -115,6 +143,64 @@ fn create_router(state: SharedState) -> Router {
 /// GET /health
 async fn health() -> &'static str {
     "ok"
+}
+
+/// GET /devices — list the user's connected devices.
+async fn list_devices(
+    State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let token = auth::extract_token_from_cookie(&headers).or_else(|| {
+        headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string())
+    });
+    let claims = match token {
+        Some(t) => auth::verify_jwt(&state.browser_jwt_secret(), &t)
+            .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t))
+            .map_err(|_| ()),
+        None => Err(()),
+    };
+    let claims = match claims {
+        Ok(c) => c,
+        Err(()) => {
+            return (StatusCode::UNAUTHORIZED, "Authentication required").into_response();
+        }
+    };
+
+    let devices = state.list_devices(&claims.sub);
+    axum::Json(serde_json::json!({ "devices": devices })).into_response()
+}
+
+/// GET /devices/names — simple list of device names (used by /auth/status).
+async fn list_device_names(
+    State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let token = auth::extract_token_from_cookie(&headers).or_else(|| {
+        headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string())
+    });
+    let claims = match token {
+        Some(t) => auth::verify_jwt(&state.browser_jwt_secret(), &t)
+            .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t))
+            .map_err(|_| ()),
+        None => Err(()),
+    };
+    let claims = match claims {
+        Ok(c) => c,
+        Err(()) => {
+            return (StatusCode::UNAUTHORIZED, "Authentication required").into_response();
+        }
+    };
+
+    let devices = state.list_device_names(&claims.sub);
+    axum::Json(serde_json::json!({ "devices": devices })).into_response()
 }
 
 /// GET /status — relay connection overview (requires browser cookie auth)
@@ -142,10 +228,13 @@ async fn status(State(state): State<SharedState>, headers: axum::http::HeaderMap
 
 /// WebSocket upgrade for browser clients.
 /// Reads JWT from the HttpOnly `lukan_token` cookie (set during login).
+/// Requires `?device=<name>` query parameter to select which daemon to connect to.
 async fn ws_client_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<SharedState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let token = match auth::extract_token_from_cookie(&headers) {
         Some(t) => t,
@@ -157,19 +246,43 @@ async fn ws_client_upgrade(
         Err(e) => return (StatusCode::UNAUTHORIZED, format!("Invalid token: {e}")).into_response(),
     };
 
-    ws.on_upgrade(move |socket| ws_client::handle_browser_ws(socket, state, claims.sub))
+    let device = match params.get("device") {
+        Some(d) => d.clone(),
+        None => return (StatusCode::BAD_REQUEST, "Missing device parameter").into_response(),
+    };
+
+    if !state.has_daemon(&claims.sub, &device) {
+        return (StatusCode::NOT_FOUND, "Device not connected").into_response();
+    }
+
+    let ip = auth::client_ip(&headers, Some(&ConnectInfo(addr))).to_string();
+
+    ws.on_upgrade(move |socket| {
+        ws_client::handle_browser_ws(socket, state, claims.sub, device, ip)
+    })
 }
 
 /// WebSocket upgrade for daemon connections.
-/// Requires `?token=<jwt>` query parameter (daemon tokens use base jwt_secret).
+/// Requires `Authorization: Bearer <jwt>` header (daemon tokens use base jwt_secret).
 async fn ws_daemon_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<SharedState>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
-    let token = match params.get("token") {
-        Some(t) => t.clone(),
-        None => return (StatusCode::UNAUTHORIZED, "Missing token parameter").into_response(),
+    // Extract token from Authorization header only (never from query string to avoid URL logging)
+    let token = match headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    {
+        Some(t) => t.to_string(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Missing Authorization header. Use: Authorization: Bearer <token>",
+            )
+                .into_response()
+        }
     };
 
     // Daemon tokens use base jwt_secret (survive relay restarts)

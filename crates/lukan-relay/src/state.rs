@@ -33,12 +33,38 @@ pub struct DaemonConnection {
     pub user_id: String,
     pub device_name: String,
     pub tx: WsSender,
+    pub connected_at: Instant,
+    pub os: Option<String>,
+    pub version: Option<String>,
+}
+
+/// Device info returned by the `/devices` endpoint.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceInfo {
+    pub name: String,
+    pub connected_since_secs: u64,
+    pub os: Option<String>,
+    pub version: Option<String>,
+    /// Active browser sessions connected to this device.
+    pub sessions: Vec<SessionInfo>,
+}
+
+/// Info about an active browser session connected to a device.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionInfo {
+    pub ip_address: String,
+    pub connected_since_secs: u64,
 }
 
 /// A connected browser client.
 pub struct BrowserConnection {
     pub user_id: String,
+    pub device_name: String,
     pub tx: WsSender,
+    pub ip_address: String,
+    pub connected_at: Instant,
 }
 
 /// Pending REST tunnel request waiting for daemon response.
@@ -114,8 +140,8 @@ impl RateLimiter {
 
 /// Shared relay server state.
 pub struct RelayState {
-    /// user_id → daemon connection (one daemon per user for now)
-    pub daemon_connections: DashMap<String, DaemonConnection>,
+    /// user_id → (device_name → daemon connection)
+    pub daemon_connections: DashMap<String, DashMap<String, DaemonConnection>>,
     /// connection_id → browser connection
     pub browser_connections: DashMap<String, BrowserConnection>,
     /// request_id → pending REST tunnel oneshot
@@ -183,14 +209,15 @@ impl RelayState {
         }
     }
 
-    /// Send a JSON message to the daemon for the given user.
+    /// Send a JSON message to a specific daemon (user + device).
     /// Returns false if no daemon is connected.
-    pub fn send_to_daemon(&self, user_id: &str, message: &str) -> bool {
-        if let Some(daemon) = self.daemon_connections.get(user_id) {
-            daemon.tx.send(message.to_string()).is_ok()
-        } else {
-            false
+    pub fn send_to_daemon(&self, user_id: &str, device: &str, message: &str) -> bool {
+        if let Some(devices) = self.daemon_connections.get(user_id)
+            && let Some(daemon) = devices.get(device)
+        {
+            return daemon.tx.send(message.to_string()).is_ok();
         }
+        false
     }
 
     /// Send a JSON message to a specific browser connection.
@@ -222,15 +249,83 @@ impl RelayState {
         }
     }
 
-    /// Check if a daemon is connected for the given user.
-    pub fn has_daemon(&self, user_id: &str) -> bool {
-        self.daemon_connections.contains_key(user_id)
+    /// Check if a specific daemon is connected for the given user + device.
+    pub fn has_daemon(&self, user_id: &str, device: &str) -> bool {
+        self.daemon_connections
+            .get(user_id)
+            .is_some_and(|devices| devices.contains_key(device))
+    }
+
+    /// Register a daemon connection for user + device.
+    pub fn register_daemon(&self, user_id: &str, device_name: &str, conn: DaemonConnection) {
+        self.daemon_connections
+            .entry(user_id.to_string())
+            .or_default()
+            .insert(device_name.to_string(), conn);
+    }
+
+    /// Remove a daemon connection. Returns the connection if it existed.
+    pub fn remove_daemon(&self, user_id: &str, device_name: &str) -> Option<DaemonConnection> {
+        if let Some(devices) = self.daemon_connections.get(user_id) {
+            let removed = devices.remove(device_name).map(|(_, c)| c);
+            if devices.is_empty() {
+                drop(devices);
+                self.daemon_connections.remove(user_id);
+            }
+            removed
+        } else {
+            None
+        }
+    }
+
+    /// List active device names for a user (simple list for /auth/status).
+    pub fn list_device_names(&self, user_id: &str) -> Vec<String> {
+        self.daemon_connections
+            .get(user_id)
+            .map(|devices| devices.iter().map(|e| e.key().clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// List active devices with full info for a user, including browser sessions.
+    pub fn list_devices(&self, user_id: &str) -> Vec<DeviceInfo> {
+        self.daemon_connections
+            .get(user_id)
+            .map(|devices| {
+                devices
+                    .iter()
+                    .map(|e| {
+                        let conn = e.value();
+                        let device_name = e.key().clone();
+
+                        // Collect browser sessions connected to this device
+                        let sessions: Vec<SessionInfo> = self
+                            .browser_connections
+                            .iter()
+                            .filter(|b| b.user_id == user_id && b.device_name == device_name)
+                            .map(|b| SessionInfo {
+                                ip_address: b.ip_address.clone(),
+                                connected_since_secs: b.connected_at.elapsed().as_secs(),
+                            })
+                            .collect();
+
+                        DeviceInfo {
+                            name: device_name,
+                            connected_since_secs: conn.connected_at.elapsed().as_secs(),
+                            os: conn.os.clone(),
+                            version: conn.version.clone(),
+                            sessions,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// JWT secret for browser tokens.
-    /// Uses the same stable secret so sessions survive relay restarts.
+    /// Derived from base secret + boot_id so browser sessions are invalidated
+    /// on relay restart and cannot be confused with daemon tokens.
     pub fn browser_jwt_secret(&self) -> String {
-        self.jwt_secret.clone()
+        format!("{}:browser:{}", self.jwt_secret, self.boot_id)
     }
 
     // ── OAuth CSRF helpers ──────────────────────────────────────────

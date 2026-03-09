@@ -14,6 +14,12 @@ pub enum DaemonToRelay {
     Register {
         user_id: String,
         device_name: String,
+        /// Operating system and architecture (e.g. "Linux x86_64", "macOS arm64")
+        #[serde(default)]
+        os: Option<String>,
+        /// Daemon binary version
+        #[serde(default)]
+        version: Option<String>,
     },
     /// Forward a server message back to a specific browser connection.
     Forward {
@@ -125,20 +131,42 @@ mod tests {
         let msg = DaemonToRelay::Register {
             user_id: "user123".into(),
             device_name: "laptop".into(),
+            os: Some("Linux x86_64".into()),
+            version: Some("0.1.0".into()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"register""#));
         assert!(json.contains(r#""userId":"user123""#));
         assert!(json.contains(r#""deviceName":"laptop""#));
+        assert!(json.contains(r#""os":"Linux x86_64""#));
+        assert!(json.contains(r#""version":"0.1.0""#));
 
         let deserialized: DaemonToRelay = serde_json::from_str(&json).unwrap();
         match deserialized {
             DaemonToRelay::Register {
                 user_id,
                 device_name,
+                os,
+                version,
             } => {
                 assert_eq!(user_id, "user123");
                 assert_eq!(device_name, "laptop");
+                assert_eq!(os.unwrap(), "Linux x86_64");
+                assert_eq!(version.unwrap(), "0.1.0");
+            }
+            _ => panic!("Expected Register variant"),
+        }
+    }
+
+    #[test]
+    fn test_register_backwards_compatible() {
+        // Old daemons without os/version fields should still deserialize
+        let json = r#"{"type":"register","userId":"u1","deviceName":"old-daemon"}"#;
+        let msg: DaemonToRelay = serde_json::from_str(json).unwrap();
+        match msg {
+            DaemonToRelay::Register { os, version, .. } => {
+                assert!(os.is_none());
+                assert!(version.is_none());
             }
             _ => panic!("Expected Register variant"),
         }

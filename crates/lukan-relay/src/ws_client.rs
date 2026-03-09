@@ -11,9 +11,15 @@ use crate::state::{BrowserConnection, RelayState};
 
 /// Handle a browser WebSocket connection.
 ///
-/// The browser must authenticate by sending a JWT token as the first message
-/// or via the `?token=` query parameter (already validated before calling this).
-pub async fn handle_browser_ws(socket: WebSocket, state: Arc<RelayState>, user_id: String) {
+/// The browser authenticates via the HttpOnly `lukan_token` cookie
+/// (validated during the WebSocket upgrade in main.rs).
+pub async fn handle_browser_ws(
+    socket: WebSocket,
+    state: Arc<RelayState>,
+    user_id: String,
+    device_name: String,
+    ip_address: String,
+) {
     let connection_id = uuid::Uuid::new_v4().to_string();
 
     let (mut ws_tx, mut ws_rx) = socket.split();
@@ -24,13 +30,17 @@ pub async fn handle_browser_ws(socket: WebSocket, state: Arc<RelayState>, user_i
         connection_id.clone(),
         BrowserConnection {
             user_id: user_id.clone(),
+            device_name: device_name.clone(),
             tx,
+            ip_address,
+            connected_at: tokio::time::Instant::now(),
         },
     );
 
     info!(
         connection_id = %connection_id,
         user_id = %user_id,
+        device = %device_name,
         "Browser client connected"
     );
 
@@ -43,7 +53,7 @@ pub async fn handle_browser_ws(socket: WebSocket, state: Arc<RelayState>, user_i
         connection_id: connection_id.clone(),
     })
     .unwrap();
-    state.send_to_daemon(&user_id, &opened_msg);
+    state.send_to_daemon(&user_id, &device_name, &opened_msg);
 
     // Spawn writer: relay → browser (with periodic pings to keep Cloudflare alive)
     let conn_id_writer = connection_id.clone();
@@ -99,8 +109,7 @@ pub async fn handle_browser_ws(socket: WebSocket, state: Arc<RelayState>, user_i
                 })
                 .unwrap();
 
-                if !state.send_to_daemon(&user_id_reader, &forward) {
-                    // No daemon connected — send error to browser
+                if !state.send_to_daemon(&user_id_reader, &device_name, &forward) {
                     let err = serde_json::json!({
                         "type": "error",
                         "error": "Your local lukan daemon is not connected. Run `lukan daemon start` and `lukan login` to connect."
@@ -124,7 +133,7 @@ pub async fn handle_browser_ws(socket: WebSocket, state: Arc<RelayState>, user_i
         connection_id: connection_id.clone(),
     })
     .unwrap();
-    state.send_to_daemon(&user_id, &closed_msg);
+    state.send_to_daemon(&user_id, &device_name, &closed_msg);
 
     writer_task.abort();
     info!(connection_id = %connection_id, "Browser client disconnected");

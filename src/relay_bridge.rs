@@ -16,7 +16,7 @@ use lukan_core::relay::{DaemonToRelay, RelayConfig, RelayToDaemon};
 /// Relay bridge: connects the local daemon to the cloud relay server.
 ///
 /// The bridge:
-/// 1. Connects outbound to `wss://relay/ws/daemon?token=jwt`
+/// 1. Connects outbound to `wss://relay/ws/daemon` with `Authorization: Bearer` header
 /// 2. Sends a `Register` message
 /// 3. Forwards `RelayToDaemon::Forward` → local WebSocket (per connection)
 /// 4. Forwards `RelayToDaemon::RestRequest` → local HTTP
@@ -103,13 +103,31 @@ async fn connect_and_run(
         .relay_url
         .replace("https://", "wss://")
         .replace("http://", "ws://");
-    let ws_url = format!(
-        "{}/ws/daemon?token={}",
-        base.trim_end_matches('/'),
-        urlencoding::encode(&config.jwt_token)
-    );
+    let ws_url = format!("{}/ws/daemon", base.trim_end_matches('/'));
 
-    let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)
+    // Send JWT via Authorization header instead of query string
+    // to prevent token leakage in server logs, proxy logs, and browser history
+    let request = tungstenite::http::Request::builder()
+        .uri(&ws_url)
+        .header("authorization", format!("Bearer {}", config.jwt_token))
+        .header(
+            "sec-websocket-key",
+            tungstenite::handshake::client::generate_key(),
+        )
+        .header("sec-websocket-version", "13")
+        .header("connection", "Upgrade")
+        .header("upgrade", "websocket")
+        .header(
+            "host",
+            tungstenite::http::Uri::try_from(&ws_url)
+                .ok()
+                .and_then(|u| u.host().map(|h| h.to_string()))
+                .unwrap_or_else(|| "localhost".to_string()),
+        )
+        .body(())
+        .context("Failed to build WebSocket request")?;
+
+    let (ws_stream, _) = tokio_tungstenite::connect_async(request)
         .await
         .context("Failed to connect to relay")?;
 
@@ -117,10 +135,12 @@ async fn connect_and_run(
 
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
-    // Send Register message
+    // Send Register message with system info
     let register = serde_json::to_string(&DaemonToRelay::Register {
         user_id: config.user_id.clone(),
         device_name: hostname(),
+        os: Some(format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)),
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
     })?;
     ws_tx
         .send(tungstenite::Message::Text(register.into()))

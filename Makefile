@@ -42,7 +42,7 @@ build:
 		rm -f target/release/lukan-desktop target/release/deps/lukan_desktop-* 2>/dev/null || true; \
 		rm -rf target/release/build/lukan-desktop-* 2>/dev/null || true; \
 	fi
-	cargo build --release -p lukan -p lukan-desktop
+	cargo build --release -p lukan -p lukan-desktop -p lukan-relay
 
 ## build-debug: Build debug binary
 build-debug:
@@ -105,10 +105,16 @@ release: build bundle-plugins package-plugins
 	@if [ -f target/release/$(BINARY_NAME)-desktop ]; then \
 		cp target/release/$(BINARY_NAME)-desktop dist/$(BINARY_NAME)-desktop-$(PLATFORM); \
 	fi
+	@if [ -f target/release/$(BINARY_NAME)-relay ]; then \
+		cp target/release/$(BINARY_NAME)-relay dist/$(BINARY_NAME)-relay-$(PLATFORM); \
+	fi
 	@# Generate checksums
 	@cd dist && sha256sum $(BINARY_NAME)-$(PLATFORM) > checksums.txt
 	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
 		cd dist && sha256sum $(BINARY_NAME)-desktop-$(PLATFORM) >> checksums.txt; \
+	fi
+	@if [ -f dist/$(BINARY_NAME)-relay-$(PLATFORM) ]; then \
+		cd dist && sha256sum $(BINARY_NAME)-relay-$(PLATFORM) >> checksums.txt; \
 	fi
 	@cd dist && sha256sum ../install.sh | sed 's#  \.\./install\.sh$$#  install.sh#' >> checksums.txt
 	@cd dist/plugins && sha256sum *.tar.gz >> ../checksums.txt
@@ -118,6 +124,7 @@ release: build bundle-plugins package-plugins
 	@echo "Release $(VERSION) built in dist/"
 	@echo "  Binary:  dist/$(BINARY_NAME)-$(PLATFORM)"
 	@echo "  Desktop: dist/$(BINARY_NAME)-desktop-$(PLATFORM)"
+	@echo "  Relay:   dist/$(BINARY_NAME)-relay-$(PLATFORM)"
 	@echo "  Plugins: dist/plugins/*.tar.gz"
 	@echo "  Checksums: dist/checksums.txt"
 
@@ -127,6 +134,9 @@ upload: release
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/$(BINARY_NAME)-$(PLATFORM) --file dist/$(BINARY_NAME)-$(PLATFORM)
 	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
 		bunx wrangler r2 object put --remote $(R2_BUCKET)/$(BINARY_NAME)-desktop-$(PLATFORM) --file dist/$(BINARY_NAME)-desktop-$(PLATFORM); \
+	fi
+	@if [ -f dist/$(BINARY_NAME)-relay-$(PLATFORM) ]; then \
+		bunx wrangler r2 object put --remote $(R2_BUCKET)/$(BINARY_NAME)-relay-$(PLATFORM) --file dist/$(BINARY_NAME)-relay-$(PLATFORM); \
 	fi
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/checksums.txt --file dist/checksums.txt --cache-control "public, max-age=60"
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/latest --file dist/latest --cache-control "public, max-age=60"
@@ -149,6 +159,9 @@ upload-daily: release
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/$(BINARY_NAME)-$(PLATFORM) --file dist/$(BINARY_NAME)-$(PLATFORM)
 	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
 		bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/$(BINARY_NAME)-desktop-$(PLATFORM) --file dist/$(BINARY_NAME)-desktop-$(PLATFORM); \
+	fi
+	@if [ -f dist/$(BINARY_NAME)-relay-$(PLATFORM) ]; then \
+		bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/$(BINARY_NAME)-relay-$(PLATFORM) --file dist/$(BINARY_NAME)-relay-$(PLATFORM); \
 	fi
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/checksums.txt --file dist/checksums.txt --cache-control "public, max-age=60"
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/latest --file dist/latest --cache-control "public, max-age=60"

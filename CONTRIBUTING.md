@@ -10,11 +10,28 @@ Thank you for your interest in contributing to Lukan. This guide covers the proc
 - Bun (for desktop-client frontend)
 - Linux or macOS (Windows via WSL)
 
+#### Linux system dependencies
+
+```bash
+sudo apt-get install -y \
+  libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
+  librsvg2-dev patchelf libssl-dev libasound2-dev
+```
+
 ### Build
+
+#### CLI only (no system dependencies required beyond Rust)
 
 ```bash
 git clone https://github.com/lukanlabs/lukan.git
 cd lukan
+cargo build -p lukan
+```
+
+#### Full build (CLI + Desktop app)
+
+```bash
+cd desktop-client && bun install && bun run build && cd ..
 cargo build
 ```
 
@@ -26,14 +43,6 @@ Every PR must pass these checks:
 cargo fmt
 cargo clippy -- -D warnings
 cargo test
-```
-
-### Build Desktop Frontend
-
-```bash
-cd desktop-client
-bun install
-bun run build
 ```
 
 ## Project Structure
@@ -140,6 +149,27 @@ To create a new plugin:
 4. Follow the IPC protocol (JSON lines over stdin/stdout)
 
 See `plugins/email/` for a reference implementation.
+
+#### Building and installing plugins locally
+
+Plugins can be installed from a local path without downloading from the registry:
+
+```bash
+# Install directly from source (runs bun/npm install automatically)
+lukan plugin install ./plugins/whatsapp
+
+# Or bundle first, then install the optimized version
+./scripts/bundle-plugins.sh whatsapp
+lukan plugin install ./plugins/whatsapp
+```
+
+When installing from a local path, lukan will prefer `dist/` (bundled) if it exists, otherwise it installs from source directly. Dependencies are resolved automatically via `bun install` or `npm install`.
+
+To bundle all plugins at once:
+
+```bash
+./scripts/bundle-plugins.sh
+```
 
 ## License
 

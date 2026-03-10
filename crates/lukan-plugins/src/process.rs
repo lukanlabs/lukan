@@ -3,6 +3,7 @@ use std::process::Stdio;
 use anyhow::{Context, Result};
 use lukan_core::config::LukanPaths;
 use lukan_core::models::plugin::{HostMessage, PluginManifest, PluginMessage};
+use lukan_tools::sandbox::{self, BwrapConfig, DEFAULT_SENSITIVE_PATTERNS};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
@@ -58,21 +59,44 @@ impl PluginProcess {
             run.command.clone()
         };
 
-        let mut cmd = Command::new(&resolved_command);
-        cmd.args(&run.args)
-            .current_dir(&plugin_dir)
-            .stdin(Stdio::piped())
+        let use_bwrap = sandbox::is_bwrap_available();
+        let plugin_dir_str = plugin_dir.to_string_lossy().to_string();
+        let data_dir = LukanPaths::plugin_data_dir(&self.name);
+        // Ensure the data directory exists before spawning the plugin
+        std::fs::create_dir_all(&data_dir).ok();
+        let data_dir_str = data_dir.to_string_lossy().to_string();
+
+        let mut cmd = if use_bwrap {
+            // Run inside bubblewrap sandbox: read-only filesystem,
+            // writable only in plugin data dir and /tmp.
+            let bwrap_args = sandbox::build_bwrap_args(&BwrapConfig {
+                allowed_dirs: vec![data_dir_str.clone()],
+                sensitive_patterns: DEFAULT_SENSITIVE_PATTERNS
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                cwd: plugin_dir_str.clone(),
+            });
+
+            let mut c = Command::new(&bwrap_args[0]);
+            c.args(&bwrap_args[1..])
+                .arg("--")
+                .arg(&resolved_command)
+                .args(&run.args);
+            c
+        } else {
+            let mut c = Command::new(&resolved_command);
+            c.args(&run.args).current_dir(&plugin_dir);
+            c
+        };
+
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::from(log_file))
             .kill_on_drop(true);
 
         // Inject standard env vars
-        cmd.env(
-            "PLUGIN_DATA_DIR",
-            LukanPaths::plugin_data_dir(&self.name)
-                .to_string_lossy()
-                .to_string(),
-        );
+        cmd.env("PLUGIN_DATA_DIR", &data_dir_str);
 
         // Inject env vars from manifest
         for (k, v) in &run.env {
@@ -81,8 +105,8 @@ impl PluginProcess {
 
         let child = cmd.spawn().with_context(|| {
             format!(
-                "Failed to spawn plugin '{}': {} {:?}",
-                self.name, run.command, run.args
+                "Failed to spawn plugin '{}': {} {:?} (bwrap={})",
+                self.name, run.command, run.args, use_bwrap
             )
         })?;
 

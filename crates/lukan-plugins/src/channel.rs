@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -110,8 +109,6 @@ impl PluginChannel {
         mut plugin_rx: mpsc::Receiver<PluginMessage>,
         host_tx: mpsc::Sender<HostMessage>,
     ) -> Result<()> {
-        let mut processing: HashSet<String> = HashSet::new();
-
         while let Some(msg) = plugin_rx.recv().await {
             // Check for config changes before processing each message
             self.maybe_reload_tools(agent);
@@ -123,17 +120,6 @@ impl PluginChannel {
                     channel_id,
                     content,
                 } => {
-                    // Deduplicate by channel_id
-                    if processing.contains(&channel_id) {
-                        info!(
-                            plugin = %self.name,
-                            channel_id = %channel_id,
-                            "Already processing, skipping"
-                        );
-                        continue;
-                    }
-                    processing.insert(channel_id.clone());
-
                     let preview = if content.len() > 80 {
                         let end = content.floor_char_boundary(80);
                         format!("{}...", &content[..end])
@@ -170,8 +156,6 @@ impl PluginChannel {
                         self.log_to_file("ERROR", &format!("Failed to send response: {e}"));
                         error!(plugin = %self.name, "Failed to send agent response: {e}");
                     }
-
-                    processing.remove(&channel_id);
                 }
                 PluginMessage::Status { status } => {
                     let status_str = match status {
@@ -261,8 +245,36 @@ impl PluginChannel {
 async fn collect_agent_response(agent: &mut AgentLoop, message: &str, max_len: usize) -> String {
     let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
 
-    // run_turn takes ownership of event_tx. When it returns, the sender drops,
-    // so recv().await will return None once all buffered events are consumed.
+    // Drain events concurrently to prevent deadlock — run_turn sends events
+    // via event_tx.send().await which blocks when the channel is full.
+    // If we wait for run_turn to finish before draining, a multi-turn
+    // interaction (LLM call + tool execution + second LLM call) can exceed
+    // the 256-event buffer and deadlock.
+    let max = max_len;
+    let drain_handle = tokio::spawn(async move {
+        let mut response = String::new();
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                StreamEvent::TextDelta { text } => {
+                    response.push_str(&text);
+                }
+                StreamEvent::ToolResult { .. } => {
+                    response.clear();
+                }
+                _ => {}
+            }
+        }
+        if response.len() > max {
+            response.truncate(max);
+            response.push_str("... (truncated)");
+        }
+        if response.is_empty() {
+            "(No response)".to_string()
+        } else {
+            response
+        }
+    });
+
     let turn_result = agent.run_turn(message, event_tx, None, None).await;
 
     if let Err(e) = turn_result {
@@ -270,33 +282,13 @@ async fn collect_agent_response(agent: &mut AgentLoop, message: &str, max_len: u
         return format!("Error: {e}");
     }
 
-    // Drain all events. recv().await blocks until an event arrives or the
-    // sender is dropped (returns None), ensuring we collect everything.
-    let mut response = String::new();
-
-    while let Some(event) = event_rx.recv().await {
-        match event {
-            StreamEvent::TextDelta { text } => {
-                response.push_str(&text);
-            }
-            StreamEvent::ToolResult { .. } => {
-                // Reset — only keep text after the last tool result
-                response.clear();
-            }
-            _ => {}
+    // event_tx is dropped here, so the drain task sees channel close and finishes
+    match drain_handle.await {
+        Ok(response) => response,
+        Err(e) => {
+            error!("Event drain task failed: {e}");
+            "(No response)".to_string()
         }
-    }
-
-    // Truncate if too long
-    if response.len() > max_len {
-        response.truncate(max_len);
-        response.push_str("... (truncated)");
-    }
-
-    if response.is_empty() {
-        "(No response)".to_string()
-    } else {
-        response
     }
 }
 

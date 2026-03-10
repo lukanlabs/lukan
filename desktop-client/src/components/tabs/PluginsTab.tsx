@@ -79,7 +79,7 @@ export default function PluginsTab() {
   const [localPath, setLocalPath] = useState("");
   const [installingLocal, setInstallingLocal] = useState(false);
 
-  const [actionLoading, setActionLoading] = useState<"start" | "stop" | "restart" | "remove" | null>(null);
+  const [actionLoading, setActionLoading] = useState<"start" | "stop" | "restart" | "remove" | "update" | null>(null);
   const [pluginConfig, setPluginConfig] = useState<Record<string, unknown>>({});
   const [pluginLogs, setPluginLogs] = useState("");
   const [logsRefreshing, setLogsRefreshing] = useState(false);
@@ -196,14 +196,15 @@ export default function PluginsTab() {
     }
   };
 
-  const handleAction = async (action: "start" | "stop" | "restart" | "remove", name: string) => {
+  const handleAction = async (action: "start" | "stop" | "restart" | "remove" | "update", name: string) => {
     setActionLoading(action);
     try {
       if (action === "start") await startPlugin(name);
       else if (action === "stop") await stopPlugin(name);
       else if (action === "restart") await restartPlugin(name);
       else if (action === "remove") { await removePlugin(name); await refreshPlugins(); goBack(); return; }
-      toast("success", `Plugin '${name}' ${action === "restart" ? "restarted" : action + "ed"}`);
+      else if (action === "update") { await installRemotePlugin(name); }
+      toast("success", `Plugin '${name}' ${action === "restart" ? "restarted" : action + (action === "update" ? "d" : "ed")}`);
       await refreshPlugins();
       const logs = await getPluginLogs(name, 200);
       setPluginLogs(logs);
@@ -485,7 +486,7 @@ interface DetailViewProps {
   plugin: PluginInfo;
   config: Record<string, unknown>;
   logs: string;
-  actionLoading: "start" | "stop" | "restart" | "remove" | null;
+  actionLoading: "start" | "stop" | "restart" | "remove" | "update" | null;
   logsRefreshing: boolean;
   commands: PluginCommand[];
   commandRunning: string | null;
@@ -494,7 +495,7 @@ interface DetailViewProps {
   configSchema: Record<string, ConfigFieldSchemaDto> | null;
   authDeclaration: AuthDeclarationDto | null;
   onBack: () => void;
-  onAction: (action: "start" | "stop" | "restart" | "remove", name: string) => void;
+  onAction: (action: "start" | "stop" | "restart" | "remove" | "update", name: string) => void;
   onConfigSave: (pluginName: string, key: string, value: string) => void;
   onRefreshLogs: (name: string) => void;
   onShowQr: (pluginName: string) => void;
@@ -527,18 +528,32 @@ function DetailView({
           <ArrowLeft size={12} />
           Back
         </button>
-        <button
-          onClick={() => onAction("remove", plugin.name)}
-          disabled={actionLoading !== null}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none"
-          style={{
-            background: "rgba(220,38,38,0.12)", color: "#fb7185", border: "1px solid rgba(251,113,133,0.15)",
-            opacity: actionLoading !== null ? 0.4 : 1, pointerEvents: actionLoading !== null ? "none" : "auto",
-          }}
-        >
-          {actionLoading === "remove" ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
-          Uninstall
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => onAction("update", plugin.name)}
+            disabled={actionLoading !== null}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none"
+            style={{
+              background: "rgba(59,130,246,0.12)", color: "#60a5fa", border: "1px solid rgba(96,165,250,0.15)",
+              opacity: actionLoading !== null ? 0.4 : 1, pointerEvents: actionLoading !== null ? "none" : "auto",
+            }}
+          >
+            {actionLoading === "update" ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
+            Update
+          </button>
+          <button
+            onClick={() => onAction("remove", plugin.name)}
+            disabled={actionLoading !== null}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none"
+            style={{
+              background: "rgba(220,38,38,0.12)", color: "#fb7185", border: "1px solid rgba(251,113,133,0.15)",
+              opacity: actionLoading !== null ? 0.4 : 1, pointerEvents: actionLoading !== null ? "none" : "auto",
+            }}
+          >
+            {actionLoading === "remove" ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
+            Uninstall
+          </button>
+        </div>
       </div>
 
       {/* Plugin info */}

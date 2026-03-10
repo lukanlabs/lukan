@@ -138,14 +138,22 @@ pub async fn install_remote(name: &str, alias_override: Option<&str>) -> Result<
             )
         })?;
 
-    // Check if already installed
+    // Check if already installed — if so, back up config.json to restore after update
     let dest = LukanPaths::plugin_dir(name);
+    let config_backup = if dest.exists() {
+        let config_path = dest.join("config.json");
+        if config_path.exists() {
+            Some(tokio::fs::read_to_string(&config_path).await?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Remove old installation (we'll restore config.json after)
     if dest.exists() {
-        bail!(
-            "Plugin '{name}' is already installed at {}\n\
-             Use `lukan plugin remove {name}` first to reinstall.",
-            dest.display()
-        );
+        tokio::fs::remove_dir_all(&dest).await?;
     }
 
     let platform_label = if entry.assets.contains_key("all") {
@@ -226,6 +234,13 @@ pub async fn install_remote(name: &str, alias_override: Option<&str>) -> Result<
     // Install from extracted directory (reuse existing install logic)
     let extract_str = extract_dir.to_string_lossy().to_string();
     let result = super::PluginManager::install(&extract_str, Some(name), alias_override).await;
+
+    // Restore config.json if we backed it up (preserves user settings on update)
+    if let Some(ref config_content) = config_backup {
+        let config_path = LukanPaths::plugin_dir(name).join("config.json");
+        tokio::fs::write(&config_path, config_content).await?;
+        println!("  Restored config.json");
+    }
 
     // Cleanup temp dir
     let _ = tokio::fs::remove_dir_all(&tmp_dir).await;

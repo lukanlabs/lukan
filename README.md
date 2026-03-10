@@ -23,7 +23,7 @@ Built in Rust. Single binary. No runtime dependencies.
 - **10 LLM Providers** — Anthropic, OpenAI Codex, GitHub Copilot, Fireworks, Nebius, Ollama Cloud, Zai, Gemini, Lukan Cloud, and any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio)
 - **Multiple Interfaces** — Terminal UI (ratatui), Web UI, Desktop app (Tauri), and CLI
 - **Browser Automation** — Full Chrome DevTools Protocol: navigate, screenshot, click, type, evaluate JS, export PDF
-- **Plugin System** — WhatsApp, Email, Gmail, Google Workspace (Sheets, Docs, Calendar, Drive), Docker Monitor, and more
+- **Plugin System** — WhatsApp, Telegram, Slack, Email, Gmail, Google Workspace (Sheets, Docs, Calendar, Drive), Docker Monitor, and more
 - **Sandboxed Execution** — OS-level isolation (bwrap), granular permission modes (Planner/Auto/Manual), sensitive file detection
 - **E2E Encrypted Relay** — Access your workstation remotely with X25519 + AES-GCM encryption
 - **Background Workers** — Scheduled autonomous tasks with cron-style execution
@@ -59,9 +59,9 @@ Built in Rust. Single binary. No runtime dependencies.
 |------------|:-----:|:-------:|:--------:|:-----------:|:---------:|:----------:|:-----:|:-----:|
 | **Multi-provider** | Yes | Yes | Yes | Anthropic only | OpenAI only | Google only | Yes | Yes |
 | **Browser automation** | CDP native (10 tools) | CDP + extension | Playwright bridge | Chrome ext (paid) | — | Experimental | — | — |
-| **Messaging channels** | WhatsApp, Email, Gmail | WhatsApp, Telegram, Discord | Twitter | — | — | — | — | — |
+| **Messaging channels** | WhatsApp, Telegram, Slack, Email, Gmail | WhatsApp, Telegram, Discord | Twitter | — | — | — | — | — |
 | **Google Workspace** | Via plugins & skills | Via skills | — | Cowork connectors | — | — | — | — |
-| **Plugin system** | Built-in registry (8+) | 50+ community | MCP extensions | MCP servers | MCP servers | Extensions | MCP extensions | — |
+| **Plugin system** | Built-in registry (10+) | 50+ community | MCP extensions | MCP servers | MCP servers | Extensions | MCP extensions | — |
 | **Background workers** | Cron scheduler + daemon | Cron jobs | Scheduled agents | Scheduled tasks | — | Via /agents:run | — | — |
 | **Sub-agents** | Parallel | Parallel | 7 Hands | Parallel | Parallel | Experimental | Via MCP | Via AiderDesk |
 | **Skills** | Markdown-based | Community skills | — | Yes | Yes | Extensions | Recipes | — |
@@ -245,6 +245,8 @@ lukan plugin logs whatsapp
 | **Docker Monitor** | Channel | Monitor container events and health |
 | **Security Monitor** | Channel | Track security-related system events |
 | **Whisper** | Channel | Local audio transcription via whisper.cpp |
+| **Telegram** | Channel | Chat with lukan from Telegram (Bot API, groups, user allowlist) |
+| **Slack** | Channel | Chat with lukan from Slack (Socket Mode, threads, channel allowlist) |
 | **Nano Banana Pro** | Tools | Image generation via Gemini |
 
 ## Skills

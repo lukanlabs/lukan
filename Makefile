@@ -96,6 +96,12 @@ package-plugins: bundle-plugins
 	@# Nano Banana Pro plugin
 	@cd plugins/nano-banana-pro/dist && tar czf ../../../dist/plugins/lukan-plugin-nano-banana-pro.tar.gz .
 	@echo "  Packaged: lukan-plugin-nano-banana-pro.tar.gz"
+	@# Telegram plugin
+	@cd plugins/telegram/dist && tar czf ../../../dist/plugins/lukan-plugin-telegram.tar.gz .
+	@echo "  Packaged: lukan-plugin-telegram.tar.gz"
+	@# Slack plugin
+	@cd plugins/slack/dist && tar czf ../../../dist/plugins/lukan-plugin-slack.tar.gz .
+	@echo "  Packaged: lukan-plugin-slack.tar.gz"
 
 ## release: Build binary + bundle plugins + generate checksums
 release: build bundle-plugins package-plugins

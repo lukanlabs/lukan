@@ -54,7 +54,58 @@ pub async fn start_web_server(resolved: ResolvedConfig, port: u16) -> Result<()>
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("Web server listening on {addr}");
-    axum::serve(listener, router).await?;
+
+    let shutdown_state = Arc::clone(&state);
+    axum::serve(listener, router)
+        .with_graceful_shutdown(graceful_shutdown(shutdown_state))
+        .await?;
 
     Ok(())
+}
+
+/// Wait for SIGTERM or Ctrl+C, then save all active sessions before exiting.
+async fn graceful_shutdown(state: Arc<AppState>) {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("Shutdown signal received, saving sessions...");
+
+    // Save legacy singleton session
+    {
+        let mut agent_lock = state.agent.lock().await;
+        if let Some(ref mut agent) = *agent_lock {
+            let _ = agent.save_session_public().await;
+        }
+    }
+
+    // Save all multi-tab sessions
+    {
+        let mut sessions = state.sessions.lock().await;
+        for (_tab_id, session) in sessions.iter_mut() {
+            if let Some(ref mut agent) = session.agent {
+                let _ = agent.save_session_public().await;
+            }
+        }
+    }
+
+    tracing::info!("Sessions saved, shutting down");
 }

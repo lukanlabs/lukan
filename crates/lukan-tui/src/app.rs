@@ -3232,6 +3232,13 @@ impl App {
             }
         }
 
+        // Save session before exiting so no conversation is lost
+        if let Some(ref mut agent) = self.agent
+            && let Err(e) = agent.save_session_public().await
+        {
+            tracing::warn!(error = %e, "Failed to save session on exit");
+        }
+
         // Close terminal modal if open
         if let Some(modal) = self.terminal_modal.take() {
             modal.close();

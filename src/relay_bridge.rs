@@ -232,7 +232,18 @@ async fn connect_and_run(
         }
     };
 
-    // Cleanup: drop writer channel and wait for task to finish
+    // Cleanup: close all local WS connections so the daemon's ws_handler
+    // runs its disconnect handler (which saves sessions). Without this,
+    // forwarding tasks hang indefinitely after a relay disconnect — their
+    // rx.recv() never returns None because the Arc<HashMap> keeps tx alive.
+    {
+        let mut conns = local_connections.lock().await;
+        for (conn_id, conn) in conns.drain() {
+            info!(connection_id = %conn_id, "Closing local WS on relay disconnect");
+            conn.task.abort();
+        }
+    }
+
     drop(write_tx);
     writer_task.abort();
     result

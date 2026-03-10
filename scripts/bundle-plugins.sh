@@ -138,6 +138,43 @@ bundle_security_monitor() {
   ok "security-monitor → dist/ (bash script, no deps)"
 }
 
+bundle_telegram() {
+  local src="$PLUGINS_DIR/telegram"
+  local dist="$src/dist"
+  info "Bundling telegram plugin..."
+
+  mkdir -p "$dist"
+
+  # No external deps — just copy files
+  cp "$src/plugin.toml" "$dist/"
+  cp "$src/bridge.js" "$dist/"
+  cp "$src/prompt.txt" "$dist/"
+  cp "$src"/prompt-dir-*.txt "$dist/" 2>/dev/null || true
+
+  ok "telegram → dist/ (no bundling needed, zero deps)"
+}
+
+bundle_slack() {
+  local src="$PLUGINS_DIR/slack"
+  local dist="$src/dist"
+  info "Bundling slack plugin..."
+
+  # Install deps if needed
+  if [ ! -d "$src/node_modules" ]; then
+    (cd "$src" && bun install --frozen-lockfile 2>/dev/null || bun install)
+  fi
+
+  mkdir -p "$dist"
+
+  bun build "$src/bridge.js" --target=node --outfile="$dist/bridge.js" 2>/dev/null
+
+  cp "$src/plugin.toml" "$dist/"
+  cp "$src/prompt.txt" "$dist/"
+  cp "$src"/prompt-dir-*.txt "$dist/" 2>/dev/null || true
+
+  ok "slack → dist/ (bridge.js)"
+}
+
 bundle_nano_banana_pro() {
   local src="$PLUGINS_DIR/nano-banana-pro"
   local dist="$src/dist"
@@ -179,6 +216,12 @@ case "$TARGET" in
   nano-banana-pro|nano-banana)
     bundle_nano_banana_pro
     ;;
+  telegram|tg)
+    bundle_telegram
+    ;;
+  slack|sk)
+    bundle_slack
+    ;;
   all)
     bundle_whatsapp
     bundle_email
@@ -187,10 +230,12 @@ case "$TARGET" in
     bundle_docker_monitor
     bundle_security_monitor
     bundle_nano_banana_pro
+    bundle_telegram
+    bundle_slack
     ;;
   *)
     err "Unknown plugin: $TARGET"
-    echo "Available: whatsapp, email, google-workspace, gmail, docker-monitor, security-monitor, nano-banana-pro, all"
+    echo "Available: whatsapp, email, google-workspace, gmail, docker-monitor, security-monitor, nano-banana-pro, telegram, slack, all"
     exit 1
     ;;
 esac

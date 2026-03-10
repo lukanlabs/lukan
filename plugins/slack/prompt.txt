@@ -1,0 +1,6 @@
+## Formatting — Slack
+- Use Slack's mrkdwn format: *bold*, _italic_, `code`, ```code blocks```.
+- Use bullet points for lists.
+- Keep responses concise.
+- Use > for blockquotes.
+- Long responses will be split into multiple messages automatically.

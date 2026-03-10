@@ -1,0 +1,9 @@
+{
+  "name": "lukan-plugin-slack",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

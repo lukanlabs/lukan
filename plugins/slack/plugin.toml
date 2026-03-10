@@ -1,0 +1,75 @@
+[plugin]
+name = "slack"
+version = "0.1.0"
+description = "Slack bot channel via Socket Mode (no public URL needed)"
+plugin_type = "channel"
+protocol_version = 1
+alias = "sk"
+
+[run]
+command = "node"
+args = ["bridge.js"]
+
+[auth]
+type = "token"
+check_field = "botToken"
+
+# Config schema
+[config.botToken]
+type = "string"
+label = "Bot Token"
+description = "Slack Bot User OAuth Token (xoxb-...)"
+format = "password"
+group = "Connection"
+order = 0
+
+[config.appToken]
+type = "string"
+label = "App-Level Token"
+description = "Slack App-Level Token for Socket Mode (xapp-...)"
+format = "password"
+group = "Connection"
+order = 1
+
+[config.allowedChannels]
+type = "string[]"
+label = "Allowed Channels"
+description = "Slack channel IDs where the bot responds (leave empty to respond everywhere it's invited)"
+group = "Access Control"
+order = 0
+
+[config.allowedUsers]
+type = "string[]"
+label = "Allowed Users"
+description = "Slack user IDs allowed to interact (leave empty to allow all)"
+group = "Access Control"
+order = 1
+
+[config.prefix]
+type = "string"
+label = "Command Prefix"
+description = "Only messages starting with this prefix will be processed"
+group = "Connection"
+order = 2
+
+[config.tools]
+type = "string[]"
+description = "Agent tools"
+hidden = true
+valid_values = [
+  "Bash",
+  "ReadFiles", "WriteFile", "EditFile",
+  "Grep", "Glob",
+  "WebFetch",
+]
+
+# Security policy
+[security]
+default_tools = ["Grep", "Glob", "ReadFiles", "WebFetch"]
+include_memory = true
+dir_restrictions = true
+dangerous_tools = ["Bash", "WriteFile", "EditFile"]
+
+[security.prompts]
+dir_none = "prompt-dir-none.txt"
+dir_allowed = "prompt-dir-allowed.txt"

@@ -257,7 +257,11 @@ async fn ws_client_upgrade(
 
     let ip = auth::client_ip(&headers, Some(&ConnectInfo(addr))).to_string();
 
-    ws.on_upgrade(move |socket| ws_client::handle_browser_ws(socket, state, claims.sub, device, ip))
+    ws.max_frame_size(64 * 1024 * 1024)
+        .max_message_size(64 * 1024 * 1024)
+        .on_upgrade(move |socket| {
+            ws_client::handle_browser_ws(socket, state, claims.sub, device, ip)
+        })
 }
 
 /// WebSocket upgrade for daemon connections.
@@ -289,5 +293,7 @@ async fn ws_daemon_upgrade(
         Err(e) => return (StatusCode::UNAUTHORIZED, format!("Invalid token: {e}")).into_response(),
     };
 
-    ws.on_upgrade(move |socket| ws_daemon::handle_daemon_ws(socket, state, claims.sub))
+    ws.max_frame_size(64 * 1024 * 1024)
+        .max_message_size(64 * 1024 * 1024)
+        .on_upgrade(move |socket| ws_daemon::handle_daemon_ws(socket, state, claims.sub))
 }

@@ -1,6 +1,14 @@
-use axum::{Json, extract::Path, http::StatusCode, response::IntoResponse};
+use std::sync::Arc;
+
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde::Serialize;
 
+use crate::state::AppState;
 use lukan_core::config::{ConfigManager, Credentials, CredentialsManager, ProviderName};
 
 #[derive(Serialize)]
@@ -20,9 +28,16 @@ pub async fn get_credentials() -> impl IntoResponse {
 }
 
 /// PUT /api/credentials
-pub async fn save_credentials(Json(credentials): Json<Credentials>) -> impl IntoResponse {
+pub async fn save_credentials(
+    State(state): State<Arc<AppState>>,
+    Json(credentials): Json<Credentials>,
+) -> impl IntoResponse {
     match CredentialsManager::save(&credentials).await {
-        Ok(()) => StatusCode::OK.into_response(),
+        Ok(()) => {
+            // Update in-memory config so create_agent() uses fresh credentials
+            state.config.lock().await.credentials = credentials;
+            StatusCode::OK.into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

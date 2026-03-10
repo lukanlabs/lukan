@@ -2,7 +2,7 @@ import { FolderOpen, File, ArrowUp, RefreshCw } from "lucide-react";
 import { useFileExplorer } from "../../../hooks/useFileExplorer";
 
 interface FilesPanelProps {
-  onPreviewFile?: (path: string) => void;
+  onPreviewFile?: (path: string, size: number) => void;
 }
 
 export function FilesPanel({ onPreviewFile }: FilesPanelProps) {
@@ -59,7 +59,7 @@ export function FilesPanel({ onPreviewFile }: FilesPanelProps) {
               if (entry.isDir) {
                 navigate(`${currentPath}/${entry.name}`);
               } else if (onPreviewFile) {
-                onPreviewFile(`${currentPath}/${entry.name}`);
+                onPreviewFile(`${currentPath}/${entry.name}`, entry.size);
               } else {
                 openFile(`${currentPath}/${entry.name}`);
               }

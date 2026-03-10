@@ -10,10 +10,11 @@ interface MainAreaProps {
   processLogSessionId?: string;
   onCloseProcessLog?: () => void;
   filePreview?: string | null;
+  filePreviewSize?: number;
   onCloseFilePreview?: () => void;
 }
 
-export function MainArea({ mode, processLog, processLogSessionId, onCloseProcessLog, filePreview, onCloseFilePreview }: MainAreaProps) {
+export function MainArea({ mode, processLog, processLogSessionId, onCloseProcessLog, filePreview, filePreviewSize, onCloseFilePreview }: MainAreaProps) {
   return (
     <div className="main-area" style={{ position: "relative" }}>
       {/* Both always mounted — display toggle preserves state */}
@@ -41,7 +42,7 @@ export function MainArea({ mode, processLog, processLogSessionId, onCloseProcess
 
       {/* File preview overlay */}
       {filePreview && onCloseFilePreview && (
-        <FileViewer path={filePreview} onClose={onCloseFilePreview} />
+        <FileViewer path={filePreview} fileSize={filePreviewSize} onClose={onCloseFilePreview} />
       )}
     </div>
   );

@@ -16,7 +16,7 @@ interface SidePanelProps {
   onLoadSession: (id: string) => void;
   onNewSession: () => void;
   onOpenProcessLog?: (process: BgProcessInfo) => void;
-  onPreviewFile?: (path: string) => void;
+  onPreviewFile?: (path: string, size: number) => void;
   // Plugin view props
   activePluginName?: string | null;
   activePluginViews?: ViewDeclaration[];

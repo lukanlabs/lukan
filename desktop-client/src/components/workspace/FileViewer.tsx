@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -182,6 +182,8 @@ function CodeEditor({
     }
   }, []);
 
+  // Defer the highlighted value so SyntaxHighlighter doesn't block the textarea on every keystroke
+  const deferredValue = useDeferredValue(value);
   const lineCount = value.split("\n").length;
 
   const sharedStyle: React.CSSProperties = {
@@ -196,8 +198,13 @@ function CodeEditor({
     overflowWrap: "normal",
   };
 
+  // Re-focus textarea when clicking anywhere in the editor (line numbers, gaps, etc.)
+  const handleContainerClick = useCallback(() => {
+    textareaRef.current?.focus();
+  }, []);
+
   return (
-    <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+    <div style={{ display: "flex", flex: 1, overflow: "hidden" }} onClick={handleContainerClick}>
       {/* Line numbers */}
       <div
         ref={lineNumRef}
@@ -215,6 +222,7 @@ function CodeEditor({
           borderRight: "1px solid var(--border-subtle)",
           flexShrink: 0,
           overflow: "hidden",
+          cursor: "default",
         }}
       >
         {Array.from({ length: lineCount }, (_, i) => (
@@ -244,7 +252,7 @@ function CodeEditor({
             }}
             codeTagProps={{ style: { background: "transparent" } }}
           >
-            {value + "\n"}
+            {deferredValue + "\n"}
           </SyntaxHighlighter>
         </div>
         {/* Transparent textarea for input */}
@@ -426,12 +434,23 @@ function FileContentView({
   }
 }
 
+const MAX_TEXT_PREVIEW = 2 * 1024 * 1024;   // 2MB — matches server MAX_TEXT_SIZE
+const MAX_BINARY_PREVIEW = 10 * 1024 * 1024; // 10MB — matches server MAX_BINARY_SIZE
+
+const BINARY_EXTS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "pdf"]);
+
+function previewLimit(path: string): number {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  return BINARY_EXTS.has(ext) ? MAX_BINARY_PREVIEW : MAX_TEXT_PREVIEW;
+}
+
 interface FileViewerProps {
   path: string;
+  fileSize?: number;
   onClose: () => void;
 }
 
-export function FileViewer({ path, onClose }: FileViewerProps) {
+export function FileViewer({ path, fileSize, onClose }: FileViewerProps) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -448,12 +467,22 @@ export function FileViewer({ path, onClose }: FileViewerProps) {
     setFile(null);
     setEditing(false);
     setDirty(false);
+
+    // Block large files before making the network call (prevents relay WebSocket crash)
+    const limit = previewLimit(path);
+    if (fileSize != null && fileSize > limit) {
+      const maxLabel = limit === MAX_BINARY_PREVIEW ? "10 MB" : "2 MB";
+      setError(`File too large for preview: ${formatSize(fileSize)} (max ${maxLabel})`);
+      setLoading(false);
+      return;
+    }
+
     readFile(path)
       .then((fc) => { if (active) setFile(fc); })
       .catch((e) => { if (active) setError(String(e)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [path]);
+  }, [path, fileSize]);
 
   const canEdit = file ? isEditable(getFileType(file)) : false;
 

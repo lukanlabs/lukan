@@ -127,9 +127,13 @@ async fn connect_and_run(
         .body(())
         .context("Failed to build WebSocket request")?;
 
-    let (ws_stream, _) = tokio_tungstenite::connect_async(request)
-        .await
-        .context("Failed to connect to relay")?;
+    let ws_config = tungstenite::protocol::WebSocketConfig::default()
+        .max_frame_size(Some(64 * 1024 * 1024))
+        .max_message_size(Some(64 * 1024 * 1024));
+    let (ws_stream, _) =
+        tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false)
+            .await
+            .context("Failed to connect to relay")?;
 
     info!("Connected to relay server");
 

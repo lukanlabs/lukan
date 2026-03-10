@@ -89,6 +89,11 @@ impl MessageHistory {
         sanitize_orphaned_tool_use(&mut messages);
         self.messages = messages;
     }
+
+    /// Fix any orphaned tool_use blocks in memory (e.g. from a failed API call).
+    pub fn repair_orphaned_tool_use(&mut self) {
+        sanitize_orphaned_tool_use(&mut self.messages);
+    }
 }
 
 impl Default for MessageHistory {

@@ -20,7 +20,7 @@ Built in Rust. Single binary. No runtime dependencies.
 
 ## Features
 
-- **8 LLM Providers** — Anthropic, OpenAI Codex, GitHub Copilot, Fireworks, Nebius, Ollama Cloud, Zai, and any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio)
+- **10 LLM Providers** — Anthropic, OpenAI Codex, GitHub Copilot, Fireworks, Nebius, Ollama Cloud, Zai, Gemini, Lukan Cloud, and any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio)
 - **Multiple Interfaces** — Terminal UI (ratatui), Web UI, Desktop app (Tauri), and CLI
 - **Browser Automation** — Full Chrome DevTools Protocol: navigate, screenshot, click, type, evaluate JS, export PDF
 - **Plugin System** — WhatsApp, Email, Gmail, Google Workspace (Sheets, Docs, Calendar, Drive), Docker Monitor, and more
@@ -46,6 +46,10 @@ Built in Rust. Single binary. No runtime dependencies.
 | Settings & Tools | Workers |
 |:---:|:---:|
 | <img src="examples/img/settings.png" width="300"> | <img src="examples/img/workers.png" width="250"> |
+
+| Remote Access (Relay) | Terminal TUI |
+|:---:|:---:|
+| <img src="examples/img/remote-lukan.png" width="450"> | <img src="examples/img/teminal-tui-lukan.png" width="450"> |
 
 </details>
 
@@ -202,6 +206,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 | Nebius | API key via `lukan setup` |
 | Ollama Cloud | API key via `lukan setup` |
 | Zai | API key via `lukan setup` |
+| Gemini | API key via `lukan setup` |
+| Lukan Cloud | API key via `lukan setup` |
 | OpenAI-compatible | Base URL + API key via `lukan setup` (works with vLLM, Ollama, LM Studio) |
 
 ## Plugins

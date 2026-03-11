@@ -30,6 +30,43 @@ const THEME = {
   brightWhite: "#ffffff",
 };
 
+/** Encode a string to base64, handling UTF-8 correctly (btoa only supports Latin-1). */
+function toBase64(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  return bytesToBase64(bytes);
+}
+
+/** Encode a Uint8Array to base64 without spread operator (avoids stack overflow on large data). */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/** Send input to PTY in chunks to avoid IPC/WebSocket message size issues. */
+const CHUNK_SIZE = 16384; // 16 KB per chunk
+
+function sendInput(sessionId: string, data: string): void {
+  const b64 = toBase64(data);
+  if (b64.length <= CHUNK_SIZE) {
+    terminalInput(sessionId, b64).catch(() => {});
+    return;
+  }
+  // Split into chunks and send sequentially
+  const chunks: string[] = [];
+  const bytes = new TextEncoder().encode(data);
+  for (let offset = 0; offset < bytes.length; offset += CHUNK_SIZE) {
+    const chunk = bytes.slice(offset, offset + CHUNK_SIZE);
+    chunks.push(bytesToBase64(chunk));
+  }
+  let chain: Promise<void> = Promise.resolve();
+  for (const chunk of chunks) {
+    chain = chain.then(() => terminalInput(sessionId, chunk)).catch(() => {});
+  }
+}
+
 interface UseTerminalOptions {
   /** Fixed session ID — does not change for this panel's lifetime. */
   sessionId: string;
@@ -84,9 +121,16 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
       terminalResize(sessionId, term.cols, term.rows).catch(() => {});
     });
 
-    // Keyboard → PTY
+    // Flag to suppress onData when we handle paste ourselves
+    let pasteHandled = false;
+
+    // Keyboard → PTY (xterm.js fires onData for keyboard AND paste events)
     const inputDisposable = term.onData((data) => {
-      terminalInput(sessionId, btoa(data)).catch(() => {});
+      if (pasteHandled) {
+        pasteHandled = false;
+        return;
+      }
+      sendInput(sessionId, data);
     });
 
     const binaryDisposable = term.onBinary((data) => {
@@ -94,7 +138,7 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
       for (let i = 0; i < data.length; i++) {
         bytes[i] = data.charCodeAt(i);
       }
-      terminalInput(sessionId, btoa(String.fromCharCode(...bytes))).catch(() => {});
+      terminalInput(sessionId, bytesToBase64(bytes)).catch(() => {});
     });
 
     // Clipboard paste → PTY (Ctrl+V / right-click / OS paste)
@@ -103,10 +147,12 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
       const text = e.clipboardData?.getData("text");
       if (text) {
         e.preventDefault();
-        terminalInput(sessionId, btoa(text)).catch(() => {});
+        e.stopPropagation();
+        pasteHandled = true;
+        sendInput(sessionId, text);
       }
     };
-    document.addEventListener("paste", onPaste);
+    document.addEventListener("paste", onPaste, true);
 
     // Terminal keyboard shortcuts
     term.attachCustomKeyEventHandler((e) => {
@@ -121,14 +167,14 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
       if (e.key === "c" && e.ctrlKey && !e.shiftKey && term.hasSelection()) {
         return false;
       }
-      // Ctrl+Shift+V → paste from clipboard
+      // Ctrl+Shift+V → paste from clipboard directly
       if (e.key === "v" && e.ctrlKey && e.shiftKey) {
         navigator.clipboard.readText().then((text) => {
-          if (text) terminalInput(sessionId, btoa(text)).catch(() => {});
+          if (text) sendInput(sessionId, text);
         }).catch(() => {});
         return false;
       }
-      // Ctrl+V → let browser fire native paste event
+      // Ctrl+V → let browser fire native paste event (handled by onPaste)
       if (e.key === "v" && e.ctrlKey && !e.shiftKey) {
         return false;
       }
@@ -166,7 +212,7 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
     return () => {
       inputDisposable.dispose();
       binaryDisposable.dispose();
-      document.removeEventListener("paste", onPaste);
+      document.removeEventListener("paste", onPaste, true);
       if (unlisten) unlisten();
       observer.disconnect();
       term.dispose();

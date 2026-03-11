@@ -106,12 +106,8 @@ async fn sandbox_status() -> Result<()> {
             }
         );
     } else {
-        println!(
-            "  bwrap available:   {DIM}n/a (bwrap is Linux-only){RESET}"
-        );
-        println!(
-            "\n  {BOLD}Effective:{RESET} {YELLOW}No OS-level sandbox on this platform{RESET}"
-        );
+        println!("  bwrap available:   {DIM}n/a (bwrap is Linux-only){RESET}");
+        println!("\n  {BOLD}Effective:{RESET} {YELLOW}No OS-level sandbox on this platform{RESET}");
     }
 
     println!();

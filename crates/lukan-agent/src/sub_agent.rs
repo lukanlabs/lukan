@@ -15,6 +15,7 @@ use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{Tool, ToolContext, create_default_registry};
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::message_history::MessageHistory;
@@ -61,6 +62,10 @@ pub struct SubAgentUpdate {
 
 struct SubAgentManager {
     entries: HashMap<String, SubAgentEntry>,
+    /// Cancel tokens for running sub-agents (keyed by sub-agent ID)
+    cancel_tokens: HashMap<String, CancellationToken>,
+    /// Join handles for running sub-agents (keyed by sub-agent ID)
+    handles: HashMap<String, tokio::task::JoinHandle<()>>,
     provider: Option<Arc<dyn Provider>>,
     system_prompt: Option<SystemPrompt>,
     cwd: Option<std::path::PathBuf>,
@@ -76,6 +81,8 @@ impl SubAgentManager {
     fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            cancel_tokens: HashMap::new(),
+            handles: HashMap::new(),
             provider: None,
             system_prompt: None,
             cwd: None,
@@ -147,6 +154,7 @@ async fn spawn_sub_agent(
     task: String,
     timeout_ms: u64,
     max_turns: usize,
+    parent_cancel: Option<CancellationToken>,
 ) -> anyhow::Result<String> {
     let id = {
         let mut buf = [0u8; 3];
@@ -188,13 +196,21 @@ async fn spawn_sub_agent(
         chat_messages: Vec::new(),
     };
 
+    // Create a cancel token for this sub-agent, child of parent if available
+    let cancel_token = if let Some(ref parent) = parent_cancel {
+        parent.child_token()
+    } else {
+        CancellationToken::new()
+    };
+
     {
         let mut mgr = MANAGER.write().await;
         mgr.entries.insert(id.clone(), entry);
+        mgr.cancel_tokens.insert(id.clone(), cancel_token.clone());
     }
 
     let agent_id = id.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         run_sub_agent(
             agent_id,
             task,
@@ -205,9 +221,15 @@ async fn spawn_sub_agent(
             cwd,
             sandbox,
             allowed_paths,
+            cancel_token,
         )
         .await;
     });
+
+    {
+        let mut mgr = MANAGER.write().await;
+        mgr.handles.insert(id.clone(), handle);
+    }
 
     Ok(id)
 }
@@ -223,6 +245,7 @@ async fn run_sub_agent(
     cwd: std::path::PathBuf,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
     allowed_paths: Option<Vec<std::path::PathBuf>>,
+    cancel_token: CancellationToken,
 ) {
     let mut history = MessageHistory::new();
     history.add_user_message(&task);
@@ -317,6 +340,12 @@ async fn run_sub_agent(
                     text_output.push_str("\n[Timeout]");
                     break 'outer;
                 }
+                _ = cancel_token.cancelled() => {
+                    stream_handle.abort();
+                    final_status = SubAgentStatus::Aborted;
+                    text_output.push_str("\n[Cancelled]");
+                    break 'outer;
+                }
             }
         }
 
@@ -393,6 +422,13 @@ async fn run_sub_agent(
             break;
         }
 
+        // Check cancellation before tool execution
+        if cancel_token.is_cancelled() {
+            final_status = SubAgentStatus::Aborted;
+            text_output.push_str("\n[Cancelled]");
+            break;
+        }
+
         // Execute tools in parallel
         let mut handles = Vec::new();
         for (_tool_id, name, input) in &pending_tools {
@@ -404,6 +440,7 @@ async fn run_sub_agent(
 
             let sandbox_cfg = sandbox.clone();
             let ap = allowed_paths.clone();
+            let ct = cancel_token.clone();
             handles.push(tokio::spawn(async move {
                 let ctx = ToolContext {
                     progress_tx: None,
@@ -414,7 +451,7 @@ async fn run_sub_agent(
                     bg_signal: None,
                     sandbox: sandbox_cfg,
                     allowed_paths: ap,
-                    cancel: None,
+                    cancel: Some(ct),
                     session_id: None,
                     extra_env: HashMap::new(),
                     agent_label: None,
@@ -495,6 +532,9 @@ async fn run_sub_agent(
             entry.output_tokens = total_output;
             entry.error = final_error.clone();
         }
+        // Clean up cancel token and handle now that we're done
+        mgr.cancel_tokens.remove(&id);
+        mgr.handles.remove(&id);
     }
 
     // Push final update to TUI
@@ -523,6 +563,28 @@ async fn get_sub_agent(id: &str) -> Option<SubAgentEntry> {
 pub async fn get_all_sub_agents() -> Vec<SubAgentEntry> {
     let mgr = MANAGER.read().await;
     mgr.entries.values().cloned().collect()
+}
+
+/// Abort a specific sub-agent by ID
+pub async fn abort_sub_agent(id: &str) -> bool {
+    let mut mgr = MANAGER.write().await;
+    if let Some(token) = mgr.cancel_tokens.remove(id) {
+        token.cancel();
+        // The handle will finish on its own once the token is cancelled
+        mgr.handles.remove(id);
+        true
+    } else {
+        false
+    }
+}
+
+/// Cancel all running sub-agents (called when parent agent is cancelled)
+pub async fn cancel_all_running() {
+    let mut mgr = MANAGER.write().await;
+    for (_id, token) in mgr.cancel_tokens.drain() {
+        token.cancel();
+    }
+    mgr.handles.clear();
 }
 
 // ── hex module (inline) ──────────────────────────────────────────────────
@@ -574,7 +636,7 @@ impl Tool for SubAgentTool {
     async fn execute(
         &self,
         input: serde_json::Value,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> anyhow::Result<ToolResult> {
         let task = input
             .get("task")
@@ -589,7 +651,7 @@ impl Tool for SubAgentTool {
 
         let max_turns = input.get("maxTurns").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
-        match spawn_sub_agent(task.clone(), timeout, max_turns).await {
+        match spawn_sub_agent(task.clone(), timeout, max_turns, ctx.cancel.clone()).await {
             Ok(id) => Ok(ToolResult::success(format!(
                 "Sub-agent spawned (ID: {id})\nTask: {task}\n\n\
                  Running in background. Use SubAgentResult(\"{id}\") to check status/results."
@@ -799,6 +861,7 @@ pub async fn run_explore(
     max_turns: usize,
     progress_tx: Option<mpsc::Sender<StreamEvent>>,
     explore_id: String,
+    cancel_token: Option<CancellationToken>,
 ) -> anyhow::Result<String> {
     let (provider, _system_prompt, cwd, sandbox, allowed_paths) = {
         let mgr = MANAGER.read().await;
@@ -933,6 +996,13 @@ pub async fn run_explore(
                     text_output.push_str("\n[Timeout]");
                     break 'outer;
                 }
+                _ = async {
+                    if let Some(ref ct) = cancel_token { ct.cancelled().await } else { std::future::pending().await }
+                } => {
+                    stream_handle.abort();
+                    text_output.push_str("\n[Cancelled]");
+                    break 'outer;
+                }
             }
         }
 
@@ -970,9 +1040,13 @@ pub async fn run_explore(
             break;
         }
 
-        // Check deadline before tool execution
+        // Check deadline and cancellation before tool execution
         if tokio::time::Instant::now() >= deadline {
             text_output.push_str("\n[Timeout]");
+            break;
+        }
+        if cancel_token.as_ref().is_some_and(|ct| ct.is_cancelled()) {
+            text_output.push_str("\n[Cancelled]");
             break;
         }
 
@@ -987,6 +1061,7 @@ pub async fn run_explore(
                 let inp = input.clone();
                 let sandbox_cfg = sandbox.clone();
                 let ap = allowed_paths.clone();
+                let ct = cancel_token.clone();
                 futs.push(tokio::spawn(async move {
                     let ctx = ToolContext {
                         progress_tx: None,
@@ -997,7 +1072,7 @@ pub async fn run_explore(
                         bg_signal: None,
                         sandbox: sandbox_cfg,
                         allowed_paths: ap,
-                        cancel: None,
+                        cancel: ct,
                         session_id: None,
                         extra_env: HashMap::new(),
                         agent_label: None,
@@ -1176,8 +1251,18 @@ impl Tool for ExploreTool {
             .unwrap_or_else(|| format!("explore-{}", rand::random::<u32>()));
 
         let progress_tx = ctx.event_tx.clone();
+        let cancel_token = ctx.cancel.clone();
 
-        match run_explore(&task, timeout, max_turns, progress_tx, explore_id).await {
+        match run_explore(
+            &task,
+            timeout,
+            max_turns,
+            progress_tx,
+            explore_id,
+            cancel_token,
+        )
+        .await
+        {
             Ok(output) => Ok(ToolResult::success(output)),
             Err(e) => Ok(ToolResult::error(format!("Explore error: {e}"))),
         }

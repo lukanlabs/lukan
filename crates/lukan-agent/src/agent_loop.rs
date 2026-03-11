@@ -859,6 +859,8 @@ impl AgentLoop {
             if cancelled {
                 stream_handle.abort();
                 info!("Turn cancelled by user");
+                // Cancel all running sub-agents
+                crate::sub_agent::cancel_all_running().await;
                 // Save any partial text so the conversation stays coherent
                 if !text_content.is_empty() {
                     self.history
@@ -927,6 +929,7 @@ impl AgentLoop {
             // Check cancellation before executing tools
             if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
                 info!("Turn cancelled before tool execution");
+                crate::sub_agent::cancel_all_running().await;
                 self.save_session().await?;
                 return Ok(());
             }

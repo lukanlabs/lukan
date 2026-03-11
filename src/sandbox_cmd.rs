@@ -66,44 +66,53 @@ async fn sandbox_status() -> Result<()> {
         }
     );
 
-    // bwrap availability
-    let bwrap_available = sandbox::is_bwrap_available();
-    println!(
-        "  bwrap available:   {}",
-        if bwrap_available {
-            format!("{GREEN}yes{RESET}")
-        } else {
-            format!("{RED}no{RESET}")
-        }
-    );
+    if cfg!(target_os = "linux") {
+        // bwrap availability
+        let bwrap_available = sandbox::is_bwrap_available();
+        println!(
+            "  bwrap available:   {}",
+            if bwrap_available {
+                format!("{GREEN}yes{RESET}")
+            } else {
+                format!("{RED}no{RESET}")
+            }
+        );
 
-    // AppArmor profile
-    let has_profile = sandbox::has_apparmor_profile();
-    println!(
-        "  AppArmor profile:  {}",
-        if has_profile {
-            format!("{GREEN}installed{RESET}")
-        } else {
-            format!("{DIM}not installed{RESET}")
-        }
-    );
+        // AppArmor profile
+        let has_profile = sandbox::has_apparmor_profile();
+        println!(
+            "  AppArmor profile:  {}",
+            if has_profile {
+                format!("{GREEN}installed{RESET}")
+            } else {
+                format!("{DIM}not installed{RESET}")
+            }
+        );
 
-    // Diagnosis
-    let diagnosis = sandbox::diagnose_bwrap();
-    println!("\n  {BOLD}Diagnosis:{RESET} {diagnosis}");
+        // Diagnosis
+        let diagnosis = sandbox::diagnose_bwrap();
+        println!("\n  {BOLD}Diagnosis:{RESET} {diagnosis}");
 
-    // Effective state
-    let effective = os_sandbox_enabled && bwrap_available;
-    println!(
-        "\n  {BOLD}Effective:{RESET} {}",
-        if effective {
-            format!("{GREEN}Sandbox is active{RESET}")
-        } else if os_sandbox_enabled {
-            format!("{YELLOW}Sandbox enabled but bwrap not available{RESET}")
-        } else {
-            format!("{YELLOW}Sandbox is disabled{RESET}")
-        }
-    );
+        // Effective state
+        let effective = os_sandbox_enabled && bwrap_available;
+        println!(
+            "\n  {BOLD}Effective:{RESET} {}",
+            if effective {
+                format!("{GREEN}Sandbox is active{RESET}")
+            } else if os_sandbox_enabled {
+                format!("{YELLOW}Sandbox enabled but bwrap not available{RESET}")
+            } else {
+                format!("{YELLOW}Sandbox is disabled{RESET}")
+            }
+        );
+    } else {
+        println!(
+            "  bwrap available:   {DIM}n/a (bwrap is Linux-only){RESET}"
+        );
+        println!(
+            "\n  {BOLD}Effective:{RESET} {YELLOW}No OS-level sandbox on this platform{RESET}"
+        );
+    }
 
     println!();
     Ok(())
@@ -152,6 +161,11 @@ async fn sandbox_off() -> Result<()> {
 }
 
 async fn sandbox_setup() -> Result<()> {
+    if !cfg!(target_os = "linux") {
+        println!("{YELLOW}Sandbox setup is only available on Linux (bwrap + AppArmor).{RESET}");
+        return Ok(());
+    }
+
     println!("\n{BOLD}{CYAN}  lukan sandbox setup{RESET}");
     println!("{DIM}  Installing AppArmor profile for bwrap{RESET}\n");
 
@@ -162,6 +176,11 @@ async fn sandbox_setup() -> Result<()> {
 }
 
 async fn sandbox_uninstall() -> Result<()> {
+    if !cfg!(target_os = "linux") {
+        println!("{YELLOW}Sandbox uninstall is only available on Linux.{RESET}");
+        return Ok(());
+    }
+
     println!("\n{BOLD}{CYAN}  lukan sandbox uninstall{RESET}");
     println!("{DIM}  Removing AppArmor profile for bwrap{RESET}\n");
 

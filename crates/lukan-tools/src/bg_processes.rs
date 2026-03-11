@@ -88,25 +88,54 @@ pub fn is_process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
-/// Recursively find all descendant PIDs of a process by walking `/proc`.
+/// Recursively find all descendant PIDs of a process.
+///
+/// On Linux, walks `/proc/<pid>/task/<pid>/children`.
+/// On macOS (and other platforms), falls back to `pgrep -P <pid>`.
 /// Returns descendants in depth-first order (children before grandchildren),
 /// which means reversing the result gives a bottom-up order for killing.
 fn find_descendants(pid: u32) -> Vec<u32> {
     let mut result = Vec::new();
     let mut stack = vec![pid];
     while let Some(p) = stack.pop() {
-        // Read /proc/<p>/task/<p>/children to get direct children
-        let path = format!("/proc/{p}/task/{p}/children");
-        if let Ok(children_str) = std::fs::read_to_string(&path) {
-            for token in children_str.split_whitespace() {
-                if let Ok(child_pid) = token.parse::<u32>() {
-                    result.push(child_pid);
-                    stack.push(child_pid);
-                }
-            }
+        let children = get_direct_children(p);
+        for child_pid in children {
+            result.push(child_pid);
+            stack.push(child_pid);
         }
     }
     result
+}
+
+/// Get direct child PIDs of a process.
+#[cfg(target_os = "linux")]
+fn get_direct_children(pid: u32) -> Vec<u32> {
+    let path = format!("/proc/{pid}/task/{pid}/children");
+    match std::fs::read_to_string(&path) {
+        Ok(children_str) => children_str
+            .split_whitespace()
+            .filter_map(|t| t.parse::<u32>().ok())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Get direct child PIDs of a process using `pgrep -P`.
+#[cfg(not(target_os = "linux"))]
+fn get_direct_children(pid: u32) -> Vec<u32> {
+    match std::process::Command::new("pgrep")
+        .args(["-P", &pid.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+    {
+        Ok(output) => String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .filter_map(|t| t.parse::<u32>().ok())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Send a signal to a process and all its descendants (found via /proc tree walk).

@@ -28,6 +28,13 @@ else
 endif
 PLATFORM := $(OS)-$(ARCH)
 
+# Cross-platform sha256: macOS has shasum, Linux has sha256sum
+ifeq ($(UNAME_S),Darwin)
+  SHA256CMD := shasum -a 256
+else
+  SHA256CMD := sha256sum
+endif
+
 .PHONY: all build clean test check install release bundle-plugins package-plugins upload upload-daily upload-gh help
 
 all: build
@@ -115,15 +122,15 @@ release: build bundle-plugins package-plugins
 		cp target/release/$(BINARY_NAME)-relay dist/$(BINARY_NAME)-relay-$(PLATFORM); \
 	fi
 	@# Generate checksums
-	@cd dist && sha256sum $(BINARY_NAME)-$(PLATFORM) > checksums.txt
+	@cd dist && $(SHA256CMD) $(BINARY_NAME)-$(PLATFORM) > checksums.txt
 	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
-		cd dist && sha256sum $(BINARY_NAME)-desktop-$(PLATFORM) >> checksums.txt; \
+		cd dist && $(SHA256CMD) $(BINARY_NAME)-desktop-$(PLATFORM) >> checksums.txt; \
 	fi
 	@if [ -f dist/$(BINARY_NAME)-relay-$(PLATFORM) ]; then \
-		cd dist && sha256sum $(BINARY_NAME)-relay-$(PLATFORM) >> checksums.txt; \
+		cd dist && $(SHA256CMD) $(BINARY_NAME)-relay-$(PLATFORM) >> checksums.txt; \
 	fi
-	@cd dist && sha256sum ../install.sh | sed 's#  \.\./install\.sh$$#  install.sh#' >> checksums.txt
-	@cd dist/plugins && sha256sum *.tar.gz >> ../checksums.txt
+	@cd dist && $(SHA256CMD) ../install.sh | sed 's#  \.\./install\.sh$$#  install.sh#' >> checksums.txt
+	@cd dist/plugins && $(SHA256CMD) *.tar.gz >> ../checksums.txt
 	@# Write version file
 	@echo "$(VERSION)" > dist/latest
 	@echo ""

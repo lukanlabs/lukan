@@ -16,3 +16,4 @@ plugins/**/bun.lock
 .plan.md
 CLAUDE.md
 *.tsbuildinfo
+plugins/*/package-lock.json

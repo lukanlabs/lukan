@@ -1583,11 +1583,23 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
     let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
     *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
 
-    let tools = if has_browser {
+    let mut tools = if has_browser {
         lukan_tools::create_configured_browser_registry(&permissions, &allowed)
     } else {
         create_configured_registry(&permissions, &allowed)
     };
+
+    // Register MCP tools if configured
+    if !config.config.mcp_servers.is_empty()
+        && let Ok(manager) =
+            lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await
+    {
+        tracing::info!(
+            count = manager.tool_defs.len(),
+            "MCP tools registered (web)"
+        );
+        Box::leak(Box::new(manager));
+    }
 
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
@@ -1614,7 +1626,16 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         extra_env: config.credentials.flatten_skill_env(),
     };
 
-    AgentLoop::new(agent_config).await
+    let mut agent = AgentLoop::new(agent_config).await?;
+    if let Some(disabled) = &config.config.disabled_tools {
+        agent.set_disabled_tools(
+            disabled
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
+        );
+    }
+    Ok(agent)
 }
 
 /// Create an AgentLoop with a loaded session
@@ -1659,11 +1680,19 @@ async fn create_agent_with_session(
     let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
     *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
 
-    let tools = if has_browser {
+    let mut tools = if has_browser {
         lukan_tools::create_configured_browser_registry(&permissions, &allowed)
     } else {
         create_configured_registry(&permissions, &allowed)
     };
+
+    // Register MCP tools if configured
+    if !config.config.mcp_servers.is_empty()
+        && let Ok(manager) =
+            lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await
+    {
+        Box::leak(Box::new(manager));
+    }
 
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
@@ -1690,7 +1719,16 @@ async fn create_agent_with_session(
         extra_env: config.credentials.flatten_skill_env(),
     };
 
-    AgentLoop::load_session(agent_config, session_id).await
+    let mut agent = AgentLoop::load_session(agent_config, session_id).await?;
+    if let Some(disabled) = &config.config.disabled_tools {
+        agent.set_disabled_tools(
+            disabled
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
+        );
+    }
+    Ok(agent)
 }
 
 /// Build system prompt (matches TUI logic)

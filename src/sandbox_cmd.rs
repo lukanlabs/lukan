@@ -105,8 +105,33 @@ async fn sandbox_status() -> Result<()> {
                 format!("{YELLOW}Sandbox is disabled{RESET}")
             }
         );
+    } else if cfg!(target_os = "macos") {
+        let sandbox_exec_available = sandbox::is_sandbox_exec_available();
+        println!(
+            "  sandbox-exec:      {}",
+            if sandbox_exec_available {
+                format!("{GREEN}available{RESET}")
+            } else {
+                format!("{RED}not available{RESET}")
+            }
+        );
+
+        let diagnosis = sandbox::diagnose_sandbox_exec();
+        println!("\n  {BOLD}Diagnosis:{RESET} {diagnosis}");
+
+        let effective = os_sandbox_enabled && sandbox_exec_available;
+        println!(
+            "\n  {BOLD}Effective:{RESET} {}",
+            if effective {
+                format!("{GREEN}Sandbox is active{RESET}")
+            } else if os_sandbox_enabled {
+                format!("{YELLOW}Sandbox enabled but sandbox-exec not available{RESET}")
+            } else {
+                format!("{YELLOW}Sandbox is disabled{RESET}")
+            }
+        );
     } else {
-        println!("  bwrap available:   {DIM}n/a (bwrap is Linux-only){RESET}");
+        println!("  Sandbox:           {DIM}n/a (no sandbox on this platform){RESET}");
         println!("\n  {BOLD}Effective:{RESET} {YELLOW}No OS-level sandbox on this platform{RESET}");
     }
 
@@ -157,6 +182,10 @@ async fn sandbox_off() -> Result<()> {
 }
 
 async fn sandbox_setup() -> Result<()> {
+    if cfg!(target_os = "macos") {
+        println!("{GREEN}sandbox-exec is built-in on macOS — no setup needed.{RESET}");
+        return Ok(());
+    }
     if !cfg!(target_os = "linux") {
         println!("{YELLOW}Sandbox setup is only available on Linux (bwrap + AppArmor).{RESET}");
         return Ok(());

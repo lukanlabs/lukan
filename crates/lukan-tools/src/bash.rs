@@ -114,25 +114,23 @@ impl Tool for BashTool {
 
         debug!(command, timeout_ms, "Executing bash command");
 
-        // Determine if we should use bwrap sandbox
-        let use_bwrap = ctx
+        // Determine if we should use OS-level sandbox (bwrap on Linux, sandbox-exec on macOS)
+        let use_sandbox = ctx
             .sandbox
             .as_ref()
-            .map(|s| s.enabled && crate::sandbox::is_bwrap_available())
+            .map(|s| s.enabled && crate::sandbox::is_sandbox_available())
             .unwrap_or(false);
 
         // Foreground mode: spawn with piped stdout/stderr
-        let mut child = if use_bwrap {
+        let mut child = if use_sandbox {
             let sandbox = ctx.sandbox.as_ref().unwrap();
-            let bwrap_args = crate::sandbox::build_bwrap_args(&crate::sandbox::BwrapConfig {
+            let sandbox_args = crate::sandbox::build_sandbox_args(&crate::sandbox::BwrapConfig {
                 allowed_dirs: sandbox.allowed_dirs.clone(),
                 sensitive_patterns: sandbox.sensitive_patterns.clone(),
                 cwd: ctx.cwd.to_string_lossy().to_string(),
             });
-            // bwrap_args[0] is "bwrap", rest are args, then append "-- bash -c <command>"
-            Command::new(&bwrap_args[0])
-                .args(&bwrap_args[1..])
-                .arg("--")
+            Command::new(&sandbox_args[0])
+                .args(&sandbox_args[1..])
                 .arg("bash")
                 .arg("-c")
                 .arg(command)
@@ -324,23 +322,22 @@ impl BashTool {
     ) -> anyhow::Result<ToolResult> {
         debug!(command, "Spawning background command");
 
-        // Determine if we should use bwrap sandbox
-        let use_bwrap = ctx
+        // Determine if we should use OS-level sandbox (bwrap on Linux, sandbox-exec on macOS)
+        let use_sandbox = ctx
             .sandbox
             .as_ref()
-            .map(|s| s.enabled && crate::sandbox::is_bwrap_available())
+            .map(|s| s.enabled && crate::sandbox::is_sandbox_available())
             .unwrap_or(false);
 
-        let mut child = if use_bwrap {
+        let mut child = if use_sandbox {
             let sandbox = ctx.sandbox.as_ref().unwrap();
-            let bwrap_args = crate::sandbox::build_bwrap_args(&crate::sandbox::BwrapConfig {
+            let sandbox_args = crate::sandbox::build_sandbox_args(&crate::sandbox::BwrapConfig {
                 allowed_dirs: sandbox.allowed_dirs.clone(),
                 sensitive_patterns: sandbox.sensitive_patterns.clone(),
                 cwd: ctx.cwd.to_string_lossy().to_string(),
             });
-            Command::new(&bwrap_args[0])
-                .args(&bwrap_args[1..])
-                .arg("--")
+            Command::new(&sandbox_args[0])
+                .args(&sandbox_args[1..])
                 .arg("bash")
                 .arg("-c")
                 .arg(command)

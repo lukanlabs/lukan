@@ -63,8 +63,24 @@ pub struct SandboxConfig {
 /// Cached result of `is_bwrap_available()`.
 static BWRAP_AVAILABLE: OnceLock<bool> = OnceLock::new();
 
+/// Cached result of `is_sandbox_exec_available()`.
+static SANDBOX_EXEC_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
 /// Timeout for bwrap availability checks (matches Node.js implementation).
 const BWRAP_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Check if any sandbox is available on this platform.
+///
+/// Dispatches to `is_bwrap_available()` on Linux and `is_sandbox_exec_available()` on macOS.
+pub fn is_sandbox_available() -> bool {
+    if cfg!(target_os = "linux") {
+        is_bwrap_available()
+    } else if cfg!(target_os = "macos") {
+        is_sandbox_exec_available()
+    } else {
+        false
+    }
+}
 
 /// Check if bwrap is available and functional on this system.
 ///
@@ -79,6 +95,116 @@ pub fn is_bwrap_available() -> bool {
 
         run_bwrap_test_with_timeout(BWRAP_CHECK_TIMEOUT)
     })
+}
+
+/// Check if macOS `sandbox-exec` is available and functional.
+///
+/// Runs a simple test once and caches the result for the lifetime of the process.
+pub fn is_sandbox_exec_available() -> bool {
+    *SANDBOX_EXEC_AVAILABLE.get_or_init(|| {
+        if !cfg!(target_os = "macos") {
+            return false;
+        }
+
+        std::process::Command::new("sandbox-exec")
+            .args(["-p", "(version 1)(allow default)", "/usr/bin/true"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
+/// Build sandbox arguments for the current platform.
+///
+/// On Linux returns bwrap args, on macOS returns sandbox-exec args.
+/// The returned `Vec` includes the sandbox binary as the first element.
+/// For bwrap, the `--` separator is included at the end.
+pub fn build_sandbox_args(config: &BwrapConfig) -> Vec<String> {
+    if cfg!(target_os = "linux") {
+        let mut args = build_bwrap_args(config);
+        args.push("--".to_string());
+        args
+    } else if cfg!(target_os = "macos") {
+        build_sandbox_exec_args(config)
+    } else {
+        // No sandbox — return empty (caller should not have called this)
+        vec![]
+    }
+}
+
+/// Build macOS `sandbox-exec` arguments with an SBPL profile.
+///
+/// The profile:
+/// 1. Allows all operations by default
+/// 2. Denies file-write* everywhere
+/// 3. Allows file-write* in /tmp, /private/tmp, cwd, and allowed dirs
+/// 4. Denies read+write to sensitive files
+///
+/// Returns `["sandbox-exec", "-p", "<profile>"]`.
+pub fn build_sandbox_exec_args(config: &BwrapConfig) -> Vec<String> {
+    let mut profile = String::new();
+    profile.push_str("(version 1)\n");
+    profile.push_str("(allow default)\n");
+    profile.push_str("(deny file-write*)\n");
+
+    // Writable directories: /tmp, /private/tmp, cwd, allowed dirs
+    profile.push_str("(allow file-write* (subpath \"/tmp\"))\n");
+    profile.push_str("(allow file-write* (subpath \"/private/tmp\"))\n");
+
+    let cwd_resolved = resolve_path(&config.cwd);
+    profile.push_str(&format!(
+        "(allow file-write* (subpath \"{cwd_resolved}\"))\n"
+    ));
+
+    for dir in &config.allowed_dirs {
+        let resolved = resolve_path(dir);
+        if resolved != cwd_resolved {
+            profile.push_str(&format!("(allow file-write* (subpath \"{resolved}\"))\n"));
+        }
+    }
+
+    // Block sensitive files (deny both read and write)
+    let mut search_dirs: Vec<String> = vec![config.cwd.clone()];
+    for dir in &config.allowed_dirs {
+        search_dirs.push(resolve_path(dir));
+    }
+    let sensitive_files = resolve_sensitive_files(&config.sensitive_patterns, &search_dirs);
+    for file in &sensitive_files {
+        profile.push_str(&format!("(deny file-read* (literal \"{file}\"))\n"));
+        profile.push_str(&format!("(deny file-write* (literal \"{file}\"))\n"));
+    }
+
+    vec!["sandbox-exec".to_string(), "-p".to_string(), profile]
+}
+
+/// Diagnose why macOS sandbox-exec is not working.
+pub fn diagnose_sandbox_exec() -> String {
+    if !cfg!(target_os = "macos") {
+        return "sandbox-exec is only available on macOS.".to_string();
+    }
+
+    if !Path::new("/usr/bin/sandbox-exec").exists() {
+        return "sandbox-exec binary not found at /usr/bin/sandbox-exec.".to_string();
+    }
+
+    let result = std::process::Command::new("sandbox-exec")
+        .args(["-p", "(version 1)(allow default)", "/usr/bin/true"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    match result {
+        Ok(output) if output.status.success() => "sandbox-exec is working.".to_string(),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            format!("sandbox-exec test failed: {}", stderr.trim())
+        }
+        Err(e) => format!("Could not execute sandbox-exec: {e}"),
+    }
 }
 
 /// Spawn a bwrap test command and wait up to `timeout` for it to finish.
@@ -731,5 +857,81 @@ mod tests {
         // Just verify it doesn't panic and returns a non-empty message
         let msg = diagnose_bwrap();
         assert!(!msg.is_empty());
+    }
+
+    // ── macOS sandbox-exec tests ─────────────────────────────────────
+
+    #[test]
+    fn test_build_sandbox_exec_args_basic() {
+        let config = BwrapConfig {
+            allowed_dirs: vec![],
+            sensitive_patterns: vec![],
+            cwd: "/Users/test/project".to_string(),
+        };
+        let args = build_sandbox_exec_args(&config);
+
+        assert_eq!(args[0], "sandbox-exec");
+        assert_eq!(args[1], "-p");
+
+        let profile = &args[2];
+        assert!(profile.contains("(version 1)"));
+        assert!(profile.contains("(allow default)"));
+        assert!(profile.contains("(deny file-write*)"));
+        assert!(profile.contains("(allow file-write* (subpath \"/tmp\"))"));
+        assert!(profile.contains("(allow file-write* (subpath \"/private/tmp\"))"));
+        assert!(profile.contains("(allow file-write* (subpath \"/Users/test/project\"))"));
+    }
+
+    #[test]
+    fn test_sbpl_profile_writable_dirs() {
+        let config = BwrapConfig {
+            allowed_dirs: vec!["/data/output".to_string(), "/var/cache".to_string()],
+            sensitive_patterns: vec![],
+            cwd: "/Users/test/project".to_string(),
+        };
+        let args = build_sandbox_exec_args(&config);
+        let profile = &args[2];
+
+        assert!(profile.contains("(allow file-write* (subpath \"/data/output\"))"));
+        assert!(profile.contains("(allow file-write* (subpath \"/var/cache\"))"));
+        // cwd should also be writable
+        assert!(profile.contains("(allow file-write* (subpath \"/Users/test/project\"))"));
+    }
+
+    #[test]
+    fn test_sbpl_profile_sensitive_files() {
+        // Create a temp directory with a test sensitive file
+        let tmp = std::env::temp_dir().join("lukan_sbpl_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let env_file = tmp.join(".env");
+        let _ = std::fs::write(&env_file, "SECRET=1");
+
+        let config = BwrapConfig {
+            allowed_dirs: vec![],
+            sensitive_patterns: vec![".env*".to_string()],
+            cwd: tmp.to_string_lossy().to_string(),
+        };
+        let args = build_sandbox_exec_args(&config);
+        let profile = &args[2];
+
+        // Sensitive files should be blocked with deny directives
+        assert!(
+            profile.contains("(deny file-read* (literal"),
+            "Profile should contain deny file-read* for sensitive files"
+        );
+        assert!(
+            profile.contains("(deny file-write* (literal"),
+            "Profile should contain deny file-write* for sensitive files"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_file(&env_file);
+        let _ = std::fs::remove_dir(&tmp);
+    }
+
+    #[test]
+    fn test_is_sandbox_available_returns_bool() {
+        // Just verify the function doesn't panic
+        let _ = is_sandbox_available();
     }
 }

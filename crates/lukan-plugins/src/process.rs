@@ -59,17 +59,17 @@ impl PluginProcess {
             run.command.clone()
         };
 
-        let use_bwrap = sandbox::is_bwrap_available();
+        let use_sandbox = sandbox::is_sandbox_available();
         let plugin_dir_str = plugin_dir.to_string_lossy().to_string();
         let data_dir = LukanPaths::plugin_data_dir(&self.name);
         // Ensure the data directory exists before spawning the plugin
         std::fs::create_dir_all(&data_dir).ok();
         let data_dir_str = data_dir.to_string_lossy().to_string();
 
-        let mut cmd = if use_bwrap {
-            // Run inside bubblewrap sandbox: read-only filesystem,
+        let mut cmd = if use_sandbox {
+            // Run inside OS-level sandbox: read-only filesystem,
             // writable only in plugin data dir and /tmp.
-            let bwrap_args = sandbox::build_bwrap_args(&BwrapConfig {
+            let sandbox_args = sandbox::build_sandbox_args(&BwrapConfig {
                 allowed_dirs: vec![data_dir_str.clone()],
                 sensitive_patterns: DEFAULT_SENSITIVE_PATTERNS
                     .iter()
@@ -78,9 +78,8 @@ impl PluginProcess {
                 cwd: plugin_dir_str.clone(),
             });
 
-            let mut c = Command::new(&bwrap_args[0]);
-            c.args(&bwrap_args[1..])
-                .arg("--")
+            let mut c = Command::new(&sandbox_args[0]);
+            c.args(&sandbox_args[1..])
                 .arg(&resolved_command)
                 .args(&run.args);
             c
@@ -105,8 +104,8 @@ impl PluginProcess {
 
         let child = cmd.spawn().with_context(|| {
             format!(
-                "Failed to spawn plugin '{}': {} {:?} (bwrap={})",
-                self.name, run.command, run.args, use_bwrap
+                "Failed to spawn plugin '{}': {} {:?} (sandbox={})",
+                self.name, run.command, run.args, use_sandbox
             )
         })?;
 

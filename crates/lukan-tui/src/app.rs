@@ -619,15 +619,15 @@ impl App {
 
         // Register MCP tools if configured
         if !self.config.config.mcp_servers.is_empty() {
-            match lukan_tools::init_mcp_tools(&mut tools, &self.config.config.mcp_servers).await {
-                Ok(manager) => {
-                    tracing::info!(count = manager.tool_defs.len(), "MCP tools registered");
-                    self.mcp_manager = Some(manager);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to initialize MCP servers: {e}");
-                }
+            let result =
+                lukan_tools::init_mcp_tools(&mut tools, &self.config.config.mcp_servers).await;
+            if result.tool_count > 0 {
+                tracing::info!(count = result.tool_count, "MCP tools registered");
             }
+            for (server, err) in &result.errors {
+                tracing::warn!(server = %server, "MCP error: {err}");
+            }
+            self.mcp_manager = Some(result.manager);
         }
 
         let config = AgentConfig {
@@ -3852,14 +3852,15 @@ impl App {
 
         // Register MCP tools if configured
         if !self.config.config.mcp_servers.is_empty() {
-            match lukan_tools::init_mcp_tools(&mut tools, &self.config.config.mcp_servers).await {
-                Ok(manager) => {
-                    self.mcp_manager = Some(manager);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to initialize MCP servers: {e}");
-                }
+            let result =
+                lukan_tools::init_mcp_tools(&mut tools, &self.config.config.mcp_servers).await;
+            if result.tool_count > 0 {
+                tracing::info!(count = result.tool_count, "MCP tools registered (session restore)");
             }
+            for (server, err) in &result.errors {
+                tracing::warn!(server = %server, "MCP error: {err}");
+            }
+            self.mcp_manager = Some(result.manager);
         }
 
         let config = AgentConfig {

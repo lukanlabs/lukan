@@ -165,11 +165,24 @@ impl ChatState {
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
         let (bg_signal_tx, bg_signal_rx) = watch::channel(());
 
-        let tools = if has_browser {
+        let mut tools = if has_browser {
             create_configured_browser_registry(&permissions, &allowed)
         } else {
             create_configured_registry(&permissions, &allowed)
         };
+
+        // Register MCP tools if configured
+        if !config.config.mcp_servers.is_empty() {
+            let result =
+                lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
+            if result.tool_count > 0 {
+                tracing::info!(count = result.tool_count, "MCP tools registered");
+            }
+            for (server, err) in &result.errors {
+                tracing::warn!(server = %server, "MCP error: {err}");
+            }
+            Box::leak(Box::new(result.manager));
+        }
 
         let agent_config = AgentConfig {
             provider: Arc::from(provider),
@@ -247,11 +260,24 @@ impl ChatState {
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
         let (bg_signal_tx, bg_signal_rx) = watch::channel(());
 
-        let tools = if has_browser {
+        let mut tools = if has_browser {
             create_configured_browser_registry(&permissions, &allowed)
         } else {
             create_configured_registry(&permissions, &allowed)
         };
+
+        // Register MCP tools if configured
+        if !config.config.mcp_servers.is_empty() {
+            let result =
+                lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
+            if result.tool_count > 0 {
+                tracing::info!(count = result.tool_count, "MCP tools registered (session restore)");
+            }
+            for (server, err) in &result.errors {
+                tracing::warn!(server = %server, "MCP error: {err}");
+            }
+            Box::leak(Box::new(result.manager));
+        }
 
         let agent_config = AgentConfig {
             provider: Arc::from(provider),

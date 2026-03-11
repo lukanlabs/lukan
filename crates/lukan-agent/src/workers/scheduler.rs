@@ -431,6 +431,20 @@ async fn run_worker(
         .unwrap_or_else(|| vec![cwd.clone()]);
 
     let mut registry = create_configured_registry(&permissions, &allowed);
+
+    // Register MCP tools if configured
+    if !config.config.mcp_servers.is_empty() {
+        let result =
+            lukan_tools::init_mcp_tools(&mut registry, &config.config.mcp_servers).await;
+        if result.tool_count > 0 {
+            tracing::info!(count = result.tool_count, "MCP tools registered (worker)");
+        }
+        for (server, err) in &result.errors {
+            tracing::warn!(server = %server, "MCP error: {err}");
+        }
+        Box::leak(Box::new(result.manager));
+    }
+
     if let Some(tool_names) = tools_filter {
         let refs: Vec<&str> = tool_names.iter().map(|s| s.as_str()).collect();
         registry.retain(&refs);

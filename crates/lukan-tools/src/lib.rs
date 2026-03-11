@@ -4,6 +4,8 @@ pub mod browser;
 mod edit_file;
 mod glob_tool;
 mod grep;
+pub mod mcp;
+pub mod mcp_tools;
 pub mod planner_tools;
 pub mod plugin_tools;
 mod read_file;
@@ -561,6 +563,34 @@ pub fn create_configured_browser_registry(
         permissions.sensitive_patterns.clone(),
     );
     registry
+}
+
+/// Result of MCP initialization.
+pub struct McpInitResult {
+    /// The manager (must be kept alive for tool proxies to work).
+    pub manager: mcp::McpManager,
+    /// Number of tools successfully registered.
+    pub tool_count: usize,
+    /// Per-server errors encountered during init.
+    pub errors: Vec<(String, String)>,
+}
+
+/// Initialize MCP servers and register their tools into a registry.
+///
+/// Returns the `McpManager` which must be kept alive for the tool proxies to work,
+/// along with diagnostic info about what was loaded.
+pub async fn init_mcp_tools(
+    registry: &mut ToolRegistry,
+    configs: &std::collections::HashMap<String, lukan_core::config::types::McpServerConfig>,
+) -> McpInitResult {
+    let (manager, errors) = mcp::McpManager::init(configs).await;
+    let tool_count = manager.tool_defs.len();
+    mcp_tools::register_mcp_tools(registry, &manager);
+    McpInitResult {
+        manager,
+        tool_count,
+        errors,
+    }
 }
 
 /// Create a registry configured with project permissions.

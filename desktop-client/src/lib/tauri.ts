@@ -59,10 +59,14 @@ export const testProvider = (provider: string) =>
 // Plugins
 export const listPlugins = () =>
   getTransport().call<PluginInfo[]>("list_plugins");
-export const installPlugin = (path: string) =>
-  getTransport().call<string>("install_plugin", { path });
-export const installRemotePlugin = (name: string) =>
-  getTransport().call<string>("install_remote_plugin", { name });
+export const installPlugin = async (path: string): Promise<string> => {
+  const res = await getTransport().call<string | { message: string }>("install_plugin", { path });
+  return typeof res === "object" && res !== null ? (res as { message: string }).message : (res as string);
+};
+export const installRemotePlugin = async (name: string): Promise<string> => {
+  const res = await getTransport().call<string | { message: string }>("install_remote_plugin", { name });
+  return typeof res === "object" && res !== null ? (res as { message: string }).message : (res as string);
+};
 export const removePlugin = (name: string) =>
   getTransport().call<void>("remove_plugin", { name });
 export const startPlugin = (name: string) =>

@@ -77,6 +77,20 @@ pub struct AppConfig {
     /// Tools to disable (by name)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_tools: Option<Vec<String>>,
+    /// MCP (Model Context Protocol) server configurations
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub mcp_servers: HashMap<String, McpServerConfig>,
+}
+
+/// Configuration for an MCP (Model Context Protocol) server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerConfig {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 fn default_max_tokens() -> u32 {
@@ -103,6 +117,7 @@ impl Default for AppConfig {
             plugins: None,
             browser_cdp_url: None,
             disabled_tools: None,
+            mcp_servers: HashMap::new(),
         }
     }
 }

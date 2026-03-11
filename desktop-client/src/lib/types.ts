@@ -17,6 +17,13 @@ export interface AppConfig {
   plugins?: PluginsConfig;
   browserCdpUrl?: string;
   disabledTools?: string[];
+  mcpServers?: Record<string, McpServerConfig>;
+}
+
+export interface McpServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
 }
 
 export interface PluginsConfig {

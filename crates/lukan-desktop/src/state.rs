@@ -173,13 +173,12 @@ impl ChatState {
 
         // Register MCP tools if configured
         if !config.config.mcp_servers.is_empty() {
-            let result =
-                lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
+            let result = lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
             if result.tool_count > 0 {
-                tracing::info!(count = result.tool_count, "MCP tools registered");
+                log::info!("MCP tools registered: {}", result.tool_count);
             }
             for (server, err) in &result.errors {
-                tracing::warn!(server = %server, "MCP error: {err}");
+                log::warn!("MCP server {server}: {err}");
             }
             Box::leak(Box::new(result.manager));
         }
@@ -268,13 +267,15 @@ impl ChatState {
 
         // Register MCP tools if configured
         if !config.config.mcp_servers.is_empty() {
-            let result =
-                lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
+            let result = lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
             if result.tool_count > 0 {
-                tracing::info!(count = result.tool_count, "MCP tools registered (session restore)");
+                log::info!(
+                    "MCP tools registered (session restore): {}",
+                    result.tool_count
+                );
             }
             for (server, err) in &result.errors {
-                tracing::warn!(server = %server, "MCP error: {err}");
+                log::warn!("MCP server {server}: {err}");
             }
             Box::leak(Box::new(result.manager));
         }

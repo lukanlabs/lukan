@@ -109,6 +109,9 @@ package-plugins: bundle-plugins
 	@# Slack plugin
 	@cd plugins/slack/dist && tar czf ../../../dist/plugins/lukan-plugin-slack.tar.gz .
 	@echo "  Packaged: lukan-plugin-slack.tar.gz"
+	@# Discord plugin
+	@cd plugins/discord/dist && tar czf ../../../dist/plugins/lukan-plugin-discord.tar.gz .
+	@echo "  Packaged: lukan-plugin-discord.tar.gz"
 
 ## release: Build binary + bundle plugins + generate checksums
 release: build bundle-plugins package-plugins

@@ -1,0 +1,6 @@
+## Formatting — Discord
+- Use Discord's Markdown format: **bold**, *italic*, `code`, ```code blocks```.
+- Use bullet points for lists.
+- Keep responses concise — Discord has a 2000 character limit per message.
+- Use > for blockquotes.
+- Long responses will be split into multiple messages automatically.

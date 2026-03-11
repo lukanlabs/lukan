@@ -93,6 +93,15 @@ source = "archive"
 [plugins.slack.assets.all]
 url = "https://get.lukan.ai/plugins/lukan-plugin-slack.tar.gz"
 
+[plugins.discord]
+description = "Discord bot channel via Gateway WebSocket"
+version = "0.1.0"
+plugin_type = "channel"
+source = "archive"
+
+[plugins.discord.assets.all]
+url = "https://get.lukan.ai/plugins/lukan-plugin-discord.tar.gz"
+
 # ── Native plugins (platform-specific) ─────────────────────────────────
 
 [plugins.whisper]

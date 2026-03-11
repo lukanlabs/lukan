@@ -1,0 +1,9 @@
+{
+  "name": "lukan-plugin-discord",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "discord.js": "^14.16.0"
+  }
+}

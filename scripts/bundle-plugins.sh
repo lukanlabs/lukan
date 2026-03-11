@@ -175,6 +175,27 @@ bundle_slack() {
   ok "slack → dist/ (bridge.js)"
 }
 
+bundle_discord() {
+  local src="$PLUGINS_DIR/discord"
+  local dist="$src/dist"
+  info "Bundling discord plugin..."
+
+  # Install deps if needed
+  if [ ! -d "$src/node_modules" ]; then
+    (cd "$src" && bun install --frozen-lockfile 2>/dev/null || bun install)
+  fi
+
+  mkdir -p "$dist"
+
+  bun build "$src/bridge.js" --target=node --outfile="$dist/bridge.js" 2>/dev/null
+
+  cp "$src/plugin.toml" "$dist/"
+  cp "$src/prompt.txt" "$dist/"
+  cp "$src"/prompt-dir-*.txt "$dist/" 2>/dev/null || true
+
+  ok "discord → dist/ (bridge.js)"
+}
+
 bundle_nano_banana_pro() {
   local src="$PLUGINS_DIR/nano-banana-pro"
   local dist="$src/dist"
@@ -222,6 +243,9 @@ case "$TARGET" in
   slack|sk)
     bundle_slack
     ;;
+  discord|dc)
+    bundle_discord
+    ;;
   all)
     bundle_whatsapp
     bundle_email
@@ -232,10 +256,11 @@ case "$TARGET" in
     bundle_nano_banana_pro
     bundle_telegram
     bundle_slack
+    bundle_discord
     ;;
   *)
     err "Unknown plugin: $TARGET"
-    echo "Available: whatsapp, email, google-workspace, gmail, docker-monitor, security-monitor, nano-banana-pro, telegram, slack, all"
+    echo "Available: whatsapp, email, google-workspace, gmail, docker-monitor, security-monitor, nano-banana-pro, telegram, slack, discord, all"
     exit 1
     ;;
 esac

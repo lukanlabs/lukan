@@ -1,0 +1,75 @@
+[plugin]
+name = "discord"
+version = "0.1.0"
+description = "Discord bot channel via Gateway WebSocket"
+plugin_type = "channel"
+protocol_version = 1
+alias = "dc"
+
+[run]
+command = "node"
+args = ["bridge.js"]
+
+[auth]
+type = "token"
+check_field = "botToken"
+
+# Config schema
+[config.botToken]
+type = "string"
+label = "Bot Token"
+description = "Discord bot token from Developer Portal (https://discord.com/developers/applications)"
+format = "password"
+group = "Connection"
+order = 0
+
+[config.allowedChannels]
+type = "string[]"
+label = "Allowed Channels"
+description = "Discord channel IDs where the bot responds (leave empty to respond everywhere)"
+group = "Access Control"
+order = 0
+
+[config.allowedUsers]
+type = "string[]"
+label = "Allowed Users"
+description = "Discord user IDs allowed to interact (leave empty to allow all)"
+group = "Access Control"
+order = 1
+
+[config.prefix]
+type = "string"
+label = "Command Prefix"
+description = "Only messages starting with this prefix will be processed"
+group = "Connection"
+order = 1
+
+[config.replyInThread]
+type = "bool"
+label = "Reply in Thread"
+description = "Create/reply in threads instead of replying in the channel directly"
+default = true
+group = "Connection"
+order = 2
+
+[config.tools]
+type = "string[]"
+description = "Agent tools"
+hidden = true
+valid_values = [
+  "Bash",
+  "ReadFiles", "WriteFile", "EditFile",
+  "Grep", "Glob",
+  "WebFetch",
+]
+
+# Security policy
+[security]
+default_tools = ["Grep", "Glob", "ReadFiles", "WebFetch"]
+include_memory = true
+dir_restrictions = true
+dangerous_tools = ["Bash", "WriteFile", "EditFile"]
+
+[security.prompts]
+dir_none = "prompt-dir-none.txt"
+dir_allowed = "prompt-dir-allowed.txt"

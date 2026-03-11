@@ -193,7 +193,13 @@ bundle_discord() {
   cp "$src/prompt.txt" "$dist/"
   cp "$src"/prompt-dir-*.txt "$dist/" 2>/dev/null || true
 
-  ok "discord → dist/ (bridge.js)"
+  # Copy voice-helper binary if it exists
+  if [ -f "$src/voice-helper/build/voice-helper" ]; then
+    cp "$src/voice-helper/build/voice-helper" "$dist/"
+    ok "discord → dist/ (bridge.js + voice-helper)"
+  else
+    ok "discord → dist/ (bridge.js, no voice-helper binary)"
+  fi
 }
 
 bundle_nano_banana_pro() {

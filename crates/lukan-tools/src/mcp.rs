@@ -312,9 +312,7 @@ impl McpManager {
     /// Initialize all configured MCP servers and discover their tools.
     ///
     /// Returns a list of per-server errors alongside the successfully initialized manager.
-    pub async fn init(
-        configs: &HashMap<String, McpServerConfig>,
-    ) -> (Self, Vec<(String, String)>) {
+    pub async fn init(configs: &HashMap<String, McpServerConfig>) -> (Self, Vec<(String, String)>) {
         let mut clients = HashMap::new();
         let mut tool_defs = Vec::new();
         let mut errors: Vec<(String, String)> = Vec::new();

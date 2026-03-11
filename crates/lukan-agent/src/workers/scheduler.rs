@@ -434,8 +434,7 @@ async fn run_worker(
 
     // Register MCP tools if configured
     if !config.config.mcp_servers.is_empty() {
-        let result =
-            lukan_tools::init_mcp_tools(&mut registry, &config.config.mcp_servers).await;
+        let result = lukan_tools::init_mcp_tools(&mut registry, &config.config.mcp_servers).await;
         if result.tool_count > 0 {
             tracing::info!(count = result.tool_count, "MCP tools registered (worker)");
         }

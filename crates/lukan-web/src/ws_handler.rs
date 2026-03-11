@@ -1591,8 +1591,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
 
     // Register MCP tools if configured
     if !config.config.mcp_servers.is_empty() {
-        let result =
-            lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
+        let result = lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
         if result.tool_count > 0 {
             tracing::info!(count = result.tool_count, "MCP tools registered (web)");
         }
@@ -1689,10 +1688,12 @@ async fn create_agent_with_session(
 
     // Register MCP tools if configured
     if !config.config.mcp_servers.is_empty() {
-        let result =
-            lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
+        let result = lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
         if result.tool_count > 0 {
-            tracing::info!(count = result.tool_count, "MCP tools registered (web/session)");
+            tracing::info!(
+                count = result.tool_count,
+                "MCP tools registered (web/session)"
+            );
         }
         for (server, err) in &result.errors {
             tracing::warn!(server = %server, "MCP error: {err}");

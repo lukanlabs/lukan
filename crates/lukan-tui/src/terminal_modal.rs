@@ -1078,7 +1078,15 @@ impl TerminalModal {
             return;
         }
         if let Some(ref mut w) = self.writer {
-            let _ = w.write_all(text.as_bytes());
+            // Wrap in bracketed paste sequences so shells (bash, zsh) handle
+            // multi-byte UTF-8 and special characters correctly.
+            let _ = w.write_all(b"\x1b[200~");
+            // Write in chunks to avoid overflowing the PTY buffer (~4KB on Linux).
+            for chunk in text.as_bytes().chunks(4096) {
+                let _ = w.write_all(chunk);
+                let _ = w.flush();
+            }
+            let _ = w.write_all(b"\x1b[201~");
             let _ = w.flush();
         }
     }

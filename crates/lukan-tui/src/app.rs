@@ -3066,7 +3066,7 @@ impl App {
                                 && self.model_picker.is_none()
                                 && self.reasoning_picker.is_none()
                             {
-                                let char_count = text.len();
+                                let char_count = text.chars().count();
                                 let label = format!("[Pasted Content {char_count} chars]");
                                 let start = self.cursor_pos;
                                 self.input.insert_str(start, &text);
@@ -3855,7 +3855,10 @@ impl App {
             let result =
                 lukan_tools::init_mcp_tools(&mut tools, &self.config.config.mcp_servers).await;
             if result.tool_count > 0 {
-                tracing::info!(count = result.tool_count, "MCP tools registered (session restore)");
+                tracing::info!(
+                    count = result.tool_count,
+                    "MCP tools registered (session restore)"
+                );
             }
             for (server, err) in &result.errors {
                 tracing::warn!(server = %server, "MCP error: {err}");

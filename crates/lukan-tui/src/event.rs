@@ -45,7 +45,10 @@ pub fn spawn_event_reader(tx: mpsc::UnboundedSender<AppEvent>) {
                             break;
                         }
                     }
-                    _ => {}
+                    Ok(_) => {} // FocusGained, FocusLost, etc.
+                    Err(e) => {
+                        tracing::warn!("crossterm event::read() error: {e}");
+                    }
                 }
             } else {
                 // Send tick for animations/updates

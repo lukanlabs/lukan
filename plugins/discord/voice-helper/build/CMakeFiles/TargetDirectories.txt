@@ -1,0 +1,3 @@
+/home/enzo/kite-project/lukan/plugins/discord/voice-helper/build/CMakeFiles/voice-helper.dir
+/home/enzo/kite-project/lukan/plugins/discord/voice-helper/build/CMakeFiles/edit_cache.dir
+/home/enzo/kite-project/lukan/plugins/discord/voice-helper/build/CMakeFiles/rebuild_cache.dir

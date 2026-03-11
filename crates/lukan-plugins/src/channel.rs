@@ -349,3 +349,264 @@ fn load_permissions_sync(
     }
     lukan_core::config::types::PermissionsConfig::default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── DEFAULT_MAX_RESPONSE_LEN ─────────────────────────────────────
+
+    #[test]
+    fn test_default_max_response_len() {
+        assert_eq!(DEFAULT_MAX_RESPONSE_LEN, 4000);
+    }
+
+    // ── PluginMessage wire format (JSON lines protocol) ──────────────
+    // These tests verify the exact JSON format that plugins send over stdout.
+
+    #[test]
+    fn test_plugin_message_ready_from_json_line() {
+        let line = r#"{"type":"ready","version":"1.0.0","capabilities":["voice"]}"#;
+        let msg: PluginMessage = serde_json::from_str(line).unwrap();
+        match msg {
+            PluginMessage::Ready {
+                version,
+                capabilities,
+            } => {
+                assert_eq!(version, "1.0.0");
+                assert_eq!(capabilities, vec!["voice"]);
+            }
+            _ => panic!("Expected Ready"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_message_ready_empty_capabilities() {
+        let line = r#"{"type":"ready","version":"0.1.0"}"#;
+        let msg: PluginMessage = serde_json::from_str(line).unwrap();
+        match msg {
+            PluginMessage::Ready { capabilities, .. } => {
+                assert!(capabilities.is_empty());
+            }
+            _ => panic!("Expected Ready"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_message_channel_message_from_json_line() {
+        let line = r#"{"type":"channelMessage","requestId":"abc-123","sender":"Alice","channelId":"general","content":"Hello!"}"#;
+        let msg: PluginMessage = serde_json::from_str(line).unwrap();
+        match msg {
+            PluginMessage::ChannelMessage {
+                request_id,
+                sender,
+                channel_id,
+                content,
+            } => {
+                assert_eq!(request_id, "abc-123");
+                assert_eq!(sender, "Alice");
+                assert_eq!(channel_id, "general");
+                assert_eq!(content, "Hello!");
+            }
+            _ => panic!("Expected ChannelMessage"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_message_status_from_json_line() {
+        for (json_val, expected) in [
+            ("connected", PluginStatus::Connected),
+            ("disconnected", PluginStatus::Disconnected),
+            ("reconnecting", PluginStatus::Reconnecting),
+            ("authenticating", PluginStatus::Authenticating),
+        ] {
+            let line = format!(r#"{{"type":"status","status":"{json_val}"}}"#);
+            let msg: PluginMessage = serde_json::from_str(&line).unwrap();
+            match msg {
+                PluginMessage::Status { status } => assert_eq!(status, expected),
+                _ => panic!("Expected Status"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_plugin_message_log_from_json_line() {
+        let line = r#"{"type":"log","level":"warn","message":"low memory"}"#;
+        let msg: PluginMessage = serde_json::from_str(line).unwrap();
+        match msg {
+            PluginMessage::Log { level, message } => {
+                assert_eq!(level, LogLevel::Warn);
+                assert_eq!(message, "low memory");
+            }
+            _ => panic!("Expected Log"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_message_error_from_json_line() {
+        let line = r#"{"type":"error","message":"connection lost","recoverable":true}"#;
+        let msg: PluginMessage = serde_json::from_str(line).unwrap();
+        match msg {
+            PluginMessage::Error {
+                message,
+                recoverable,
+            } => {
+                assert_eq!(message, "connection lost");
+                assert!(recoverable);
+            }
+            _ => panic!("Expected Error"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_message_system_event_from_json_line() {
+        let line =
+            r#"{"type":"systemEvent","source":"discord","level":"info","detail":"bot started"}"#;
+        let msg: PluginMessage = serde_json::from_str(line).unwrap();
+        match msg {
+            PluginMessage::SystemEvent {
+                source,
+                level,
+                detail,
+            } => {
+                assert_eq!(source, "discord");
+                assert_eq!(level, "info");
+                assert_eq!(detail, "bot started");
+            }
+            _ => panic!("Expected SystemEvent"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_message_view_update_from_json_line() {
+        let line = r#"{"type":"viewUpdate","viewId":"overview","data":{"count":42}}"#;
+        let msg: PluginMessage = serde_json::from_str(line).unwrap();
+        match msg {
+            PluginMessage::ViewUpdate { view_id, data } => {
+                assert_eq!(view_id, "overview");
+                assert_eq!(data["count"], 42);
+            }
+            _ => panic!("Expected ViewUpdate"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_message_invalid_type_fails() {
+        let line = r#"{"type":"unknownType","foo":"bar"}"#;
+        let result = serde_json::from_str::<PluginMessage>(line);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_plugin_message_missing_type_fails() {
+        let line = r#"{"version":"1.0.0"}"#;
+        let result = serde_json::from_str::<PluginMessage>(line);
+        assert!(result.is_err());
+    }
+
+    // ── HostMessage wire format (JSON lines to plugin stdin) ─────────
+
+    #[test]
+    fn test_host_message_init_json_format() {
+        let msg = HostMessage::Init {
+            name: "test".into(),
+            config: serde_json::json!({"key": "value"}),
+            protocol_version: 1,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        // Verify the wire format matches what plugins expect
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["type"], "init");
+        assert_eq!(parsed["name"], "test");
+        assert_eq!(parsed["protocolVersion"], 1);
+        assert_eq!(parsed["config"]["key"], "value");
+    }
+
+    #[test]
+    fn test_host_message_agent_response_json_format() {
+        let msg = HostMessage::AgentResponse {
+            request_id: "req-1".into(),
+            text: "Here is the answer".into(),
+            is_error: false,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["type"], "agentResponse");
+        assert_eq!(parsed["requestId"], "req-1");
+        assert_eq!(parsed["isError"], false);
+    }
+
+    #[test]
+    fn test_host_message_shutdown_json_format() {
+        let msg = HostMessage::Shutdown;
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["type"], "shutdown");
+    }
+
+    #[test]
+    fn test_host_message_roundtrip() {
+        let messages = vec![
+            HostMessage::Init {
+                name: "plugin".into(),
+                config: serde_json::json!({}),
+                protocol_version: 1,
+            },
+            HostMessage::AgentResponse {
+                request_id: "r1".into(),
+                text: "ok".into(),
+                is_error: true,
+            },
+            HostMessage::Shutdown,
+        ];
+        for msg in messages {
+            let json = serde_json::to_string(&msg).unwrap();
+            let parsed: HostMessage = serde_json::from_str(&json).unwrap();
+            // Verify roundtrip by re-serializing
+            let json2 = serde_json::to_string(&parsed).unwrap();
+            assert_eq!(json, json2);
+        }
+    }
+
+    #[test]
+    fn test_plugin_message_roundtrip() {
+        let messages = vec![
+            PluginMessage::Ready {
+                version: "1.0.0".into(),
+                capabilities: vec!["voice".into()],
+            },
+            PluginMessage::ChannelMessage {
+                request_id: "r1".into(),
+                sender: "Bob".into(),
+                channel_id: "ch1".into(),
+                content: "test message".into(),
+            },
+            PluginMessage::Status {
+                status: PluginStatus::Connected,
+            },
+            PluginMessage::Log {
+                level: LogLevel::Error,
+                message: "oops".into(),
+            },
+            PluginMessage::Error {
+                message: "fatal".into(),
+                recoverable: false,
+            },
+            PluginMessage::SystemEvent {
+                source: "test".into(),
+                level: "warn".into(),
+                detail: "something".into(),
+            },
+            PluginMessage::ViewUpdate {
+                view_id: "v1".into(),
+                data: serde_json::json!({"items": [1, 2, 3]}),
+            },
+        ];
+        for msg in messages {
+            let json = serde_json::to_string(&msg).unwrap();
+            let parsed: PluginMessage = serde_json::from_str(&json).unwrap();
+            let json2 = serde_json::to_string(&parsed).unwrap();
+            assert_eq!(json, json2);
+        }
+    }
+}

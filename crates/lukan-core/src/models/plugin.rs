@@ -415,3 +415,326 @@ pub struct PluginRunConfig {
     /// Handler script filename (e.g. "tools.py"). Defaults to "tools.js" if absent.
     pub handler: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── ConfigFieldType ─────────────────────────────────────────────
+
+    #[test]
+    fn test_config_field_type_serde() {
+        assert_eq!(
+            serde_json::to_string(&ConfigFieldType::String).unwrap(),
+            r#""string""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ConfigFieldType::StringArray).unwrap(),
+            r#""string[]""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ConfigFieldType::Number).unwrap(),
+            r#""number""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ConfigFieldType::Bool).unwrap(),
+            r#""bool""#
+        );
+
+        let parsed: ConfigFieldType = serde_json::from_str(r#""string[]""#).unwrap();
+        assert_eq!(parsed, ConfigFieldType::StringArray);
+    }
+
+    #[test]
+    fn test_config_field_type_default() {
+        let ft = ConfigFieldType::default();
+        assert_eq!(ft, ConfigFieldType::String);
+    }
+
+    #[test]
+    fn test_config_field_type_invalid() {
+        let result = serde_json::from_str::<ConfigFieldType>(r#""invalid""#);
+        assert!(result.is_err());
+    }
+
+    // ── PluginStatus ────────────────────────────────────────────────
+
+    #[test]
+    fn test_plugin_status_serde() {
+        assert_eq!(
+            serde_json::to_string(&PluginStatus::Connected).unwrap(),
+            r#""connected""#
+        );
+        assert_eq!(
+            serde_json::to_string(&PluginStatus::Reconnecting).unwrap(),
+            r#""reconnecting""#
+        );
+        assert_eq!(
+            serde_json::to_string(&PluginStatus::Authenticating).unwrap(),
+            r#""authenticating""#
+        );
+
+        let parsed: PluginStatus = serde_json::from_str(r#""disconnected""#).unwrap();
+        assert_eq!(parsed, PluginStatus::Disconnected);
+    }
+
+    // ── LogLevel ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_log_level_serde() {
+        assert_eq!(
+            serde_json::to_string(&LogLevel::Debug).unwrap(),
+            r#""debug""#
+        );
+        assert_eq!(serde_json::to_string(&LogLevel::Info).unwrap(), r#""info""#);
+        assert_eq!(serde_json::to_string(&LogLevel::Warn).unwrap(), r#""warn""#);
+        assert_eq!(
+            serde_json::to_string(&LogLevel::Error).unwrap(),
+            r#""error""#
+        );
+    }
+
+    // ── HostMessage ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_host_message_init_serde() {
+        let msg = HostMessage::Init {
+            name: "whatsapp".into(),
+            config: serde_json::json!({"phone": "+123"}),
+            protocol_version: 1,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"init""#));
+        assert!(json.contains(r#""protocolVersion":1"#));
+
+        let parsed: HostMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            HostMessage::Init {
+                name,
+                protocol_version,
+                ..
+            } => {
+                assert_eq!(name, "whatsapp");
+                assert_eq!(protocol_version, 1);
+            }
+            _ => panic!("Expected Init"),
+        }
+    }
+
+    #[test]
+    fn test_host_message_agent_response_serde() {
+        let msg = HostMessage::AgentResponse {
+            request_id: "r1".into(),
+            text: "response text".into(),
+            is_error: false,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"agentResponse""#));
+        assert!(json.contains(r#""requestId":"r1""#));
+        assert!(json.contains(r#""isError":false"#));
+    }
+
+    #[test]
+    fn test_host_message_shutdown_serde() {
+        let msg = HostMessage::Shutdown;
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"shutdown""#));
+    }
+
+    // ── PluginMessage ───────────────────────────────────────────────
+
+    #[test]
+    fn test_plugin_message_ready_serde() {
+        let msg = PluginMessage::Ready {
+            version: "1.0.0".into(),
+            capabilities: vec!["voice".into()],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"ready""#));
+
+        let parsed: PluginMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            PluginMessage::Ready {
+                version,
+                capabilities,
+            } => {
+                assert_eq!(version, "1.0.0");
+                assert_eq!(capabilities, vec!["voice"]);
+            }
+            _ => panic!("Expected Ready"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_message_channel_message_serde() {
+        let msg = PluginMessage::ChannelMessage {
+            request_id: "r1".into(),
+            sender: "John".into(),
+            channel_id: "ch-1".into(),
+            content: "hello there".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""requestId":"r1""#));
+        assert!(json.contains(r#""channelId":"ch-1""#));
+    }
+
+    #[test]
+    fn test_plugin_message_error_serde() {
+        let msg = PluginMessage::Error {
+            message: "crash".into(),
+            recoverable: false,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"error""#));
+        assert!(json.contains(r#""recoverable":false"#));
+    }
+
+    #[test]
+    fn test_plugin_message_log_serde() {
+        let msg = PluginMessage::Log {
+            level: LogLevel::Warn,
+            message: "something odd".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""level":"warn""#));
+    }
+
+    // ── AuthDeclaration ─────────────────────────────────────────────
+
+    #[test]
+    fn test_auth_declaration_qr_defaults() {
+        let json = r#"{"type":"qr"}"#;
+        let auth: AuthDeclaration = serde_json::from_str(json).unwrap();
+        match auth {
+            AuthDeclaration::Qr {
+                qr_file,
+                status_file,
+            } => {
+                assert_eq!(qr_file, "current-qr.txt");
+                assert_eq!(status_file, "creds.json");
+            }
+            _ => panic!("Expected Qr"),
+        }
+    }
+
+    #[test]
+    fn test_auth_declaration_token_default() {
+        let json = r#"{"type":"token"}"#;
+        let auth: AuthDeclaration = serde_json::from_str(json).unwrap();
+        match auth {
+            AuthDeclaration::Token { check_field } => {
+                assert_eq!(check_field, "access_token");
+            }
+            _ => panic!("Expected Token"),
+        }
+    }
+
+    #[test]
+    fn test_auth_declaration_command() {
+        let json = r#"{"type":"command"}"#;
+        let auth: AuthDeclaration = serde_json::from_str(json).unwrap();
+        assert!(matches!(auth, AuthDeclaration::Command));
+    }
+
+    // ── PluginManifest ──────────────────────────────────────────────
+
+    #[test]
+    fn test_plugin_manifest_toml_parse() {
+        let toml_str = r#"
+            [plugin]
+            name = "test-plugin"
+            version = "0.1.0"
+            description = "A test plugin"
+
+            [run]
+            command = "node"
+            args = ["index.js"]
+
+            [config.api_key]
+            type = "string"
+            description = "API key"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(manifest.plugin.name, "test-plugin");
+        assert_eq!(manifest.plugin.version, "0.1.0");
+        assert!(manifest.run.is_some());
+        let run = manifest.run.unwrap();
+        assert_eq!(run.command, "node");
+        assert_eq!(run.args, vec!["index.js"]);
+        assert!(manifest.config.contains_key("api_key"));
+    }
+
+    #[test]
+    fn test_plugin_manifest_defaults() {
+        let toml_str = r#"
+            [plugin]
+            name = "minimal"
+            version = "0.1.0"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(manifest.plugin.plugin_type, "channel");
+        assert_eq!(manifest.plugin.protocol_version, PROTOCOL_VERSION);
+        assert!(manifest.run.is_none());
+        assert!(manifest.config.is_empty());
+        assert!(manifest.commands.is_empty());
+        assert!(manifest.auth.is_none());
+    }
+
+    #[test]
+    fn test_inject_security_config_dir_restrictions() {
+        let toml_str = r#"
+            [plugin]
+            name = "secured"
+            version = "0.1.0"
+
+            [security]
+            dir_restrictions = true
+            default_tools = ["Bash", "ReadFiles"]
+        "#;
+        let mut manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert!(!manifest.config.contains_key("allowed_dirs"));
+        assert!(!manifest.config.contains_key("tools"));
+
+        manifest.inject_security_config();
+
+        assert!(manifest.config.contains_key("allowed_dirs"));
+        assert_eq!(
+            manifest.config["allowed_dirs"].field_type,
+            ConfigFieldType::StringArray
+        );
+        assert!(manifest.config.contains_key("skip_dir_restrictions"));
+        assert!(manifest.config.contains_key("tools"));
+    }
+
+    #[test]
+    fn test_inject_security_config_no_dir_restrictions() {
+        let toml_str = r#"
+            [plugin]
+            name = "open"
+            version = "0.1.0"
+        "#;
+        let mut manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        manifest.inject_security_config();
+        // Should not inject anything since dir_restrictions is false
+        assert!(!manifest.config.contains_key("allowed_dirs"));
+        assert!(!manifest.config.contains_key("tools"));
+    }
+
+    // ── TranscriptionContribution ───────────────────────────────────
+
+    #[test]
+    fn test_transcription_contribution_defaults() {
+        let json = r#"{}"#;
+        let tc: TranscriptionContribution = serde_json::from_str(json).unwrap();
+        assert_eq!(tc.port_field, "port");
+        assert_eq!(tc.default_port, 8787);
+        assert_eq!(tc.endpoint, "/v1/audio/transcriptions");
+    }
+
+    // ── PROTOCOL_VERSION ────────────────────────────────────────────
+
+    #[test]
+    fn test_protocol_version_is_1() {
+        assert_eq!(PROTOCOL_VERSION, 1);
+    }
+}

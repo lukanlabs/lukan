@@ -53,3 +53,90 @@ impl ToolResult {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::checkpoints::FileOperation;
+    use super::*;
+
+    #[test]
+    fn test_tool_definition_serde() {
+        let def = ToolDefinition {
+            name: "Bash".into(),
+            description: "Execute a shell command".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"}
+                }
+            }),
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains(r#""name":"Bash""#));
+        assert!(json.contains(r#""inputSchema""#));
+
+        let parsed: ToolDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "Bash");
+        assert_eq!(parsed.description, "Execute a shell command");
+    }
+
+    #[test]
+    fn test_tool_result_success() {
+        let result = ToolResult::success("file created");
+        assert_eq!(result.content, "file created");
+        assert!(!result.is_error);
+        assert!(result.diff.is_none());
+        assert!(result.image.is_none());
+        assert!(result.snapshot.is_none());
+    }
+
+    #[test]
+    fn test_tool_result_error() {
+        let result = ToolResult::error("command failed");
+        assert_eq!(result.content, "command failed");
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn test_tool_result_with_diff() {
+        let result = ToolResult::success("edited").with_diff("--- a\n+++ b\n".into());
+        assert_eq!(result.diff.as_deref(), Some("--- a\n+++ b\n"));
+        assert!(!result.is_error);
+    }
+
+    #[test]
+    fn test_tool_result_with_snapshot() {
+        let snapshot = FileSnapshot {
+            path: "/tmp/test.txt".into(),
+            operation: FileOperation::Created,
+            before: None,
+            after: Some("content".into()),
+            diff: None,
+            additions: 1,
+            deletions: 0,
+        };
+        let result = ToolResult::success("created").with_snapshot(snapshot);
+        assert!(result.snapshot.is_some());
+        assert_eq!(result.snapshot.unwrap().path, "/tmp/test.txt");
+    }
+
+    #[test]
+    fn test_tool_result_chaining() {
+        let snapshot = FileSnapshot {
+            path: "/tmp/f.txt".into(),
+            operation: FileOperation::Modified,
+            before: Some("old".into()),
+            after: Some("new".into()),
+            diff: Some("diff".into()),
+            additions: 1,
+            deletions: 1,
+        };
+        let result = ToolResult::success("done")
+            .with_diff("diff-text".into())
+            .with_snapshot(snapshot);
+        assert_eq!(result.content, "done");
+        assert!(!result.is_error);
+        assert_eq!(result.diff.as_deref(), Some("diff-text"));
+        assert!(result.snapshot.is_some());
+    }
+}

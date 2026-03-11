@@ -290,3 +290,196 @@ async fn list_dir_contents(dir: &Path) -> Vec<String> {
     }
     names
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Registry TOML parsing ────────────────────────────────────────
+
+    #[test]
+    fn test_registry_file_parse_full() {
+        let toml_str = r#"
+            [meta]
+            version = 1
+            registry_url = "https://example.com/registry.toml"
+
+            [plugins.whatsapp]
+            description = "WhatsApp channel"
+            version = "0.3.0"
+            plugin_type = "channel"
+            source = "archive"
+
+            [plugins.whatsapp.assets.all]
+            url = "https://example.com/whatsapp-0.3.0.tar.gz"
+
+            [plugins.whisper]
+            description = "Local whisper transcription"
+            version = "0.1.0"
+            plugin_type = "service"
+            source = "binary"
+
+            [plugins.whisper.assets.linux-x86_64]
+            url = "https://example.com/whisper-linux-x86_64.tar.gz"
+            binary = "lukan-whisper"
+
+            [plugins.whisper.assets.macos-aarch64]
+            url = "https://example.com/whisper-macos-aarch64.tar.gz"
+            binary = "lukan-whisper"
+        "#;
+
+        let registry: RegistryFile = toml::from_str(toml_str).unwrap();
+        assert_eq!(registry.meta.version, 1);
+        assert_eq!(
+            registry.meta.registry_url.as_deref(),
+            Some("https://example.com/registry.toml")
+        );
+        assert_eq!(registry.plugins.len(), 2);
+
+        let wa = &registry.plugins["whatsapp"];
+        assert_eq!(wa.description, "WhatsApp channel");
+        assert_eq!(wa.version, "0.3.0");
+        assert_eq!(wa.plugin_type, "channel");
+        assert_eq!(wa.source, "archive");
+        assert_eq!(wa.assets.len(), 1);
+        assert!(wa.assets.contains_key("all"));
+
+        let whisper = &registry.plugins["whisper"];
+        assert_eq!(whisper.source, "binary");
+        assert_eq!(whisper.assets.len(), 2);
+        let linux_asset = &whisper.assets["linux-x86_64"];
+        assert_eq!(linux_asset.binary.as_deref(), Some("lukan-whisper"));
+    }
+
+    #[test]
+    fn test_registry_file_parse_minimal() {
+        let toml_str = r#"
+            [meta]
+            version = 1
+
+            [plugins.test]
+            description = "test"
+            version = "0.0.1"
+            plugin_type = "channel"
+            source = "archive"
+        "#;
+
+        let registry: RegistryFile = toml::from_str(toml_str).unwrap();
+        assert_eq!(registry.meta.version, 1);
+        assert!(registry.meta.registry_url.is_none());
+        assert_eq!(registry.plugins.len(), 1);
+        let p = &registry.plugins["test"];
+        assert!(p.assets.is_empty());
+    }
+
+    #[test]
+    fn test_registry_file_parse_missing_meta_fails() {
+        let toml_str = r#"
+            [plugins.test]
+            description = "test"
+            version = "0.0.1"
+            plugin_type = "channel"
+            source = "archive"
+        "#;
+        let result = toml::from_str::<RegistryFile>(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_registry_file_parse_missing_required_plugin_field_fails() {
+        let toml_str = r#"
+            [meta]
+            version = 1
+
+            [plugins.test]
+            description = "test"
+            version = "0.0.1"
+        "#;
+        // Missing plugin_type and source
+        let result = toml::from_str::<RegistryFile>(toml_str);
+        assert!(result.is_err());
+    }
+
+    // ── RegistryPlugin ───────────────────────────────────────────────
+
+    #[test]
+    fn test_registry_plugin_clone() {
+        let plugin = RegistryPlugin {
+            description: "desc".into(),
+            version: "1.0.0".into(),
+            plugin_type: "channel".into(),
+            source: "archive".into(),
+            assets: HashMap::new(),
+        };
+        let cloned = plugin.clone();
+        assert_eq!(cloned.description, "desc");
+        assert_eq!(cloned.version, "1.0.0");
+    }
+
+    // ── PluginAsset ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_plugin_asset_with_binary() {
+        let toml_str = r#"
+            url = "https://example.com/plugin.tar.gz"
+            binary = "my-binary"
+        "#;
+        let asset: PluginAsset = toml::from_str(toml_str).unwrap();
+        assert_eq!(asset.url, "https://example.com/plugin.tar.gz");
+        assert_eq!(asset.binary.as_deref(), Some("my-binary"));
+    }
+
+    #[test]
+    fn test_plugin_asset_without_binary() {
+        let toml_str = r#"
+            url = "https://example.com/plugin.tar.gz"
+        "#;
+        let asset: PluginAsset = toml::from_str(toml_str).unwrap();
+        assert_eq!(asset.url, "https://example.com/plugin.tar.gz");
+        assert!(asset.binary.is_none());
+    }
+
+    #[test]
+    fn test_plugin_asset_missing_url_fails() {
+        let toml_str = r#"
+            binary = "my-binary"
+        "#;
+        let result = toml::from_str::<PluginAsset>(toml_str);
+        assert!(result.is_err());
+    }
+
+    // ── current_platform ─────────────────────────────────────────────
+
+    #[test]
+    fn test_current_platform_format() {
+        let platform = current_platform();
+        // Should contain a dash separating OS and arch
+        assert!(
+            platform.contains('-'),
+            "platform should be os-arch: {platform}"
+        );
+        let parts: Vec<&str> = platform.split('-').collect();
+        assert_eq!(parts.len(), 2);
+        // OS should be a known value
+        assert!(
+            ["linux", "macos", "windows"].contains(&parts[0]),
+            "unexpected OS: {}",
+            parts[0]
+        );
+        // Arch should be mapped correctly
+        assert!(
+            ["x86_64", "aarch64"].contains(&parts[1])
+                || !["x86_64", "x86", "aarch64"].contains(&std::env::consts::ARCH),
+            "unexpected arch: {}",
+            parts[1]
+        );
+    }
+
+    // ── DEFAULT_REGISTRY_URL ─────────────────────────────────────────
+
+    #[test]
+    fn test_default_registry_url() {
+        assert!(DEFAULT_REGISTRY_URL.starts_with("https://"));
+        assert!(DEFAULT_REGISTRY_URL.ends_with(".toml"));
+    }
+}

@@ -252,3 +252,137 @@ impl Tool for EditFileTool {
             .with_snapshot(snapshot))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn single_edit<'a>(old: &'a str, new: &'a str, replace_all: bool) -> SingleEdit<'a> {
+        SingleEdit {
+            old_text: old,
+            new_text: new,
+            replace_all,
+        }
+    }
+
+    #[test]
+    fn apply_edit_simple_replacement() {
+        let content = "hello world";
+        let edit = single_edit("hello", "goodbye", false);
+        let result = apply_edit(content, &edit, "test.rs").unwrap();
+        assert_eq!(result, "goodbye world");
+    }
+
+    #[test]
+    fn apply_edit_not_found() {
+        let content = "hello world";
+        let edit = single_edit("missing", "replacement", false);
+        let err = apply_edit(content, &edit, "test.rs").unwrap_err();
+        assert!(err.contains("old_text not found"));
+        assert!(err.contains("test.rs"));
+    }
+
+    #[test]
+    fn apply_edit_duplicate_without_replace_all() {
+        let content = "foo bar foo baz";
+        let edit = single_edit("foo", "qux", false);
+        let err = apply_edit(content, &edit, "test.rs").unwrap_err();
+        assert!(err.contains("found 2 times"));
+        assert!(err.contains("replace_all: true"));
+    }
+
+    #[test]
+    fn apply_edit_replace_all_replaces_all_occurrences() {
+        let content = "foo bar foo baz foo";
+        let edit = single_edit("foo", "qux", true);
+        let result = apply_edit(content, &edit, "test.rs").unwrap();
+        assert_eq!(result, "qux bar qux baz qux");
+    }
+
+    #[test]
+    fn apply_edit_replace_all_single_occurrence() {
+        let content = "hello world";
+        let edit = single_edit("hello", "goodbye", true);
+        let result = apply_edit(content, &edit, "test.rs").unwrap();
+        assert_eq!(result, "goodbye world");
+    }
+
+    #[test]
+    fn apply_edit_multiline_content() {
+        let content = "line 1\nline 2\nline 3\n";
+        let edit = single_edit("line 2", "replaced line", false);
+        let result = apply_edit(content, &edit, "test.rs").unwrap();
+        assert_eq!(result, "line 1\nreplaced line\nline 3\n");
+    }
+
+    #[test]
+    fn apply_edit_preserves_whitespace() {
+        let content = "    indented code\n        more indented\n";
+        let edit = single_edit("    indented code", "    new code", false);
+        let result = apply_edit(content, &edit, "test.rs").unwrap();
+        assert_eq!(result, "    new code\n        more indented\n");
+    }
+
+    #[test]
+    fn apply_edit_empty_new_text_deletes() {
+        let content = "before middle after";
+        let edit = single_edit("middle ", "", false);
+        let result = apply_edit(content, &edit, "test.rs").unwrap();
+        assert_eq!(result, "before after");
+    }
+
+    #[test]
+    fn apply_edit_empty_old_text_not_found_in_empty_content() {
+        // Empty old_text matches everywhere (0-length match appears content.len()+1 times)
+        // but since content is non-empty, "" matches many times
+        let content = "abc";
+        let edit = single_edit("", "x", false);
+        // "" matches 4 times in "abc" (before a, before b, before c, at end)
+        let err = apply_edit(content, &edit, "test.rs").unwrap_err();
+        assert!(err.contains("found") && err.contains("times"));
+    }
+
+    #[test]
+    fn apply_edit_replaces_only_first_when_not_replace_all() {
+        // Even with replace_all=false, if there's exactly 1 match it works
+        let content = "unique text here";
+        let edit = single_edit("unique text", "changed text", false);
+        let result = apply_edit(content, &edit, "test.rs").unwrap();
+        assert_eq!(result, "changed text here");
+    }
+
+    // ── Tool metadata tests ──────────────────────────────────────────
+
+    #[test]
+    fn edit_file_tool_name() {
+        let tool = EditFileTool;
+        assert_eq!(Tool::name(&tool), "EditFile");
+    }
+
+    #[test]
+    fn edit_file_tool_description_not_empty() {
+        let tool = EditFileTool;
+        assert!(!Tool::description(&tool).is_empty());
+    }
+
+    #[test]
+    fn edit_file_tool_schema_has_file_path() {
+        let tool = EditFileTool;
+        let schema = tool.input_schema();
+        let props = schema.get("properties").unwrap();
+        assert!(props.get("file_path").is_some());
+        assert!(props.get("old_text").is_some());
+        assert!(props.get("new_text").is_some());
+        assert!(props.get("replace_all").is_some());
+        assert!(props.get("edits").is_some());
+    }
+
+    #[test]
+    fn edit_file_tool_required_fields() {
+        let tool = EditFileTool;
+        let schema = tool.input_schema();
+        let required = schema.get("required").unwrap().as_array().unwrap();
+        let required_strs: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(required_strs.contains(&"file_path"));
+    }
+}

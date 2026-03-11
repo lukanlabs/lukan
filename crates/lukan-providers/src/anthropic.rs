@@ -538,3 +538,398 @@ struct AnthropicModelRaw {
     display_name: String,
     created_at: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lukan_core::models::messages::{ContentBlock, ImageSource, Message, MessageContent};
+    use lukan_core::models::tools::ToolDefinition;
+    use serde_json::json;
+
+    fn make_provider() -> AnthropicProvider {
+        AnthropicProvider::new("test-key".into(), "claude-test".into(), 4096)
+    }
+
+    // ── map_stop_reason ───────────────────────────────────────────────
+
+    #[test]
+    fn map_stop_reason_end_turn() {
+        assert_eq!(
+            AnthropicProvider::map_stop_reason(Some("end_turn")),
+            StopReason::EndTurn
+        );
+    }
+
+    #[test]
+    fn map_stop_reason_tool_use() {
+        assert_eq!(
+            AnthropicProvider::map_stop_reason(Some("tool_use")),
+            StopReason::ToolUse
+        );
+    }
+
+    #[test]
+    fn map_stop_reason_max_tokens() {
+        assert_eq!(
+            AnthropicProvider::map_stop_reason(Some("max_tokens")),
+            StopReason::MaxTokens
+        );
+    }
+
+    #[test]
+    fn map_stop_reason_unknown_defaults_to_end_turn() {
+        assert_eq!(
+            AnthropicProvider::map_stop_reason(Some("unknown")),
+            StopReason::EndTurn
+        );
+        assert_eq!(
+            AnthropicProvider::map_stop_reason(None),
+            StopReason::EndTurn
+        );
+    }
+
+    // ── build_system_blocks ───────────────────────────────────────────
+
+    #[test]
+    fn build_system_blocks_text() {
+        let p = make_provider();
+        let blocks = p.build_system_blocks(&SystemPrompt::Text("Hello system".into()));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "Hello system");
+        assert!(blocks[0].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn build_system_blocks_structured() {
+        let p = make_provider();
+        let blocks = p.build_system_blocks(&SystemPrompt::Structured {
+            cached: vec!["block1".into(), "block2".into()],
+            dynamic: "dynamic content".into(),
+        });
+        assert_eq!(blocks.len(), 3);
+        // First cached block: no cache_control
+        assert!(blocks[0].get("cache_control").is_none());
+        assert_eq!(blocks[0]["text"], "block1");
+        // Last cached block: has cache_control
+        assert_eq!(blocks[1]["cache_control"]["type"], "ephemeral");
+        assert_eq!(blocks[1]["text"], "block2");
+        // Dynamic block
+        assert_eq!(blocks[2]["text"], "dynamic content");
+        assert!(blocks[2].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn build_system_blocks_structured_empty_dynamic() {
+        let p = make_provider();
+        let blocks = p.build_system_blocks(&SystemPrompt::Structured {
+            cached: vec!["only cached".into()],
+            dynamic: String::new(),
+        });
+        // Empty dynamic should not produce a block
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["text"], "only cached");
+        assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
+    }
+
+    // ── convert_messages ──────────────────────────────────────────────
+
+    #[test]
+    fn convert_messages_user_text() {
+        let p = make_provider();
+        let msgs = vec![Message::user("Hello")];
+        let result = p.convert_messages(&msgs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "user");
+        assert_eq!(result[0]["content"], "Hello");
+    }
+
+    #[test]
+    fn convert_messages_assistant_text() {
+        let p = make_provider();
+        let msgs = vec![Message::assistant("Response")];
+        let result = p.convert_messages(&msgs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "assistant");
+        assert_eq!(result[0]["content"], "Response");
+    }
+
+    #[test]
+    fn convert_messages_tool_result() {
+        let p = make_provider();
+        let msgs = vec![Message {
+            role: Role::Tool,
+            content: MessageContent::Text("tool output".into()),
+            tool_call_id: Some("call_123".into()),
+            name: None,
+        }];
+        let result = p.convert_messages(&msgs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "user");
+        let content = result[0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "call_123");
+        assert_eq!(content[0]["content"], "tool output");
+    }
+
+    // ── convert_content_blocks ────────────────────────────────────────
+
+    #[test]
+    fn convert_content_blocks_text() {
+        let p = make_provider();
+        let blocks = vec![ContentBlock::Text {
+            text: "hello".into(),
+        }];
+        let result = p.convert_content_blocks(&blocks);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["type"], "text");
+        assert_eq!(result[0]["text"], "hello");
+    }
+
+    #[test]
+    fn convert_content_blocks_skips_empty_text() {
+        let p = make_provider();
+        let blocks = vec![ContentBlock::Text {
+            text: String::new(),
+        }];
+        let result = p.convert_content_blocks(&blocks);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn convert_content_blocks_tool_use() {
+        let p = make_provider();
+        let blocks = vec![ContentBlock::ToolUse {
+            id: "tool_1".into(),
+            name: "bash".into(),
+            input: json!({"command": "ls"}),
+        }];
+        let result = p.convert_content_blocks(&blocks);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["type"], "tool_use");
+        assert_eq!(result[0]["id"], "tool_1");
+        assert_eq!(result[0]["name"], "bash");
+        assert_eq!(result[0]["input"]["command"], "ls");
+    }
+
+    #[test]
+    fn convert_content_blocks_tool_result_with_error() {
+        let p = make_provider();
+        let blocks = vec![ContentBlock::ToolResult {
+            tool_use_id: "tool_1".into(),
+            content: "failed".into(),
+            is_error: Some(true),
+            diff: None,
+            image: None,
+        }];
+        let result = p.convert_content_blocks(&blocks);
+        assert_eq!(result[0]["type"], "tool_result");
+        assert_eq!(result[0]["is_error"], true);
+    }
+
+    #[test]
+    fn convert_content_blocks_tool_result_without_error() {
+        let p = make_provider();
+        let blocks = vec![ContentBlock::ToolResult {
+            tool_use_id: "tool_1".into(),
+            content: "ok".into(),
+            is_error: None,
+            diff: None,
+            image: None,
+        }];
+        let result = p.convert_content_blocks(&blocks);
+        assert!(result[0].get("is_error").is_none());
+    }
+
+    #[test]
+    fn convert_content_blocks_image_url() {
+        let p = make_provider();
+        let blocks = vec![ContentBlock::Image {
+            source: ImageSource::Url,
+            data: "https://example.com/img.png".into(),
+            media_type: None,
+        }];
+        let result = p.convert_content_blocks(&blocks);
+        assert_eq!(result[0]["type"], "image");
+        assert_eq!(result[0]["source"]["type"], "url");
+        assert_eq!(result[0]["source"]["url"], "https://example.com/img.png");
+    }
+
+    #[test]
+    fn convert_content_blocks_image_base64() {
+        let p = make_provider();
+        let blocks = vec![ContentBlock::Image {
+            source: ImageSource::Base64,
+            data: "abc123".into(),
+            media_type: Some("image/png".into()),
+        }];
+        let result = p.convert_content_blocks(&blocks);
+        assert_eq!(result[0]["source"]["type"], "base64");
+        assert_eq!(result[0]["source"]["media_type"], "image/png");
+        assert_eq!(result[0]["source"]["data"], "abc123");
+    }
+
+    #[test]
+    fn convert_content_blocks_skips_thinking() {
+        let p = make_provider();
+        let blocks = vec![ContentBlock::Thinking {
+            text: "reasoning".into(),
+        }];
+        let result = p.convert_content_blocks(&blocks);
+        assert!(result.is_empty());
+    }
+
+    // ── convert_tools ─────────────────────────────────────────────────
+
+    #[test]
+    fn convert_tools_cache_on_last() {
+        let p = make_provider();
+        let tools = vec![
+            ToolDefinition {
+                name: "bash".into(),
+                description: "Run commands".into(),
+                input_schema: json!({"type": "object"}),
+            },
+            ToolDefinition {
+                name: "read".into(),
+                description: "Read files".into(),
+                input_schema: json!({"type": "object"}),
+            },
+        ];
+        let result = p.convert_tools(&tools);
+        assert_eq!(result.len(), 2);
+        // First tool: no cache_control
+        assert!(result[0].get("cache_control").is_none());
+        // Last tool: has cache_control
+        assert_eq!(result[1]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn convert_tools_single_tool_gets_cache() {
+        let p = make_provider();
+        let tools = vec![ToolDefinition {
+            name: "bash".into(),
+            description: "Run".into(),
+            input_schema: json!({}),
+        }];
+        let result = p.convert_tools(&tools);
+        assert_eq!(result[0]["cache_control"]["type"], "ephemeral");
+    }
+
+    // ── SSE type deserialization ──────────────────────────────────────
+
+    #[test]
+    fn deserialize_message_start() {
+        let json_str = r#"{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_creation_input_tokens":50,"cache_read_input_tokens":25}}}"#;
+        let event: AnthropicStreamEvent = serde_json::from_str(json_str).unwrap();
+        match event {
+            AnthropicStreamEvent::MessageStart { message } => {
+                let usage = message.usage.unwrap();
+                assert_eq!(usage.input_tokens, Some(100));
+                assert_eq!(usage.cache_creation_input_tokens, Some(50));
+                assert_eq!(usage.cache_read_input_tokens, Some(25));
+            }
+            _ => panic!("Expected MessageStart"),
+        }
+    }
+
+    #[test]
+    fn deserialize_content_block_start_tool_use() {
+        let json_str = r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_123","name":"bash"}}"#;
+        let event: AnthropicStreamEvent = serde_json::from_str(json_str).unwrap();
+        match event {
+            AnthropicStreamEvent::ContentBlockStart {
+                index,
+                content_block,
+            } => {
+                assert_eq!(index, 0);
+                assert_eq!(content_block.r#type, "tool_use");
+                assert_eq!(content_block.id.unwrap(), "toolu_123");
+                assert_eq!(content_block.name.unwrap(), "bash");
+            }
+            _ => panic!("Expected ContentBlockStart"),
+        }
+    }
+
+    #[test]
+    fn deserialize_content_block_delta_text() {
+        let json_str = r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#;
+        let event: AnthropicStreamEvent = serde_json::from_str(json_str).unwrap();
+        match event {
+            AnthropicStreamEvent::ContentBlockDelta { delta, .. } => {
+                assert_eq!(delta.r#type, "text_delta");
+                assert_eq!(delta.text.unwrap(), "Hello");
+            }
+            _ => panic!("Expected ContentBlockDelta"),
+        }
+    }
+
+    #[test]
+    fn deserialize_content_block_delta_input_json() {
+        let json_str = r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":"}}"#;
+        let event: AnthropicStreamEvent = serde_json::from_str(json_str).unwrap();
+        match event {
+            AnthropicStreamEvent::ContentBlockDelta { delta, .. } => {
+                assert_eq!(delta.r#type, "input_json_delta");
+                assert_eq!(delta.partial_json.unwrap(), "{\"cmd\":");
+            }
+            _ => panic!("Expected ContentBlockDelta"),
+        }
+    }
+
+    #[test]
+    fn deserialize_message_delta() {
+        let json_str = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}"#;
+        let event: AnthropicStreamEvent = serde_json::from_str(json_str).unwrap();
+        match event {
+            AnthropicStreamEvent::MessageDelta { delta, usage } => {
+                assert_eq!(delta.stop_reason.unwrap(), "end_turn");
+                assert_eq!(usage.unwrap().output_tokens, Some(42));
+            }
+            _ => panic!("Expected MessageDelta"),
+        }
+    }
+
+    #[test]
+    fn deserialize_ping() {
+        let json_str = r#"{"type":"ping"}"#;
+        let event: AnthropicStreamEvent = serde_json::from_str(json_str).unwrap();
+        assert!(matches!(event, AnthropicStreamEvent::Ping));
+    }
+
+    #[test]
+    fn deserialize_error() {
+        let json_str =
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"API is overloaded"}}"#;
+        let event: AnthropicStreamEvent = serde_json::from_str(json_str).unwrap();
+        match event {
+            AnthropicStreamEvent::Error { error } => {
+                assert_eq!(error.r#type, "overloaded_error");
+                assert_eq!(error.message, "API is overloaded");
+            }
+            _ => panic!("Expected Error"),
+        }
+    }
+
+    #[test]
+    fn deserialize_message_stop() {
+        let json_str = r#"{"type":"message_stop"}"#;
+        let event: AnthropicStreamEvent = serde_json::from_str(json_str).unwrap();
+        assert!(matches!(event, AnthropicStreamEvent::MessageStop));
+    }
+
+    // ── AnthropicModel serialization ──────────────────────────────────
+
+    #[test]
+    fn anthropic_model_roundtrip() {
+        let model = AnthropicModel {
+            id: "claude-3-opus".into(),
+            display_name: "Claude 3 Opus".into(),
+            created_at: "2024-01-01".into(),
+        };
+        let json = serde_json::to_value(&model).unwrap();
+        assert_eq!(json["id"], "claude-3-opus");
+        let deserialized: AnthropicModel = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.id, "claude-3-opus");
+    }
+}

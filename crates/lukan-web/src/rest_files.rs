@@ -309,6 +309,228 @@ pub async fn write_file(Json(body): Json<WriteFileBody>) -> impl IntoResponse {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- language_from_ext ---
+
+    #[test]
+    fn test_language_from_ext_rust() {
+        assert_eq!(language_from_ext("rs"), Some("rust"));
+    }
+
+    #[test]
+    fn test_language_from_ext_typescript() {
+        assert_eq!(language_from_ext("ts"), Some("typescript"));
+        assert_eq!(language_from_ext("tsx"), Some("typescript"));
+    }
+
+    #[test]
+    fn test_language_from_ext_javascript() {
+        assert_eq!(language_from_ext("js"), Some("javascript"));
+        assert_eq!(language_from_ext("jsx"), Some("javascript"));
+    }
+
+    #[test]
+    fn test_language_from_ext_python() {
+        assert_eq!(language_from_ext("py"), Some("python"));
+    }
+
+    #[test]
+    fn test_language_from_ext_go() {
+        assert_eq!(language_from_ext("go"), Some("go"));
+    }
+
+    #[test]
+    fn test_language_from_ext_java() {
+        assert_eq!(language_from_ext("java"), Some("java"));
+    }
+
+    #[test]
+    fn test_language_from_ext_c_family() {
+        assert_eq!(language_from_ext("c"), Some("c"));
+        assert_eq!(language_from_ext("h"), Some("c"));
+        assert_eq!(language_from_ext("cpp"), Some("cpp"));
+        assert_eq!(language_from_ext("cc"), Some("cpp"));
+        assert_eq!(language_from_ext("cxx"), Some("cpp"));
+        assert_eq!(language_from_ext("hpp"), Some("cpp"));
+    }
+
+    #[test]
+    fn test_language_from_ext_csharp() {
+        assert_eq!(language_from_ext("cs"), Some("csharp"));
+    }
+
+    #[test]
+    fn test_language_from_ext_scripting() {
+        assert_eq!(language_from_ext("rb"), Some("ruby"));
+        assert_eq!(language_from_ext("php"), Some("php"));
+        assert_eq!(language_from_ext("lua"), Some("lua"));
+        assert_eq!(language_from_ext("r"), Some("r"));
+    }
+
+    #[test]
+    fn test_language_from_ext_shell() {
+        assert_eq!(language_from_ext("sh"), Some("bash"));
+        assert_eq!(language_from_ext("bash"), Some("bash"));
+        assert_eq!(language_from_ext("zsh"), Some("bash"));
+    }
+
+    #[test]
+    fn test_language_from_ext_config() {
+        assert_eq!(language_from_ext("json"), Some("json"));
+        assert_eq!(language_from_ext("toml"), Some("toml"));
+        assert_eq!(language_from_ext("yaml"), Some("yaml"));
+        assert_eq!(language_from_ext("yml"), Some("yaml"));
+        assert_eq!(language_from_ext("xml"), Some("xml"));
+    }
+
+    #[test]
+    fn test_language_from_ext_web() {
+        assert_eq!(language_from_ext("html"), Some("html"));
+        assert_eq!(language_from_ext("htm"), Some("html"));
+        assert_eq!(language_from_ext("css"), Some("css"));
+        assert_eq!(language_from_ext("scss"), Some("scss"));
+        assert_eq!(language_from_ext("sass"), Some("scss"));
+        assert_eq!(language_from_ext("vue"), Some("vue"));
+        assert_eq!(language_from_ext("svelte"), Some("svelte"));
+    }
+
+    #[test]
+    fn test_language_from_ext_other() {
+        assert_eq!(language_from_ext("swift"), Some("swift"));
+        assert_eq!(language_from_ext("kt"), Some("kotlin"));
+        assert_eq!(language_from_ext("kts"), Some("kotlin"));
+        assert_eq!(language_from_ext("sql"), Some("sql"));
+        assert_eq!(language_from_ext("md"), Some("markdown"));
+        assert_eq!(language_from_ext("markdown"), Some("markdown"));
+        assert_eq!(language_from_ext("dockerfile"), Some("dockerfile"));
+        assert_eq!(language_from_ext("zig"), Some("zig"));
+    }
+
+    #[test]
+    fn test_language_from_ext_unknown() {
+        assert_eq!(language_from_ext("xyz"), None);
+        assert_eq!(language_from_ext(""), None);
+        assert_eq!(language_from_ext("doc"), None);
+        assert_eq!(language_from_ext("png"), None);
+    }
+
+    // --- mime_from_ext ---
+
+    #[test]
+    fn test_mime_from_ext_images() {
+        assert_eq!(mime_from_ext("png"), Some("image/png"));
+        assert_eq!(mime_from_ext("jpg"), Some("image/jpeg"));
+        assert_eq!(mime_from_ext("jpeg"), Some("image/jpeg"));
+        assert_eq!(mime_from_ext("gif"), Some("image/gif"));
+        assert_eq!(mime_from_ext("svg"), Some("image/svg+xml"));
+        assert_eq!(mime_from_ext("webp"), Some("image/webp"));
+        assert_eq!(mime_from_ext("ico"), Some("image/x-icon"));
+        assert_eq!(mime_from_ext("bmp"), Some("image/bmp"));
+    }
+
+    #[test]
+    fn test_mime_from_ext_pdf() {
+        assert_eq!(mime_from_ext("pdf"), Some("application/pdf"));
+    }
+
+    #[test]
+    fn test_mime_from_ext_unknown() {
+        assert_eq!(mime_from_ext("rs"), None);
+        assert_eq!(mime_from_ext("txt"), None);
+        assert_eq!(mime_from_ext(""), None);
+        assert_eq!(mime_from_ext("html"), None);
+    }
+
+    // --- is_binary ---
+
+    #[test]
+    fn test_is_binary_with_null_byte() {
+        let buf = b"hello\x00world";
+        assert!(is_binary(buf), "Buffer with null byte is binary");
+    }
+
+    #[test]
+    fn test_is_binary_without_null_byte() {
+        let buf = b"hello world\nline two\n";
+        assert!(!is_binary(buf), "Normal text is not binary");
+    }
+
+    #[test]
+    fn test_is_binary_empty() {
+        let buf: &[u8] = b"";
+        assert!(!is_binary(buf), "Empty buffer is not binary");
+    }
+
+    #[test]
+    fn test_is_binary_only_null() {
+        let buf = b"\x00";
+        assert!(is_binary(buf));
+    }
+
+    #[test]
+    fn test_is_binary_utf8_text() {
+        let buf = "hello, \u{00e9}l\u{00e8}ve".as_bytes();
+        assert!(
+            !is_binary(buf),
+            "UTF-8 text without null bytes is not binary"
+        );
+    }
+
+    // --- DTO serialization ---
+
+    #[test]
+    fn test_file_entry_serialization() {
+        let entry = FileEntry {
+            name: "main.rs".into(),
+            is_dir: false,
+            size: 1024,
+            modified: Some("2024-01-01T00:00:00Z".into()),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains(r#""name":"main.rs""#), "name: {json}");
+        assert!(json.contains(r#""isDir":false"#), "isDir camelCase: {json}");
+        assert!(!json.contains("is_dir"), "no snake_case: {json}");
+        assert!(json.contains(r#""size":1024"#), "size: {json}");
+    }
+
+    #[test]
+    fn test_directory_listing_serialization() {
+        let listing = DirectoryListing {
+            path: "/home/user".into(),
+            entries: vec![FileEntry {
+                name: "src".into(),
+                is_dir: true,
+                size: 0,
+                modified: None,
+            }],
+        };
+        let json = serde_json::to_string(&listing).unwrap();
+        assert!(json.contains(r#""path":"/home/user""#), "path: {json}");
+        assert!(json.contains(r#""entries""#), "entries: {json}");
+        assert!(json.contains(r#""isDir":true"#), "isDir: {json}");
+    }
+
+    #[test]
+    fn test_file_content_serialization() {
+        let content = FileContent {
+            path: "/tmp/test.rs".into(),
+            name: "test.rs".into(),
+            content: "fn main() {}".into(),
+            encoding: "utf8".into(),
+            size: 13,
+            language: Some("rust".into()),
+            mime_type: None,
+        };
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains(r#""mimeType""#), "mimeType camelCase: {json}");
+        assert!(json.contains(r#""language":"rust""#), "language: {json}");
+        assert!(json.contains(r#""encoding":"utf8""#), "encoding: {json}");
+    }
+}
+
 /// GET /api/cwd
 pub async fn get_cwd() -> impl IntoResponse {
     match std::env::current_dir() {

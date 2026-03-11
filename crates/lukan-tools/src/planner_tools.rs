@@ -150,3 +150,129 @@ impl Tool for PlannerQuestionTool {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── normalize_submit_plan_input tests ────────────────────────────
+
+    #[test]
+    fn normalize_renames_description_to_detail() {
+        let mut input = json!({
+            "title": "Plan",
+            "plan": "Full plan content",
+            "tasks": [
+                {
+                    "title": "Task 1",
+                    "description": "Do something"
+                }
+            ]
+        });
+        normalize_submit_plan_input(&mut input);
+        let tasks = input["tasks"].as_array().unwrap();
+        assert_eq!(tasks[0]["detail"], "Do something");
+        assert!(tasks[0].get("description").is_none());
+    }
+
+    #[test]
+    fn normalize_keeps_detail_if_already_present() {
+        let mut input = json!({
+            "title": "Plan",
+            "plan": "Content",
+            "tasks": [
+                {
+                    "title": "Task 1",
+                    "detail": "Already correct"
+                }
+            ]
+        });
+        normalize_submit_plan_input(&mut input);
+        let tasks = input["tasks"].as_array().unwrap();
+        assert_eq!(tasks[0]["detail"], "Already correct");
+    }
+
+    #[test]
+    fn normalize_does_not_override_existing_detail_with_description() {
+        let mut input = json!({
+            "title": "Plan",
+            "plan": "Content",
+            "tasks": [
+                {
+                    "title": "Task 1",
+                    "detail": "Existing detail",
+                    "description": "Should be ignored"
+                }
+            ]
+        });
+        normalize_submit_plan_input(&mut input);
+        let tasks = input["tasks"].as_array().unwrap();
+        assert_eq!(tasks[0]["detail"], "Existing detail");
+    }
+
+    #[test]
+    fn normalize_handles_multiple_tasks() {
+        let mut input = json!({
+            "title": "Plan",
+            "plan": "Content",
+            "tasks": [
+                { "title": "T1", "description": "D1" },
+                { "title": "T2", "detail": "D2" },
+                { "title": "T3", "description": "D3" }
+            ]
+        });
+        normalize_submit_plan_input(&mut input);
+        let tasks = input["tasks"].as_array().unwrap();
+        assert_eq!(tasks[0]["detail"], "D1");
+        assert_eq!(tasks[1]["detail"], "D2");
+        assert_eq!(tasks[2]["detail"], "D3");
+    }
+
+    #[test]
+    fn normalize_handles_no_tasks_key() {
+        let mut input = json!({ "title": "Plan", "plan": "Content" });
+        normalize_submit_plan_input(&mut input); // Should not panic
+    }
+
+    #[test]
+    fn normalize_handles_empty_tasks_array() {
+        let mut input = json!({
+            "title": "Plan",
+            "plan": "Content",
+            "tasks": []
+        });
+        normalize_submit_plan_input(&mut input); // Should not panic
+    }
+
+    // ── Tool metadata tests ──────────────────────────────────────────
+
+    #[test]
+    fn submit_plan_tool_name() {
+        use crate::Tool;
+        assert_eq!(Tool::name(&SubmitPlanTool), "SubmitPlan");
+    }
+
+    #[test]
+    fn planner_question_tool_name() {
+        use crate::Tool;
+        assert_eq!(Tool::name(&PlannerQuestionTool), "PlannerQuestion");
+    }
+
+    #[test]
+    fn submit_plan_schema_requires_title_plan_tasks() {
+        let schema = SubmitPlanTool.input_schema();
+        let required = schema["required"].as_array().unwrap();
+        let required_strs: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(required_strs.contains(&"title"));
+        assert!(required_strs.contains(&"plan"));
+        assert!(required_strs.contains(&"tasks"));
+    }
+
+    #[test]
+    fn planner_question_schema_requires_questions() {
+        let schema = PlannerQuestionTool.input_schema();
+        let required = schema["required"].as_array().unwrap();
+        let required_strs: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(required_strs.contains(&"questions"));
+    }
+}

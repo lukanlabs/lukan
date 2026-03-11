@@ -19,6 +19,27 @@ pub struct ProviderStatusDto {
     pub default_model: String,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provider_status_dto_serialization() {
+        let dto = ProviderStatusDto {
+            name: "anthropic".into(),
+            configured: true,
+            default_model: "claude-sonnet-4-20250514".into(),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(
+            json.contains(r#""defaultModel""#),
+            "defaultModel camelCase: {json}"
+        );
+        assert!(!json.contains("default_model"), "no snake_case: {json}");
+        assert!(json.contains(r#""configured":true"#), "configured: {json}");
+    }
+}
+
 /// GET /api/credentials
 pub async fn get_credentials() -> impl IntoResponse {
     match CredentialsManager::load().await {

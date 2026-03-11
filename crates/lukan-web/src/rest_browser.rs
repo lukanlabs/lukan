@@ -23,6 +23,54 @@ pub struct BrowserTabInfo {
     pub ws_url: String,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_browser_status_response_serialization() {
+        let resp = BrowserStatusResponse {
+            running: true,
+            cdp_url: Some("ws://localhost:9222".into()),
+            current_url: Some("https://example.com".into()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains(r#""cdpUrl""#), "cdpUrl camelCase: {json}");
+        assert!(
+            json.contains(r#""currentUrl""#),
+            "currentUrl camelCase: {json}"
+        );
+        assert!(!json.contains("cdp_url"), "no snake_case: {json}");
+        assert!(!json.contains("current_url"), "no snake_case: {json}");
+    }
+
+    #[test]
+    fn test_browser_status_response_not_running() {
+        let resp = BrowserStatusResponse {
+            running: false,
+            cdp_url: None,
+            current_url: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains(r#""running":false"#), "running: {json}");
+    }
+
+    #[test]
+    fn test_browser_tab_info_serialization() {
+        let tab = BrowserTabInfo {
+            id: "tab-123".into(),
+            title: "Example".into(),
+            url: "https://example.com".into(),
+            ws_url: "ws://localhost:9222/devtools/page/tab-123".into(),
+        };
+        let json = serde_json::to_string(&tab).unwrap();
+        assert!(json.contains(r#""wsUrl""#), "wsUrl camelCase: {json}");
+        assert!(!json.contains("ws_url"), "no snake_case: {json}");
+        assert!(json.contains(r#""id":"tab-123""#), "id: {json}");
+        assert!(json.contains(r#""title":"Example""#), "title: {json}");
+    }
+}
+
 /// POST /api/browser/launch
 pub async fn browser_launch(
     State(state): State<Arc<AppState>>,

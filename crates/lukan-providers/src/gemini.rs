@@ -552,3 +552,378 @@ struct GeminiModelRaw {
     #[serde(default)]
     supported_generation_methods: Option<Vec<String>>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lukan_core::models::messages::{ContentBlock, ImageSource, Message, MessageContent};
+    use lukan_core::models::tools::ToolDefinition;
+    use serde_json::json;
+
+    fn make_provider() -> GeminiProvider {
+        GeminiProvider::new("test-key".into(), "gemini-pro".into(), 4096)
+    }
+
+    // ── map_finish_reason ─────────────────────────────────────────────
+
+    #[test]
+    fn map_finish_reason_stop() {
+        assert_eq!(
+            GeminiProvider::map_finish_reason(Some("STOP"), false),
+            StopReason::EndTurn
+        );
+    }
+
+    #[test]
+    fn map_finish_reason_max_tokens() {
+        assert_eq!(
+            GeminiProvider::map_finish_reason(Some("MAX_TOKENS"), false),
+            StopReason::MaxTokens
+        );
+    }
+
+    #[test]
+    fn map_finish_reason_safety() {
+        assert_eq!(
+            GeminiProvider::map_finish_reason(Some("SAFETY"), false),
+            StopReason::Error
+        );
+    }
+
+    #[test]
+    fn map_finish_reason_recitation() {
+        assert_eq!(
+            GeminiProvider::map_finish_reason(Some("RECITATION"), false),
+            StopReason::Error
+        );
+    }
+
+    #[test]
+    fn map_finish_reason_function_call_overrides() {
+        // When has_function_call is true, should always be ToolUse regardless of reason
+        assert_eq!(
+            GeminiProvider::map_finish_reason(Some("STOP"), true),
+            StopReason::ToolUse
+        );
+        assert_eq!(
+            GeminiProvider::map_finish_reason(None, true),
+            StopReason::ToolUse
+        );
+    }
+
+    #[test]
+    fn map_finish_reason_none() {
+        assert_eq!(
+            GeminiProvider::map_finish_reason(None, false),
+            StopReason::EndTurn
+        );
+    }
+
+    // ── build_system_instruction ──────────────────────────────────────
+
+    #[test]
+    fn build_system_instruction_text() {
+        let p = make_provider();
+        let result = p.build_system_instruction(&SystemPrompt::Text("hello".into()));
+        assert_eq!(result["parts"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn build_system_instruction_structured() {
+        let p = make_provider();
+        let result = p.build_system_instruction(&SystemPrompt::Structured {
+            cached: vec!["a".into(), "b".into()],
+            dynamic: "c".into(),
+        });
+        let parts = result["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0]["text"], "a");
+        assert_eq!(parts[1]["text"], "b");
+        assert_eq!(parts[2]["text"], "c");
+    }
+
+    #[test]
+    fn build_system_instruction_structured_empty_dynamic() {
+        let p = make_provider();
+        let result = p.build_system_instruction(&SystemPrompt::Structured {
+            cached: vec!["only".into()],
+            dynamic: String::new(),
+        });
+        let parts = result["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+    }
+
+    // ── convert_messages ──────────────────────────────────────────────
+
+    #[test]
+    fn convert_messages_user_text() {
+        let p = make_provider();
+        let result = p.convert_messages(&[Message::user("hi")]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "user");
+        assert_eq!(result[0]["parts"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn convert_messages_assistant_text() {
+        let p = make_provider();
+        let result = p.convert_messages(&[Message::assistant("response")]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "model");
+        assert_eq!(result[0]["parts"][0]["text"], "response");
+    }
+
+    #[test]
+    fn convert_messages_tool_result() {
+        let p = make_provider();
+        let msgs = vec![Message {
+            role: Role::Tool,
+            content: MessageContent::Text("output".into()),
+            tool_call_id: Some("my_tool".into()),
+            name: None,
+        }];
+        let result = p.convert_messages(&msgs);
+        assert_eq!(result[0]["role"], "user");
+        let fr = &result[0]["parts"][0]["functionResponse"];
+        assert_eq!(fr["name"], "my_tool");
+    }
+
+    #[test]
+    fn convert_messages_merges_consecutive_same_role() {
+        let p = make_provider();
+        let msgs = vec![Message::user("first"), Message::user("second")];
+        let result = p.convert_messages(&msgs);
+        // Should be merged into one "user" entry
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "user");
+        let parts = result[0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["text"], "first");
+        assert_eq!(parts[1]["text"], "second");
+    }
+
+    #[test]
+    fn convert_messages_alternating_roles_not_merged() {
+        let p = make_provider();
+        let msgs = vec![
+            Message::user("q"),
+            Message::assistant("a"),
+            Message::user("q2"),
+        ];
+        let result = p.convert_messages(&msgs);
+        assert_eq!(result.len(), 3);
+    }
+
+    // ── convert_assistant_parts ───────────────────────────────────────
+
+    #[test]
+    fn convert_assistant_parts_tool_use() {
+        let p = make_provider();
+        let content = MessageContent::Blocks(vec![ContentBlock::ToolUse {
+            id: "call_1".into(),
+            name: "bash".into(),
+            input: json!({"command": "ls"}),
+        }]);
+        let parts = p.convert_assistant_parts(&content);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["functionCall"]["name"], "bash");
+        assert_eq!(parts[0]["functionCall"]["args"]["command"], "ls");
+    }
+
+    #[test]
+    fn convert_assistant_parts_skips_thinking() {
+        let p = make_provider();
+        let content = MessageContent::Blocks(vec![ContentBlock::Thinking {
+            text: "reasoning".into(),
+        }]);
+        let parts = p.convert_assistant_parts(&content);
+        assert!(parts.is_empty());
+    }
+
+    // ── convert_user_parts ────────────────────────────────────────────
+
+    #[test]
+    fn convert_user_parts_image_base64() {
+        let p = make_provider();
+        let content = MessageContent::Blocks(vec![ContentBlock::Image {
+            source: ImageSource::Base64,
+            data: "abc123".into(),
+            media_type: Some("image/png".into()),
+        }]);
+        let parts = p.convert_user_parts(&content);
+        assert_eq!(parts[0]["inline_data"]["mime_type"], "image/png");
+        assert_eq!(parts[0]["inline_data"]["data"], "abc123");
+    }
+
+    #[test]
+    fn convert_user_parts_image_url() {
+        let p = make_provider();
+        let content = MessageContent::Blocks(vec![ContentBlock::Image {
+            source: ImageSource::Url,
+            data: "https://example.com/img.png".into(),
+            media_type: None,
+        }]);
+        let parts = p.convert_user_parts(&content);
+        assert_eq!(
+            parts[0]["file_data"]["file_uri"],
+            "https://example.com/img.png"
+        );
+    }
+
+    // ── convert_tools ─────────────────────────────────────────────────
+
+    #[test]
+    fn convert_tools_format() {
+        let p = make_provider();
+        let tools = vec![ToolDefinition {
+            name: "bash".into(),
+            description: "Run commands".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "command": { "type": "string" } }
+            }),
+        }];
+        let result = p.convert_tools(&tools);
+        assert_eq!(result.len(), 1);
+        let decls = result[0]["functionDeclarations"].as_array().unwrap();
+        assert_eq!(decls.len(), 1);
+        assert_eq!(decls[0]["name"], "bash");
+        assert_eq!(decls[0]["description"], "Run commands");
+        assert_eq!(
+            decls[0]["parameters"]["properties"]["command"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn convert_tools_empty_returns_empty() {
+        let p = make_provider();
+        let result = p.convert_tools(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn convert_tools_null_schema_omits_parameters() {
+        let p = make_provider();
+        let tools = vec![ToolDefinition {
+            name: "noop".into(),
+            description: "No params".into(),
+            input_schema: json!(null),
+        }];
+        let result = p.convert_tools(&tools);
+        let decls = result[0]["functionDeclarations"].as_array().unwrap();
+        assert!(decls[0].get("parameters").is_none());
+    }
+
+    #[test]
+    fn convert_tools_empty_schema_omits_parameters() {
+        let p = make_provider();
+        let tools = vec![ToolDefinition {
+            name: "noop".into(),
+            description: "No params".into(),
+            input_schema: json!({}),
+        }];
+        let result = p.convert_tools(&tools);
+        let decls = result[0]["functionDeclarations"].as_array().unwrap();
+        assert!(decls[0].get("parameters").is_none());
+    }
+
+    // ── strip_unsupported_schema_keys ─────────────────────────────────
+
+    #[test]
+    fn strip_unsupported_schema_keys_removes_known_keys() {
+        let mut schema = json!({
+            "type": "object",
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "pattern": "^[a-z]+$",
+                    "format": "email",
+                    "default": "foo",
+                    "title": "Name",
+                    "examples": ["bar"]
+                }
+            }
+        });
+        strip_unsupported_schema_keys(&mut schema);
+        assert!(schema.get("$schema").is_none());
+        assert!(schema.get("additionalProperties").is_none());
+        assert!(schema.get("required").is_none());
+        let name_prop = &schema["properties"]["name"];
+        assert_eq!(name_prop["type"], "string");
+        assert!(name_prop.get("minLength").is_none());
+        assert!(name_prop.get("maxLength").is_none());
+        assert!(name_prop.get("pattern").is_none());
+        assert!(name_prop.get("format").is_none());
+        assert!(name_prop.get("default").is_none());
+        assert!(name_prop.get("title").is_none());
+        assert!(name_prop.get("examples").is_none());
+    }
+
+    #[test]
+    fn strip_unsupported_schema_keys_recurses_arrays() {
+        let mut schema = json!({
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "minItems": 1
+        });
+        strip_unsupported_schema_keys(&mut schema);
+        assert!(schema.get("minItems").is_none());
+        assert!(schema["items"].get("minLength").is_none());
+        assert_eq!(schema["items"]["type"], "string");
+    }
+
+    // ── Gemini SSE type deserialization ───────────────────────────────
+
+    #[test]
+    fn deserialize_gemini_stream_response_text() {
+        let data = r#"{"candidates":[{"content":{"parts":[{"text":"Hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}"#;
+        let resp: GeminiStreamResponse = serde_json::from_str(data).unwrap();
+        let candidates = resp.candidates.unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].content.as_ref().unwrap().parts[0]
+                .text
+                .as_deref(),
+            Some("Hello")
+        );
+        assert_eq!(candidates[0].finish_reason.as_deref(), Some("STOP"));
+        let usage = resp.usage_metadata.unwrap();
+        assert_eq!(usage.prompt_token_count, Some(10));
+        assert_eq!(usage.candidates_token_count, Some(5));
+    }
+
+    #[test]
+    fn deserialize_gemini_stream_response_function_call() {
+        let data = r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"bash","args":{"command":"ls"}}}]}}]}"#;
+        let resp: GeminiStreamResponse = serde_json::from_str(data).unwrap();
+        let candidates = resp.candidates.unwrap();
+        let part = &candidates[0].content.as_ref().unwrap().parts[0];
+        let fc = part.function_call.as_ref().unwrap();
+        assert_eq!(fc.name, "bash");
+        assert_eq!(fc.args.as_ref().unwrap()["command"], "ls");
+    }
+
+    #[test]
+    fn deserialize_gemini_stream_response_error() {
+        let data = r#"{"error":{"code":429,"message":"Rate limited"}}"#;
+        let resp: GeminiStreamResponse = serde_json::from_str(data).unwrap();
+        let error = resp.error.unwrap();
+        assert_eq!(error.code, Some(429));
+        assert_eq!(error.message, "Rate limited");
+    }
+
+    #[test]
+    fn deserialize_gemini_stream_response_empty() {
+        let data = r#"{}"#;
+        let resp: GeminiStreamResponse = serde_json::from_str(data).unwrap();
+        assert!(resp.candidates.is_none());
+        assert!(resp.usage_metadata.is_none());
+        assert!(resp.error.is_none());
+    }
+}

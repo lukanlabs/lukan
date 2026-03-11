@@ -17,3 +17,5 @@ plugins/**/bun.lock
 CLAUDE.md
 *.tsbuildinfo
 plugins/*/package-lock.json
+*.profraw
+crates/*/target/

@@ -26,6 +26,53 @@ pub struct SessionQuery {
     session_id: Option<String>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bg_process_dto_serialization() {
+        let dto = BgProcessDto {
+            pid: 12345,
+            command: "cargo build".into(),
+            started_at: "2024-01-01T00:00:00Z".into(),
+            exited_at: None,
+            status: "running".into(),
+            label: Some("build".into()),
+            session_id: Some("sess-1".into()),
+            tab_id: None,
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains(r#""pid":12345"#), "pid: {json}");
+        assert!(
+            json.contains(r#""startedAt""#),
+            "startedAt camelCase: {json}"
+        );
+        assert!(json.contains(r#""exitedAt""#), "exitedAt camelCase: {json}");
+        assert!(
+            json.contains(r#""sessionId""#),
+            "sessionId camelCase: {json}"
+        );
+        assert!(json.contains(r#""tabId""#), "tabId camelCase: {json}");
+        assert!(!json.contains("started_at"), "no snake_case: {json}");
+        assert!(!json.contains("exited_at"), "no snake_case: {json}");
+        assert!(!json.contains("session_id"), "no snake_case: {json}");
+        assert!(!json.contains("tab_id"), "no snake_case: {json}");
+    }
+
+    #[test]
+    fn test_session_query_deserialize() {
+        let q: SessionQuery = serde_json::from_str(r#"{"sessionId":"abc"}"#).unwrap();
+        assert_eq!(q.session_id, Some("abc".to_string()));
+    }
+
+    #[test]
+    fn test_session_query_deserialize_empty() {
+        let q: SessionQuery = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(q.session_id.is_none());
+    }
+}
+
 /// GET /api/processes?sessionId=...
 pub async fn list_bg_processes(Query(q): Query<SessionQuery>) -> Json<Vec<BgProcessDto>> {
     let procs = match q.session_id.as_deref() {

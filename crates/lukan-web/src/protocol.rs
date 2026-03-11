@@ -514,4 +514,677 @@ mod tests {
             "should have recentRuns: {json}"
         );
     }
+
+    // --- TokenUsage serialization/deserialization ---
+
+    #[test]
+    fn test_token_usage_roundtrip() {
+        let usage = TokenUsage {
+            input: 1000,
+            output: 500,
+            cache_creation: Some(200),
+            cache_read: Some(100),
+        };
+        let json = serde_json::to_string(&usage).unwrap();
+        assert!(json.contains(r#""cacheCreation""#), "cacheCreation: {json}");
+        assert!(json.contains(r#""cacheRead""#), "cacheRead: {json}");
+        assert!(
+            !json.contains("cache_creation"),
+            "no snake_case cache_creation: {json}"
+        );
+        assert!(
+            !json.contains("cache_read"),
+            "no snake_case cache_read: {json}"
+        );
+
+        let parsed: TokenUsage = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.input, 1000);
+        assert_eq!(parsed.output, 500);
+        assert_eq!(parsed.cache_creation, Some(200));
+        assert_eq!(parsed.cache_read, Some(100));
+    }
+
+    #[test]
+    fn test_token_usage_skip_none_fields() {
+        let usage = TokenUsage {
+            input: 42,
+            output: 7,
+            cache_creation: None,
+            cache_read: None,
+        };
+        let json = serde_json::to_string(&usage).unwrap();
+        assert!(
+            !json.contains("cacheCreation"),
+            "None cacheCreation should be skipped: {json}"
+        );
+        assert!(
+            !json.contains("cacheRead"),
+            "None cacheRead should be skipped: {json}"
+        );
+    }
+
+    #[test]
+    fn test_token_usage_deserialize_missing_optional_fields() {
+        let json = r#"{"input":10,"output":5}"#;
+        let parsed: TokenUsage = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.input, 10);
+        assert_eq!(parsed.output, 5);
+        assert_eq!(parsed.cache_creation, None);
+        assert_eq!(parsed.cache_read, None);
+    }
+
+    // --- ClientMessage deserialization (additional variants) ---
+
+    #[test]
+    fn test_client_message_send_message() {
+        let json = r#"{"type":"send_message","content":"hello world"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::SendMessage {
+                content,
+                session_id,
+            } => {
+                assert_eq!(content, "hello world");
+                assert_eq!(session_id, None);
+            }
+            _ => panic!("Expected SendMessage"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_send_message_with_session() {
+        let json = r#"{"type":"send_message","content":"hello","sessionId":"tab-42"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::SendMessage {
+                content,
+                session_id,
+            } => {
+                assert_eq!(content, "hello");
+                assert_eq!(session_id, Some("tab-42".to_string()));
+            }
+            _ => panic!("Expected SendMessage"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_approve() {
+        let json = r#"{"type":"approve","approvedIds":["id1","id2"]}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::Approve {
+                approved_ids,
+                session_id,
+            } => {
+                assert_eq!(approved_ids, vec!["id1", "id2"]);
+                assert_eq!(session_id, None);
+            }
+            _ => panic!("Expected Approve"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_abort() {
+        let json = r#"{"type":"abort","sessionId":"sess-1"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::Abort { session_id } => {
+                assert_eq!(session_id, Some("sess-1".to_string()));
+            }
+            _ => panic!("Expected Abort"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_answer_question() {
+        let json = r#"{"type":"answer_question","answer":"yes"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::AnswerQuestion { answer, session_id } => {
+                assert_eq!(answer, "yes");
+                assert_eq!(session_id, None);
+            }
+            _ => panic!("Expected AnswerQuestion"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_new_session() {
+        let json = r#"{"type":"new_session","name":"My Session"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::NewSession { name, session_id } => {
+                assert_eq!(name, Some("My Session".to_string()));
+                assert_eq!(session_id, None);
+            }
+            _ => panic!("Expected NewSession"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_list_sessions() {
+        let json = r#"{"type":"list_sessions"}"#;
+        let _msg: ClientMessage = serde_json::from_str(json).unwrap();
+    }
+
+    #[test]
+    fn test_client_message_delete_session() {
+        let json = r#"{"type":"delete_session","sessionId":"sess-x"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::DeleteSession { session_id } => {
+                assert_eq!(session_id, "sess-x");
+            }
+            _ => panic!("Expected DeleteSession"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_set_model() {
+        let json = r#"{"type":"set_model","model":"claude-opus-4-20250514"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::SetModel { model } => {
+                assert_eq!(model, "claude-opus-4-20250514");
+            }
+            _ => panic!("Expected SetModel"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_list_models() {
+        let json = r#"{"type":"list_models"}"#;
+        let _msg: ClientMessage = serde_json::from_str(json).unwrap();
+    }
+
+    #[test]
+    fn test_client_message_auth() {
+        let json = r#"{"type":"auth","token":"abc123"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::Auth { token } => {
+                assert_eq!(token, "abc123");
+            }
+            _ => panic!("Expected Auth"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_auth_login() {
+        let json = r#"{"type":"auth_login","password":"secret"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::AuthLogin { password } => {
+                assert_eq!(password, "secret");
+            }
+            _ => panic!("Expected AuthLogin"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_set_config() {
+        let json = r#"{"type":"set_config","config":{"key":"value"}}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::SetConfig { config } => {
+                assert_eq!(config["key"], "value");
+            }
+            _ => panic!("Expected SetConfig"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_get_config() {
+        let json = r#"{"type":"get_config"}"#;
+        let _msg: ClientMessage = serde_json::from_str(json).unwrap();
+    }
+
+    #[test]
+    fn test_client_message_set_permission_mode() {
+        let json = r#"{"type":"set_permission_mode","mode":"manual"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::SetPermissionMode { mode } => {
+                assert_eq!(mode, "manual");
+            }
+            _ => panic!("Expected SetPermissionMode"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_destroy_agent_tab() {
+        let json = r#"{"type":"destroy_agent_tab","sessionId":"tab-1"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::DestroyAgentTab { session_id } => {
+                assert_eq!(session_id, "tab-1");
+            }
+            _ => panic!("Expected DestroyAgentTab"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_rename_agent_tab() {
+        let json = r#"{"type":"rename_agent_tab","sessionId":"tab-1","label":"Research"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::RenameAgentTab { session_id, label } => {
+                assert_eq!(session_id, "tab-1");
+                assert_eq!(label, "Research");
+            }
+            _ => panic!("Expected RenameAgentTab"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_terminal_create() {
+        let json = r#"{"type":"terminal_create","cwd":"/tmp","cols":80,"rows":24}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::TerminalCreate { cwd, cols, rows } => {
+                assert_eq!(cwd, Some("/tmp".to_string()));
+                assert_eq!(cols, 80);
+                assert_eq!(rows, 24);
+            }
+            _ => panic!("Expected TerminalCreate"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_terminal_input() {
+        let json = r#"{"type":"terminal_input","sessionId":"t1","data":"bHM="}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::TerminalInput { session_id, data } => {
+                assert_eq!(session_id, "t1");
+                assert_eq!(data, "bHM=");
+            }
+            _ => panic!("Expected TerminalInput"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_terminal_resize() {
+        let json = r#"{"type":"terminal_resize","sessionId":"t1","cols":120,"rows":40}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::TerminalResize {
+                session_id,
+                cols,
+                rows,
+            } => {
+                assert_eq!(session_id, "t1");
+                assert_eq!(cols, 120);
+                assert_eq!(rows, 40);
+            }
+            _ => panic!("Expected TerminalResize"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_terminal_destroy() {
+        let json = r#"{"type":"terminal_destroy","sessionId":"t1"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::TerminalDestroy { session_id } => {
+                assert_eq!(session_id, "t1");
+            }
+            _ => panic!("Expected TerminalDestroy"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_terminal_list() {
+        let json = r#"{"type":"terminal_list"}"#;
+        let _msg: ClientMessage = serde_json::from_str(json).unwrap();
+    }
+
+    #[test]
+    fn test_client_message_plan_accept() {
+        let json = r#"{"type":"plan_accept","tasks":[{"name":"t1"}],"sessionId":"s1"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::PlanAccept { tasks, session_id } => {
+                assert!(tasks.is_some());
+                assert_eq!(session_id, Some("s1".to_string()));
+            }
+            _ => panic!("Expected PlanAccept"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_plan_reject() {
+        let json = r#"{"type":"plan_reject","feedback":"not good enough"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::PlanReject {
+                feedback,
+                session_id,
+            } => {
+                assert_eq!(feedback, "not good enough");
+                assert_eq!(session_id, None);
+            }
+            _ => panic!("Expected PlanReject"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_set_screenshots() {
+        let json = r#"{"type":"set_screenshots","enabled":true}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::SetScreenshots { enabled } => {
+                assert!(enabled);
+            }
+            _ => panic!("Expected SetScreenshots"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_invalid_type_fails() {
+        let json = r#"{"type":"nonexistent_variant"}"#;
+        let result = serde_json::from_str::<ClientMessage>(json);
+        assert!(result.is_err(), "Unknown type should fail to deserialize");
+    }
+
+    #[test]
+    fn test_client_message_missing_required_field_fails() {
+        // send_message requires "content"
+        let json = r#"{"type":"send_message"}"#;
+        let result = serde_json::from_str::<ClientMessage>(json);
+        assert!(
+            result.is_err(),
+            "Missing required field should fail: {result:?}"
+        );
+    }
+
+    // --- ServerMessage serialization ---
+
+    #[test]
+    fn test_server_message_error() {
+        let msg = ServerMessage::Error {
+            error: "something broke".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"error""#), "type tag: {json}");
+        assert!(
+            json.contains(r#""error":"something broke""#),
+            "error field: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_auth_required() {
+        let msg = ServerMessage::AuthRequired;
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"auth_required""#),
+            "type tag: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_auth_ok() {
+        let msg = ServerMessage::AuthOk {
+            token: "tok123".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"auth_ok""#), "type tag: {json}");
+        assert!(json.contains(r#""token":"tok123""#), "token: {json}");
+    }
+
+    #[test]
+    fn test_server_message_auth_error() {
+        let msg = ServerMessage::AuthError {
+            error: "bad password".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"auth_error""#), "type tag: {json}");
+    }
+
+    #[test]
+    fn test_server_message_model_list() {
+        let msg = ServerMessage::ModelList {
+            models: vec!["a".into(), "b".into()],
+            current: "a".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"model_list""#), "type tag: {json}");
+        assert!(json.contains(r#""models""#), "models: {json}");
+        assert!(json.contains(r#""current""#), "current: {json}");
+    }
+
+    #[test]
+    fn test_server_message_model_changed() {
+        let msg = ServerMessage::ModelChanged {
+            provider_name: "anthropic".into(),
+            model_name: "claude-sonnet".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"model_changed""#),
+            "type tag: {json}"
+        );
+        assert!(
+            json.contains(r#""providerName""#),
+            "providerName camelCase: {json}"
+        );
+        assert!(
+            json.contains(r#""modelName""#),
+            "modelName camelCase: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_config_values() {
+        let msg = ServerMessage::ConfigValues {
+            config: serde_json::json!({"key": "val"}),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"config_values""#),
+            "type tag: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_config_saved() {
+        let msg = ServerMessage::ConfigSaved {
+            config: serde_json::json!({}),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"config_saved""#),
+            "type tag: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_mode_changed() {
+        let msg = ServerMessage::ModeChanged {
+            mode: "manual".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"mode_changed""#),
+            "type tag: {json}"
+        );
+        assert!(json.contains(r#""mode":"manual""#), "mode: {json}");
+    }
+
+    #[test]
+    fn test_server_message_screenshots_changed() {
+        let msg = ServerMessage::ScreenshotsChanged { enabled: true };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"screenshots_changed""#),
+            "type tag: {json}"
+        );
+        assert!(json.contains(r#""enabled":true"#), "enabled: {json}");
+    }
+
+    #[test]
+    fn test_server_message_session_list() {
+        let msg = ServerMessage::SessionList { sessions: vec![] };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"session_list""#),
+            "type tag: {json}"
+        );
+        assert!(json.contains(r#""sessions":[]"#), "sessions: {json}");
+    }
+
+    #[test]
+    fn test_server_message_agent_tab_created() {
+        let msg = ServerMessage::AgentTabCreated {
+            session_id: "tab-new".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"agent_tab_created""#),
+            "type tag: {json}"
+        );
+        assert!(
+            json.contains(r#""sessionId":"tab-new""#),
+            "sessionId camelCase: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_processing_complete_skip_none() {
+        let msg = ServerMessage::ProcessingComplete {
+            session_id: "s1".into(),
+            messages: vec![],
+            checkpoints: vec![],
+            context_size: None,
+            tab_id: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            !json.contains("contextSize"),
+            "None contextSize should be skipped: {json}"
+        );
+        assert!(
+            !json.contains("tabId"),
+            "None tabId should be skipped: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_processing_complete_with_optionals() {
+        let msg = ServerMessage::ProcessingComplete {
+            session_id: "s1".into(),
+            messages: vec![],
+            checkpoints: vec![],
+            context_size: Some(100000),
+            tab_id: Some("tab-1".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""contextSize":100000"#),
+            "contextSize present: {json}"
+        );
+        assert!(json.contains(r#""tabId":"tab-1""#), "tabId present: {json}");
+    }
+
+    #[test]
+    fn test_server_message_terminal_created() {
+        let msg = ServerMessage::TerminalCreated {
+            id: "term-1".into(),
+            cols: 80,
+            rows: 24,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"terminal_created""#),
+            "type tag: {json}"
+        );
+        assert!(json.contains(r#""id":"term-1""#), "id: {json}");
+        assert!(json.contains(r#""cols":80"#), "cols: {json}");
+        assert!(json.contains(r#""rows":24"#), "rows: {json}");
+    }
+
+    #[test]
+    fn test_server_message_terminal_output() {
+        let msg = ServerMessage::TerminalOutput {
+            session_id: "t1".into(),
+            data: "base64data".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"terminal_output""#),
+            "type tag: {json}"
+        );
+        assert!(
+            json.contains(r#""sessionId":"t1""#),
+            "sessionId camelCase: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_terminal_exited() {
+        let msg = ServerMessage::TerminalExited {
+            session_id: "t1".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"terminal_exited""#),
+            "type tag: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_terminal_sessions() {
+        let msg = ServerMessage::TerminalSessions {
+            sessions: vec![TerminalSessionInfoDto {
+                id: "t1".into(),
+                cols: 120,
+                rows: 40,
+            }],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"terminal_sessions""#),
+            "type tag: {json}"
+        );
+        assert!(json.contains(r#""id":"t1""#), "id: {json}");
+    }
+
+    #[test]
+    fn test_server_message_worker_notification() {
+        let msg = ServerMessage::WorkerNotification {
+            worker_id: "w1".into(),
+            worker_name: "my-worker".into(),
+            status: "success".into(),
+            summary: "done".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""type":"worker_notification""#),
+            "type tag: {json}"
+        );
+        assert!(
+            json.contains(r#""workerId":"w1""#),
+            "workerId camelCase: {json}"
+        );
+        assert!(
+            json.contains(r#""workerName":"my-worker""#),
+            "workerName camelCase: {json}"
+        );
+    }
+
+    // --- TerminalSessionInfoDto ---
+
+    #[test]
+    fn test_terminal_session_info_dto_serialization() {
+        let dto = TerminalSessionInfoDto {
+            id: "abc".into(),
+            cols: 80,
+            rows: 24,
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains(r#""id":"abc""#), "id: {json}");
+        assert!(json.contains(r#""cols":80"#), "cols: {json}");
+        assert!(json.contains(r#""rows":24"#), "rows: {json}");
+    }
 }

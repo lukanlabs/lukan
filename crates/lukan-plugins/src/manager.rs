@@ -551,3 +551,441 @@ fn install_hint(cmd: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── PluginManager basics ─────────────────────────────────────────
+
+    #[test]
+    fn test_plugin_manager_new_has_no_running() {
+        let manager = PluginManager::new();
+        assert!(!manager.is_running("anything"));
+    }
+
+    #[test]
+    fn test_plugin_manager_default() {
+        let manager = PluginManager::default();
+        assert!(!manager.is_running("test"));
+    }
+
+    #[test]
+    fn test_is_running_returns_false_for_unknown() {
+        let manager = PluginManager::new();
+        assert!(!manager.is_running("nonexistent"));
+        assert!(!manager.is_running(""));
+        assert!(!manager.is_running("whatsapp"));
+    }
+
+    // ── RESERVED_COMMANDS ────────────────────────────────────────────
+
+    #[test]
+    fn test_reserved_commands_contains_expected() {
+        assert!(PluginManager::RESERVED_COMMANDS.contains(&"chat"));
+        assert!(PluginManager::RESERVED_COMMANDS.contains(&"setup"));
+        assert!(PluginManager::RESERVED_COMMANDS.contains(&"doctor"));
+        assert!(PluginManager::RESERVED_COMMANDS.contains(&"plugin"));
+        assert!(PluginManager::RESERVED_COMMANDS.contains(&"models"));
+        assert!(PluginManager::RESERVED_COMMANDS.contains(&"sandbox"));
+    }
+
+    #[test]
+    fn test_reserved_commands_does_not_contain_plugin_names() {
+        assert!(!PluginManager::RESERVED_COMMANDS.contains(&"whatsapp"));
+        assert!(!PluginManager::RESERVED_COMMANDS.contains(&"discord"));
+        assert!(!PluginManager::RESERVED_COMMANDS.contains(&"telegram"));
+    }
+
+    #[test]
+    fn test_reserved_commands_non_empty() {
+        assert!(!PluginManager::RESERVED_COMMANDS.is_empty());
+    }
+
+    // ── install_hint ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_install_hint_node() {
+        let hint = install_hint("node");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("nodejs.org"));
+    }
+
+    #[test]
+    fn test_install_hint_python() {
+        assert!(install_hint("python3").is_some());
+        assert!(install_hint("python").is_some());
+        // Both should give the same hint
+        assert_eq!(install_hint("python3"), install_hint("python"));
+    }
+
+    #[test]
+    fn test_install_hint_bun() {
+        let hint = install_hint("bun");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("bun.sh"));
+    }
+
+    #[test]
+    fn test_install_hint_deno() {
+        let hint = install_hint("deno");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("deno.land"));
+    }
+
+    #[test]
+    fn test_install_hint_unknown_returns_none() {
+        assert!(install_hint("ruby").is_none());
+        assert!(install_hint("cargo").is_none());
+        assert!(install_hint("").is_none());
+        assert!(install_hint("some-random-binary").is_none());
+    }
+
+    // ── PluginManifest parsing via manager (TOML) ────────────────────
+
+    #[test]
+    fn test_manifest_parse_with_alias() {
+        let toml_str = r#"
+            [plugin]
+            name = "discord"
+            version = "0.1.0"
+            description = "Discord bot"
+            alias = "dc"
+
+            [run]
+            command = "node"
+            args = ["bridge.js"]
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(manifest.plugin.alias.as_deref(), Some("dc"));
+    }
+
+    #[test]
+    fn test_manifest_parse_with_commands() {
+        let toml_str = r#"
+            [plugin]
+            name = "test"
+            version = "0.1.0"
+
+            [commands.auth]
+            description = "Authenticate"
+            handler = "auth.js"
+
+            [commands.status]
+            description = "Show status"
+            handler = "status.js"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(manifest.commands.len(), 2);
+        assert!(manifest.commands.contains_key("auth"));
+        assert_eq!(manifest.commands["auth"].handler, "auth.js");
+        assert_eq!(manifest.commands["status"].description, "Show status");
+    }
+
+    #[test]
+    fn test_manifest_parse_with_security() {
+        let toml_str = r#"
+            [plugin]
+            name = "secure-plugin"
+            version = "0.1.0"
+
+            [security]
+            default_tools = ["Grep", "Glob", "ReadFiles"]
+            include_memory = true
+            dir_restrictions = true
+            dangerous_tools = ["Bash", "WriteFile"]
+
+            [security.prompts]
+            dir_none = "prompt-none.txt"
+            dir_allowed = "prompt-allowed.txt"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert!(manifest.security.include_memory);
+        assert!(manifest.security.dir_restrictions);
+        assert_eq!(manifest.security.default_tools.len(), 3);
+        assert_eq!(manifest.security.dangerous_tools, vec!["Bash", "WriteFile"]);
+        assert_eq!(
+            manifest.security.prompts.dir_none.as_deref(),
+            Some("prompt-none.txt")
+        );
+        assert_eq!(
+            manifest.security.prompts.dir_allowed.as_deref(),
+            Some("prompt-allowed.txt")
+        );
+    }
+
+    #[test]
+    fn test_manifest_security_defaults() {
+        let toml_str = r#"
+            [plugin]
+            name = "minimal"
+            version = "0.1.0"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert!(!manifest.security.include_memory);
+        assert!(!manifest.security.dir_restrictions);
+        assert!(manifest.security.default_tools.is_empty());
+        // When [security] section is absent entirely, Default trait is used (empty vec)
+        assert!(manifest.security.dangerous_tools.is_empty());
+        assert!(manifest.security.prompts.dir_none.is_none());
+        assert!(manifest.security.prompts.dir_allowed.is_none());
+    }
+
+    #[test]
+    fn test_manifest_parse_with_auth_qr() {
+        let toml_str = r#"
+            [plugin]
+            name = "wa"
+            version = "0.1.0"
+
+            [auth]
+            type = "qr"
+            qr_file = "my-qr.txt"
+            status_file = "my-creds.json"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        match manifest.auth.unwrap() {
+            lukan_core::models::plugin::AuthDeclaration::Qr {
+                qr_file,
+                status_file,
+            } => {
+                assert_eq!(qr_file, "my-qr.txt");
+                assert_eq!(status_file, "my-creds.json");
+            }
+            other => panic!("Expected Qr, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_manifest_parse_with_auth_token() {
+        let toml_str = r#"
+            [plugin]
+            name = "discord"
+            version = "0.1.0"
+
+            [auth]
+            type = "token"
+            check_field = "botToken"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        match manifest.auth.unwrap() {
+            lukan_core::models::plugin::AuthDeclaration::Token { check_field } => {
+                assert_eq!(check_field, "botToken");
+            }
+            other => panic!("Expected Token, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_manifest_parse_with_run_env() {
+        let toml_str = r#"
+            [plugin]
+            name = "test"
+            version = "0.1.0"
+
+            [run]
+            command = "node"
+            args = ["index.js"]
+
+            [run.env]
+            NODE_ENV = "production"
+            DEBUG = "false"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        let run = manifest.run.unwrap();
+        assert_eq!(run.env.len(), 2);
+        assert_eq!(run.env["NODE_ENV"], "production");
+        assert_eq!(run.env["DEBUG"], "false");
+    }
+
+    #[test]
+    fn test_manifest_parse_run_defaults() {
+        let toml_str = r#"
+            [plugin]
+            name = "test"
+            version = "0.1.0"
+
+            [run]
+            command = "python3"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        let run = manifest.run.unwrap();
+        assert_eq!(run.command, "python3");
+        assert!(run.args.is_empty());
+        assert!(run.env.is_empty());
+        assert!(run.handler.is_none());
+    }
+
+    #[test]
+    fn test_manifest_parse_with_config_fields() {
+        let toml_str = r#"
+            [plugin]
+            name = "test"
+            version = "0.1.0"
+
+            [config.api_key]
+            type = "string"
+            description = "API key"
+            format = "password"
+            group = "Auth"
+            order = 0
+
+            [config.channels]
+            type = "string[]"
+            description = "Channel IDs"
+            group = "Access"
+            order = 1
+
+            [config.port]
+            type = "number"
+            description = "Port number"
+            default = 8080
+
+            [config.debug]
+            type = "bool"
+            description = "Enable debug mode"
+            default = false
+            hidden = true
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(manifest.config.len(), 4);
+
+        let api_key = &manifest.config["api_key"];
+        assert_eq!(
+            api_key.field_type,
+            lukan_core::models::plugin::ConfigFieldType::String
+        );
+        assert_eq!(api_key.format.as_deref(), Some("password"));
+        assert_eq!(api_key.group.as_deref(), Some("Auth"));
+        assert_eq!(api_key.order, 0);
+        assert!(!api_key.hidden);
+
+        let channels = &manifest.config["channels"];
+        assert_eq!(
+            channels.field_type,
+            lukan_core::models::plugin::ConfigFieldType::StringArray
+        );
+
+        let port = &manifest.config["port"];
+        assert_eq!(
+            port.field_type,
+            lukan_core::models::plugin::ConfigFieldType::Number
+        );
+        assert_eq!(port.default, Some(serde_json::json!(8080)));
+
+        let debug = &manifest.config["debug"];
+        assert_eq!(
+            debug.field_type,
+            lukan_core::models::plugin::ConfigFieldType::Bool
+        );
+        assert!(debug.hidden);
+        assert_eq!(debug.default, Some(serde_json::json!(false)));
+    }
+
+    #[test]
+    fn test_manifest_parse_with_depends_on() {
+        let toml_str = r#"
+            [plugin]
+            name = "test"
+            version = "0.1.0"
+
+            [config.backend]
+            type = "string"
+            description = "Backend type"
+            valid_values = ["local", "cloud"]
+
+            [config.server_url]
+            type = "string"
+            description = "Server URL"
+
+            [config.server_url.depends_on]
+            field = "backend"
+            values = ["cloud"]
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        let server_url = &manifest.config["server_url"];
+        let dep = server_url.depends_on.as_ref().unwrap();
+        assert_eq!(dep.field, "backend");
+        assert_eq!(dep.values, vec!["cloud"]);
+
+        // backend should have no depends_on
+        assert!(manifest.config["backend"].depends_on.is_none());
+    }
+
+    #[test]
+    fn test_manifest_parse_with_contributions() {
+        let toml_str = r#"
+            [plugin]
+            name = "whisper"
+            version = "0.1.0"
+
+            [contributions.transcription]
+            port_field = "port"
+            default_port = 9999
+            endpoint = "/transcribe"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        let tc = manifest.contributions.transcription.unwrap();
+        assert_eq!(tc.port_field, "port");
+        assert_eq!(tc.default_port, 9999);
+        assert_eq!(tc.endpoint, "/transcribe");
+    }
+
+    #[test]
+    fn test_manifest_parse_with_views() {
+        let toml_str = r#"
+            [plugin]
+            name = "dashboard"
+            version = "0.1.0"
+
+            [plugin.activity_bar]
+            icon = "container"
+            label = "Dashboard"
+
+            [[plugin.views]]
+            id = "overview"
+            type = "panel"
+            label = "Overview"
+
+            [[plugin.views]]
+            id = "logs"
+            type = "panel"
+            label = "Logs"
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        let ab = manifest.plugin.activity_bar.unwrap();
+        assert_eq!(ab.icon, "container");
+        assert_eq!(ab.label, "Dashboard");
+        assert_eq!(manifest.plugin.views.len(), 2);
+        assert_eq!(manifest.plugin.views[0].id, "overview");
+        assert_eq!(manifest.plugin.views[0].view_type, "panel");
+        assert_eq!(manifest.plugin.views[1].id, "logs");
+    }
+
+    #[test]
+    fn test_manifest_parse_invalid_toml() {
+        let toml_str = "this is not valid toml {{{}}}";
+        let result = toml::from_str::<PluginManifest>(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_manifest_parse_missing_name_fails() {
+        let toml_str = r#"
+            [plugin]
+            version = "0.1.0"
+        "#;
+        let result = toml::from_str::<PluginManifest>(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_manifest_parse_missing_version_fails() {
+        let toml_str = r#"
+            [plugin]
+            name = "test"
+        "#;
+        let result = toml::from_str::<PluginManifest>(toml_str);
+        assert!(result.is_err());
+    }
+}

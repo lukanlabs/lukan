@@ -27,6 +27,55 @@ pub struct SourceQuery {
     source: Option<String>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_count() {
+        assert_eq!(default_count(), 50);
+    }
+
+    #[test]
+    fn test_system_event_dto_serialization() {
+        let event = SystemEventDto {
+            ts: "2024-01-01T00:00:00Z".into(),
+            source: "worker:my-worker".into(),
+            level: "info".into(),
+            detail: "Worker completed".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""ts""#), "ts: {json}");
+        assert!(json.contains(r#""source""#), "source: {json}");
+        assert!(json.contains(r#""level""#), "level: {json}");
+        assert!(json.contains(r#""detail""#), "detail: {json}");
+    }
+
+    #[test]
+    fn test_count_query_deserialize_default() {
+        let q: CountQuery = serde_json::from_str(r#"{}"#).unwrap();
+        assert_eq!(q.count, 50);
+    }
+
+    #[test]
+    fn test_count_query_deserialize_custom() {
+        let q: CountQuery = serde_json::from_str(r#"{"count":100}"#).unwrap();
+        assert_eq!(q.count, 100);
+    }
+
+    #[test]
+    fn test_source_query_deserialize_none() {
+        let q: SourceQuery = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(q.source.is_none());
+    }
+
+    #[test]
+    fn test_source_query_deserialize_some() {
+        let q: SourceQuery = serde_json::from_str(r#"{"source":"worker:test"}"#).unwrap();
+        assert_eq!(q.source, Some("worker:test".to_string()));
+    }
+}
+
 /// POST /api/events/consume
 pub async fn consume_pending_events() -> Json<Vec<SystemEventDto>> {
     let pending_path = LukanPaths::pending_events_file();

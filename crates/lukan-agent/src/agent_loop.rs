@@ -736,11 +736,6 @@ impl AgentLoop {
 
         // Inner loop: call LLM → execute tools → repeat until done
         loop {
-            // Repair any orphaned tool_use blocks before sending history to the provider.
-            // This handles edge cases where a previous API error left function_calls without
-            // matching function_call_outputs (which causes Codex 400 errors).
-            self.history.repair_orphaned_tool_use();
-
             let mut tool_defs = self.tools.definitions();
             // In planner mode, only expose read-only tools to the LLM
             if self.permission_matcher.mode() == PermissionMode::Planner {
@@ -859,8 +854,6 @@ impl AgentLoop {
             if cancelled {
                 stream_handle.abort();
                 info!("Turn cancelled by user");
-                // Cancel all running sub-agents
-                crate::sub_agent::cancel_all_running().await;
                 // Save any partial text so the conversation stays coherent
                 if !text_content.is_empty() {
                     self.history
@@ -888,16 +881,12 @@ impl AgentLoop {
                 });
             }
 
-            // Don't add ToolUse blocks on error — they can't be executed and would
-            // create orphaned function_call entries that cause Codex 400 errors.
-            if stop_reason != StopReason::Error {
-                for tool in &pending_tools {
-                    blocks.push(ContentBlock::ToolUse {
-                        id: tool.id.clone(),
-                        name: tool.name.clone(),
-                        input: tool.input.clone(),
-                    });
-                }
+            for tool in &pending_tools {
+                blocks.push(ContentBlock::ToolUse {
+                    id: tool.id.clone(),
+                    name: tool.name.clone(),
+                    input: tool.input.clone(),
+                });
             }
 
             if !blocks.is_empty() {
@@ -929,7 +918,6 @@ impl AgentLoop {
             // Check cancellation before executing tools
             if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
                 info!("Turn cancelled before tool execution");
-                crate::sub_agent::cancel_all_running().await;
                 self.save_session().await?;
                 return Ok(());
             }

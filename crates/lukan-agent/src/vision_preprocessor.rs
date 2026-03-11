@@ -179,26 +179,7 @@ fn parse_data_url_to_image_block(data_url: &str) -> ContentBlock {
 }
 
 /// Call the vision provider to describe a single image.
-/// Applies a 30-second timeout to prevent hanging indefinitely.
 async fn describe_with_provider(provider: &dyn Provider, image_block: ContentBlock) -> String {
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        describe_with_provider_inner(provider, image_block),
-    )
-    .await
-    {
-        Ok(desc) => desc,
-        Err(_) => {
-            warn!("Vision provider timed out after 30s");
-            "[Image description unavailable — vision model timed out]".to_string()
-        }
-    }
-}
-
-async fn describe_with_provider_inner(
-    provider: &dyn Provider,
-    image_block: ContentBlock,
-) -> String {
     let user_msg = Message {
         role: Role::User,
         content: MessageContent::Blocks(vec![
@@ -220,6 +201,10 @@ async fn describe_with_provider_inner(
     let (tx, mut rx) = mpsc::channel::<StreamEvent>(64);
 
     let provider_name = provider.name().to_string();
+    // We need to call the provider but it takes &self not Arc, so we do this in-task
+    // The provider is Send+Sync so we can move the reference across the spawn boundary
+    // by using a scoped approach. However, since Provider is behind a dyn ref we
+    // cannot spawn. Instead, run inline (vision calls are short).
     if let Err(e) = provider.stream(params, tx).await {
         warn!("Vision provider ({provider_name}) error: {e}");
         return format!("[Image description unavailable — vision model error: {e}]");

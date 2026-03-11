@@ -176,3 +176,95 @@ impl ProjectConfig {
         Ok(Some(content))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_project_config_default() {
+        let config = ProjectConfig::default();
+        assert_eq!(config.permission_mode, PermissionMode::Auto);
+        assert!(!config.trusted);
+        assert!(config.allowed_paths.is_empty());
+        assert!(config.permissions.os_sandbox);
+    }
+
+    #[test]
+    fn test_project_config_serde_roundtrip() {
+        let config = ProjectConfig {
+            permission_mode: PermissionMode::Manual,
+            permissions: PermissionsConfig {
+                deny: vec!["rm -rf /".into()],
+                allow: vec!["Bash:ls *".into()],
+                ..Default::default()
+            },
+            trusted: true,
+            allowed_paths: vec!["/tmp/extra".into(), "~/projects".into()],
+        };
+        let json = serde_json::to_string_pretty(&config).unwrap();
+        let parsed: ProjectConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.permission_mode, PermissionMode::Manual);
+        assert!(parsed.trusted);
+        assert_eq!(parsed.allowed_paths.len(), 2);
+        assert_eq!(parsed.permissions.deny, vec!["rm -rf /"]);
+        assert_eq!(parsed.permissions.allow, vec!["Bash:ls *"]);
+    }
+
+    #[test]
+    fn test_project_config_deserialize_minimal() {
+        // All fields have defaults, so an empty JSON object should work
+        let json = "{}";
+        let config: ProjectConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.permission_mode, PermissionMode::Auto);
+        assert!(!config.trusted);
+    }
+
+    #[test]
+    fn test_resolve_allowed_paths_cwd_only() {
+        let config = ProjectConfig::default();
+        let cwd = Path::new("/home/user/project");
+        let paths = config.resolve_allowed_paths(cwd);
+        assert_eq!(paths, vec![PathBuf::from("/home/user/project")]);
+    }
+
+    #[test]
+    fn test_resolve_allowed_paths_with_extras() {
+        let config = ProjectConfig {
+            allowed_paths: vec!["/tmp/data".into(), "/opt/tools".into()],
+            ..Default::default()
+        };
+        let cwd = Path::new("/home/user/project");
+        let paths = config.resolve_allowed_paths(cwd);
+        assert_eq!(paths.len(), 3);
+        assert_eq!(paths[0], PathBuf::from("/home/user/project"));
+        assert_eq!(paths[1], PathBuf::from("/tmp/data"));
+        assert_eq!(paths[2], PathBuf::from("/opt/tools"));
+    }
+
+    #[test]
+    fn test_resolve_allowed_paths_tilde_expansion() {
+        let config = ProjectConfig {
+            allowed_paths: vec!["~/Documents".into()],
+            ..Default::default()
+        };
+        let cwd = Path::new("/home/user/project");
+        let paths = config.resolve_allowed_paths(cwd);
+        assert_eq!(paths.len(), 2);
+        // The tilde should be replaced with $HOME
+        let expanded = &paths[1];
+        assert!(!expanded.to_string_lossy().contains('~'));
+    }
+
+    #[test]
+    fn test_resolve_allowed_paths_no_duplicates() {
+        let config = ProjectConfig {
+            allowed_paths: vec!["/home/user/project".into()],
+            ..Default::default()
+        };
+        let cwd = Path::new("/home/user/project");
+        let paths = config.resolve_allowed_paths(cwd);
+        // cwd is already in the list, so no duplicate
+        assert_eq!(paths.len(), 1);
+    }
+}

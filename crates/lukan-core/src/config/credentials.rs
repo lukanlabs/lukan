@@ -102,3 +102,80 @@ impl CredentialsManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::types::{Credentials, ProviderName};
+    use super::*;
+
+    #[test]
+    fn test_get_api_key_returns_correct_key_per_provider() {
+        let creds = Credentials {
+            nebius_api_key: Some("neb-key".into()),
+            anthropic_api_key: Some("ant-key".into()),
+            fireworks_api_key: Some("fw-key".into()),
+            copilot_token: Some("cp-tok".into()),
+            codex_access_token: Some("cx-tok".into()),
+            zai_api_key: Some("zai-key".into()),
+            ollama_cloud_api_key: Some("oll-key".into()),
+            openai_compatible_api_key: Some("oai-key".into()),
+            lukan_cloud_api_key: Some("lk-key".into()),
+            gemini_api_key: Some("gem-key".into()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::Nebius),
+            Some("neb-key".into())
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::Anthropic),
+            Some("ant-key".into())
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::Fireworks),
+            Some("fw-key".into())
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::GithubCopilot),
+            Some("cp-tok".into())
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::OpenaiCodex),
+            Some("cx-tok".into())
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::Zai),
+            Some("zai-key".into())
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::OllamaCloud),
+            Some("oll-key".into())
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::OpenaiCompatible),
+            Some("oai-key".into())
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::LukanCloud),
+            Some("lk-key".into())
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::Gemini),
+            Some("gem-key".into())
+        );
+    }
+
+    #[test]
+    fn test_get_api_key_returns_none_when_unset() {
+        let creds = Credentials::default();
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::Anthropic),
+            None
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::Nebius),
+            None
+        );
+    }
+}

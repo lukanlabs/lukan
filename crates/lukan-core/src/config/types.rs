@@ -347,3 +347,364 @@ pub struct PluginOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_restart: Option<bool>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── ProviderName ────────────────────────────────────────────────
+
+    #[test]
+    fn test_provider_name_serde_kebab_case() {
+        let name = ProviderName::GithubCopilot;
+        let json = serde_json::to_string(&name).unwrap();
+        assert_eq!(json, r#""github-copilot""#);
+
+        let parsed: ProviderName = serde_json::from_str(r#""github-copilot""#).unwrap();
+        assert_eq!(parsed, ProviderName::GithubCopilot);
+    }
+
+    #[test]
+    fn test_provider_name_all_variants_roundtrip() {
+        let variants = [
+            ProviderName::Nebius,
+            ProviderName::Anthropic,
+            ProviderName::Fireworks,
+            ProviderName::GithubCopilot,
+            ProviderName::OpenaiCodex,
+            ProviderName::Zai,
+            ProviderName::OllamaCloud,
+            ProviderName::OpenaiCompatible,
+            ProviderName::LukanCloud,
+            ProviderName::Gemini,
+        ];
+        for variant in &variants {
+            let json = serde_json::to_string(variant).unwrap();
+            let parsed: ProviderName = serde_json::from_str(&json).unwrap();
+            assert_eq!(&parsed, variant);
+        }
+    }
+
+    #[test]
+    fn test_provider_name_display() {
+        assert_eq!(ProviderName::Nebius.to_string(), "nebius");
+        assert_eq!(ProviderName::Anthropic.to_string(), "anthropic");
+        assert_eq!(ProviderName::GithubCopilot.to_string(), "github-copilot");
+        assert_eq!(ProviderName::OpenaiCodex.to_string(), "openai-codex");
+        assert_eq!(ProviderName::OllamaCloud.to_string(), "ollama-cloud");
+        assert_eq!(
+            ProviderName::OpenaiCompatible.to_string(),
+            "openai-compatible"
+        );
+        assert_eq!(ProviderName::LukanCloud.to_string(), "lukan-cloud");
+        assert_eq!(ProviderName::Gemini.to_string(), "gemini");
+    }
+
+    #[test]
+    fn test_provider_name_hash_eq() {
+        let mut map = HashMap::new();
+        map.insert(ProviderName::Anthropic, "key1");
+        map.insert(ProviderName::Nebius, "key2");
+        assert_eq!(map.get(&ProviderName::Anthropic), Some(&"key1"));
+        assert_eq!(map.get(&ProviderName::Nebius), Some(&"key2"));
+        assert_eq!(map.get(&ProviderName::Gemini), None);
+    }
+
+    // ── AppConfig ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_app_config_default() {
+        let config = AppConfig::default();
+        assert_eq!(config.provider, ProviderName::Nebius);
+        assert_eq!(config.max_tokens, 8192);
+        assert!(config.model.is_none());
+        assert!(config.temperature.is_none());
+        assert!(config.plugins.is_none());
+        assert!(config.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn test_app_config_serde_roundtrip() {
+        let config = AppConfig {
+            provider: ProviderName::Anthropic,
+            model: Some("claude-3".into()),
+            max_tokens: 4096,
+            temperature: Some(0.7),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains(r#""provider":"anthropic""#));
+        assert!(json.contains(r#""model":"claude-3""#));
+        assert!(json.contains(r#""maxTokens":4096"#));
+
+        let parsed: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.provider, ProviderName::Anthropic);
+        assert_eq!(parsed.model.as_deref(), Some("claude-3"));
+        assert_eq!(parsed.max_tokens, 4096);
+    }
+
+    #[test]
+    fn test_app_config_max_tokens_default_on_missing() {
+        let json = r#"{"provider":"nebius"}"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_tokens, 8192);
+    }
+
+    #[test]
+    fn test_app_config_skip_serializing_none_fields() {
+        let config = AppConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        // Optional None fields should be omitted
+        assert!(!json.contains("model"));
+        assert!(!json.contains("temperature"));
+        assert!(!json.contains("webPassword"));
+    }
+
+    #[test]
+    fn test_app_config_mcp_servers() {
+        let json = r#"{
+            "provider": "nebius",
+            "mcpServers": {
+                "test-server": {
+                    "command": "node",
+                    "args": ["server.js"],
+                    "env": {"PORT": "3000"}
+                }
+            }
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.mcp_servers.len(), 1);
+        let server = &config.mcp_servers["test-server"];
+        assert_eq!(server.command, "node");
+        assert_eq!(server.args, vec!["server.js"]);
+        assert_eq!(server.env.get("PORT").unwrap(), "3000");
+    }
+
+    // ── Credentials ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_credentials_default() {
+        let creds = Credentials::default();
+        assert!(creds.anthropic_api_key.is_none());
+        assert!(creds.nebius_api_key.is_none());
+        assert!(creds.skill_credentials.is_empty());
+    }
+
+    #[test]
+    fn test_credentials_serde_roundtrip() {
+        let creds = Credentials {
+            anthropic_api_key: Some("sk-ant-123".into()),
+            nebius_api_key: Some("neb-456".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&creds).unwrap();
+        assert!(json.contains(r#""anthropicApiKey":"sk-ant-123""#));
+
+        let parsed: Credentials = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.anthropic_api_key.as_deref(), Some("sk-ant-123"));
+        assert_eq!(parsed.nebius_api_key.as_deref(), Some("neb-456"));
+    }
+
+    #[test]
+    fn test_credentials_flatten_skill_env() {
+        let mut skill_creds = HashMap::new();
+        let mut skill_a = HashMap::new();
+        skill_a.insert("API_KEY".to_string(), "key_a".to_string());
+        skill_a.insert("SECRET".to_string(), "sec_a".to_string());
+        skill_creds.insert("skill-a".to_string(), skill_a);
+
+        let mut skill_b = HashMap::new();
+        skill_b.insert("OTHER_KEY".to_string(), "key_b".to_string());
+        skill_creds.insert("skill-b".to_string(), skill_b);
+
+        let creds = Credentials {
+            skill_credentials: skill_creds,
+            ..Default::default()
+        };
+
+        let flat = creds.flatten_skill_env();
+        assert_eq!(flat.get("API_KEY").unwrap(), "key_a");
+        assert_eq!(flat.get("SECRET").unwrap(), "sec_a");
+        assert_eq!(flat.get("OTHER_KEY").unwrap(), "key_b");
+    }
+
+    #[test]
+    fn test_credentials_flatten_skill_env_empty() {
+        let creds = Credentials::default();
+        assert!(creds.flatten_skill_env().is_empty());
+    }
+
+    // ── ResolvedConfig ──────────────────────────────────────────────
+
+    #[test]
+    fn test_effective_model_none_when_unset() {
+        let rc = ResolvedConfig {
+            config: AppConfig::default(),
+            credentials: Credentials::default(),
+        };
+        assert!(rc.effective_model().is_none());
+    }
+
+    #[test]
+    fn test_effective_model_plain() {
+        let rc = ResolvedConfig {
+            config: AppConfig {
+                model: Some("claude-3-opus".into()),
+                ..Default::default()
+            },
+            credentials: Credentials::default(),
+        };
+        assert_eq!(rc.effective_model().as_deref(), Some("claude-3-opus"));
+    }
+
+    #[test]
+    fn test_effective_model_strips_provider_prefix() {
+        let rc = ResolvedConfig {
+            config: AppConfig {
+                provider: ProviderName::Anthropic,
+                model: Some("anthropic:claude-3-opus".into()),
+                ..Default::default()
+            },
+            credentials: Credentials::default(),
+        };
+        assert_eq!(rc.effective_model().as_deref(), Some("claude-3-opus"));
+    }
+
+    #[test]
+    fn test_effective_model_does_not_strip_other_provider_prefix() {
+        let rc = ResolvedConfig {
+            config: AppConfig {
+                provider: ProviderName::Nebius,
+                model: Some("anthropic:claude-3-opus".into()),
+                ..Default::default()
+            },
+            credentials: Credentials::default(),
+        };
+        // Should not strip because current provider is Nebius, not Anthropic
+        assert_eq!(
+            rc.effective_model().as_deref(),
+            Some("anthropic:claude-3-opus")
+        );
+    }
+
+    // ── PermissionMode ──────────────────────────────────────────────
+
+    #[test]
+    fn test_permission_mode_default() {
+        let mode = PermissionMode::default();
+        assert_eq!(mode, PermissionMode::Auto);
+    }
+
+    #[test]
+    fn test_permission_mode_display() {
+        assert_eq!(PermissionMode::Manual.to_string(), "manual");
+        assert_eq!(PermissionMode::Auto.to_string(), "auto");
+        assert_eq!(PermissionMode::Skip.to_string(), "skip");
+        assert_eq!(PermissionMode::Planner.to_string(), "planner");
+    }
+
+    #[test]
+    fn test_permission_mode_next_cycles() {
+        let start = PermissionMode::Manual;
+        let step1 = start.next();
+        assert_eq!(step1, PermissionMode::Auto);
+        let step2 = step1.next();
+        assert_eq!(step2, PermissionMode::Skip);
+        let step3 = step2.next();
+        assert_eq!(step3, PermissionMode::Planner);
+        let step4 = step3.next();
+        assert_eq!(step4, PermissionMode::Manual);
+    }
+
+    #[test]
+    fn test_permission_mode_serde() {
+        let mode = PermissionMode::Planner;
+        let json = serde_json::to_string(&mode).unwrap();
+        assert_eq!(json, r#""planner""#);
+
+        let parsed: PermissionMode = serde_json::from_str(r#""auto""#).unwrap();
+        assert_eq!(parsed, PermissionMode::Auto);
+    }
+
+    // ── PermissionsConfig ───────────────────────────────────────────
+
+    #[test]
+    fn test_permissions_config_default() {
+        let perms = PermissionsConfig::default();
+        assert!(perms.deny.is_empty());
+        assert!(perms.ask.is_empty());
+        assert!(perms.allow.is_empty());
+        assert!(perms.os_sandbox);
+        assert!(!perms.sensitive_patterns.is_empty());
+        // Spot-check some default patterns
+        assert!(perms.sensitive_patterns.contains(&".env*".to_string()));
+        assert!(perms.sensitive_patterns.contains(&".ssh/".to_string()));
+        assert!(perms.sensitive_patterns.contains(&"*.pem".to_string()));
+    }
+
+    #[test]
+    fn test_permissions_config_serde_roundtrip() {
+        let perms = PermissionsConfig {
+            deny: vec!["rm -rf".into()],
+            ask: vec!["Bash".into()],
+            allow: vec!["ReadFiles".into()],
+            os_sandbox: false,
+            sensitive_patterns: vec![".secret".into()],
+        };
+        let json = serde_json::to_string(&perms).unwrap();
+        let parsed: PermissionsConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.deny, vec!["rm -rf"]);
+        assert!(!parsed.os_sandbox);
+        assert_eq!(parsed.sensitive_patterns, vec![".secret"]);
+    }
+
+    // ── PluginsConfig ───────────────────────────────────────────────
+
+    #[test]
+    fn test_plugins_config_default() {
+        let pc = PluginsConfig::default();
+        assert!(pc.enabled.is_empty());
+        assert!(pc.overrides.is_empty());
+    }
+
+    #[test]
+    fn test_plugins_config_serde() {
+        let json = r#"{"enabled":["whatsapp"],"overrides":{"whatsapp":{"provider":"anthropic","model":"claude-3"}}}"#;
+        let pc: PluginsConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(pc.enabled, vec!["whatsapp"]);
+        let ov = &pc.overrides["whatsapp"];
+        assert_eq!(ov.provider, Some(ProviderName::Anthropic));
+        assert_eq!(ov.model.as_deref(), Some("claude-3"));
+    }
+
+    // ── McpServerConfig ─────────────────────────────────────────────
+
+    #[test]
+    fn test_mcp_server_config_defaults() {
+        let json = r#"{"command":"npx"}"#;
+        let cfg: McpServerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.command, "npx");
+        assert!(cfg.args.is_empty());
+        assert!(cfg.env.is_empty());
+    }
+
+    // ── TOOL_GROUPS constant ────────────────────────────────────────
+
+    #[test]
+    fn test_tool_groups_not_empty() {
+        assert!(!TOOL_GROUPS.is_empty());
+        for (group_name, tools) in TOOL_GROUPS {
+            assert!(!group_name.is_empty());
+            assert!(!tools.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_tool_groups_contains_expected() {
+        let names: Vec<&str> = TOOL_GROUPS.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"File ops"));
+        assert!(names.contains(&"Search"));
+        assert!(names.contains(&"Execution"));
+        assert!(names.contains(&"Browser"));
+    }
+}

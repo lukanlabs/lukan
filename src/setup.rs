@@ -480,21 +480,34 @@ pub async fn run_doctor() -> Result<()> {
     }
     println!();
 
-    // ── Sandbox (bwrap) ──
+    // ── Sandbox ──
     println!("{BOLD}Sandbox{RESET}");
-    let bwrap_available = lukan_tools::sandbox::is_bwrap_available();
-    if bwrap_available {
-        println!("  {GREEN}✓{RESET} OS sandbox (bwrap): {GREEN}available{RESET}");
+    if cfg!(target_os = "linux") {
+        let bwrap_available = lukan_tools::sandbox::is_bwrap_available();
+        if bwrap_available {
+            println!("  {GREEN}✓{RESET} OS sandbox (bwrap):    {GREEN}available{RESET}");
+        } else {
+            println!("  {YELLOW}!{RESET} OS sandbox (bwrap):    {YELLOW}not available{RESET}");
+            let diagnosis = lukan_tools::sandbox::diagnose_bwrap();
+            println!("  {DIM}Diagnosis: {diagnosis}{RESET}");
+        }
+        let has_profile = lukan_tools::sandbox::has_apparmor_profile();
+        if has_profile {
+            println!("  {GREEN}✓{RESET} AppArmor profile:      {GREEN}installed{RESET}");
+        } else {
+            println!("  {DIM}✗ AppArmor profile:      not installed{RESET}");
+        }
+    } else if cfg!(target_os = "macos") {
+        let sandbox_exec = lukan_tools::sandbox::is_sandbox_exec_available();
+        if sandbox_exec {
+            println!("  {GREEN}✓{RESET} OS sandbox (sandbox-exec): {GREEN}available{RESET}");
+        } else {
+            println!("  {YELLOW}!{RESET} OS sandbox (sandbox-exec): {YELLOW}not available{RESET}");
+            let diagnosis = lukan_tools::sandbox::diagnose_sandbox_exec();
+            println!("  {DIM}Diagnosis: {diagnosis}{RESET}");
+        }
     } else {
-        println!("  {YELLOW}!{RESET} OS sandbox (bwrap): {YELLOW}not available{RESET}");
-        let diagnosis = lukan_tools::sandbox::diagnose_bwrap();
-        println!("  {DIM}Diagnosis: {diagnosis}{RESET}");
-    }
-    let has_profile = lukan_tools::sandbox::has_apparmor_profile();
-    if has_profile {
-        println!("  {GREEN}✓{RESET} AppArmor profile:   {GREEN}installed{RESET}");
-    } else {
-        println!("  {DIM}✗ AppArmor profile:   not installed{RESET}");
+        println!("  {DIM}No OS-level sandbox available on this platform{RESET}");
     }
     println!();
 

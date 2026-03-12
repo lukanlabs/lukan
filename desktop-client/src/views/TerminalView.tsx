@@ -1,7 +1,95 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
 import TerminalTabBar from "../components/terminal/TerminalTabBar";
 import XTermPanel from "../components/terminal/XTermPanel";
+import { AlertTriangle } from "lucide-react";
+
+function ConfirmDialog({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+      if (e.key === "Enter") onConfirm();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onConfirm, onCancel]);
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.5)",
+        backdropFilter: "blur(2px)",
+      }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#1a1a1e",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 10,
+          padding: "20px 24px",
+          maxWidth: 360,
+          width: "90%",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <AlertTriangle size={18} style={{ color: "#fbbf24", flexShrink: 0 }} />
+          <span style={{ fontSize: 14, fontWeight: 600, color: "#fafafa" }}>
+            Close terminal?
+          </span>
+        </div>
+        <p style={{ fontSize: 13, color: "#a1a1aa", margin: "0 0 20px", lineHeight: 1.5 }}>
+          This will kill the running process and destroy the session. This action cannot be undone.
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            onClick={onCancel}
+            style={{
+              padding: "6px 16px",
+              fontSize: 13,
+              borderRadius: 6,
+              border: "1px solid rgba(255,255,255,0.1)",
+              background: "transparent",
+              color: "#a1a1aa",
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            style={{
+              padding: "6px 16px",
+              fontSize: 13,
+              borderRadius: 6,
+              border: "none",
+              background: "#dc2626",
+              color: "#fff",
+              cursor: "pointer",
+              fontWeight: 500,
+            }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function TerminalView() {
   const {
@@ -17,6 +105,7 @@ export default function TerminalView() {
     attachSession,
   } = useTerminalSessions();
   const initialized = useRef(false);
+  const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
 
   // Initialize: list existing tmux sessions or create first one
   useEffect(() => {
@@ -68,18 +157,20 @@ export default function TerminalView() {
       );
   }, [detachSession]);
 
-  const handleClose = useCallback(
-    async (id: string) => {
-      if (sessions.length > 1) {
-        // Multiple tabs open — just detach (don't kill tmux)
-        detachSession(id);
-      } else {
-        // Last tab — destroy the tmux session
-        await destroySession(id);
-      }
-    },
-    [sessions.length, detachSession, destroySession],
-  );
+  const handleClose = useCallback((id: string) => {
+    setPendingCloseId(id);
+  }, []);
+
+  const confirmClose = useCallback(async () => {
+    if (!pendingCloseId) return;
+    const id = pendingCloseId;
+    setPendingCloseId(null);
+    await destroySession(id);
+  }, [pendingCloseId, destroySession]);
+
+  const cancelClose = useCallback(() => {
+    setPendingCloseId(null);
+  }, []);
 
   const handleScrollbackReplayed = useCallback(
     (id: string) => {
@@ -110,6 +201,9 @@ export default function TerminalView() {
           />
         ))}
       </div>
+      {pendingCloseId && (
+        <ConfirmDialog onConfirm={confirmClose} onCancel={cancelClose} />
+      )}
     </div>
   );
 }

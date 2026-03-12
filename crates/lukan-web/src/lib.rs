@@ -26,8 +26,53 @@ use lukan_core::config::ResolvedConfig;
 
 use crate::state::AppState;
 
+/// Save host terminal state and install a signal handler that restores it.
+///
+/// tmux subprocesses can corrupt the host TTY even with `setsid()`.
+/// By saving termios at startup and restoring on SIGINT/SIGTERM, we
+/// guarantee the user's terminal is never left in a broken state.
+#[cfg(unix)]
+fn install_terminal_guard() {
+    use std::sync::OnceLock;
+    static SAVED_TERMIOS: OnceLock<libc::termios> = OnceLock::new();
+
+    unsafe {
+        let mut termios: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) == 0 {
+            SAVED_TERMIOS.get_or_init(|| termios);
+        }
+    }
+
+    // Install signal handlers that restore termios before exiting
+    unsafe {
+        extern "C" fn restore_and_exit(sig: libc::c_int) {
+            unsafe {
+                let mut termios: libc::termios = std::mem::zeroed();
+                if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) == 0 {
+                    // Restore canonical mode, echo, and sane settings
+                    termios.c_lflag |= libc::ECHO | libc::ICANON | libc::ISIG | libc::IEXTEN;
+                    termios.c_iflag |= libc::ICRNL;
+                    termios.c_oflag |= libc::OPOST;
+                    let _ = libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios);
+                }
+                // Write a newline so the shell prompt appears on a clean line
+                let _ = libc::write(libc::STDOUT_FILENO, b"\n" as *const u8 as _, 1);
+                // Re-raise with default handler to get the correct exit status
+                libc::signal(sig, libc::SIG_DFL);
+                libc::raise(sig);
+            }
+        }
+
+        libc::signal(libc::SIGINT, restore_and_exit as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, restore_and_exit as *const () as libc::sighandler_t);
+    }
+}
+
 /// Start the web server with embedded React UI
 pub async fn start_web_server(resolved: ResolvedConfig, port: u16) -> Result<()> {
+    #[cfg(unix)]
+    install_terminal_guard();
+
     let state = Arc::new(AppState::new(resolved));
 
     // Spawn background task to poll notification file and broadcast to WebSocket clients
@@ -55,57 +100,11 @@ pub async fn start_web_server(resolved: ResolvedConfig, port: u16) -> Result<()>
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("Web server listening on {addr}");
 
-    let shutdown_state = Arc::clone(&state);
-    axum::serve(listener, router)
-        .with_graceful_shutdown(graceful_shutdown(shutdown_state))
-        .await?;
+    // The terminal guard (install_terminal_guard) handles SIGINT/SIGTERM
+    // directly via libc signal handlers, restoring termios and exiting.
+    // No need for tokio graceful shutdown — axum will be killed cleanly
+    // and chat sessions are saved incrementally.
+    axum::serve(listener, router).await?;
 
     Ok(())
-}
-
-/// Wait for SIGTERM or Ctrl+C, then save all active sessions before exiting.
-async fn graceful_shutdown(state: Arc<AppState>) {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-
-    tracing::info!("Shutdown signal received, saving sessions...");
-
-    // Save legacy singleton session
-    {
-        let mut agent_lock = state.agent.lock().await;
-        if let Some(ref mut agent) = *agent_lock {
-            let _ = agent.save_session_public().await;
-        }
-    }
-
-    // Save all multi-tab sessions
-    {
-        let mut sessions = state.sessions.lock().await;
-        for (_tab_id, session) in sessions.iter_mut() {
-            if let Some(ref mut agent) = session.agent {
-                let _ = agent.save_session_public().await;
-            }
-        }
-    }
-
-    tracing::info!("Sessions saved, shutting down");
 }

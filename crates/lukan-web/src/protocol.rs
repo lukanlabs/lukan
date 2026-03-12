@@ -171,6 +171,9 @@ pub enum ClientMessage {
         session_id: String,
     },
     TerminalList,
+    TerminalReconnect {
+        session_id: String,
+    },
 }
 
 /// Messages sent from the server to the client (browser)
@@ -283,6 +286,8 @@ pub enum ServerMessage {
         id: String,
         cols: u16,
         rows: u16,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scrollback: Option<String>,
     },
     TerminalSessions {
         sessions: Vec<TerminalSessionInfoDto>,
@@ -1102,6 +1107,7 @@ mod tests {
             id: "term-1".into(),
             cols: 80,
             rows: 24,
+            scrollback: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(
@@ -1111,6 +1117,37 @@ mod tests {
         assert!(json.contains(r#""id":"term-1""#), "id: {json}");
         assert!(json.contains(r#""cols":80"#), "cols: {json}");
         assert!(json.contains(r#""rows":24"#), "rows: {json}");
+        assert!(
+            !json.contains("scrollback"),
+            "None scrollback should be skipped: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_terminal_created_with_scrollback() {
+        let msg = ServerMessage::TerminalCreated {
+            id: "term-1".into(),
+            cols: 80,
+            rows: 24,
+            scrollback: Some("c29tZSBkYXRh".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""scrollback":"c29tZSBkYXRh""#),
+            "scrollback present: {json}"
+        );
+    }
+
+    #[test]
+    fn test_client_message_terminal_reconnect() {
+        let json = r#"{"type":"terminal_reconnect","sessionId":"t1"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::TerminalReconnect { session_id } => {
+                assert_eq!(session_id, "t1");
+            }
+            _ => panic!("Expected TerminalReconnect"),
+        }
     }
 
     #[test]

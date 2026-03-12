@@ -1,25 +1,34 @@
 use std::collections::HashMap;
-use std::io::Write;
 
+use anyhow::Context;
 use base64::Engine;
-use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
+use tokio::io::AsyncReadExt;
+use tokio::process::Command;
 use tokio::sync::{Mutex, broadcast};
 
 use crate::protocol::{ServerMessage, TerminalSessionInfoDto};
 
-/// A single PTY session.
-pub struct TerminalSession {
-    pub id: String,
-    pub writer: Box<dyn Write + Send>,
-    pub master: Box<dyn MasterPty + Send>,
-    pub child: Box<dyn portable_pty::Child + Send>,
-    pub cols: u16,
-    pub rows: u16,
+/// Prefix for all lukan-managed tmux sessions.
+const TMUX_PREFIX: &str = "lukan-";
+
+/// A tmux-backed terminal session.
+struct TmuxSession {
+    id: String,
+    cols: u16,
+    rows: u16,
+    /// FIFO path used by `tmux pipe-pane` to stream output.
+    fifo_path: String,
+    /// Handle to the async task reading the FIFO.
+    reader_handle: tokio::task::JoinHandle<()>,
 }
 
-/// Manages all terminal sessions for the web server.
+/// Manages terminal sessions backed by tmux.
+///
+/// Each session maps 1:1 to a tmux session with a `lukan-` prefix.
+/// Sessions survive WebSocket disconnects and server restarts because tmux
+/// keeps the PTY alive independently.
 pub struct TerminalManager {
-    pub sessions: Mutex<HashMap<String, TerminalSession>>,
+    sessions: Mutex<HashMap<String, TmuxSession>>,
 }
 
 impl Default for TerminalManager {
@@ -31,8 +40,8 @@ impl Default for TerminalManager {
 }
 
 impl TerminalManager {
-    /// Spawn a new PTY session. Output is sent via the broadcast channel
-    /// as `ServerMessage::TerminalOutput` or `ServerMessage::TerminalExited`.
+    /// Spawn a new tmux session. Output is streamed via a FIFO and broadcast
+    /// as `ServerMessage::TerminalOutput` / `ServerMessage::TerminalExited`.
     pub async fn create_session(
         &self,
         output_tx: broadcast::Sender<ServerMessage>,
@@ -40,148 +49,134 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
     ) -> anyhow::Result<TerminalSessionInfoDto> {
-        let id = uuid::Uuid::new_v4().to_string();
-
-        let pty_system = NativePtySystem::default();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| anyhow::anyhow!("failed to open PTY: {e}"))?;
-
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-        let mut cmd = CommandBuilder::new(&shell);
-        cmd.arg("-l");
-        let working_dir = cwd
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
-        cmd.cwd(working_dir);
-
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .map_err(|e| anyhow::anyhow!("failed to spawn shell: {e}"))?;
-
-        drop(pair.slave);
-
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|e| anyhow::anyhow!("failed to take PTY writer: {e}"))?;
-
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|e| anyhow::anyhow!("failed to clone PTY reader: {e}"))?;
-
-        // Spawn blocking reader thread that sends output via broadcast
-        let session_id = id.clone();
-        let tx = output_tx;
-        std::thread::spawn(move || {
-            let mut reader = reader;
-            let mut buf = [0u8; 4096];
-            loop {
-                match std::io::Read::read(&mut reader, &mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
-                        let msg = ServerMessage::TerminalOutput {
-                            session_id: session_id.clone(),
-                            data: b64,
-                        };
-                        if tx.send(msg).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-            let _ = tx.send(ServerMessage::TerminalExited {
-                session_id: session_id.clone(),
-            });
+        let session_name = format!("{TMUX_PREFIX}{}", uuid::Uuid::new_v4());
+        let working_dir = cwd.unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_else(|_| "/".into())
+                .to_string_lossy()
+                .into_owned()
         });
 
-        let info = TerminalSessionInfoDto {
-            id: id.clone(),
-            cols,
-            rows,
-        };
+        let status = Command::new("tmux")
+            .args([
+                "new-session",
+                "-d",
+                "-s",
+                &session_name,
+                "-x",
+                &cols.to_string(),
+                "-y",
+                &rows.to_string(),
+                "-c",
+                &working_dir,
+            ])
+            .status()
+            .await
+            .context("failed to run tmux new-session")?;
+
+        anyhow::ensure!(status.success(), "tmux new-session exited with error");
+
+        let fifo_path = format!("/tmp/lukan-tmux-{session_name}");
+        let reader_handle =
+            Self::spawn_output_reader(session_name.clone(), fifo_path.clone(), output_tx);
 
         let mut sessions = self.sessions.lock().await;
         sessions.insert(
-            id.clone(),
-            TerminalSession {
-                id,
-                writer,
-                master: pair.master,
-                child,
+            session_name.clone(),
+            TmuxSession {
+                id: session_name.clone(),
                 cols,
                 rows,
+                fifo_path,
+                reader_handle,
             },
         );
 
-        Ok(info)
+        Ok(TerminalSessionInfoDto {
+            id: session_name,
+            cols,
+            rows,
+        })
     }
 
-    /// Write input data to a terminal session.
+    /// Write base64-encoded input to a tmux session via `tmux send-keys -H`.
     pub async fn write_input(&self, session_id: &str, data: &str) -> anyhow::Result<()> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data)
-            .map_err(|e| anyhow::anyhow!("invalid base64: {e}"))?;
+            .context("invalid base64 input")?;
 
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| anyhow::anyhow!("session not found: {session_id}"))?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
 
-        session
-            .writer
-            .write_all(&bytes)
-            .map_err(|e| anyhow::anyhow!("write failed: {e}"))?;
-        session
-            .writer
-            .flush()
-            .map_err(|e| anyhow::anyhow!("flush failed: {e}"))?;
+        // send-keys -H accepts space-separated hex bytes — this is the most
+        // reliable way to send arbitrary bytes (including control chars) to tmux.
+        let hex_args: Vec<String> = bytes.iter().map(|b| format!("{b:02X}")).collect();
+
+        let mut cmd = Command::new("tmux");
+        cmd.arg("send-keys").arg("-t").arg(session_id).arg("-H");
+        for h in &hex_args {
+            cmd.arg(h);
+        }
+
+        let status = cmd
+            .status()
+            .await
+            .context("failed to run tmux send-keys")?;
+
+        if !status.success() {
+            anyhow::bail!("tmux send-keys failed for session {session_id}");
+        }
 
         Ok(())
     }
 
-    /// Resize a terminal session.
+    /// Resize a tmux session's window.
     pub async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
+        let status = Command::new("tmux")
+            .args([
+                "resize-window",
+                "-t",
+                session_id,
+                "-x",
+                &cols.to_string(),
+                "-y",
+                &rows.to_string(),
+            ])
+            .status()
+            .await
+            .context("tmux resize-window failed")?;
+
+        if !status.success() {
+            anyhow::bail!("tmux resize-window failed for session {session_id}");
+        }
+
         let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| anyhow::anyhow!("session not found: {session_id}"))?;
-
-        session
-            .master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| anyhow::anyhow!("resize failed: {e}"))?;
-
-        session.cols = cols;
-        session.rows = rows;
+        if let Some(s) = sessions.get_mut(session_id) {
+            s.cols = cols;
+            s.rows = rows;
+        }
 
         Ok(())
     }
 
-    /// Destroy a terminal session, killing the child process.
+    /// Destroy a terminal session — kills the tmux session and cleans up the FIFO.
     pub async fn destroy(&self, session_id: &str) -> anyhow::Result<()> {
         let mut sessions = self.sessions.lock().await;
-        if let Some(mut session) = sessions.remove(session_id) {
-            let _ = session.child.kill();
+        if let Some(session) = sessions.remove(session_id) {
+            session.reader_handle.abort();
+            let _ = tokio::fs::remove_file(&session.fifo_path).await;
         }
+
+        let _ = Command::new("tmux")
+            .args(["kill-session", "-t", session_id])
+            .status()
+            .await;
+
         Ok(())
     }
 
-    /// List all active terminal sessions.
+    /// List all tracked terminal sessions.
     pub async fn list(&self) -> Vec<TerminalSessionInfoDto> {
         let sessions = self.sessions.lock().await;
         sessions
@@ -192,5 +187,187 @@ impl TerminalManager {
                 rows: s.rows,
             })
             .collect()
+    }
+
+    /// Discover and re-adopt orphaned tmux sessions with the `lukan-` prefix.
+    ///
+    /// Called on server startup or when a WebSocket client connects. For each
+    /// tmux session found that we aren't already tracking, we re-attach a FIFO
+    /// reader so output flows again.
+    pub async fn recover_sessions(
+        &self,
+        output_tx: broadcast::Sender<ServerMessage>,
+    ) -> Vec<TerminalSessionInfoDto> {
+        let output = Command::new("tmux")
+            .args([
+                "list-sessions",
+                "-F",
+                "#{session_name}:#{window_width}:#{window_height}",
+            ])
+            .output()
+            .await;
+
+        let Ok(output) = output else {
+            return vec![];
+        };
+        if !output.status.success() {
+            // tmux server not running → no sessions to recover
+            return vec![];
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut recovered = vec![];
+        let mut sessions = self.sessions.lock().await;
+
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.splitn(3, ':').collect();
+            if parts.len() != 3 {
+                continue;
+            }
+
+            let name = parts[0];
+            if !name.starts_with(TMUX_PREFIX) {
+                continue;
+            }
+
+            // Already tracking this session
+            if sessions.contains_key(name) {
+                continue;
+            }
+
+            let cols: u16 = parts[1].parse().unwrap_or(80);
+            let rows: u16 = parts[2].parse().unwrap_or(24);
+
+            let fifo_path = format!("/tmp/lukan-tmux-{name}");
+            let reader_handle =
+                Self::spawn_output_reader(name.to_string(), fifo_path.clone(), output_tx.clone());
+
+            let id = name.to_string();
+            sessions.insert(
+                id.clone(),
+                TmuxSession {
+                    id: id.clone(),
+                    cols,
+                    rows,
+                    fifo_path,
+                    reader_handle,
+                },
+            );
+
+            recovered.push(TerminalSessionInfoDto { id, cols, rows });
+        }
+
+        recovered
+    }
+
+    /// Capture the current visible pane content + scrollback as base64.
+    ///
+    /// Used during reconnection to replay terminal state to the client.
+    pub async fn capture_scrollback(&self, session_id: &str) -> anyhow::Result<String> {
+        let output = Command::new("tmux")
+            .args([
+                "capture-pane",
+                "-t",
+                session_id,
+                "-p",     // print to stdout
+                "-e",     // include escape sequences (colors)
+                "-S", "-500", // last 500 lines of scrollback
+            ])
+            .output()
+            .await
+            .context("tmux capture-pane failed")?;
+
+        anyhow::ensure!(
+            output.status.success(),
+            "tmux capture-pane exited with error"
+        );
+
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&output.stdout);
+        Ok(b64)
+    }
+
+    /// Spawn an async task that reads from a FIFO (created by `tmux pipe-pane`)
+    /// and broadcasts output as `ServerMessage::TerminalOutput`.
+    fn spawn_output_reader(
+        session_id: String,
+        fifo_path: String,
+        tx: broadcast::Sender<ServerMessage>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            // Disable any stale pipe-pane left from a previous server run.
+            // Without this, tmux thinks a pipe is already active and the new
+            // pipe-pane command below becomes a no-op.
+            let _ = Command::new("tmux")
+                .args(["pipe-pane", "-t", &session_id, ""])
+                .status()
+                .await;
+
+            // Clean up any stale FIFO from a previous run
+            let _ = tokio::fs::remove_file(&fifo_path).await;
+
+            // Create FIFO
+            let fifo_c = std::ffi::CString::new(fifo_path.as_str()).unwrap();
+            let rc = unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) };
+            if rc != 0 {
+                tracing::error!(session_id, fifo_path, "failed to create FIFO");
+                return;
+            }
+
+            // Tell tmux to pipe pane output into the FIFO
+            let pipe_status = Command::new("tmux")
+                .args([
+                    "pipe-pane",
+                    "-t",
+                    &session_id,
+                    &format!("cat >> '{fifo_path}'"),
+                ])
+                .status()
+                .await;
+
+            if pipe_status.is_err() || !pipe_status.unwrap().success() {
+                tracing::error!(session_id, "tmux pipe-pane failed");
+                let _ = tokio::fs::remove_file(&fifo_path).await;
+                return;
+            }
+
+            // Open the FIFO for reading (blocks until tmux opens the write end)
+            let file = match tokio::fs::File::open(&fifo_path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!(session_id, error = %e, "failed to open FIFO");
+                    return;
+                }
+            };
+
+            let mut reader = tokio::io::BufReader::new(file);
+            let mut buf = [0u8; 4096];
+
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) => {
+                        // FIFO closed — tmux session likely exited
+                        let _ = tx.send(ServerMessage::TerminalExited {
+                            session_id: session_id.clone(),
+                        });
+                        break;
+                    }
+                    Ok(n) => {
+                        let b64 =
+                            base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
+                        let _ = tx.send(ServerMessage::TerminalOutput {
+                            session_id: session_id.clone(),
+                            data: b64,
+                        });
+                    }
+                    Err(e) => {
+                        tracing::error!(session_id, error = %e, "FIFO read error");
+                        break;
+                    }
+                }
+            }
+
+            // Cleanup
+            let _ = tokio::fs::remove_file(&fifo_path).await;
+        })
     }
 }

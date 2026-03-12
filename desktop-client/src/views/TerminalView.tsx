@@ -1,11 +1,18 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
 import TerminalTabBar from "../components/terminal/TerminalTabBar";
 import XTermPanel from "../components/terminal/XTermPanel";
 
 export default function TerminalView() {
-  const { sessions, activeSessionId, createSession, destroySession, switchSession, renameSession } =
-    useTerminalSessions();
+  const {
+    sessions,
+    activeSessionId,
+    createSession,
+    destroySession,
+    switchSession,
+    renameSession,
+    clearScrollback,
+  } = useTerminalSessions();
   const initialized = useRef(false);
 
   // Auto-create first session on mount
@@ -15,6 +22,13 @@ export default function TerminalView() {
       createSession();
     }
   }, [createSession]);
+
+  const handleScrollbackReplayed = useCallback(
+    (id: string) => {
+      clearScrollback(id);
+    },
+    [clearScrollback],
+  );
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -33,6 +47,8 @@ export default function TerminalView() {
             key={s.id}
             sessionId={s.id}
             isActive={s.id === activeSessionId}
+            scrollback={s.scrollback}
+            onScrollbackReplayed={() => handleScrollbackReplayed(s.id)}
           />
         ))}
       </div>

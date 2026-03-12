@@ -211,12 +211,24 @@ export const terminalDestroy = (sessionId: string) =>
   getTransport().call<void>("terminal_destroy", { sessionId });
 export const terminalList = () =>
   getTransport().call<TerminalSessionInfo[]>("terminal_list");
+export const terminalReconnect = (sessionId: string) =>
+  getTransport().call<TerminalSessionInfo & { scrollback?: string }>(
+    "terminal_reconnect",
+    { sessionId },
+  );
 export const onTerminalOutput = (
   sessionId: string,
   cb: (event: TerminalOutputEvent) => void,
 ) =>
   getTransport().subscribe(
     `terminal-output-${sessionId}`,
+    cb as (p: unknown) => void,
+  );
+export const onTerminalSessionsRecovered = (
+  cb: (sessions: TerminalSessionInfo[]) => void,
+) =>
+  getTransport().subscribe(
+    "terminal-sessions-recovered",
     cb as (p: unknown) => void,
   );
 

@@ -5,11 +5,21 @@ import "@xterm/xterm/css/xterm.css";
 interface XTermPanelProps {
   sessionId: string;
   isActive: boolean;
+  /** Base64-encoded scrollback to replay (from session recovery). */
+  scrollback?: string;
+  /** Called after scrollback has been written to xterm. */
+  onScrollbackReplayed?: () => void;
 }
 
-export default function XTermPanel({ sessionId, isActive }: XTermPanelProps) {
+export default function XTermPanel({
+  sessionId,
+  isActive,
+  scrollback,
+  onScrollbackReplayed,
+}: XTermPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { fit } = useTerminal({ sessionId, containerRef });
+  const { termRef, fit } = useTerminal({ sessionId, containerRef });
+  const scrollbackReplayed = useRef(false);
 
   // Re-fit when becoming visible (tab switch)
   useEffect(() => {
@@ -17,6 +27,24 @@ export default function XTermPanel({ sessionId, isActive }: XTermPanelProps) {
       requestAnimationFrame(fit);
     }
   }, [isActive, fit]);
+
+  // Replay scrollback once after recovery
+  useEffect(() => {
+    if (scrollback && termRef.current && !scrollbackReplayed.current) {
+      scrollbackReplayed.current = true;
+      try {
+        const raw = atob(scrollback);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) {
+          bytes[i] = raw.charCodeAt(i);
+        }
+        termRef.current.write(bytes);
+      } catch {
+        // ignore decode errors
+      }
+      onScrollbackReplayed?.();
+    }
+  }, [scrollback, termRef, onScrollbackReplayed]);
 
   return (
     <div

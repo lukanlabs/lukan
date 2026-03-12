@@ -21,6 +21,15 @@ use lukan_tools::create_configured_registry;
 use crate::protocol::{ClientMessage, ServerMessage, TokenUsage};
 use crate::state::{AppState, WebAgentSession};
 
+/// Bundles the mutable stream handles passed into `handle_send_message`
+/// so we stay under clippy's argument limit.
+struct WsStreams<'a> {
+    ws_tx: &'a mut futures::stream::SplitSink<WebSocket, Message>,
+    ws_rx: &'a mut futures::stream::SplitStream<WebSocket>,
+    terminal_rx: &'a mut tokio::sync::broadcast::Receiver<ServerMessage>,
+    notify_rx: &'a mut tokio::sync::broadcast::Receiver<lukan_agent::WorkerNotification>,
+}
+
 /// WebSocket upgrade handler
 pub async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
@@ -211,10 +220,12 @@ async fn dispatch_message(
                 &content,
                 session_id.as_deref(),
                 state,
-                ws_tx,
-                ws_rx,
-                terminal_rx,
-                notify_rx,
+                &mut WsStreams {
+                    ws_tx,
+                    ws_rx,
+                    terminal_rx,
+                    notify_rx,
+                },
             )
             .await;
         }
@@ -617,6 +628,7 @@ async fn dispatch_message(
                             id: info.id,
                             cols: info.cols,
                             rows: info.rows,
+                            scrollback: None,
                         },
                     )
                     .await;
@@ -674,8 +686,42 @@ async fn dispatch_message(
         }
 
         ClientMessage::TerminalList => {
+            // Recover any orphaned tmux sessions before listing
+            let _ = state
+                .terminal_manager
+                .recover_sessions(state.terminal_tx.clone())
+                .await;
             let sessions = state.terminal_manager.list().await;
             send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
+        }
+
+        ClientMessage::TerminalReconnect { session_id } => {
+            match state.terminal_manager.capture_scrollback(&session_id).await {
+                Ok(scrollback) => {
+                    let sessions = state.terminal_manager.list().await;
+                    if let Some(info) = sessions.iter().find(|s| s.id == session_id) {
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::TerminalCreated {
+                                id: info.id.clone(),
+                                cols: info.cols,
+                                rows: info.rows,
+                                scrollback: Some(scrollback),
+                            },
+                        )
+                        .await;
+                    }
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Terminal reconnect failed: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
         }
 
         // Auth messages handled above
@@ -699,12 +745,16 @@ async fn handle_send_message(
     content: &str,
     tab_id: Option<&str>,
     state: &Arc<AppState>,
-    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
-    ws_rx: &mut futures::stream::SplitStream<WebSocket>,
-    terminal_rx: &mut tokio::sync::broadcast::Receiver<ServerMessage>,
-    notify_rx: &mut tokio::sync::broadcast::Receiver<lukan_agent::WorkerNotification>,
+    streams: &mut WsStreams<'_>,
 ) {
     use futures::{SinkExt, StreamExt};
+
+    let WsStreams {
+        ws_tx,
+        ws_rx,
+        terminal_rx,
+        notify_rx,
+    } = streams;
 
     // Try to acquire processing lock
     {

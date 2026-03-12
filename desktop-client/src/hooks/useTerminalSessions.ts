@@ -1,9 +1,16 @@
-import { useState, useCallback } from "react";
-import { terminalCreate, terminalDestroy } from "../lib/tauri";
+import { useState, useCallback, useEffect } from "react";
+import {
+  terminalCreate,
+  terminalDestroy,
+  terminalReconnect,
+  onTerminalSessionsRecovered,
+} from "../lib/tauri";
 import type { TerminalSessionInfo } from "../lib/types";
 
 export interface TerminalSession extends TerminalSessionInfo {
   label?: string;
+  /** Base64 scrollback to replay into xterm.js after recovery. */
+  scrollback?: string;
 }
 
 export function useTerminalSessions() {
@@ -40,6 +47,59 @@ export function useTerminalSessions() {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, label } : s)));
   }, []);
 
+  /** Clear scrollback for a session after it has been replayed. */
+  const clearScrollback = useCallback((id: string) => {
+    setSessions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, scrollback: undefined } : s)),
+    );
+  }, []);
+
+  // Listen for recovered terminal sessions on WebSocket reconnect
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    onTerminalSessionsRecovered(async (recovered: TerminalSessionInfo[]) => {
+      if (!recovered || recovered.length === 0) return;
+
+      // For each recovered session, request scrollback and add to state
+      const sessionsWithScrollback: TerminalSession[] = [];
+      for (const s of recovered) {
+        try {
+          const info = await terminalReconnect(s.id);
+          sessionsWithScrollback.push({
+            id: s.id,
+            cols: info.cols,
+            rows: info.rows,
+            scrollback: info.scrollback,
+          });
+        } catch {
+          // Still add the session even if scrollback capture fails
+          sessionsWithScrollback.push(s);
+        }
+      }
+
+      setSessions((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id));
+        const newSessions = sessionsWithScrollback.filter(
+          (s) => !existingIds.has(s.id),
+        );
+        return [...prev, ...newSessions];
+      });
+
+      // Activate first recovered session if none is active
+      setActiveSessionId((current) => {
+        if (current) return current;
+        return sessionsWithScrollback[0]?.id ?? null;
+      });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   return {
     sessions,
     activeSessionId,
@@ -47,5 +107,6 @@ export function useTerminalSessions() {
     destroySession,
     switchSession,
     renameSession,
+    clearScrollback,
   };
 }

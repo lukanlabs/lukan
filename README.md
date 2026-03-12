@@ -9,6 +9,13 @@
 <p align="center"><strong>The AI-native agentic workstation. Your desktop, amplified.</strong></p>
 
 <p align="center">
+  <a href="https://github.com/lukanlabs/lukan/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <a href="https://github.com/lukanlabs/lukan/releases"><img alt="Release" src="https://img.shields.io/badge/release-v0.2.0-green"></a>
+  <img alt="Rust" src="https://img.shields.io/badge/rust-2024-orange.svg">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20WSL-lightgrey">
+</p>
+
+<p align="center">
 Lukan is an AI agent that turns your terminal, browser, and messaging into one intelligent workspace.<br>
 Multi-provider, multi-interface, E2E encrypted remote access, background workers, and sandboxed execution.<br>
 Built in Rust. Single binary. No runtime dependencies.
@@ -53,30 +60,28 @@ Built in Rust. Single binary. No runtime dependencies.
 
 </details>
 
-## How Lukan Compares
+## What Lukan Can Do
 
-| Capability | Lukan | OpenClaw | OpenFang | Claude Code | Codex CLI | Gemini CLI | Goose | Aider |
-|------------|:-----:|:-------:|:--------:|:-----------:|:---------:|:----------:|:-----:|:-----:|
-| **Multi-provider** | Yes | Yes | Yes | Anthropic only | OpenAI only | Google only | Yes | Yes |
-| **Browser automation** | CDP native (10 tools) | CDP + extension | Playwright bridge | Chrome ext (paid) | — | Experimental | — | — |
-| **Messaging channels** | WhatsApp, Telegram, Slack, Email, Gmail | WhatsApp, Telegram, Discord | Twitter | — | — | — | — | — |
-| **Google Workspace** | Via plugins & skills | Via skills | — | Cowork connectors | — | — | — | — |
-| **Plugin system** | Built-in registry (10+) | 50+ community | MCP extensions | MCP servers | MCP servers | Extensions | MCP extensions | — |
-| **Background workers** | Cron scheduler + daemon | Cron jobs | Scheduled agents | Scheduled tasks | — | Via /agents:run | — | — |
-| **Sub-agents** | Parallel | Parallel | 7 Hands | Parallel | Parallel | Experimental | Via MCP | Via AiderDesk |
-| **Skills** | Markdown-based | Community skills | — | Yes | Yes | Extensions | Recipes | — |
-| **Long-term memory** | MEMORY.md + compaction | Context memory | SQLite + vectors | Plugin | — | — | — | Repo map |
-| **Session checkpoints & rewind** | Yes | — | — | — | — | — | — | — |
-| **E2E encrypted remote access** | X25519 + AES-GCM | WebSocket gateway (TLS) | — | Remote Control (HTTPS relay) | — | — | — | — |
-| **OS-level sandbox** | bwrap | Configurable | WASM + subprocess | Container | Network-disabled | Docker sandbox | Recommended | — |
-| **Permission modes** | Planner / Auto / Manual | Allowlist | RBAC | 3 modes | 3 modes | — | Auto | Auto |
-| **Sensitive file detection** | Pattern-based (.env, .ssh, .aws, keys) | Pattern-based | Credential vault | Yes | Yes | — | — | — |
-| **Audio input** | Desktop + Web UI (Whisper) | — | — | — | Voice sessions | — | — | Experimental |
-| **Interfaces** | TUI + Web + Desktop | CLI | TUI + Dashboard + Desktop | TUI + VS Code | TUI + VS Code | TUI | TUI + Desktop | CLI |
-| **Embedded terminal** | Desktop + Web UI | — | Desktop | VS Code | VS Code | — | Desktop | — |
-| **Single Rust binary** | Yes | — | Yes | — | Yes | — | Yes | — |
-| **License** | MIT | MIT | MIT | Proprietary | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
-| **Price** | Free (BYOK) | Free (BYOK) | Free (BYOK) | Subscription | Subscription | Free tier | Free (BYOK) | Free (BYOK) |
+| Capability | Details |
+|------------|---------|
+| **LLM Providers** | Multi-provider — Anthropic, OpenAI, GitHub Copilot, Fireworks, Gemini, Ollama, and any OpenAI-compatible endpoint |
+| **Interfaces** | Terminal UI (ratatui), Web UI, Desktop app (Tauri), CLI |
+| **Embedded Terminal** | tmux-backed sessions in Web & Desktop UI — sessions persist across reconnects with scrollback recovery. Falls back to PTY when tmux is not installed |
+| **Browser Automation** | CDP native with 10 tools: navigate, screenshot, click, type, evaluate JS, export PDF, tab management |
+| **Messaging Channels** | WhatsApp, Telegram, Slack, Discord, Email, Gmail via plugin system |
+| **Google Workspace** | Sheets, Docs, Calendar, Slides, Drive via plugins & skills |
+| **Plugin System** | Built-in registry, hot-reload, IPC protocol |
+| **Background Workers** | Cron scheduler + daemon for autonomous scheduled tasks |
+| **Sub-agents** | Parallel sub-agent execution for complex multi-step tasks |
+| **Skills** | Markdown-based instruction system for project-specific workflows |
+| **Long-term Memory** | MEMORY.md + context compaction + session checkpoints & rewind |
+| **E2E Encrypted Relay** | Remote access via X25519 key exchange + AES-GCM authenticated encryption |
+| **OS-level Sandbox** | bubblewrap (bwrap) isolation with configurable allowed paths |
+| **Permission Modes** | Planner (human reviews all), Auto (whitelisted tools run freely), Manual (approve each call) |
+| **Sensitive File Detection** | Pattern-based blocking for .env, .ssh/, .aws/, credentials, and private keys |
+| **Audio Input** | Desktop + Web UI via Whisper plugin (local transcription, GPU/CPU auto-detect) |
+| **Single Binary** | Rust, no runtime dependencies, instant startup |
+| **License** | MIT — Free, bring your own keys |
 
 ## Install
 
@@ -171,6 +176,60 @@ lukan models anthropic
 
 # Self-update
 lukan update
+```
+
+### Embedded terminal
+
+The Web and Desktop UIs include a full terminal emulator powered by xterm.js. When tmux is available, sessions are backed by tmux — they persist across page reloads, browser crashes, and reconnects, with full scrollback recovery. Without tmux, terminals fall back to direct PTY.
+
+- Full terminal — run any CLI tool, including other agents (Claude Code, Codex CLI, OpenCode, etc.)
+- Multiple terminal tabs with rename support
+- Sessions panel in the sidebar to manage and switch between terminals
+- Send running processes to background mid-execution
+- File explorer with inline preview
+
+### Agent tabs & sessions
+
+Run multiple agents in parallel, each with its own context and conversation history. Sessions are saved automatically and can be loaded, rewound, or continued later.
+
+- Multiple agent tabs — work on different tasks simultaneously
+- Session checkpoints — rewind to any point in the conversation (CLI)
+- Session recovery — resume after disconnects or crashes
+- Background processes — long-running commands can be sent to background while the agent continues working
+
+### Audio input
+
+Record audio directly in the Web and Desktop UI. Transcription runs locally via the Whisper plugin using whisper.cpp with GPU/CPU auto-detection — no data leaves your machine.
+
+```bash
+# Install the whisper plugin
+lukan plugin install whisper
+```
+
+## Remote Access (Relay)
+
+Lukan includes a built-in relay system for accessing your workstation from any browser, anywhere. The connection is end-to-end encrypted — the relay server never sees your data.
+
+```
+┌──────────────┐        ┌──────────────┐        ┌──────────────┐
+│   Browser    │◄──────►│  Relay Server│◄──────►│  Your Machine│
+│  (any device)│  E2E   │  (cloud)     │  E2E   │  (lukan)     │
+└──────────────┘  enc.  └──────────────┘  enc.  └──────────────┘
+```
+
+- **E2E Encryption** — X25519 key exchange + AES-256-GCM. The relay only forwards opaque ciphertext.
+- **Google OAuth** — Login with your Google account, no extra credentials to manage.
+- **Full Web UI** — Same interface as local `--ui web`, including agent, terminals, file explorer, and plugins.
+- **No port forwarding** — Works behind NAT, firewalls, and corporate networks.
+
+```bash
+# Authenticate with the relay
+lukan login
+
+# Check connection status
+lukan relay status
+
+# Your workstation is now accessible at your relay URL
 ```
 
 ## Architecture

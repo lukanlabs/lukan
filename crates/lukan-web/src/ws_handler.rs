@@ -1170,7 +1170,7 @@ async fn handle_mid_turn_message(
     msg: ClientMessage,
     conn_id: usize,
     state: &Arc<AppState>,
-    _ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
     match msg {
         ClientMessage::Approve {
@@ -1273,6 +1273,73 @@ async fn handle_mid_turn_message(
                 if let Some(ref tx) = *tx {
                     let _ = tx.send(());
                 }
+            }
+        }
+
+        // Terminal management is valid mid-turn
+        ClientMessage::TerminalList => {
+            let _ = state
+                .terminal_manager
+                .recover_sessions(state.terminal_tx.clone())
+                .await;
+            let sessions = state.terminal_manager.list().await;
+            send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
+        }
+
+        ClientMessage::TerminalCreate { cwd, cols, rows } => {
+            if let Ok(info) = state
+                .terminal_manager
+                .create_session(state.terminal_tx.clone(), cwd, cols, rows)
+                .await
+            {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::TerminalCreated {
+                        id: info.id,
+                        cols: info.cols,
+                        rows: info.rows,
+                        scrollback: None,
+                    },
+                )
+                .await;
+            }
+        }
+
+        ClientMessage::TerminalReconnect { session_id } => {
+            state
+                .terminal_manager
+                .reset_output_reader(&session_id, state.terminal_tx.clone())
+                .await;
+            if let Ok(scrollback) = state.terminal_manager.capture_scrollback(&session_id).await {
+                let sessions = state.terminal_manager.list().await;
+                if let Some(info) = sessions.iter().find(|s| s.id == session_id) {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::TerminalCreated {
+                            id: info.id.clone(),
+                            cols: info.cols,
+                            rows: info.rows,
+                            scrollback: Some(scrollback),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::TerminalRename { session_id, name } => {
+            state
+                .terminal_manager
+                .rename_session(&session_id, name)
+                .await;
+            let sessions = state.terminal_manager.list().await;
+            send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
+        }
+
+        // Session management is valid mid-turn
+        ClientMessage::ListSessions => {
+            if let Ok(sessions) = lukan_agent::SessionManager::list().await {
+                send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
             }
         }
 

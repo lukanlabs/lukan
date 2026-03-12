@@ -25,6 +25,7 @@ const WS_COMMANDS = new Set([
   "terminal_destroy",
   "terminal_list",
   "terminal_reconnect",
+  "terminal_rename",
 ]);
 
 // WS commands that return void (resolve immediately after sending)
@@ -44,6 +45,7 @@ const WS_VOID_COMMANDS = new Set([
   "terminal_input",
   "terminal_resize",
   "terminal_destroy",
+  "terminal_rename",
 ]);
 
 // Commands handled entirely in the browser
@@ -693,6 +695,8 @@ export class WebTransport implements Transport {
         return { type: "terminal_list" };
       case "terminal_reconnect":
         return { type: "terminal_reconnect", sessionId: args?.sessionId };
+      case "terminal_rename":
+        return { type: "terminal_rename", sessionId: args?.sessionId, name: args?.name };
       default:
         throw new Error(`Unknown WS command: ${command}`);
     }

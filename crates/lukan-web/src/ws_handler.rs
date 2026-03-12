@@ -724,6 +724,15 @@ async fn dispatch_message(
             }
         }
 
+        ClientMessage::TerminalRename { session_id, name } => {
+            state
+                .terminal_manager
+                .rename_session(&session_id, name)
+                .await;
+            let sessions = state.terminal_manager.list().await;
+            send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
+        }
+
         // Auth messages handled above
         ClientMessage::Auth { .. } | ClientMessage::AuthLogin { .. } => {}
     }

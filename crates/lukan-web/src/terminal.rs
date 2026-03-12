@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::process::Stdio;
 
 use anyhow::Context;
 use base64::Engine;
@@ -11,11 +12,46 @@ use crate::protocol::{ServerMessage, TerminalSessionInfoDto};
 /// Prefix for all lukan-managed tmux sessions.
 const TMUX_PREFIX: &str = "lukan-";
 
+/// Build a `Command` for tmux isolated on the `lukan` socket with no config file.
+///
+/// Uses `setsid()` in `pre_exec` so tmux doesn't inherit the server's
+/// controlling terminal, and pipes stderr/stdout to null to avoid blocking.
+fn tmux_cmd() -> Command {
+    let mut cmd = Command::new("tmux");
+    cmd.args(["-L", "lukan", "-f", "/dev/null"]);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    cmd
+}
+
+/// Like [`tmux_cmd`] but keeps stdout so we can read output.
+fn tmux_cmd_with_output() -> Command {
+    let mut cmd = Command::new("tmux");
+    cmd.args(["-L", "lukan", "-f", "/dev/null"]);
+    cmd.stdin(Stdio::null());
+    cmd.stderr(Stdio::null());
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    cmd
+}
+
 /// A tmux-backed terminal session.
 struct TmuxSession {
     id: String,
     cols: u16,
     rows: u16,
+    name: Option<String>,
     /// FIFO path used by `tmux pipe-pane` to stream output.
     fifo_path: String,
     /// Handle to the async task reading the FIFO.
@@ -57,7 +93,13 @@ impl TerminalManager {
                 .into_owned()
         });
 
-        let status = Command::new("tmux")
+        // Ensure xterm-256color for proper escape-sequence support
+        let _ = tmux_cmd()
+            .args(["set-option", "-g", "default-terminal", "xterm-256color"])
+            .status()
+            .await;
+
+        let status = tmux_cmd()
             .args([
                 "new-session",
                 "-d",
@@ -87,6 +129,7 @@ impl TerminalManager {
                 id: session_name.clone(),
                 cols,
                 rows,
+                name: None,
                 fifo_path,
                 reader_handle,
             },
@@ -96,6 +139,7 @@ impl TerminalManager {
             id: session_name,
             cols,
             rows,
+            name: None,
         })
     }
 
@@ -113,7 +157,7 @@ impl TerminalManager {
         // reliable way to send arbitrary bytes (including control chars) to tmux.
         let hex_args: Vec<String> = bytes.iter().map(|b| format!("{b:02X}")).collect();
 
-        let mut cmd = Command::new("tmux");
+        let mut cmd = tmux_cmd();
         cmd.arg("send-keys").arg("-t").arg(session_id).arg("-H");
         for h in &hex_args {
             cmd.arg(h);
@@ -133,7 +177,7 @@ impl TerminalManager {
 
     /// Resize a tmux session's window.
     pub async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
-        let status = Command::new("tmux")
+        let status = tmux_cmd()
             .args([
                 "resize-window",
                 "-t",
@@ -168,12 +212,20 @@ impl TerminalManager {
             let _ = tokio::fs::remove_file(&session.fifo_path).await;
         }
 
-        let _ = Command::new("tmux")
+        let _ = tmux_cmd()
             .args(["kill-session", "-t", session_id])
             .status()
             .await;
 
         Ok(())
+    }
+
+    /// Rename a terminal session's user-facing label.
+    pub async fn rename_session(&self, session_id: &str, name: String) {
+        let mut sessions = self.sessions.lock().await;
+        if let Some(s) = sessions.get_mut(session_id) {
+            s.name = Some(name);
+        }
     }
 
     /// List all tracked terminal sessions.
@@ -185,6 +237,7 @@ impl TerminalManager {
                 id: s.id.clone(),
                 cols: s.cols,
                 rows: s.rows,
+                name: s.name.clone(),
             })
             .collect()
     }
@@ -198,7 +251,7 @@ impl TerminalManager {
         &self,
         output_tx: broadcast::Sender<ServerMessage>,
     ) -> Vec<TerminalSessionInfoDto> {
-        let output = Command::new("tmux")
+        let output = tmux_cmd_with_output()
             .args([
                 "list-sessions",
                 "-F",
@@ -249,12 +302,18 @@ impl TerminalManager {
                     id: id.clone(),
                     cols,
                     rows,
+                    name: None,
                     fifo_path,
                     reader_handle,
                 },
             );
 
-            recovered.push(TerminalSessionInfoDto { id, cols, rows });
+            recovered.push(TerminalSessionInfoDto {
+                id,
+                cols,
+                rows,
+                name: None,
+            });
         }
 
         recovered
@@ -264,13 +323,13 @@ impl TerminalManager {
     ///
     /// Used during reconnection to replay terminal state to the client.
     pub async fn capture_scrollback(&self, session_id: &str) -> anyhow::Result<String> {
-        let output = Command::new("tmux")
+        let output = tmux_cmd_with_output()
             .args([
                 "capture-pane",
                 "-t",
                 session_id,
-                "-p",     // print to stdout
-                "-e",     // include escape sequences (colors)
+                "-p",         // print to stdout
+                "-e",         // include escape sequences (colors)
                 "-S", "-500", // last 500 lines of scrollback
             ])
             .output()
@@ -282,7 +341,10 @@ impl TerminalManager {
             "tmux capture-pane exited with error"
         );
 
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&output.stdout);
+        // Only trim trailing whitespace — preserve leading content and escape sequences
+        let text = String::from_utf8_lossy(&output.stdout);
+        let trimmed = text.trim_end();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(trimmed.as_bytes());
         Ok(b64)
     }
 
@@ -297,7 +359,7 @@ impl TerminalManager {
             // Disable any stale pipe-pane left from a previous server run.
             // Without this, tmux thinks a pipe is already active and the new
             // pipe-pane command below becomes a no-op.
-            let _ = Command::new("tmux")
+            let _ = tmux_cmd()
                 .args(["pipe-pane", "-t", &session_id, ""])
                 .status()
                 .await;
@@ -314,7 +376,7 @@ impl TerminalManager {
             }
 
             // Tell tmux to pipe pane output into the FIFO
-            let pipe_status = Command::new("tmux")
+            let pipe_status = tmux_cmd()
                 .args([
                     "pipe-pane",
                     "-t",

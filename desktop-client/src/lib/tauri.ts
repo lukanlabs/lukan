@@ -216,6 +216,8 @@ export const terminalReconnect = (sessionId: string) =>
     "terminal_reconnect",
     { sessionId },
   );
+export const terminalRename = (sessionId: string, name: string) =>
+  getTransport().call<void>("terminal_rename", { sessionId, name });
 export const onTerminalOutput = (
   sessionId: string,
   cb: (event: TerminalOutputEvent) => void,

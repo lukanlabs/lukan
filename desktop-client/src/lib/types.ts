@@ -176,7 +176,7 @@ export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" |
 
 export type WorkspaceMode = "agent" | "terminal";
 
-export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes" | "events" | "plugin";
+export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes" | "events" | "plugin" | "terminals";
 
 export interface SystemEvent {
   ts: string;
@@ -303,6 +303,7 @@ export interface TerminalSessionInfo {
   id: string;
   cols: number;
   rows: number;
+  name?: string;
 }
 
 export interface TerminalOutputEvent {

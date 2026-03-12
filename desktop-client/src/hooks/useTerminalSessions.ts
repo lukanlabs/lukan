@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import {
   terminalCreate,
   terminalDestroy,
+  terminalList,
   terminalReconnect,
   onTerminalSessionsRecovered,
 } from "../lib/tauri";
@@ -16,6 +17,49 @@ export interface TerminalSession extends TerminalSessionInfo {
 export function useTerminalSessions() {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+  /** Initialize by listing existing tmux sessions and reconnecting to each. */
+  const initialize = useCallback(async () => {
+    try {
+      const existing = await terminalList();
+      if (existing.length === 0) {
+        // No existing sessions — create a fresh one
+        const info = await terminalCreate(undefined, 80, 24);
+        setSessions([info]);
+        setActiveSessionId(info.id);
+        return;
+      }
+
+      // Reconnect to each existing session to get scrollback
+      const reconnected: TerminalSession[] = [];
+      for (const s of existing) {
+        try {
+          const info = await terminalReconnect(s.id);
+          reconnected.push({
+            id: s.id,
+            cols: info.cols,
+            rows: info.rows,
+            name: s.name,
+            scrollback: info.scrollback,
+          });
+        } catch {
+          reconnected.push(s);
+        }
+      }
+
+      setSessions(reconnected);
+      setActiveSessionId(reconnected[0]?.id ?? null);
+    } catch {
+      // Fallback: create a fresh session
+      try {
+        const info = await terminalCreate(undefined, 80, 24);
+        setSessions([info]);
+        setActiveSessionId(info.id);
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
 
   const createSession = useCallback(async () => {
     const info = await terminalCreate(undefined, 80, 24);
@@ -38,6 +82,40 @@ export function useTerminalSessions() {
     },
     [activeSessionId],
   );
+
+  /** Detach a session from the tab bar without killing tmux. */
+  const detachSession = useCallback(
+    (id: string) => {
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.id !== id);
+        if (activeSessionId === id) {
+          setActiveSessionId(next.length > 0 ? next[next.length - 1].id : null);
+        }
+        return next;
+      });
+    },
+    [activeSessionId],
+  );
+
+  /** Re-attach a tmux session by its ID, fetching scrollback. */
+  const attachSession = useCallback(async (id: string) => {
+    try {
+      const info = await terminalReconnect(id);
+      const session: TerminalSession = {
+        id,
+        cols: info.cols,
+        rows: info.rows,
+        scrollback: info.scrollback,
+      };
+      setSessions((prev) => {
+        if (prev.some((s) => s.id === id)) return prev;
+        return [...prev, session];
+      });
+      setActiveSessionId(id);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const switchSession = useCallback((id: string) => {
     setActiveSessionId(id);
@@ -103,8 +181,11 @@ export function useTerminalSessions() {
   return {
     sessions,
     activeSessionId,
+    initialize,
     createSession,
     destroySession,
+    detachSession,
+    attachSession,
     switchSession,
     renameSession,
     clearScrollback,

@@ -299,11 +299,15 @@ export function useChat(tabId: string) {
       if (sid && sid !== s.sessionId) {
         window.dispatchEvent(new CustomEvent("session-changed", { detail: sid }));
       }
+      // When the turn was aborted by the user, append a system-level indicator
+      const messages = complete.aborted
+        ? [...complete.messages, { role: "assistant" as const, content: "⏹ Response cancelled." }]
+        : complete.messages;
       return {
         ...s,
         isProcessing: false,
         sessionId: sid || s.sessionId,
-        messages: complete.messages,
+        messages,
         streamingBlocks: [],
         toolImages: { ...s.toolImages, ...imageCacheRef.current },
         contextSize: complete.contextSize ?? s.contextSize,
@@ -423,13 +427,14 @@ export function useChat(tabId: string) {
   }, [tabId]);
 
   const abort = useCallback(() => {
-    api.cancelStream(tabId).catch(() => {});
+    // Deny pending approvals first so the agent can process denials
     setState((s) => {
       if (s.pendingApproval) {
         api.denyAllTools(tabId).catch(() => {});
       }
       return s;
     });
+    // Mark running tools as stopped visually
     for (const block of blocksRef.current) {
       if (block.type === "tool" && block.tool.isRunning) {
         block.tool = { ...block.tool, isRunning: false };
@@ -438,11 +443,16 @@ export function useChat(tabId: string) {
     flushRender();
     setState((s) => ({
       ...s,
-      isProcessing: false,
       pendingApproval: null,
       pendingQuestion: null,
       pendingPlanReview: null,
     }));
+    // Wait for backend to fully recover the agent before allowing new messages
+    api.cancelStream(tabId)
+      .catch(() => {})
+      .finally(() => {
+        setState((s) => ({ ...s, isProcessing: false }));
+      });
   }, [tabId, flushRender]);
 
   const clearApprovalBlocks = useCallback(() => {

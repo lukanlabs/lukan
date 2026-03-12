@@ -50,7 +50,7 @@ export default function TerminalTabBar({
     >
       {sessions.map((s, i) => {
         const isActive = s.id === activeSessionId;
-        const label = s.label || `shell-${i + 1}`;
+        const label = s.label || s.name || `shell-${i + 1}`;
 
         if (editingId === s.id) {
           return (

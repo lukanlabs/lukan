@@ -171,6 +171,13 @@ pub enum ClientMessage {
         session_id: String,
     },
     TerminalList,
+    TerminalReconnect {
+        session_id: String,
+    },
+    TerminalRename {
+        session_id: String,
+        name: String,
+    },
 }
 
 /// Messages sent from the server to the client (browser)
@@ -202,6 +209,9 @@ pub enum ServerMessage {
         /// Agent tab ID for routing (new multi-tab protocol)
         #[serde(skip_serializing_if = "Option::is_none")]
         tab_id: Option<String>,
+        /// True when the turn was cancelled by the user (abort)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        aborted: Option<bool>,
     },
     AgentTabCreated {
         session_id: String,
@@ -280,6 +290,8 @@ pub enum ServerMessage {
         id: String,
         cols: u16,
         rows: u16,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scrollback: Option<String>,
     },
     TerminalSessions {
         sessions: Vec<TerminalSessionInfoDto>,
@@ -299,6 +311,8 @@ pub struct TerminalSessionInfoDto {
     pub id: String,
     pub cols: u16,
     pub rows: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1058,6 +1072,7 @@ mod tests {
             checkpoints: vec![],
             context_size: None,
             tab_id: None,
+            aborted: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(
@@ -1067,6 +1082,10 @@ mod tests {
         assert!(
             !json.contains("tabId"),
             "None tabId should be skipped: {json}"
+        );
+        assert!(
+            !json.contains("aborted"),
+            "None aborted should be skipped: {json}"
         );
     }
 
@@ -1078,6 +1097,7 @@ mod tests {
             checkpoints: vec![],
             context_size: Some(100000),
             tab_id: Some("tab-1".into()),
+            aborted: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(
@@ -1093,6 +1113,7 @@ mod tests {
             id: "term-1".into(),
             cols: 80,
             rows: 24,
+            scrollback: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(
@@ -1102,6 +1123,37 @@ mod tests {
         assert!(json.contains(r#""id":"term-1""#), "id: {json}");
         assert!(json.contains(r#""cols":80"#), "cols: {json}");
         assert!(json.contains(r#""rows":24"#), "rows: {json}");
+        assert!(
+            !json.contains("scrollback"),
+            "None scrollback should be skipped: {json}"
+        );
+    }
+
+    #[test]
+    fn test_server_message_terminal_created_with_scrollback() {
+        let msg = ServerMessage::TerminalCreated {
+            id: "term-1".into(),
+            cols: 80,
+            rows: 24,
+            scrollback: Some("c29tZSBkYXRh".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""scrollback":"c29tZSBkYXRh""#),
+            "scrollback present: {json}"
+        );
+    }
+
+    #[test]
+    fn test_client_message_terminal_reconnect() {
+        let json = r#"{"type":"terminal_reconnect","sessionId":"t1"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::TerminalReconnect { session_id } => {
+                assert_eq!(session_id, "t1");
+            }
+            _ => panic!("Expected TerminalReconnect"),
+        }
     }
 
     #[test]
@@ -1140,6 +1192,7 @@ mod tests {
                 id: "t1".into(),
                 cols: 120,
                 rows: 40,
+                name: None,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -1181,10 +1234,43 @@ mod tests {
             id: "abc".into(),
             cols: 80,
             rows: 24,
+            name: None,
         };
         let json = serde_json::to_string(&dto).unwrap();
         assert!(json.contains(r#""id":"abc""#), "id: {json}");
         assert!(json.contains(r#""cols":80"#), "cols: {json}");
         assert!(json.contains(r#""rows":24"#), "rows: {json}");
+        assert!(
+            !json.contains("name"),
+            "None name should be skipped: {json}"
+        );
+    }
+
+    #[test]
+    fn test_terminal_session_info_dto_with_name() {
+        let dto = TerminalSessionInfoDto {
+            id: "abc".into(),
+            cols: 80,
+            rows: 24,
+            name: Some("My Terminal".into()),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(
+            json.contains(r#""name":"My Terminal""#),
+            "name present: {json}"
+        );
+    }
+
+    #[test]
+    fn test_client_message_terminal_rename() {
+        let json = r#"{"type":"terminal_rename","sessionId":"t1","name":"Dev Shell"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::TerminalRename { session_id, name } => {
+                assert_eq!(session_id, "t1");
+                assert_eq!(name, "Dev Shell");
+            }
+            _ => panic!("Expected TerminalRename"),
+        }
     }
 }

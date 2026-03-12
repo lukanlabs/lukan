@@ -35,7 +35,7 @@ else
   SHA256CMD := sha256sum
 endif
 
-.PHONY: all build clean test check install release bundle-plugins package-plugins upload upload-daily upload-gh help
+.PHONY: all build clean test check install release bundle-plugins package-plugins package-whisper upload upload-daily upload-gh help
 
 all: build
 
@@ -113,8 +113,21 @@ package-plugins: bundle-plugins
 	@cd plugins/discord/dist && tar czf ../../../dist/plugins/lukan-plugin-discord.tar.gz .
 	@echo "  Packaged: lukan-plugin-discord.tar.gz"
 
+## package-whisper: Build whisper plugin binary and create platform-specific tarball
+WHISPER_ARCH := $(if $(filter x86_64 x86,$(UNAME_M)),x86_64,$(if $(filter aarch64 arm64,$(UNAME_M)),aarch64,$(UNAME_M)))
+WHISPER_OS := $(if $(filter Linux,$(UNAME_S)),linux,$(if $(filter Darwin,$(UNAME_S)),macos,$(UNAME_S)))
+WHISPER_PLATFORM := $(WHISPER_OS)-$(WHISPER_ARCH)
+package-whisper:
+	@echo "Building whisper plugin ($(WHISPER_PLATFORM))..."
+	cd plugins/whisper && cargo build --release
+	@mkdir -p dist/plugins plugins/whisper/dist
+	@cp plugins/whisper/target/release/lukan-whisper plugins/whisper/dist/
+	@cp plugins/whisper/plugin.toml plugins/whisper/dist/
+	@cd plugins/whisper/dist && tar czf ../../../dist/plugins/lukan-plugin-whisper-$(WHISPER_PLATFORM).tar.gz .
+	@echo "  Packaged: lukan-plugin-whisper-$(WHISPER_PLATFORM).tar.gz"
+
 ## release: Build binary + bundle plugins + generate checksums
-release: build bundle-plugins package-plugins
+release: build bundle-plugins package-plugins package-whisper
 	@echo "Building release $(VERSION) for $(PLATFORM)..."
 	@mkdir -p dist
 	@cp target/release/$(BINARY_NAME) dist/$(BINARY_NAME)-$(PLATFORM)

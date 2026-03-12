@@ -6,7 +6,7 @@ use axum::{
     extract::{State, WebSocketUpgrade},
     response::IntoResponse,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -20,6 +20,15 @@ use lukan_tools::create_configured_registry;
 
 use crate::protocol::{ClientMessage, ServerMessage, TokenUsage};
 use crate::state::{AppState, WebAgentSession};
+
+/// Bundles the mutable stream handles passed into `handle_send_message`
+/// so we stay under clippy's argument limit.
+struct WsStreams<'a> {
+    ws_tx: &'a mut futures::stream::SplitSink<WebSocket, Message>,
+    ws_rx: &'a mut futures::stream::SplitStream<WebSocket>,
+    terminal_rx: &'a mut tokio::sync::broadcast::Receiver<ServerMessage>,
+    notify_rx: &'a mut tokio::sync::broadcast::Receiver<lukan_agent::WorkerNotification>,
+}
 
 /// WebSocket upgrade handler
 pub async fn ws_upgrade_handler(
@@ -154,7 +163,16 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
         }
 
         // Dispatch authenticated messages
-        dispatch_message(client_msg, conn_id, &state, &mut ws_tx, &mut ws_rx).await;
+        dispatch_message(
+            client_msg,
+            conn_id,
+            &state,
+            &mut ws_tx,
+            &mut ws_rx,
+            &mut terminal_rx,
+            &mut notify_rx,
+        )
+        .await;
     }
 
     // On disconnect: release processing lock if owned, save sessions
@@ -198,6 +216,8 @@ async fn dispatch_message(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     ws_rx: &mut futures::stream::SplitStream<WebSocket>,
+    terminal_rx: &mut tokio::sync::broadcast::Receiver<ServerMessage>,
+    notify_rx: &mut tokio::sync::broadcast::Receiver<lukan_agent::WorkerNotification>,
 ) {
     match msg {
         ClientMessage::SendMessage {
@@ -209,8 +229,12 @@ async fn dispatch_message(
                 &content,
                 session_id.as_deref(),
                 state,
-                ws_tx,
-                ws_rx,
+                &mut WsStreams {
+                    ws_tx,
+                    ws_rx,
+                    terminal_rx,
+                    notify_rx,
+                },
             )
             .await;
         }
@@ -255,12 +279,32 @@ async fn dispatch_message(
         ClientMessage::RenameAgentTab { session_id, label } => {
             let mut sessions = state.sessions.lock().await;
             if let Some(session) = sessions.get_mut(&session_id) {
-                session.label = label;
+                session.label = label.clone();
+                // Persist the name to the chat session on disk
+                if let Some(ref mut agent) = session.agent {
+                    let _ = agent.set_session_name(label).await;
+                }
             }
         }
 
-        ClientMessage::SendToBackground { session_id: _ } => {
-            // Background signal not yet implemented in web
+        ClientMessage::SendToBackground { session_id } => {
+            let mut sent = false;
+            // Try session-based bg_signal first
+            if let Some(ref sid) = session_id {
+                let sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get(sid)
+                    && let Some(ref tx) = session.bg_signal_tx
+                {
+                    sent = tx.send(()).is_ok();
+                }
+            }
+            // Fallback to legacy singleton
+            if !sent {
+                let tx = state.bg_signal_tx.lock().await;
+                if let Some(ref tx) = *tx {
+                    let _ = tx.send(());
+                }
+            }
         }
 
         ClientMessage::ListSessions => match SessionManager::list().await {
@@ -332,26 +376,8 @@ async fn dispatch_message(
                 serde_json::from_value(serde_json::Value::String(mode.clone()))
                     .unwrap_or(PermissionMode::Auto);
 
-            // Store in state
-            *state.permission_mode.lock().await = parsed.clone();
-
-            // Update legacy singleton agent
-            {
-                let mut agent_lock = state.agent.lock().await;
-                if let Some(ref mut agent) = *agent_lock {
-                    agent.set_permission_mode(parsed.clone());
-                }
-            }
-
-            // Update all session agents
-            {
-                let mut sessions = state.sessions.lock().await;
-                for session in sessions.values_mut() {
-                    if let Some(ref mut agent) = session.agent {
-                        agent.set_permission_mode(parsed.clone());
-                    }
-                }
-            }
+            // Update via watch channel — all agents with a receiver see the change immediately
+            let _ = state.permission_mode.send(parsed);
 
             send_json(ws_tx, &ServerMessage::ModeChanged { mode }).await;
         }
@@ -627,6 +653,7 @@ async fn dispatch_message(
                             id: info.id,
                             cols: info.cols,
                             rows: info.rows,
+                            scrollback: None,
                         },
                     )
                     .await;
@@ -684,6 +711,57 @@ async fn dispatch_message(
         }
 
         ClientMessage::TerminalList => {
+            // Recover any orphaned tmux sessions before listing
+            let _ = state
+                .terminal_manager
+                .recover_sessions(state.terminal_tx.clone())
+                .await;
+            let sessions = state.terminal_manager.list().await;
+            send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
+        }
+
+        ClientMessage::TerminalReconnect { session_id } => {
+            // Reset pipe-pane so the output stream starts clean.
+            // Fixes rendering corruption when re-attaching sessions
+            // that were running TUI apps (e.g. Claude Code with Ink/React).
+            state
+                .terminal_manager
+                .reset_output_reader(&session_id, state.terminal_tx.clone())
+                .await;
+
+            match state.terminal_manager.capture_scrollback(&session_id).await {
+                Ok(scrollback) => {
+                    let sessions = state.terminal_manager.list().await;
+                    if let Some(info) = sessions.iter().find(|s| s.id == session_id) {
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::TerminalCreated {
+                                id: info.id.clone(),
+                                cols: info.cols,
+                                rows: info.rows,
+                                scrollback: Some(scrollback),
+                            },
+                        )
+                        .await;
+                    }
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Terminal reconnect failed: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::TerminalRename { session_id, name } => {
+            state
+                .terminal_manager
+                .rename_session(&session_id, name)
+                .await;
             let sessions = state.terminal_manager.list().await;
             send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
         }
@@ -709,10 +787,16 @@ async fn handle_send_message(
     content: &str,
     tab_id: Option<&str>,
     state: &Arc<AppState>,
-    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
-    ws_rx: &mut futures::stream::SplitStream<WebSocket>,
+    streams: &mut WsStreams<'_>,
 ) {
     use futures::{SinkExt, StreamExt};
+
+    let WsStreams {
+        ws_tx,
+        ws_rx,
+        terminal_rx,
+        notify_rx,
+    } = streams;
 
     // Try to acquire processing lock
     {
@@ -733,7 +817,7 @@ async fn handle_send_message(
     // Determine whether to use a session or the legacy singleton
     let use_session = tab_id.is_some();
 
-    // Ensure agent exists (session or singleton)
+    // Ensure agent exists (session or singleton) — reload from last_session_id if available
     if use_session {
         let tab = tab_id.unwrap();
         let mut sessions = state.sessions.lock().await;
@@ -741,7 +825,12 @@ async fn handle_send_message(
             .entry(tab.to_string())
             .or_insert_with(WebAgentSession::new);
         if session.agent.is_none() {
-            match create_agent(state).await {
+            let result = if let Some(ref last_id) = session.last_session_id {
+                create_agent_with_session(state, last_id).await
+            } else {
+                create_agent(state).await
+            };
+            match result {
                 Ok(agent) => {
                     session.agent = Some(agent);
                 }
@@ -779,15 +868,17 @@ async fn handle_send_message(
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
         let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        let (bg_signal_tx, bg_signal_rx) = watch::channel(());
         session.approval_tx = Some(approval_tx);
         session.plan_review_tx = Some(plan_review_tx);
         session.planner_answer_tx = Some(planner_answer_tx);
+        session.bg_signal_tx = Some(bg_signal_tx);
         let mut agent = session.agent.take().unwrap();
         agent.set_channels(
             Some(approval_rx),
             Some(plan_review_rx),
             Some(planner_answer_rx),
-            None,
+            Some(bg_signal_rx),
         );
         agent.label = Some(session.label.clone());
         agent.tab_id = Some(tab.to_string());
@@ -797,16 +888,18 @@ async fn handle_send_message(
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
         let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        let (bg_signal_tx, bg_signal_rx) = watch::channel(());
         *state.approval_tx.lock().await = Some(approval_tx);
         *state.plan_review_tx.lock().await = Some(plan_review_tx);
         *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
+        *state.bg_signal_tx.lock().await = Some(bg_signal_tx);
         let mut lock = state.agent.lock().await;
         let mut agent = lock.take().unwrap();
         agent.set_channels(
             Some(approval_rx),
             Some(plan_review_rx),
             Some(planner_answer_rx),
-            None,
+            Some(bg_signal_rx),
         );
         agent.label = Some("Agent 1".to_string());
         agent
@@ -885,8 +978,42 @@ async fn handle_send_message(
                     _ => {} // ping/pong/binary — ignore
                 }
             }
+            // Terminal output must keep flowing during agent turns
+            Ok(term_msg) = terminal_rx.recv() => {
+                send_json(ws_tx, &term_msg).await;
+            }
+            // Worker notifications must keep flowing during agent turns
+            Ok(notif) = notify_rx.recv() => {
+                let msg = ServerMessage::WorkerNotification {
+                    worker_id: notif.worker_id,
+                    worker_name: notif.worker_name,
+                    status: notif.status,
+                    summary: notif.summary,
+                };
+                send_json(ws_tx, &msg).await;
+            }
         }
     }
+
+    // Drain any remaining buffered events before dropping the receiver.
+    // This ensures tool results (e.g. "Tool denied by user.") that were
+    // queued while the abort was processed still get forwarded to the client.
+    if !client_disconnected {
+        while let Ok(ev) = event_rx.try_recv() {
+            let json = if let Some(ref tid) = tab_id_owned {
+                inject_tab_id(&ev, tid)
+            } else {
+                serde_json::to_string(&ev).unwrap_or_default()
+            };
+            let _ = ws_tx.send(Message::Text(json.into())).await;
+        }
+    }
+
+    // Drop the event receiver so the agent's event_tx.send() fails immediately
+    // instead of blocking on a full channel buffer when nobody is reading.
+    // Without this, the agent can hang indefinitely and the timeout below
+    // would fire, losing the agent (and its unsaved session) entirely.
+    drop(event_rx);
 
     // Wait for agent turn to complete (with timeout for abort/disconnect cases)
     let wait_result = if aborted || client_disconnected {
@@ -931,6 +1058,7 @@ async fn handle_send_message(
                         checkpoints,
                         context_size: Some(context_size),
                         tab_id: tab_id_owned.clone(),
+                        aborted: if aborted { Some(true) } else { None },
                     },
                 )
                 .await;
@@ -940,6 +1068,7 @@ async fn handle_send_message(
             if let Some(ref tid) = tab_id_owned {
                 let mut sessions = state.sessions.lock().await;
                 if let Some(session) = sessions.get_mut(tid) {
+                    session.last_session_id = Some(returned_agent.session_id().to_string());
                     session.agent = Some(returned_agent);
                 }
                 // If session was destroyed mid-turn, agent is dropped
@@ -1127,6 +1256,24 @@ async fn handle_mid_turn_message(
 
         ClientMessage::TerminalDestroy { session_id } => {
             let _ = state.terminal_manager.destroy(&session_id).await;
+        }
+
+        ClientMessage::SendToBackground { session_id } => {
+            let mut sent = false;
+            if let Some(ref sid) = session_id {
+                let sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get(sid)
+                    && let Some(ref tx) = session.bg_signal_tx
+                {
+                    sent = tx.send(()).is_ok();
+                }
+            }
+            if !sent {
+                let tx = state.bg_signal_tx.lock().await;
+                if let Some(ref tx) = *tx {
+                    let _ = tx.send(());
+                }
+            }
         }
 
         // Ignore all other messages during a turn
@@ -1440,7 +1587,7 @@ async fn send_init(
     let agent_lock = state.agent.lock().await;
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.to_string();
+    let permission_mode = state.permission_mode.borrow().to_string();
 
     let (session_id, messages, checkpoints, token_usage, context_size) =
         if let Some(ref agent) = *agent_lock {
@@ -1553,7 +1700,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.clone();
+    let permission_mode = state.permission_mode.borrow().clone();
 
     let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
         .await
@@ -1601,6 +1748,9 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         Box::leak(Box::new(result.manager));
     }
 
+    let (bg_signal_tx, bg_signal_rx) = watch::channel(());
+    *state.bg_signal_tx.lock().await = Some(bg_signal_tx);
+
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools,
@@ -1608,10 +1758,10 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         cwd,
         provider_name,
         model_name,
-        bg_signal: None,
+        bg_signal: Some(bg_signal_rx),
         allowed_paths: Some(allowed),
         permission_mode,
-        permission_mode_rx: None,
+        permission_mode_rx: Some(state.permission_mode.subscribe()),
         permissions,
         approval_rx: Some(approval_rx),
         plan_review_rx: Some(plan_review_rx),
@@ -1650,7 +1800,7 @@ async fn create_agent_with_session(
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.clone();
+    let permission_mode = state.permission_mode.borrow().clone();
 
     let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
         .await
@@ -1680,6 +1830,10 @@ async fn create_agent_with_session(
     let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
     *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
 
+    // Create bg signal channel
+    let (bg_signal_tx, bg_signal_rx) = watch::channel(());
+    *state.bg_signal_tx.lock().await = Some(bg_signal_tx);
+
     let mut tools = if has_browser {
         lukan_tools::create_configured_browser_registry(&permissions, &allowed)
     } else {
@@ -1708,10 +1862,10 @@ async fn create_agent_with_session(
         cwd,
         provider_name,
         model_name,
-        bg_signal: None,
+        bg_signal: Some(bg_signal_rx),
         allowed_paths: Some(allowed),
         permission_mode,
-        permission_mode_rx: None,
+        permission_mode_rx: Some(state.permission_mode.subscribe()),
         permissions,
         approval_rx: Some(approval_rx),
         plan_review_rx: Some(plan_review_rx),

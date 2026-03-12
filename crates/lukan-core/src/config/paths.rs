@@ -144,6 +144,11 @@ impl LukanPaths {
             .join(format!("{view_id}.json"))
     }
 
+    /// Terminal session names: ~/.config/lukan/terminal-names.json
+    pub fn terminal_names_file() -> PathBuf {
+        Self::config_dir().join("terminal-names.json")
+    }
+
     /// Worker daemon PID file: ~/.config/lukan/daemon.pid
     pub fn daemon_pid_file() -> PathBuf {
         Self::config_dir().join("daemon.pid")

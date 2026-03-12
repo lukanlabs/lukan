@@ -1,11 +1,15 @@
+use std::sync::Arc;
+
 use axum::{
     Json,
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use lukan_tools::bg_processes::{self, BgProcessStatus};
 use serde::Serialize;
+
+use crate::state::AppState;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -127,9 +131,30 @@ pub async fn kill_bg_process(Path(pid): Path<u32>) -> Json<bool> {
 }
 
 /// POST /api/processes/background
-pub async fn send_to_background() -> impl IntoResponse {
-    // In web mode, we don't have access to the bg_signal_tx from ChatState.
-    // This would require access to the shared AppState.
-    // For now, return false as this is a Tauri-specific feature.
-    (StatusCode::OK, Json(serde_json::json!(false)))
+pub async fn send_to_background(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Try session-based bg_signal first, then legacy singleton
+    let mut sent = false;
+
+    // Check all sessions for an active bg_signal_tx
+    {
+        let sessions = state.sessions.lock().await;
+        for session in sessions.values() {
+            if let Some(ref tx) = session.bg_signal_tx
+                && tx.send(()).is_ok()
+            {
+                sent = true;
+                break;
+            }
+        }
+    }
+
+    // Fallback to legacy singleton
+    if !sent {
+        let tx = state.bg_signal_tx.lock().await;
+        if let Some(ref tx) = *tx {
+            sent = tx.send(()).is_ok();
+        }
+    }
+
+    (StatusCode::OK, Json(serde_json::json!(sent)))
 }

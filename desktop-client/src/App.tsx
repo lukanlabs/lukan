@@ -63,6 +63,7 @@ export default function App() {
   const [processLog, setProcessLog] = useState<BgProcessInfo | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [filePreviewSize, setFilePreviewSize] = useState(0);
+  const [terminalAttachedIds, setTerminalAttachedIds] = useState<string[]>([]);
   const [runningMonitors, setRunningMonitors] = useState<PluginInfo[]>([]);
   const [unreadSources, setUnreadSources] = useState<Set<string>>(new Set());
   const [eventSourceFilter, setEventSourceFilter] = useState<string | null>(null);
@@ -171,6 +172,32 @@ export default function App() {
     workspace.togglePanel("browser");
   };
 
+  // Listen for terminal attached IDs from TerminalView
+  useEffect(() => {
+    const onAttachedIds = (e: Event) => {
+      const ids = (e as CustomEvent<string[]>).detail;
+      setTerminalAttachedIds(ids ?? []);
+    };
+    window.addEventListener("terminal-attached-ids", onAttachedIds);
+    return () => window.removeEventListener("terminal-attached-ids", onAttachedIds);
+  }, []);
+
+  // Auto-close file preview when switching views (agent/terminal)
+  useEffect(() => {
+    setFilePreview(null);
+  }, [workspace.mode]);
+
+  const handleSwitchToTerminal = useCallback(
+    (sessionId: string) => {
+      setFilePreview(null);
+      workspace.setMode("terminal");
+      window.dispatchEvent(
+        new CustomEvent("terminal-attach-request", { detail: sessionId }),
+      );
+    },
+    [workspace],
+  );
+
   // Sync currentSessionId when the chat hook detects a new session
   // (e.g. agent lazily created on first message)
   useEffect(() => {
@@ -182,13 +209,17 @@ export default function App() {
     return () => window.removeEventListener("session-changed", onSessionChanged);
   }, []);
 
-  const handleLoadSession = (id: string) => {
+  const handleLoadSession = (id: string, name?: string) => {
+    setFilePreview(null);
     setCurrentSessionId(id);
-    window.dispatchEvent(new CustomEvent("load-session", { detail: id }));
+    workspace.setMode("agent");
+    window.dispatchEvent(new CustomEvent("load-session", { detail: { id, name } }));
   };
 
   const handleNewSession = () => {
+    setFilePreview(null);
     setCurrentSessionId("");
+    workspace.setMode("agent");
     window.dispatchEvent(new CustomEvent("new-session"));
   };
 
@@ -223,6 +254,8 @@ export default function App() {
             onNewSession={handleNewSession}
             onOpenProcessLog={handleOpenProcessLog}
             onPreviewFile={(path, size) => { setFilePreview(path); setFilePreviewSize(size); }}
+            terminalAttachedIds={terminalAttachedIds}
+            onSwitchToTerminal={handleSwitchToTerminal}
             activePluginName={activePluginName}
             activePluginViews={activePluginName ? runningMonitors.find((m) => m.name === activePluginName)?.views : undefined}
             activePluginRunning={activePluginName ? runningMonitors.some((m) => m.name === activePluginName && m.running) : undefined}

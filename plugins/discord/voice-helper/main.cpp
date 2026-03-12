@@ -92,8 +92,9 @@ int main(int argc, char* argv[]) {
 
     dpp::cluster bot(token, dpp::i_guilds | dpp::i_guild_voice_states);
 
-    // Suppress DPP logs to stderr (bridge reads stderr for debug)
+    // Forward DPP logs to stderr, but suppress noisy decrypt errors
     bot.on_log([](const dpp::log_t& event) {
+        if (event.message.find("decrypt failed") != std::string::npos) return;
         std::cerr << "[dpp] " << event.message << "\n";
     });
 
@@ -104,8 +105,8 @@ int main(int argc, char* argv[]) {
         // Connect to voice via the shard's discord_client
         auto* shard = event.from();
         if (shard) {
-            shard->connect_voice(guild_id, channel_id, true, false, true);
-            // self_mute=true, self_deaf=false, enable_dave=true
+            shard->connect_voice(guild_id, channel_id, false, false, true);
+            // self_mute=false, self_deaf=false, enable_dave=true
         } else {
             send_error("No shard available");
             bot.shutdown();
@@ -113,11 +114,38 @@ int main(int argc, char* argv[]) {
     });
 
     bot.on_voice_ready([&](const dpp::voice_ready_t& event) {
+        // Send 0.5s of silence to prime Discord into sending us audio.
+        auto* vc = event.voice_client;
+        if (vc) {
+            constexpr size_t silence_samples = 48000 / 2; // 0.5s at 48kHz
+            constexpr size_t frame_bytes = silence_samples * 2 * 2; // stereo 16-bit
+            std::vector<uint8_t> silence(frame_bytes, 0);
+            vc->send_audio_raw(reinterpret_cast<uint16_t*>(silence.data()), silence.size());
+            std::cerr << "[voice] Sent 0.5s silence to prime audio receive\n";
+        }
         send_event("joined");
     });
 
     bot.on_voice_receive([&](const dpp::voice_receive_t& event) {
-        if (!running.load() || event.audio_data.empty()) return;
+        if (!running.load()) return;
+        // Skip bot's own audio (user_id 0 = unknown/self)
+        if (event.user_id == 0 || event.user_id == bot.me.id) return;
+        if (event.audio_data.empty()) return;
+
+        // Filter out corrupt frames from DAVE decrypt failures.
+        // Corrupt frames have most samples at extreme values (clipping).
+        const auto* samples = reinterpret_cast<const int16_t*>(event.audio_data.data());
+        size_t num_samples = event.audio_data.size() / 2;
+        if (num_samples == 0) return;
+
+        size_t extreme_count = 0;
+        for (size_t i = 0; i < num_samples; i++) {
+            int16_t s = samples[i];
+            if (s > 30000 || s < -30000) extreme_count++;
+        }
+
+        // If >50% of samples are extreme, this frame is corrupt
+        if (extreme_count * 2 > num_samples) return;
 
         std::lock_guard<std::mutex> lock(audio_mutex);
         auto& ua = user_audio[event.user_id];
@@ -158,6 +186,7 @@ int main(int argc, char* argv[]) {
                     }
 
                     std::string filepath = output_dir + "/" + safe_name + ".wav";
+                    std::cerr << "[voice] Saving " << ua.samples.size() << " bytes for user " << name << "\n";
 
                     // Write WAV file
                     WavHeader header;

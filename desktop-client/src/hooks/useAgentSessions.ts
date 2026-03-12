@@ -38,7 +38,12 @@ export function useAgentSessions() {
 
   const renameTab = useCallback((id: string, label: string) => {
     setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, label } : t)));
-    renameAgentTab(id, label).catch(() => {});
+    renameAgentTab(id, label)
+      .then(() => {
+        // Notify sessions panel to refresh (name persisted on disk)
+        window.dispatchEvent(new CustomEvent("session-changed", { detail: id }));
+      })
+      .catch(() => {});
   }, []);
 
   // Auto-create first tab on mount

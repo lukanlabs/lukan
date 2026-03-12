@@ -169,10 +169,11 @@ function handleDiscordMessage(message) {
   const notesMatch = content.match(/^!notes\s+(start|stop)$/i);
   if (notesMatch) {
     const action = notesMatch[1].toLowerCase();
+    log("info", `[notes] !notes ${action} from ${message.author.username} (${message.author.id}) msg_id=${message.id}`);
     if (action === "start") {
       startNotes(message).catch((err) => log("error", `startNotes error: ${err.message}`));
     } else {
-      stopNotes(message).catch((err) => log("error", `stopNotes error: ${err.message}`));
+      stopNotes(message).catch((err) => log("error", `stopNotes error: ${err?.message || err}`));
     }
     return;
   }
@@ -406,8 +407,22 @@ async function stopNotes(message) {
     });
 
     // Send stop command
-    session.helperProcess.stdin.write("stop\n");
+    try {
+      session.helperProcess.stdin.write("stop\n");
+    } catch (e) {
+      log("error", `Failed to send stop to voice helper: ${e.message}`);
+      clearTimeout(timeout);
+      resolve(files);
+    }
+
+    // Force-kill helper if it doesn't exit within the timeout
+    session.helperProcess.once("exit", () => clearTimeout(timeout));
   });
+
+  // Give the helper 2s to exit gracefully, then force-kill
+  setTimeout(() => {
+    try { session.helperProcess.kill("SIGKILL"); } catch {}
+  }, 2000);
 
   if (audioFiles.length === 0) {
     await target.send("Notes session ended. No speech was captured.");
@@ -488,22 +503,27 @@ async function stopNotes(message) {
 // ── Transcription ─────────────────────────────────────────────────────
 
 async function transcribeWavFile(filepath) {
+  if (transcriptionBackend === "local") {
+    return transcribeLocal(filepath);
+  }
   const { readFile } = await import("fs/promises");
   const wavBuffer = await readFile(filepath);
-
-  if (transcriptionBackend === "local") {
-    return transcribeLocal(wavBuffer);
-  }
   return transcribeOpenAI(wavBuffer);
 }
 
-async function transcribeLocal(wavBuffer) {
+async function transcribeLocal(filepath) {
+  log("info", `[transcribe] Sending ${filepath} to ${whisperUrl}`);
+  const { readFile } = await import("fs/promises");
+  const buffer = await readFile(filepath);
+  log("info", `[transcribe] File size: ${buffer.length} bytes`);
+
+  // Use same multipart approach as WhatsApp plugin (proven to work)
   const boundary = `----FormBoundary${Date.now()}`;
   const fileHeader = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`,
   );
   const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
-  const body = Buffer.concat([fileHeader, wavBuffer, footer]);
+  const body = Buffer.concat([fileHeader, buffer, footer]);
 
   const url = `${whisperUrl}/v1/audio/transcriptions`;
   const response = await fetch(url, {
@@ -518,6 +538,7 @@ async function transcribeLocal(wavBuffer) {
   }
 
   const result = await response.json();
+  log("info", `[transcribe] Result: ${(result.text || "").slice(0, 100)}`);
   return result.text || "";
 }
 

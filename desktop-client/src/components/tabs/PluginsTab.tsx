@@ -203,7 +203,12 @@ export default function PluginsTab() {
       else if (action === "stop") await stopPlugin(name);
       else if (action === "restart") await restartPlugin(name);
       else if (action === "remove") { await removePlugin(name); await refreshPlugins(); goBack(); return; }
-      else if (action === "update") { await installRemotePlugin(name); }
+      else if (action === "update") {
+        const wasRunning = plugins.find(p => p.name === name)?.running;
+        if (wasRunning) await stopPlugin(name);
+        await installRemotePlugin(name);
+        if (wasRunning) await startPlugin(name);
+      }
       toast("success", `Plugin '${name}' ${action === "restart" ? "restarted" : action + (action === "update" ? "d" : "ed")}`);
       await refreshPlugins();
       const logs = await getPluginLogs(name, 200);

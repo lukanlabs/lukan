@@ -46,24 +46,18 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /** Send input to PTY in chunks to avoid IPC/WebSocket message size issues. */
-const CHUNK_SIZE = 16384; // 16 KB per chunk
+const CHAR_CHUNK = 8192; // Split by characters, not bytes, to avoid splitting multi-byte UTF-8
 
 function sendInput(sessionId: string, data: string): void {
-  const b64 = toBase64(data);
-  if (b64.length <= CHUNK_SIZE) {
-    terminalInput(sessionId, b64).catch(() => {});
+  if (data.length <= CHAR_CHUNK) {
+    terminalInput(sessionId, toBase64(data)).catch(() => {});
     return;
   }
-  // Split into chunks and send sequentially
-  const chunks: string[] = [];
-  const bytes = new TextEncoder().encode(data);
-  for (let offset = 0; offset < bytes.length; offset += CHUNK_SIZE) {
-    const chunk = bytes.slice(offset, offset + CHUNK_SIZE);
-    chunks.push(bytesToBase64(chunk));
-  }
+  // Split by characters so we never break a multi-byte UTF-8 sequence
   let chain: Promise<void> = Promise.resolve();
-  for (const chunk of chunks) {
-    chain = chain.then(() => terminalInput(sessionId, chunk)).catch(() => {});
+  for (let offset = 0; offset < data.length; offset += CHAR_CHUNK) {
+    const chunk = data.slice(offset, offset + CHAR_CHUNK);
+    chain = chain.then(() => terminalInput(sessionId, toBase64(chunk))).catch(() => {});
   }
 }
 
@@ -121,15 +115,12 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
       terminalResize(sessionId, term.cols, term.rows).catch(() => {});
     });
 
-    // Flag to suppress onData when we handle paste ourselves
-    let pasteHandled = false;
+    // Track whether we're currently handling a paste (to suppress xterm.js onData echo)
+    let pasteInProgress = false;
 
-    // Keyboard → PTY (xterm.js fires onData for keyboard AND paste events)
+    // Keyboard + paste → PTY. xterm.js fires onData for ALL input including paste.
     const inputDisposable = term.onData((data) => {
-      if (pasteHandled) {
-        pasteHandled = false;
-        return;
-      }
+      if (pasteInProgress) return; // paste handled by our own onPaste handler
       sendInput(sessionId, data);
     });
 
@@ -141,16 +132,21 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
       terminalInput(sessionId, bytesToBase64(bytes)).catch(() => {});
     });
 
-    // Clipboard paste → PTY (Ctrl+V / right-click / OS paste)
+    // Intercept paste at the document level (capture phase) so we handle it
+    // before xterm.js. This ensures UTF-8 text with special characters
+    // (em-dashes, accents, arrows, etc.) is encoded correctly via sendInput.
     const onPaste = (e: ClipboardEvent) => {
-      if (!container.contains(document.activeElement) && document.activeElement !== term.element) return;
-      const text = e.clipboardData?.getData("text");
-      if (text) {
-        e.preventDefault();
-        e.stopPropagation();
-        pasteHandled = true;
-        sendInput(sessionId, text);
-      }
+      // Only handle if the terminal has focus
+      if (!container.contains(document.activeElement)) return;
+      const text = e.clipboardData?.getData("text/plain");
+      if (!text) return;
+      e.preventDefault();
+      // Suppress xterm.js onData for this paste cycle
+      pasteInProgress = true;
+      sendInput(sessionId, text);
+      // Re-enable onData after the current event loop tick
+      // (xterm.js fires onData synchronously during paste processing)
+      setTimeout(() => { pasteInProgress = false; }, 0);
     };
     document.addEventListener("paste", onPaste, true);
 
@@ -167,14 +163,14 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
       if (e.key === "c" && e.ctrlKey && !e.shiftKey && term.hasSelection()) {
         return false;
       }
-      // Ctrl+Shift+V → paste from clipboard directly
+      // Ctrl+Shift+V → paste from clipboard via async API
       if (e.key === "v" && e.ctrlKey && e.shiftKey) {
         navigator.clipboard.readText().then((text) => {
           if (text) sendInput(sessionId, text);
         }).catch(() => {});
         return false;
       }
-      // Ctrl+V → let browser fire native paste event (handled by onPaste)
+      // Ctrl+V → let browser handle natively (xterm.js processes the paste event)
       if (e.key === "v" && e.ctrlKey && !e.shiftKey) {
         return false;
       }

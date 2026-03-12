@@ -176,7 +176,7 @@ export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" |
 
 export type WorkspaceMode = "agent" | "terminal";
 
-export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes" | "events" | "plugin";
+export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes" | "events" | "plugin" | "terminals";
 
 export interface SystemEvent {
   ts: string;
@@ -303,6 +303,7 @@ export interface TerminalSessionInfo {
   id: string;
   cols: number;
   rows: number;
+  name?: string;
 }
 
 export interface TerminalOutputEvent {
@@ -411,13 +412,13 @@ export interface TaskInfo {
 // Session types
 export interface SessionSummary {
   id: string;
-  name: string;
+  name?: string;
   createdAt: string;
   updatedAt: string;
   messageCount: number;
-  firstUserMessage: string;
-  lastUserMessage: string;
-  model: string;
+  provider?: string;
+  model?: string;
+  lastMessage?: string;
 }
 
 // Init response from backend
@@ -443,4 +444,5 @@ export interface TurnComplete {
   messages: Message[];
   contextSize: number;
   tokenUsage: TokenUsage;
+  aborted?: boolean;
 }

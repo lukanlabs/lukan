@@ -60,13 +60,17 @@ pub struct TurnComplete {
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummaryJs {
     pub id: String,
-    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub message_count: usize,
-    pub first_user_message: String,
-    pub last_user_message: String,
-    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<String>,
 }
 
 // ── Tab management commands ──────────────────────────────────────────
@@ -110,7 +114,11 @@ pub async fn rename_agent_tab(
 ) -> Result<(), String> {
     let mut sessions = state.sessions.lock().await;
     if let Some(session) = sessions.get_mut(&session_id) {
-        session.label = label;
+        session.label = label.clone();
+        // Persist the name to the chat session on disk
+        if let Some(ref mut agent) = session.agent {
+            let _ = agent.set_session_name(label).await;
+        }
     }
     Ok(())
 }
@@ -191,7 +199,7 @@ pub async fn send_message(
         session.is_processing = true;
     }
 
-    // Ensure agent exists
+    // Ensure agent exists (reload from last_session_id if available)
     {
         let mut sessions = state.sessions.lock().await;
         let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
@@ -203,7 +211,12 @@ pub async fn send_message(
                 .clone();
             drop(config_lock);
 
-            match state.create_agent(&config).await {
+            let result = if let Some(ref last_id) = session.last_session_id {
+                state.create_agent_with_session(&config, last_id).await
+            } else {
+                state.create_agent(&config).await
+            };
+            match result {
                 Ok((agent, channels)) => {
                     session.agent = Some(agent);
                     session.approval_tx = Some(channels.approval_tx);
@@ -304,6 +317,15 @@ pub async fn send_message(
         }
     });
 
+    // Grab the turn_done notifier so the completion handler can signal it
+    let turn_done = {
+        let sessions = state.sessions.lock().await;
+        sessions
+            .get(&session_id)
+            .map(|s| s.turn_done.clone())
+            .unwrap_or_else(|| std::sync::Arc::new(tokio::sync::Notify::new()))
+    };
+
     // Spawn completion handler
     let app_for_complete = app.clone();
     tokio::spawn(async move {
@@ -336,6 +358,7 @@ pub async fn send_message(
                         let current_gen = session.generation.load(Ordering::SeqCst);
                         if current_gen != turn_gen {
                             let _ = returned_agent.save_session_public().await;
+                            turn_done.notify_waiters();
                             return;
                         }
 
@@ -362,6 +385,7 @@ pub async fn send_message(
                             serde_json::to_string(&complete).unwrap_or_default(),
                         );
 
+                        session.last_session_id = Some(returned_agent.session_id().to_string());
                         session.agent = Some(returned_agent);
                         session.cancel_token = None;
                         session.is_processing = false;
@@ -393,6 +417,8 @@ pub async fn send_message(
                 }
             }
         }
+        // Signal that the turn is fully done and the agent has been returned
+        turn_done.notify_waiters();
     });
 
     Ok(())
@@ -424,6 +450,7 @@ pub async fn cancel_stream(
                         let _ = returned_agent.save_session_public().await;
                         let mut sessions = state.sessions.lock().await;
                         if let Some(session) = sessions.get_mut(&session_id_clone) {
+                            session.last_session_id = Some(returned_agent.session_id().to_string());
                             session.agent = Some(returned_agent);
                         }
                     }
@@ -439,11 +466,23 @@ pub async fn cancel_stream(
                         let chat_state = app.state::<ChatState>();
                         let mut sessions = chat_state.sessions.lock().await;
                         if let Some(session) = sessions.get_mut(&session_id_bg) {
+                            session.last_session_id = Some(returned_agent.session_id().to_string());
                             session.agent = Some(returned_agent);
                         }
                     }
                 });
             }
+        }
+    } else {
+        // The completion handler already took the handle — wait for it to
+        // return the agent via the Notify signal (no polling needed).
+        let turn_done = {
+            let sessions = state.sessions.lock().await;
+            sessions.get(&session_id).map(|s| s.turn_done.clone())
+        };
+        if let Some(notify) = turn_done {
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(10), notify.notified()).await;
         }
     }
 
@@ -563,13 +602,13 @@ pub async fn list_sessions() -> Result<Vec<SessionSummaryJs>, String> {
         .into_iter()
         .map(|s| SessionSummaryJs {
             id: s.id,
-            name: s.name.unwrap_or_default(),
+            name: s.name,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
             message_count: s.message_count,
-            first_user_message: s.last_message.clone().unwrap_or_default(),
-            last_user_message: s.last_message.unwrap_or_default(),
-            model: s.model.unwrap_or_default(),
+            provider: s.provider,
+            model: s.model,
+            last_message: s.last_message,
         })
         .collect())
 }

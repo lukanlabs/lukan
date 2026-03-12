@@ -182,8 +182,14 @@ export default function App() {
     return () => window.removeEventListener("terminal-attached-ids", onAttachedIds);
   }, []);
 
+  // Auto-close file preview when switching views (agent/terminal)
+  useEffect(() => {
+    setFilePreview(null);
+  }, [workspace.mode]);
+
   const handleSwitchToTerminal = useCallback(
     (sessionId: string) => {
+      setFilePreview(null);
       workspace.setMode("terminal");
       window.dispatchEvent(
         new CustomEvent("terminal-attach-request", { detail: sessionId }),
@@ -204,12 +210,16 @@ export default function App() {
   }, []);
 
   const handleLoadSession = (id: string, name?: string) => {
+    setFilePreview(null);
     setCurrentSessionId(id);
+    workspace.setMode("agent");
     window.dispatchEvent(new CustomEvent("load-session", { detail: { id, name } }));
   };
 
   const handleNewSession = () => {
+    setFilePreview(null);
     setCurrentSessionId("");
+    workspace.setMode("agent");
     window.dispatchEvent(new CustomEvent("new-session"));
   };
 

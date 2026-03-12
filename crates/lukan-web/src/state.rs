@@ -16,6 +16,7 @@ pub struct WebAgentSession {
     pub approval_tx: Option<mpsc::Sender<ApprovalResponse>>,
     pub plan_review_tx: Option<mpsc::Sender<PlanReviewResponse>>,
     pub planner_answer_tx: Option<mpsc::Sender<String>>,
+    pub bg_signal_tx: Option<watch::Sender<()>>,
     /// Human-readable label for this tab (e.g. "Agent 2")
     pub label: String,
     /// The persisted ChatSession ID (6-char hex) so we can reload after agent loss.
@@ -29,6 +30,7 @@ impl WebAgentSession {
             approval_tx: None,
             plan_review_tx: None,
             planner_answer_tx: None,
+            bg_signal_tx: None,
             label: "Agent 1".to_string(),
             last_session_id: None,
         }
@@ -65,6 +67,8 @@ pub struct AppState {
     pub plan_review_tx: Mutex<Option<mpsc::Sender<PlanReviewResponse>>>,
     /// Sender half of the planner answer channel — legacy singleton
     pub planner_answer_tx: Mutex<Option<mpsc::Sender<String>>>,
+    /// Sender for background signal — legacy singleton
+    pub bg_signal_tx: Mutex<Option<watch::Sender<()>>>,
     /// Broadcast channel for worker notifications from the daemon
     pub notification_tx: broadcast::Sender<WorkerNotification>,
     /// Terminal PTY manager
@@ -105,6 +109,7 @@ impl AppState {
             approval_tx: Mutex::new(None),
             plan_review_tx: Mutex::new(None),
             planner_answer_tx: Mutex::new(None),
+            bg_signal_tx: Mutex::new(None),
             notification_tx,
             terminal_manager: TerminalManager::default(),
             terminal_tx,

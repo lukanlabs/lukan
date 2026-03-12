@@ -6,7 +6,7 @@ use axum::{
     extract::{State, WebSocketUpgrade},
     response::IntoResponse,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -287,8 +287,24 @@ async fn dispatch_message(
             }
         }
 
-        ClientMessage::SendToBackground { session_id: _ } => {
-            // Background signal not yet implemented in web
+        ClientMessage::SendToBackground { session_id } => {
+            let mut sent = false;
+            // Try session-based bg_signal first
+            if let Some(ref sid) = session_id {
+                let sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get(sid)
+                    && let Some(ref tx) = session.bg_signal_tx
+                {
+                    sent = tx.send(()).is_ok();
+                }
+            }
+            // Fallback to legacy singleton
+            if !sent {
+                let tx = state.bg_signal_tx.lock().await;
+                if let Some(ref tx) = *tx {
+                    let _ = tx.send(());
+                }
+            }
         }
 
         ClientMessage::ListSessions => match SessionManager::list().await {
@@ -852,15 +868,17 @@ async fn handle_send_message(
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
         let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        let (bg_signal_tx, bg_signal_rx) = watch::channel(());
         session.approval_tx = Some(approval_tx);
         session.plan_review_tx = Some(plan_review_tx);
         session.planner_answer_tx = Some(planner_answer_tx);
+        session.bg_signal_tx = Some(bg_signal_tx);
         let mut agent = session.agent.take().unwrap();
         agent.set_channels(
             Some(approval_rx),
             Some(plan_review_rx),
             Some(planner_answer_rx),
-            None,
+            Some(bg_signal_rx),
         );
         agent.label = Some(session.label.clone());
         agent.tab_id = Some(tab.to_string());
@@ -870,16 +888,18 @@ async fn handle_send_message(
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
         let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        let (bg_signal_tx, bg_signal_rx) = watch::channel(());
         *state.approval_tx.lock().await = Some(approval_tx);
         *state.plan_review_tx.lock().await = Some(plan_review_tx);
         *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
+        *state.bg_signal_tx.lock().await = Some(bg_signal_tx);
         let mut lock = state.agent.lock().await;
         let mut agent = lock.take().unwrap();
         agent.set_channels(
             Some(approval_rx),
             Some(plan_review_rx),
             Some(planner_answer_rx),
-            None,
+            Some(bg_signal_rx),
         );
         agent.label = Some("Agent 1".to_string());
         agent
@@ -1236,6 +1256,24 @@ async fn handle_mid_turn_message(
 
         ClientMessage::TerminalDestroy { session_id } => {
             let _ = state.terminal_manager.destroy(&session_id).await;
+        }
+
+        ClientMessage::SendToBackground { session_id } => {
+            let mut sent = false;
+            if let Some(ref sid) = session_id {
+                let sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get(sid)
+                    && let Some(ref tx) = session.bg_signal_tx
+                {
+                    sent = tx.send(()).is_ok();
+                }
+            }
+            if !sent {
+                let tx = state.bg_signal_tx.lock().await;
+                if let Some(ref tx) = *tx {
+                    let _ = tx.send(());
+                }
+            }
         }
 
         // Ignore all other messages during a turn
@@ -1710,6 +1748,9 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         Box::leak(Box::new(result.manager));
     }
 
+    let (bg_signal_tx, bg_signal_rx) = watch::channel(());
+    *state.bg_signal_tx.lock().await = Some(bg_signal_tx);
+
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools,
@@ -1717,7 +1758,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         cwd,
         provider_name,
         model_name,
-        bg_signal: None,
+        bg_signal: Some(bg_signal_rx),
         allowed_paths: Some(allowed),
         permission_mode,
         permission_mode_rx: Some(state.permission_mode.subscribe()),
@@ -1789,6 +1830,10 @@ async fn create_agent_with_session(
     let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
     *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
 
+    // Create bg signal channel
+    let (bg_signal_tx, bg_signal_rx) = watch::channel(());
+    *state.bg_signal_tx.lock().await = Some(bg_signal_tx);
+
     let mut tools = if has_browser {
         lukan_tools::create_configured_browser_registry(&permissions, &allowed)
     } else {
@@ -1817,7 +1862,7 @@ async fn create_agent_with_session(
         cwd,
         provider_name,
         model_name,
-        bg_signal: None,
+        bg_signal: Some(bg_signal_rx),
         allowed_paths: Some(allowed),
         permission_mode,
         permission_mode_rx: Some(state.permission_mode.subscribe()),

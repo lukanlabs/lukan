@@ -63,8 +63,14 @@ fn install_terminal_guard() {
             }
         }
 
-        libc::signal(libc::SIGINT, restore_and_exit as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, restore_and_exit as *const () as libc::sighandler_t);
+        libc::signal(
+            libc::SIGINT,
+            restore_and_exit as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            restore_and_exit as *const () as libc::sighandler_t,
+        );
     }
 }
 

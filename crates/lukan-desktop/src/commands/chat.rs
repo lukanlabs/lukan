@@ -481,11 +481,8 @@ pub async fn cancel_stream(
             sessions.get(&session_id).map(|s| s.turn_done.clone())
         };
         if let Some(notify) = turn_done {
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                notify.notified(),
-            )
-            .await;
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(10), notify.notified()).await;
         }
     }
 

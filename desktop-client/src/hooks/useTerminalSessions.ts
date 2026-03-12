@@ -4,6 +4,7 @@ import {
   terminalDestroy,
   terminalList,
   terminalReconnect,
+  terminalRename,
   onTerminalSessionsRecovered,
 } from "../lib/tauri";
 import type { TerminalSessionInfo } from "../lib/types";
@@ -65,6 +66,7 @@ export function useTerminalSessions() {
     const info = await terminalCreate(undefined, 80, 24);
     setSessions((prev) => [...prev, info]);
     setActiveSessionId(info.id);
+    window.dispatchEvent(new CustomEvent("terminal-sessions-changed"));
     return info;
   }, []);
 
@@ -79,6 +81,8 @@ export function useTerminalSessions() {
         }
         return next;
       });
+      // Notify side panel to refresh its session list
+      window.dispatchEvent(new CustomEvent("terminal-sessions-changed"));
     },
     [activeSessionId],
   );
@@ -121,8 +125,14 @@ export function useTerminalSessions() {
     setActiveSessionId(id);
   }, []);
 
-  const renameSession = useCallback((id: string, label: string) => {
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, label } : s)));
+  const renameSession = useCallback(async (id: string, label: string) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, label, name: label } : s)));
+    try {
+      await terminalRename(id, label);
+    } catch {
+      // ignore
+    }
+    window.dispatchEvent(new CustomEvent("terminal-sessions-changed"));
   }, []);
 
   /** Clear scrollback for a session after it has been replayed. */
@@ -176,6 +186,18 @@ export function useTerminalSessions() {
     return () => {
       if (unlisten) unlisten();
     };
+  }, []);
+
+  // Sync renames coming from the side panel
+  useEffect(() => {
+    const onRenamed = (e: Event) => {
+      const { id, name } = (e as CustomEvent<{ id: string; name: string }>).detail;
+      setSessions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, label: name, name } : s)),
+      );
+    };
+    window.addEventListener("terminal-renamed", onRenamed);
+    return () => window.removeEventListener("terminal-renamed", onRenamed);
   }, []);
 
   return {

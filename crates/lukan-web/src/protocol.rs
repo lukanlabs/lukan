@@ -1240,7 +1240,10 @@ mod tests {
         assert!(json.contains(r#""id":"abc""#), "id: {json}");
         assert!(json.contains(r#""cols":80"#), "cols: {json}");
         assert!(json.contains(r#""rows":24"#), "rows: {json}");
-        assert!(!json.contains("name"), "None name should be skipped: {json}");
+        assert!(
+            !json.contains("name"),
+            "None name should be skipped: {json}"
+        );
     }
 
     #[test]

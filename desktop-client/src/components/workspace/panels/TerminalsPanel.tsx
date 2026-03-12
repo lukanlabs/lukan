@@ -71,6 +71,7 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
     if (trimmed) {
       try {
         await terminalRename(id, trimmed);
+        window.dispatchEvent(new CustomEvent("terminal-renamed", { detail: { id, name: trimmed } }));
         load();
       } catch {
         // ignore

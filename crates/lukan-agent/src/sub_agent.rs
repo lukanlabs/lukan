@@ -1230,7 +1230,16 @@ impl Tool for ExploreTool {
 
         let progress_tx = ctx.event_tx.clone();
 
-        match run_explore(&task, timeout, max_turns, progress_tx, explore_id, ctx.cancel.clone()).await {
+        match run_explore(
+            &task,
+            timeout,
+            max_turns,
+            progress_tx,
+            explore_id,
+            ctx.cancel.clone(),
+        )
+        .await
+        {
             Ok(output) => Ok(ToolResult::success(output)),
             Err(e) => Ok(ToolResult::error(format!("Explore error: {e}"))),
         }

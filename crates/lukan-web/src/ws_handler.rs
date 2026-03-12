@@ -163,7 +163,16 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
         }
 
         // Dispatch authenticated messages
-        dispatch_message(client_msg, conn_id, &state, &mut ws_tx, &mut ws_rx, &mut terminal_rx, &mut notify_rx).await;
+        dispatch_message(
+            client_msg,
+            conn_id,
+            &state,
+            &mut ws_tx,
+            &mut ws_rx,
+            &mut terminal_rx,
+            &mut notify_rx,
+        )
+        .await;
     }
 
     // On disconnect: release processing lock if owned, save sessions

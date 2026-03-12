@@ -310,7 +310,9 @@ impl PluginManager {
             // During remote updates, the old dir should already be removed.
             // If it still exists, remove it now to allow re-install.
             info!(plugin = %plugin_name, "Destination exists, removing for re-install");
-            tokio::fs::remove_dir_all(&dest).await.context("Failed to remove existing plugin dir")?;
+            tokio::fs::remove_dir_all(&dest)
+                .await
+                .context("Failed to remove existing plugin dir")?;
         }
 
         // Copy directory recursively

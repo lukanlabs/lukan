@@ -319,6 +319,32 @@ impl TerminalManager {
         recovered
     }
 
+    /// Reset the pipe-pane output reader for a session.
+    ///
+    /// Aborts the old FIFO reader task, tears down the old pipe-pane, and
+    /// spawns a fresh one. This ensures the output stream starts clean,
+    /// which fixes rendering corruption when re-attaching sessions that
+    /// were running TUI apps (e.g. Ink/React-based CLIs).
+    pub async fn reset_output_reader(
+        &self,
+        session_id: &str,
+        output_tx: broadcast::Sender<ServerMessage>,
+    ) {
+        let mut sessions = self.sessions.lock().await;
+        if let Some(session) = sessions.get_mut(session_id) {
+            // Abort the old reader task
+            session.reader_handle.abort();
+            let _ = tokio::fs::remove_file(&session.fifo_path).await;
+
+            // Spawn a fresh reader (which resets pipe-pane internally)
+            session.reader_handle = Self::spawn_output_reader(
+                session_id.to_string(),
+                session.fifo_path.clone(),
+                output_tx,
+            );
+        }
+    }
+
     /// Capture the current visible pane content + scrollback as base64.
     ///
     /// Used during reconnection to replay terminal state to the client.

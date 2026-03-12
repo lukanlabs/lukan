@@ -215,28 +215,51 @@ pub fn get_bg_processes_for_session(session_id: &str) -> Vec<BgProcessSnapshot> 
     result
 }
 
-/// Read the last `max_lines` from a background process log file
+/// Read the last `max_lines` from a background process log file.
+/// Uses a tail-seek approach: reads only the last ~32KB of the file
+/// to avoid reading megabytes of output on every poll.
 pub fn get_bg_log(pid: u32, max_lines: usize) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
     let log_path = {
         let t = tracker().lock().unwrap();
         let process = t.processes.get(&pid)?;
         process.log_file.clone()
     };
 
-    match std::fs::read_to_string(&log_path) {
-        Ok(content) => {
-            let lines: Vec<&str> = content.lines().collect();
-            if lines.len() <= max_lines {
-                Some(content)
-            } else {
-                let start = lines.len() - max_lines;
-                Some(lines[start..].join("\n"))
-            }
-        }
+    let mut file = match std::fs::File::open(&log_path) {
+        Ok(f) => f,
         Err(e) => {
             warn!(pid, error = %e, "Failed to read bg process log");
-            None
+            return None;
         }
+    };
+
+    let metadata = file.metadata().ok()?;
+    let file_len = metadata.len();
+
+    // For small files, read everything. For large files, seek near the end.
+    // 32KB is enough for ~200 lines of typical terminal output.
+    const TAIL_BYTES: u64 = 32 * 1024;
+    let mut content = String::new();
+
+    if file_len > TAIL_BYTES {
+        let _ = file.seek(SeekFrom::End(-(TAIL_BYTES as i64)));
+        let _ = file.read_to_string(&mut content);
+        // Drop the first partial line (we likely seeked into the middle of one)
+        if let Some(pos) = content.find('\n') {
+            content = content[pos + 1..].to_string();
+        }
+    } else {
+        let _ = file.read_to_string(&mut content);
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() <= max_lines {
+        Some(content)
+    } else {
+        let start = lines.len() - max_lines;
+        Some(lines[start..].join("\n"))
     }
 }
 

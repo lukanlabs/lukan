@@ -44,6 +44,8 @@ pub struct BgPicker {
     pub log_content: String,
     /// PID of the process whose log is being viewed
     pub log_pid: u32,
+    /// Last time the log was refreshed (throttle to avoid reading every tick)
+    last_log_refresh: std::time::Instant,
 }
 
 impl BgPicker {
@@ -54,6 +56,7 @@ impl BgPicker {
             view: BgPickerView::List,
             log_content: String::new(),
             log_pid: 0,
+            last_log_refresh: std::time::Instant::now(),
         }
     }
 
@@ -81,9 +84,13 @@ impl BgPicker {
         }
     }
 
-    /// Refresh the log content if in log view
+    /// Refresh the log content if in log view (throttled to every 500ms)
     pub fn refresh_log(&mut self) {
-        if self.view == BgPickerView::Log && self.log_pid > 0 {
+        if self.view == BgPickerView::Log
+            && self.log_pid > 0
+            && self.last_log_refresh.elapsed().as_millis() >= 500
+        {
+            self.last_log_refresh = std::time::Instant::now();
             self.log_content = lukan_tools::bg_processes::get_bg_log(self.log_pid, 200)
                 .unwrap_or_else(|| "(no log output yet)".to_string());
         }

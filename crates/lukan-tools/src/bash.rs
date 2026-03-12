@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 use tokio::process::Command;
-use tokio::sync::Mutex;
 use tracing::debug;
 
 use crate::bg_processes;
@@ -138,6 +137,7 @@ impl Tool for BashTool {
                 .env("LUKAN_AGENT", "1")
                 .envs(&ctx.extra_env)
                 .current_dir(&ctx.cwd)
+                .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()?
@@ -154,6 +154,7 @@ impl Tool for BashTool {
                 .env("LUKAN_AGENT", "1")
                 .envs(&ctx.extra_env)
                 .current_dir(&ctx.cwd)
+                .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
             unsafe {
@@ -185,7 +186,8 @@ impl Tool for BashTool {
             // Shared buffers: drain tasks write here continuously.
             // Also write to log file so /bg can show live output.
             let log_path = bg_processes::log_file_path(child_pid);
-            let drainer = OutputDrainer::start(child_pid, stdout_pipe, stderr_pipe, &log_path);
+            let drainer =
+                OutputDrainer::start(child_pid, stdout_pipe, stderr_pipe, &log_path, true);
 
             // Race: child.wait() vs Alt+B vs cancellation
             enum RaceResult {
@@ -246,6 +248,10 @@ impl Tool for BashTool {
                 }
                 RaceResult::Background => {
                     if child_pid > 0 {
+                        // Stop accumulating in memory — the drain tasks will
+                        // continue writing to the log file only.
+                        drainer.stop_buffering();
+
                         // Drain tasks are already running and writing to the log
                         // file — they'll continue until the process exits.
                         // Just register the process and spawn a reaper.
@@ -345,6 +351,7 @@ impl BashTool {
                 .env("LUKAN_AGENT", "1")
                 .envs(&ctx.extra_env)
                 .current_dir(&ctx.cwd)
+                .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()?
@@ -356,6 +363,7 @@ impl BashTool {
                 .env("LUKAN_AGENT", "1")
                 .envs(&ctx.extra_env)
                 .current_dir(&ctx.cwd)
+                .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
             unsafe {
@@ -379,7 +387,7 @@ impl BashTool {
         // Drain stdout/stderr to log file in background tasks
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
-        OutputDrainer::start(pid, stdout, stderr, &log_file);
+        OutputDrainer::start(pid, stdout, stderr, &log_file, false);
 
         // Spawn a task to wait for the child (so it doesn't become a zombie)
         tokio::spawn(async move {
@@ -413,108 +421,134 @@ impl BashTool {
 /// - Shared in-memory buffers (for foreground return value)
 /// - A log file on disk (for /bg live viewing and background processes)
 ///
-/// This prevents the OS pipe buffer (~64KB) from filling up and deadlocking
-/// the child process.
+/// Architecture: lightweight tokio tasks read chunks from the pipes and forward
+/// them through a std::sync::mpsc channel to a dedicated OS writer thread.
+/// This keeps the async runtime load minimal (just reads + channel sends)
+/// while all file I/O happens off the runtime entirely.
 struct OutputDrainer {
-    stdout_buf: Arc<Mutex<Vec<u8>>>,
-    stderr_buf: Arc<Mutex<Vec<u8>>>,
+    stdout_buf: Arc<std::sync::Mutex<Vec<u8>>>,
+    stderr_buf: Arc<std::sync::Mutex<Vec<u8>>>,
+    /// Shared flag — set to `false` to stop buffering in memory (e.g. after Alt+B).
+    buffer_flag: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl OutputDrainer {
-    /// Start draining. Returns immediately; drain happens in spawned tasks.
     fn start(
         pid: u32,
         stdout: Option<tokio::process::ChildStdout>,
         stderr: Option<tokio::process::ChildStderr>,
         log_path: &std::path::Path,
+        buffer_in_memory: bool,
     ) -> Self {
-        let stdout_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
-        let stderr_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let stdout_buf = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let stderr_buf = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let buffer_flag = Arc::new(std::sync::atomic::AtomicBool::new(buffer_in_memory));
 
-        // Shared log file handle
-        let log_file: Arc<Mutex<Option<tokio::fs::File>>> = Arc::new(Mutex::new(None));
-        let log_ready = Arc::new(tokio::sync::Notify::new());
+        // Channel: async reader tasks → OS writer thread
+        let (log_tx, log_rx) = std::sync::mpsc::channel::<Vec<u8>>();
 
-        // Create log file
+        // OS writer thread — all file I/O happens here, completely off tokio.
         {
-            let log_file = Arc::clone(&log_file);
-            let log_ready = Arc::clone(&log_ready);
             let log_path = log_path.to_path_buf();
+            std::thread::Builder::new()
+                .name("log-writer".into())
+                .spawn(move || {
+                    use std::io::Write;
+                    let file = match std::fs::File::create(&log_path) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            tracing::warn!(pid, error = %e, "Failed to create bg log file");
+                            return;
+                        }
+                    };
+                    let mut writer = std::io::BufWriter::new(file);
+                    while let Ok(data) = log_rx.recv() {
+                        let _ = writer.write_all(&data);
+                        // Flush after each write so /bg can see live output
+                        let _ = writer.flush();
+                    }
+                })
+                .ok();
+        }
+
+        // Spawn a lightweight async task that reads chunks from a pipe and
+        // forwards them to the writer thread via the mpsc channel.
+        fn spawn_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
+            reader: R,
+            mem_buf: Arc<std::sync::Mutex<Vec<u8>>>,
+            buffer_flag: Arc<std::sync::atomic::AtomicBool>,
+            log_tx: std::sync::mpsc::Sender<Vec<u8>>,
+        ) {
             tokio::spawn(async move {
-                match tokio::fs::File::create(&log_path).await {
-                    Ok(f) => *log_file.lock().await = Some(f),
-                    Err(e) => tracing::warn!(pid, error = %e, "Failed to create bg log file"),
+                use tokio::io::AsyncReadExt;
+                let mut reader = reader;
+                let mut chunk = vec![0u8; 8192];
+                loop {
+                    match reader.read(&mut chunk).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let data = chunk[..n].to_vec();
+
+                            if buffer_flag.load(std::sync::atomic::Ordering::Relaxed)
+                                && let Ok(mut b) = mem_buf.lock()
+                            {
+                                b.extend_from_slice(&data);
+                            }
+
+                            // Non-blocking send to writer thread
+                            if log_tx.send(data).is_err() {
+                                break; // Writer thread gone
+                            }
+
+                            // Yield so the TUI event loop gets CPU time
+                            tokio::task::yield_now().await;
+                        }
+                        Err(_) => break,
+                    }
                 }
-                log_ready.notify_waiters();
+                // Drop sender so writer thread flushes and exits
+                drop(log_tx);
             });
         }
 
-        // Drain stdout
         if let Some(stdout) = stdout {
-            let buf = Arc::clone(&stdout_buf);
-            let log = Arc::clone(&log_file);
-            let ready = Arc::clone(&log_ready);
-            tokio::spawn(async move {
-                use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-                ready.notified().await;
-                let reader = tokio::io::BufReader::new(stdout);
-                let mut lines = reader.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    // Append to in-memory buffer
-                    {
-                        let mut b = buf.lock().await;
-                        b.extend_from_slice(line.as_bytes());
-                        b.push(b'\n');
-                    }
-                    // Append to log file
-                    let mut guard = log.lock().await;
-                    if let Some(f) = guard.as_mut() {
-                        let _ = f.write_all(line.as_bytes()).await;
-                        let _ = f.write_all(b"\n").await;
-                        let _ = f.flush().await;
-                    }
-                }
-            });
+            spawn_reader(
+                stdout,
+                Arc::clone(&stdout_buf),
+                Arc::clone(&buffer_flag),
+                log_tx.clone(),
+            );
         }
 
-        // Drain stderr
         if let Some(stderr) = stderr {
-            let buf = Arc::clone(&stderr_buf);
-            let log = Arc::clone(&log_file);
-            let ready = Arc::clone(&log_ready);
-            tokio::spawn(async move {
-                use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-                ready.notified().await;
-                let reader = tokio::io::BufReader::new(stderr);
-                let mut lines = reader.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    // Append to in-memory buffer
-                    {
-                        let mut b = buf.lock().await;
-                        b.extend_from_slice(line.as_bytes());
-                        b.push(b'\n');
-                    }
-                    // Append to log file
-                    let mut guard = log.lock().await;
-                    if let Some(f) = guard.as_mut() {
-                        let _ = f.write_all(line.as_bytes()).await;
-                        let _ = f.write_all(b"\n").await;
-                        let _ = f.flush().await;
-                    }
-                }
-            });
+            spawn_reader(
+                stderr,
+                Arc::clone(&stderr_buf),
+                Arc::clone(&buffer_flag),
+                log_tx.clone(),
+            );
         }
+
+        // Drop our copy so writer thread exits when both reader tasks finish
+        drop(log_tx);
 
         Self {
             stdout_buf,
             stderr_buf,
+            buffer_flag,
         }
+    }
+
+    /// Stop accumulating output in memory (e.g. when command is sent to background).
+    fn stop_buffering(&self) {
+        self.buffer_flag
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Collect the buffered stdout and stderr data.
     async fn collect(self) -> (Vec<u8>, Vec<u8>) {
-        let stdout = std::mem::take(&mut *self.stdout_buf.lock().await);
-        let stderr = std::mem::take(&mut *self.stderr_buf.lock().await);
+        let stdout = std::mem::take(&mut *self.stdout_buf.lock().unwrap());
+        let stderr = std::mem::take(&mut *self.stderr_buf.lock().unwrap());
         (stdout, stderr)
     }
 }

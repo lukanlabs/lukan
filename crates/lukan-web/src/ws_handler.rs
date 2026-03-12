@@ -725,7 +725,7 @@ async fn handle_send_message(
     // Determine whether to use a session or the legacy singleton
     let use_session = tab_id.is_some();
 
-    // Ensure agent exists (session or singleton)
+    // Ensure agent exists (session or singleton) — reload from last_session_id if available
     if use_session {
         let tab = tab_id.unwrap();
         let mut sessions = state.sessions.lock().await;
@@ -733,7 +733,12 @@ async fn handle_send_message(
             .entry(tab.to_string())
             .or_insert_with(WebAgentSession::new);
         if session.agent.is_none() {
-            match create_agent(state).await {
+            let result = if let Some(ref last_id) = session.last_session_id {
+                create_agent_with_session(state, last_id).await
+            } else {
+                create_agent(state).await
+            };
+            match result {
                 Ok(agent) => {
                     session.agent = Some(agent);
                 }
@@ -894,6 +899,20 @@ async fn handle_send_message(
         }
     }
 
+    // Drain any remaining buffered events before dropping the receiver.
+    // This ensures tool results (e.g. "Tool denied by user.") that were
+    // queued while the abort was processed still get forwarded to the client.
+    if !client_disconnected {
+        while let Ok(ev) = event_rx.try_recv() {
+            let json = if let Some(ref tid) = tab_id_owned {
+                inject_tab_id(&ev, tid)
+            } else {
+                serde_json::to_string(&ev).unwrap_or_default()
+            };
+            let _ = ws_tx.send(Message::Text(json.into())).await;
+        }
+    }
+
     // Drop the event receiver so the agent's event_tx.send() fails immediately
     // instead of blocking on a full channel buffer when nobody is reading.
     // Without this, the agent can hang indefinitely and the timeout below
@@ -953,6 +972,7 @@ async fn handle_send_message(
             if let Some(ref tid) = tab_id_owned {
                 let mut sessions = state.sessions.lock().await;
                 if let Some(session) = sessions.get_mut(tid) {
+                    session.last_session_id = Some(returned_agent.session_id().to_string());
                     session.agent = Some(returned_agent);
                 }
                 // If session was destroyed mid-turn, agent is dropped

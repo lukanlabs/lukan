@@ -18,6 +18,8 @@ pub struct WebAgentSession {
     pub planner_answer_tx: Option<mpsc::Sender<String>>,
     /// Human-readable label for this tab (e.g. "Agent 2")
     pub label: String,
+    /// The persisted ChatSession ID (6-char hex) so we can reload after agent loss.
+    pub last_session_id: Option<String>,
 }
 
 impl WebAgentSession {
@@ -28,6 +30,7 @@ impl WebAgentSession {
             plan_review_tx: None,
             planner_answer_tx: None,
             label: "Agent 1".to_string(),
+            last_session_id: None,
         }
     }
 }

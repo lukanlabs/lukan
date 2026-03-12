@@ -12,7 +12,7 @@ use lukan_core::config::{LukanPaths, ResolvedConfig};
 use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse};
 use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::{create_configured_browser_registry, create_configured_registry};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -33,6 +33,10 @@ pub struct AgentSession {
     pub generation: AtomicU64,
     /// Human-readable label for this tab (e.g. "Agent 2")
     pub label: String,
+    /// Signalled by the completion handler when the agent has been returned.
+    pub turn_done: Arc<Notify>,
+    /// The persisted ChatSession ID (6-char hex) so we can reload after agent loss.
+    pub last_session_id: Option<String>,
 }
 
 impl AgentSession {
@@ -49,6 +53,8 @@ impl AgentSession {
             bg_signal_tx: None,
             generation: AtomicU64::new(0),
             label: "Agent 1".to_string(),
+            turn_done: Arc::new(Notify::new()),
+            last_session_id: None,
         }
     }
 

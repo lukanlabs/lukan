@@ -4,6 +4,7 @@ use anyhow::Result;
 use axum::extract::{Multipart, State};
 use axum::http::StatusCode;
 use axum::response::Json;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
 use serde_json::{json, Value};
@@ -106,7 +107,10 @@ pub async fn run_server(
     });
 
     let app = Router::new()
-        .route("/v1/audio/transcriptions", post(transcribe_handler))
+        .route(
+            "/v1/audio/transcriptions",
+            post(transcribe_handler).layer(DefaultBodyLimit::disable()),
+        )
         .route("/health", get(health_handler))
         .with_state(state);
 

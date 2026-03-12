@@ -411,13 +411,13 @@ export interface TaskInfo {
 // Session types
 export interface SessionSummary {
   id: string;
-  name: string;
+  name?: string;
   createdAt: string;
   updatedAt: string;
   messageCount: number;
-  firstUserMessage: string;
-  lastUserMessage: string;
-  model: string;
+  provider?: string;
+  model?: string;
+  lastMessage?: string;
 }
 
 // Init response from backend
@@ -443,4 +443,5 @@ export interface TurnComplete {
   messages: Message[];
   contextSize: number;
   tokenUsage: TokenUsage;
+  aborted?: boolean;
 }

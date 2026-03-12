@@ -299,11 +299,15 @@ export function useChat(tabId: string) {
       if (sid && sid !== s.sessionId) {
         window.dispatchEvent(new CustomEvent("session-changed", { detail: sid }));
       }
+      // When the turn was aborted by the user, append a system-level indicator
+      const messages = complete.aborted
+        ? [...complete.messages, { role: "assistant" as const, content: "⏹ Response cancelled." }]
+        : complete.messages;
       return {
         ...s,
         isProcessing: false,
         sessionId: sid || s.sessionId,
-        messages: complete.messages,
+        messages,
         streamingBlocks: [],
         toolImages: { ...s.toolImages, ...imageCacheRef.current },
         contextSize: complete.contextSize ?? s.contextSize,

@@ -354,6 +354,15 @@ impl AgentLoop {
         Some(dirs)
     }
 
+    /// Set a human-readable name for this session and persist to disk.
+    pub async fn set_session_name(&mut self, name: String) -> Result<()> {
+        self.session.name = Some(name);
+        if !self.skip_session_save {
+            SessionManager::save(&mut self.session).await?;
+        }
+        Ok(())
+    }
+
     /// Get the session ID
     pub fn session_id(&self) -> &str {
         &self.session.id
@@ -841,6 +850,12 @@ impl AgentLoop {
                 if event_tx.send(event).await.is_err() {
                     warn!("Event receiver dropped, aborting turn");
                     stream_handle.abort();
+                    // Save any partial text so the conversation stays coherent
+                    if !text_content.is_empty() {
+                        self.history
+                            .add_assistant_blocks(vec![ContentBlock::Text { text: text_content }]);
+                    }
+                    self.save_session().await?;
                     return Ok(());
                 }
 
@@ -891,6 +906,9 @@ impl AgentLoop {
 
             if !blocks.is_empty() {
                 self.history.add_assistant_blocks(blocks);
+                // Incremental save: persist after each LLM response so nothing
+                // is lost if the connection drops or the process exits.
+                self.save_session().await?;
             }
 
             // If no tool calls, we're done — unless queued messages are waiting
@@ -1201,6 +1219,9 @@ impl AgentLoop {
                 tool_call_id: None,
                 name: None,
             });
+
+            // Incremental save: persist after tool results
+            self.save_session().await?;
 
             // Inject queued messages after tool results so the LLM sees them
             if let Some(ref queue) = queued {

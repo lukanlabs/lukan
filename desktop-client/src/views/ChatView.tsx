@@ -41,9 +41,10 @@ interface ChatPanelProps {
   onStatsChange?: (tabId: string, tokenUsage: TokenUsage, contextSize: number) => void;
   pendingSessionId?: string;
   onPendingLoadConsumed?: (tabId: string) => void;
+  onSessionIdChange?: (tabId: string, sessionId: string) => void;
 }
 
-export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, onPendingLoadConsumed }: ChatPanelProps) {
+export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, onPendingLoadConsumed, onSessionIdChange }: ChatPanelProps) {
   const chat = useChat(tabId);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +54,11 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
   useEffect(() => {
     onStatsChange?.(tabId, chat.tokenUsage, chat.contextSize);
   }, [tabId, chat.tokenUsage, chat.contextSize, onStatsChange]);
+
+  // Report session ID changes to parent (so AgentView can track which tab has which session)
+  useEffect(() => {
+    onSessionIdChange?.(tabId, chat.sessionId);
+  }, [tabId, chat.sessionId, onSessionIdChange]);
 
   // Load a pending session passed from AgentView (always opens in new tab)
   useEffect(() => {

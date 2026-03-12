@@ -307,11 +307,10 @@ impl PluginManager {
         let dest = LukanPaths::plugin_dir(plugin_name);
 
         if dest.exists() {
-            anyhow::bail!(
-                "Plugin '{}' already installed at {}",
-                plugin_name,
-                dest.display()
-            );
+            // During remote updates, the old dir should already be removed.
+            // If it still exists, remove it now to allow re-install.
+            info!(plugin = %plugin_name, "Destination exists, removing for re-install");
+            tokio::fs::remove_dir_all(&dest).await.context("Failed to remove existing plugin dir")?;
         }
 
         // Copy directory recursively
@@ -378,6 +377,7 @@ impl PluginManager {
 }
 
 /// Recursively copy a directory, skipping node_modules and build artifacts.
+/// Preserves executable permissions on copied files.
 async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     tokio::fs::create_dir_all(dst).await?;
     let mut entries = tokio::fs::read_dir(src).await?;
@@ -396,6 +396,18 @@ async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
             Box::pin(copy_dir_recursive(&src_path, &dst_path)).await?;
         } else {
             tokio::fs::copy(&src_path, &dst_path).await?;
+            // Preserve executable permission from source
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(src_meta) = tokio::fs::metadata(&src_path).await {
+                    let mode = src_meta.permissions().mode();
+                    if mode & 0o111 != 0 {
+                        let perms = std::fs::Permissions::from_mode(mode);
+                        let _ = tokio::fs::set_permissions(&dst_path, perms).await;
+                    }
+                }
+            }
         }
     }
     Ok(())

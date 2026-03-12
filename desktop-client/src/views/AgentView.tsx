@@ -16,6 +16,17 @@ export default function AgentView() {
   // Pending session loads keyed by tab ID
   const [pendingLoads, setPendingLoads] = useState<Record<string, string>>({});
 
+  // Track which session each tab has loaded: tabId → sessionId
+  const tabSessionMapRef = useRef<Map<string, string>>(new Map());
+
+  const handleSessionIdChange = useCallback((tabId: string, sessionId: string) => {
+    if (sessionId) {
+      tabSessionMapRef.current.set(tabId, sessionId);
+    } else {
+      tabSessionMapRef.current.delete(tabId);
+    }
+  }, []);
+
   // Broadcast tab labels so ProcessesPanel can resolve names dynamically
   useEffect(() => {
     const labels: Record<string, string> = {};
@@ -25,16 +36,39 @@ export default function AgentView() {
     window.dispatchEvent(new CustomEvent("agent-tab-labels", { detail: labels }));
   }, [tabs]);
 
-  // Intercept load-session: always open in a new tab
+  // Intercept load-session: switch to existing tab if session is already open,
+  // otherwise open in a new tab.
   useEffect(() => {
     const onLoad = async (e: Event) => {
-      const sessionId = (e as CustomEvent<string>).detail;
+      const detail = (e as CustomEvent<{ id: string; name?: string }>).detail;
+      const sessionId = detail.id;
+      const sessionName = detail.name;
+
+      // Check if this session is already open in an existing tab
+      for (const [tabId, sid] of tabSessionMapRef.current.entries()) {
+        if (sid === sessionId) {
+          switchTab(tabId);
+          return;
+        }
+      }
+
+      // Not open yet — create a new tab
       const tab = await createTab();
+      // Apply the session name as the tab label
+      if (sessionName) {
+        renameTab(tab.id, sessionName);
+      }
       setPendingLoads((prev) => ({ ...prev, [tab.id]: sessionId }));
     };
     window.addEventListener("load-session", onLoad);
     return () => window.removeEventListener("load-session", onLoad);
-  }, [createTab]);
+  }, [createTab, switchTab, renameTab]);
+
+  // Wrap destroyTab to also clean up the session map
+  const handleDestroyTab = useCallback(async (id: string) => {
+    tabSessionMapRef.current.delete(id);
+    await destroyTab(id);
+  }, [destroyTab]);
 
   const clearPendingLoad = useCallback((tabId: string) => {
     setPendingLoads((prev) => {
@@ -66,7 +100,7 @@ export default function AgentView() {
         tabs={tabs}
         activeTabId={activeTabId}
         onSwitch={switchTab}
-        onClose={destroyTab}
+        onClose={handleDestroyTab}
         onCreate={createTab}
         onRename={renameTab}
         tokenUsage={activeStats?.tokenUsage}
@@ -81,6 +115,7 @@ export default function AgentView() {
             onStatsChange={handleStatsChange}
             pendingSessionId={pendingLoads[tab.id]}
             onPendingLoadConsumed={clearPendingLoad}
+            onSessionIdChange={handleSessionIdChange}
           />
         ))}
       </div>

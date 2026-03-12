@@ -154,7 +154,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
         }
 
         // Dispatch authenticated messages
-        dispatch_message(client_msg, conn_id, &state, &mut ws_tx, &mut ws_rx).await;
+        dispatch_message(client_msg, conn_id, &state, &mut ws_tx, &mut ws_rx, &mut terminal_rx, &mut notify_rx).await;
     }
 
     // On disconnect: release processing lock if owned, save sessions
@@ -198,6 +198,8 @@ async fn dispatch_message(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     ws_rx: &mut futures::stream::SplitStream<WebSocket>,
+    terminal_rx: &mut tokio::sync::broadcast::Receiver<ServerMessage>,
+    notify_rx: &mut tokio::sync::broadcast::Receiver<lukan_agent::WorkerNotification>,
 ) {
     match msg {
         ClientMessage::SendMessage {
@@ -211,6 +213,8 @@ async fn dispatch_message(
                 state,
                 ws_tx,
                 ws_rx,
+                terminal_rx,
+                notify_rx,
             )
             .await;
         }
@@ -255,7 +259,11 @@ async fn dispatch_message(
         ClientMessage::RenameAgentTab { session_id, label } => {
             let mut sessions = state.sessions.lock().await;
             if let Some(session) = sessions.get_mut(&session_id) {
-                session.label = label;
+                session.label = label.clone();
+                // Persist the name to the chat session on disk
+                if let Some(ref mut agent) = session.agent {
+                    let _ = agent.set_session_name(label).await;
+                }
             }
         }
 
@@ -332,26 +340,8 @@ async fn dispatch_message(
                 serde_json::from_value(serde_json::Value::String(mode.clone()))
                     .unwrap_or(PermissionMode::Auto);
 
-            // Store in state
-            *state.permission_mode.lock().await = parsed.clone();
-
-            // Update legacy singleton agent
-            {
-                let mut agent_lock = state.agent.lock().await;
-                if let Some(ref mut agent) = *agent_lock {
-                    agent.set_permission_mode(parsed.clone());
-                }
-            }
-
-            // Update all session agents
-            {
-                let mut sessions = state.sessions.lock().await;
-                for session in sessions.values_mut() {
-                    if let Some(ref mut agent) = session.agent {
-                        agent.set_permission_mode(parsed.clone());
-                    }
-                }
-            }
+            // Update via watch channel — all agents with a receiver see the change immediately
+            let _ = state.permission_mode.send(parsed);
 
             send_json(ws_tx, &ServerMessage::ModeChanged { mode }).await;
         }
@@ -711,6 +701,8 @@ async fn handle_send_message(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     ws_rx: &mut futures::stream::SplitStream<WebSocket>,
+    terminal_rx: &mut tokio::sync::broadcast::Receiver<ServerMessage>,
+    notify_rx: &mut tokio::sync::broadcast::Receiver<lukan_agent::WorkerNotification>,
 ) {
     use futures::{SinkExt, StreamExt};
 
@@ -885,8 +877,28 @@ async fn handle_send_message(
                     _ => {} // ping/pong/binary — ignore
                 }
             }
+            // Terminal output must keep flowing during agent turns
+            Ok(term_msg) = terminal_rx.recv() => {
+                send_json(ws_tx, &term_msg).await;
+            }
+            // Worker notifications must keep flowing during agent turns
+            Ok(notif) = notify_rx.recv() => {
+                let msg = ServerMessage::WorkerNotification {
+                    worker_id: notif.worker_id,
+                    worker_name: notif.worker_name,
+                    status: notif.status,
+                    summary: notif.summary,
+                };
+                send_json(ws_tx, &msg).await;
+            }
         }
     }
+
+    // Drop the event receiver so the agent's event_tx.send() fails immediately
+    // instead of blocking on a full channel buffer when nobody is reading.
+    // Without this, the agent can hang indefinitely and the timeout below
+    // would fire, losing the agent (and its unsaved session) entirely.
+    drop(event_rx);
 
     // Wait for agent turn to complete (with timeout for abort/disconnect cases)
     let wait_result = if aborted || client_disconnected {
@@ -931,6 +943,7 @@ async fn handle_send_message(
                         checkpoints,
                         context_size: Some(context_size),
                         tab_id: tab_id_owned.clone(),
+                        aborted: if aborted { Some(true) } else { None },
                     },
                 )
                 .await;
@@ -1440,7 +1453,7 @@ async fn send_init(
     let agent_lock = state.agent.lock().await;
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.to_string();
+    let permission_mode = state.permission_mode.borrow().to_string();
 
     let (session_id, messages, checkpoints, token_usage, context_size) =
         if let Some(ref agent) = *agent_lock {
@@ -1553,7 +1566,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.clone();
+    let permission_mode = state.permission_mode.borrow().clone();
 
     let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
         .await
@@ -1611,7 +1624,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         bg_signal: None,
         allowed_paths: Some(allowed),
         permission_mode,
-        permission_mode_rx: None,
+        permission_mode_rx: Some(state.permission_mode.subscribe()),
         permissions,
         approval_rx: Some(approval_rx),
         plan_review_rx: Some(plan_review_rx),
@@ -1650,7 +1663,7 @@ async fn create_agent_with_session(
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.clone();
+    let permission_mode = state.permission_mode.borrow().clone();
 
     let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
         .await
@@ -1711,7 +1724,7 @@ async fn create_agent_with_session(
         bg_signal: None,
         allowed_paths: Some(allowed),
         permission_mode,
-        permission_mode_rx: None,
+        permission_mode_rx: Some(state.permission_mode.subscribe()),
         permissions,
         approval_rx: Some(approval_rx),
         plan_review_rx: Some(plan_review_rx),

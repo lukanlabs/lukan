@@ -3174,12 +3174,27 @@ impl App {
                 }
                 Some(stream_event) = agent_rx.recv() => {
                     self.handle_stream_event(stream_event);
+                    // Drain all ready agent events before re-rendering so rapid
+                    // streaming doesn't starve terminal input / Tick processing.
+                    while let Ok(ev) = agent_rx.try_recv() {
+                        self.handle_stream_event(ev);
+                    }
+                    // Keep terminal responsive during agent streaming
+                    if let Some(ref mut modal) = self.terminal_modal {
+                        modal.process_output();
+                    }
                 }
                 Some(event_stream_event) = event_agent_rx.recv() => {
                     self.handle_event_agent_stream_event(event_stream_event);
+                    while let Ok(ev) = event_agent_rx.try_recv() {
+                        self.handle_event_agent_stream_event(ev);
+                    }
                 }
                 Some(update) = subagent_update_rx.recv() => {
                     self.handle_subagent_update(update);
+                    while let Ok(ev) = subagent_update_rx.try_recv() {
+                        self.handle_subagent_update(ev);
+                    }
                 }
             }
 

@@ -13,7 +13,7 @@ interface SidePanelProps {
   eventSourceFilter?: string | null;
   // Session props
   currentSessionId: string;
-  onLoadSession: (id: string) => void;
+  onLoadSession: (id: string, name?: string) => void;
   onNewSession: () => void;
   onOpenProcessLog?: (process: BgProcessInfo) => void;
   onPreviewFile?: (path: string, size: number) => void;

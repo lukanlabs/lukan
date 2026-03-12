@@ -5,7 +5,7 @@ use lukan_agent::{AgentLoop, WorkerNotification};
 use lukan_core::config::ResolvedConfig;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse};
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{Mutex, broadcast, mpsc, watch};
 
 use crate::protocol::ServerMessage;
 use crate::terminal::TerminalManager;
@@ -54,8 +54,8 @@ pub struct AppState {
     pub model_name: Mutex<String>,
     /// Connection ID counter
     connection_counter: AtomicUsize,
-    /// Current permission mode
-    pub permission_mode: Mutex<PermissionMode>,
+    /// Current permission mode (watch channel for live updates to agents)
+    pub permission_mode: watch::Sender<PermissionMode>,
     /// Sender half of the approval channel (sent to the agent) — legacy singleton
     pub approval_tx: Mutex<Option<mpsc::Sender<ApprovalResponse>>>,
     /// Sender half of the plan review channel — legacy singleton
@@ -98,7 +98,7 @@ impl AppState {
             provider_name: Mutex::new(provider_name),
             model_name: Mutex::new(model_name),
             connection_counter: AtomicUsize::new(1),
-            permission_mode: Mutex::new(PermissionMode::Auto),
+            permission_mode: watch::Sender::new(PermissionMode::Auto),
             approval_tx: Mutex::new(None),
             plan_review_tx: Mutex::new(None),
             planner_answer_tx: Mutex::new(None),

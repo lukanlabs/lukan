@@ -182,9 +182,9 @@ export default function App() {
     return () => window.removeEventListener("session-changed", onSessionChanged);
   }, []);
 
-  const handleLoadSession = (id: string) => {
+  const handleLoadSession = (id: string, name?: string) => {
     setCurrentSessionId(id);
-    window.dispatchEvent(new CustomEvent("load-session", { detail: id }));
+    window.dispatchEvent(new CustomEvent("load-session", { detail: { id, name } }));
   };
 
   const handleNewSession = () => {

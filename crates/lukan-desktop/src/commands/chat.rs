@@ -110,7 +110,11 @@ pub async fn rename_agent_tab(
 ) -> Result<(), String> {
     let mut sessions = state.sessions.lock().await;
     if let Some(session) = sessions.get_mut(&session_id) {
-        session.label = label;
+        session.label = label.clone();
+        // Persist the name to the chat session on disk
+        if let Some(ref mut agent) = session.agent {
+            let _ = agent.set_session_name(label).await;
+        }
     }
     Ok(())
 }

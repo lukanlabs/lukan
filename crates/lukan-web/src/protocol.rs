@@ -202,6 +202,9 @@ pub enum ServerMessage {
         /// Agent tab ID for routing (new multi-tab protocol)
         #[serde(skip_serializing_if = "Option::is_none")]
         tab_id: Option<String>,
+        /// True when the turn was cancelled by the user (abort)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        aborted: Option<bool>,
     },
     AgentTabCreated {
         session_id: String,
@@ -1058,6 +1061,7 @@ mod tests {
             checkpoints: vec![],
             context_size: None,
             tab_id: None,
+            aborted: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(
@@ -1067,6 +1071,10 @@ mod tests {
         assert!(
             !json.contains("tabId"),
             "None tabId should be skipped: {json}"
+        );
+        assert!(
+            !json.contains("aborted"),
+            "None aborted should be skipped: {json}"
         );
     }
 
@@ -1078,6 +1086,7 @@ mod tests {
             checkpoints: vec![],
             context_size: Some(100000),
             tab_id: Some("tab-1".into()),
+            aborted: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(

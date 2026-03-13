@@ -4,6 +4,10 @@ on:
   push:
     tags: ['v*']
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -18,9 +22,15 @@ jobs:
           - os: linux
             runner: ubuntu-latest
             platform: linux-amd64
+          - os: linux
+            runner: ubuntu-24.04-arm
+            platform: linux-arm64
           - os: darwin
             runner: macos-latest
             platform: darwin-arm64
+          - os: darwin
+            runner: macos-13
+            platform: darwin-amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -127,8 +137,13 @@ jobs:
           ## Assets
           - \`lukan-linux-amd64\` — CLI binary (Linux x86_64)
           - \`lukan-desktop-linux-amd64\` — Desktop app (Linux x86_64)
+          - \`lukan-linux-arm64\` — CLI binary (Linux ARM64)
+          - \`lukan-desktop-linux-arm64\` — Desktop app (Linux ARM64)
           - \`lukan-darwin-arm64\` — CLI binary (macOS Apple Silicon)
           - \`lukan-desktop-darwin-arm64\` — Desktop app (macOS Apple Silicon)
+          - \`lukan-darwin-amd64\` — CLI binary (macOS Intel)
+          - \`lukan-desktop-darwin-amd64\` — Desktop app (macOS Intel)
+          - \`lukan-relay-*\` — Relay server (all platforms)
           - Plugin archives (\`.tar.gz\`)
           ENDOFBODY
 
@@ -139,9 +154,6 @@ jobs:
           name: ${{ steps.release.outputs.version }}
           body_path: /tmp/release-body.md
           files: |
-            dist/lukan-linux-amd64
-            dist/lukan-desktop-linux-amd64
-            dist/lukan-darwin-arm64
-            dist/lukan-desktop-darwin-arm64
+            dist/lukan-*
             dist/checksums.txt
             dist/plugins/*.tar.gz

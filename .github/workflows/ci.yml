@@ -61,9 +61,9 @@ jobs:
         run: cargo test --workspace
 
       - name: Build release binaries
-        run: make build
+        run: cargo build --release -p lukan -p lukan-relay
 
       - name: Verify binaries exist
         run: |
           test -f target/release/lukan
-          test -f target/release/lukan-desktop
+          test -f target/release/lukan-relay

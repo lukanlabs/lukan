@@ -294,17 +294,19 @@ mod tests {
 
     #[test]
     fn allowed_dir_permits_children() {
-        let ctx = make_ctx(Some(vec!["/tmp"]));
-        assert!(ctx.check_path_allowed("/tmp/foo.txt".as_ref()).is_ok());
-        assert!(
-            ctx.check_path_allowed("/tmp/sub/dir/file.rs".as_ref())
-                .is_ok()
-        );
+        // Use temp_dir() so macOS resolves /tmp → /private/tmp correctly
+        let tmp = std::env::temp_dir();
+        let tmp_str = tmp.to_str().unwrap();
+        let ctx = make_ctx(Some(vec![tmp_str]));
+        assert!(ctx.check_path_allowed(&tmp.join("foo.txt")).is_ok());
+        assert!(ctx.check_path_allowed(&tmp.join("sub/dir/file.rs")).is_ok());
     }
 
     #[test]
     fn blocks_outside_allowed_dirs() {
-        let ctx = make_ctx(Some(vec!["/tmp"]));
+        let tmp = std::env::temp_dir();
+        let tmp_str = tmp.to_str().unwrap();
+        let ctx = make_ctx(Some(vec![tmp_str]));
         let result = ctx.check_path_allowed("/etc/passwd".as_ref());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("outside allowed directories"));
@@ -312,8 +314,10 @@ mod tests {
 
     #[test]
     fn multiple_allowed_dirs() {
-        let ctx = make_ctx(Some(vec!["/tmp", "/home/enzo/projects"]));
-        assert!(ctx.check_path_allowed("/tmp/file".as_ref()).is_ok());
+        let tmp = std::env::temp_dir();
+        let tmp_str = tmp.to_str().unwrap();
+        let ctx = make_ctx(Some(vec![tmp_str, "/home/enzo/projects"]));
+        assert!(ctx.check_path_allowed(&tmp.join("file")).is_ok());
         assert!(
             ctx.check_path_allowed("/home/enzo/projects/foo.rs".as_ref())
                 .is_ok()

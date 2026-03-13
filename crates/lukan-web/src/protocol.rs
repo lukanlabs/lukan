@@ -65,6 +65,7 @@ pub enum ClientMessage {
     DeleteSession {
         session_id: String,
     },
+    DeleteAllSessions,
 
     // Agent tabs (multi-agent)
     CreateAgentTab,

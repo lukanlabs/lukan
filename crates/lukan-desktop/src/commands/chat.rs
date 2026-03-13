@@ -652,6 +652,18 @@ pub async fn list_sessions() -> Result<Vec<SessionSummaryJs>, String> {
 }
 
 #[tauri::command]
+pub async fn delete_session(id: String) -> Result<bool, String> {
+    SessionManager::delete(&id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_all_sessions() -> Result<u32, String> {
+    SessionManager::delete_all()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn load_session(
     state: State<'_, ChatState>,
     session_id: String,

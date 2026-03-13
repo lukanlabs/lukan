@@ -42,10 +42,12 @@ const WS_COMMANDS = new Set([
   "rename_agent_tab",
   "send_to_background",
   "terminal_create",
+  "terminal_reconnect",
   "terminal_input",
   "terminal_resize",
   "terminal_destroy",
   "terminal_list",
+  "terminal_rename",
 ]);
 
 const WS_VOID_COMMANDS = new Set([
@@ -64,6 +66,7 @@ const WS_VOID_COMMANDS = new Set([
   "terminal_input",
   "terminal_resize",
   "terminal_destroy",
+  "terminal_rename",
 ]);
 
 const LOCAL_COMMANDS = new Set([
@@ -458,15 +461,22 @@ export class RelayTransport implements Transport {
 
     // Terminal
     if (type === "terminal_created") {
-      this.resolvePending("terminal_create", {
+      const info = {
         id: msg.id,
         cols: msg.cols,
         rows: msg.rows,
-      });
+        scrollback: msg.scrollback ?? undefined,
+      };
+      if (msg.scrollback) {
+        this.resolvePending("terminal_reconnect", info);
+      } else {
+        this.resolvePending("terminal_create", info);
+      }
       return;
     }
     if (type === "terminal_sessions") {
       this.resolvePending("terminal_list", msg.sessions);
+      this.dispatch("terminal-sessions-recovered", msg.sessions);
       return;
     }
     if (type === "terminal_output") {
@@ -578,6 +588,8 @@ export class RelayTransport implements Transport {
         return { type: "send_to_background", sessionId: args?.sessionId };
       case "terminal_create":
         return { type: "terminal_create", cwd: args?.cwd, cols: args?.cols, rows: args?.rows };
+      case "terminal_reconnect":
+        return { type: "terminal_reconnect", sessionId: args?.sessionId };
       case "terminal_input":
         return { type: "terminal_input", sessionId: args?.sessionId, data: args?.data };
       case "terminal_resize":
@@ -586,6 +598,8 @@ export class RelayTransport implements Transport {
         return { type: "terminal_destroy", sessionId: args?.sessionId };
       case "terminal_list":
         return { type: "terminal_list" };
+      case "terminal_rename":
+        return { type: "terminal_rename", sessionId: args?.sessionId, name: args?.name };
       default:
         return { type: command, ...args };
     }

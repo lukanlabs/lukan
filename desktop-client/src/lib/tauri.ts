@@ -176,6 +176,10 @@ export const setPermissionMode = (mode: string) =>
   getTransport().call<void>("set_permission_mode", { mode });
 export const listSessions = () =>
   getTransport().call<SessionSummary[]>("list_sessions");
+export const deleteSession = (id: string) =>
+  getTransport().call<boolean>("delete_session", { id });
+export const deleteAllSessions = () =>
+  getTransport().call<number>("delete_all_sessions");
 export const listTasks = () =>
   getTransport().call<TaskInfo[]>("list_tasks");
 

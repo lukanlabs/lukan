@@ -6,6 +6,250 @@ mod commands;
 mod state;
 mod terminal_state;
 
+mod cli_install {
+    use std::path::{Path, PathBuf};
+
+    /// Search order for the bundled CLI binary relative to the desktop executable dir.
+    const BUNDLE_RESOURCE_PATHS: &[&str] = &[
+        "../Resources/lukan",         // macOS .app: Contents/MacOS/../Resources/
+        "../lib/Lukan Desktop/lukan", // Linux .deb: /usr/bin/../lib/Lukan Desktop/
+    ];
+
+    /// Check if `lukan` is already available somewhere in the given PATH dirs.
+    pub fn cli_in_path(path_dirs: &[PathBuf]) -> bool {
+        path_dirs.iter().any(|dir| {
+            let candidate = dir.join("lukan");
+            candidate.is_file() || candidate.is_symlink()
+        })
+    }
+
+    /// Find the bundled CLI binary relative to the executable directory.
+    ///
+    /// Returns `None` if:
+    /// - No bundled CLI exists (dev build without sibling binary)
+    /// - The CLI is next to the exe AND that dir is already in PATH (curl install)
+    pub fn find_bundled_cli(exe_dir: &Path, path_dirs: &[PathBuf]) -> Option<PathBuf> {
+        // 1. Next to our binary
+        let beside = exe_dir.join("lukan");
+        if beside.exists() {
+            // If exe_dir is in PATH, user already has access (curl install) — skip
+            if path_dirs.iter().any(|p| p == exe_dir) {
+                return None;
+            }
+            return Some(beside);
+        }
+
+        // 2. Tauri bundle resource paths
+        for relative in BUNDLE_RESOURCE_PATHS {
+            let candidate = exe_dir.join(relative);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+
+        None
+    }
+
+    /// Determine the directory where the CLI symlink should be created.
+    pub fn symlink_dir(home: Option<&Path>) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            PathBuf::from("/usr/local/bin")
+        } else {
+            home.map(|h| h.join(".local/bin"))
+                .unwrap_or_else(|| PathBuf::from("/usr/local/bin"))
+        }
+    }
+
+    /// Top-level: find bundled CLI, check PATH, create symlink if needed.
+    pub fn install_cli_symlink() {
+        let exe = match std::env::current_exe() {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        let exe_dir = match exe.parent() {
+            Some(d) => d,
+            None => return,
+        };
+
+        let path_dirs: Vec<PathBuf> = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default();
+
+        if cli_in_path(&path_dirs) {
+            return;
+        }
+
+        let cli_bin = match find_bundled_cli(exe_dir, &path_dirs) {
+            Some(p) => p,
+            None => return,
+        };
+
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let link_dir = symlink_dir(home.as_deref());
+
+        if std::fs::create_dir_all(&link_dir).is_err() {
+            return;
+        }
+
+        let link_path = link_dir.join("lukan");
+
+        #[cfg(unix)]
+        let _ = std::os::unix::fs::symlink(&cli_bin, &link_path);
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::fs;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+        fn make_temp(name: &str) -> PathBuf {
+            let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().canonicalize().unwrap().join(format!(
+                "lukan-cli-test-{}-{}-{}",
+                std::process::id(),
+                id,
+                name
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+
+        #[test]
+        fn cli_in_path_finds_existing_binary() {
+            let tmp = make_temp("in-path-found");
+            fs::write(tmp.join("lukan"), "fake").unwrap();
+            assert!(cli_in_path(&[tmp.clone()]));
+            fs::remove_dir_all(&tmp).unwrap();
+        }
+
+        #[test]
+        fn cli_in_path_returns_false_when_missing() {
+            let tmp = make_temp("in-path-missing");
+            assert!(!cli_in_path(&[tmp.clone()]));
+            fs::remove_dir_all(&tmp).unwrap();
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn cli_in_path_detects_symlink() {
+            let tmp = make_temp("in-path-symlink");
+            let real = tmp.join("lukan-real");
+            fs::write(&real, "fake").unwrap();
+            std::os::unix::fs::symlink(&real, tmp.join("lukan")).unwrap();
+
+            assert!(cli_in_path(&[tmp.clone()]));
+            fs::remove_dir_all(&tmp).unwrap();
+        }
+
+        #[test]
+        fn find_bundled_beside_exe_not_in_path() {
+            let tmp = make_temp("beside-not-path");
+            fs::write(tmp.join("lukan"), "fake").unwrap();
+
+            let result = find_bundled_cli(&tmp, &[PathBuf::from("/some/other/dir")]);
+            assert_eq!(result, Some(tmp.join("lukan")));
+            fs::remove_dir_all(&tmp).unwrap();
+        }
+
+        #[test]
+        fn find_bundled_beside_exe_in_path_returns_none() {
+            let tmp = make_temp("beside-in-path");
+            fs::write(tmp.join("lukan"), "fake").unwrap();
+
+            let result = find_bundled_cli(&tmp, &[tmp.clone()]);
+            assert!(result.is_none());
+            fs::remove_dir_all(&tmp).unwrap();
+        }
+
+        #[test]
+        fn find_bundled_in_macos_resources() {
+            let tmp = make_temp("macos-resources");
+            let macos_dir = tmp.join("Contents/MacOS");
+            let resources_dir = tmp.join("Contents/Resources");
+            fs::create_dir_all(&macos_dir).unwrap();
+            fs::create_dir_all(&resources_dir).unwrap();
+            fs::write(resources_dir.join("lukan"), "fake").unwrap();
+
+            let result = find_bundled_cli(&macos_dir, &[]);
+            assert!(result.is_some());
+            assert!(result.unwrap().ends_with("Resources/lukan"));
+            fs::remove_dir_all(&tmp).unwrap();
+        }
+
+        #[test]
+        fn find_bundled_in_deb_lib_dir() {
+            // .deb layout: exe at /usr/bin/lukan-desktop
+            //              cli at /usr/lib/Lukan Desktop/lukan
+            // relative from /usr/bin: ../lib/Lukan Desktop/lukan
+            let tmp = make_temp("deb-lib");
+            let bin_dir = tmp.join("usr/bin");
+            let lib_dir = tmp.join("usr/lib/Lukan Desktop");
+            fs::create_dir_all(&bin_dir).unwrap();
+            fs::create_dir_all(&lib_dir).unwrap();
+            fs::write(lib_dir.join("lukan"), "fake").unwrap();
+
+            let result = find_bundled_cli(&bin_dir, &[]);
+            assert!(result.is_some());
+            assert!(
+                result.unwrap().ends_with("Lukan Desktop/lukan"),
+                "should find CLI in lib dir"
+            );
+            fs::remove_dir_all(&tmp).unwrap();
+        }
+
+        #[test]
+        fn find_bundled_returns_none_when_missing() {
+            let tmp = make_temp("nothing-exists");
+            let result = find_bundled_cli(&tmp, &[]);
+            assert!(result.is_none());
+            fs::remove_dir_all(&tmp).unwrap();
+        }
+
+        #[test]
+        fn symlink_dir_linux_with_home() {
+            if cfg!(target_os = "macos") {
+                return;
+            }
+            let home = PathBuf::from("/home/testuser");
+            assert_eq!(
+                symlink_dir(Some(&home)),
+                PathBuf::from("/home/testuser/.local/bin")
+            );
+        }
+
+        #[test]
+        fn symlink_dir_without_home_fallback() {
+            if cfg!(target_os = "macos") {
+                return;
+            }
+            assert_eq!(symlink_dir(None), PathBuf::from("/usr/local/bin"));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn full_symlink_creation() {
+            let tmp = make_temp("full-symlink");
+            let exe_dir = tmp.join("app");
+            let link_dir = tmp.join("bin");
+            fs::create_dir_all(&exe_dir).unwrap();
+            fs::create_dir_all(&link_dir).unwrap();
+            fs::write(exe_dir.join("lukan"), "fake-cli").unwrap();
+
+            let cli_bin = find_bundled_cli(&exe_dir, &[]).unwrap();
+            let link_path = link_dir.join("lukan");
+            std::os::unix::fs::symlink(&cli_bin, &link_path).unwrap();
+
+            assert!(link_path.is_symlink());
+            assert_eq!(fs::read_to_string(&link_path).unwrap(), "fake-cli");
+            fs::remove_dir_all(&tmp).unwrap();
+        }
+    }
+}
+
 fn main() {
     // Catch GTK/display initialization failures and exit with a friendly message
     // instead of a panic backtrace.
@@ -35,6 +279,9 @@ fn main() {
         .manage(state::ChatState::default())
         .manage(terminal_state::TerminalState::default())
         .setup(|app| {
+            // Install CLI symlink if bundled binary exists but isn't in PATH
+            cli_install::install_cli_symlink();
+
             // Spawn background task to poll worker notifications and emit Tauri events
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -109,6 +356,8 @@ fn main() {
             commands::chat::reject_plan,
             commands::chat::answer_question,
             commands::chat::list_sessions,
+            commands::chat::delete_session,
+            commands::chat::delete_all_sessions,
             commands::chat::load_session,
             commands::chat::new_session,
             commands::chat::set_permission_mode,

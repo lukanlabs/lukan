@@ -25,6 +25,9 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.png"],
-    "resources": ["icons/icon.png"]
+    "resources": {
+      "icons/icon.png": "icons/icon.png",
+      "../../target/release/lukan": "lukan"
+    }
   }
 }

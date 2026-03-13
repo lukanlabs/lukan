@@ -11,6 +11,8 @@ const WS_COMMANDS = new Set([
   "reject_plan",
   "answer_question",
   "list_sessions",
+  "delete_session",
+  "delete_all_sessions",
   "load_session",
   "new_session",
   "set_permission_mode",
@@ -43,6 +45,8 @@ const WS_VOID_COMMANDS = new Set([
   "set_permission_mode",
   "destroy_agent_tab",
   "rename_agent_tab",
+  "delete_session",
+  "delete_all_sessions",
   "send_to_background",
   "terminal_input",
   "terminal_resize",
@@ -666,6 +670,10 @@ export class WebTransport implements Transport {
         return { type: "answer_question", answer: args?.answer, sessionId: args?.sessionId };
       case "list_sessions":
         return { type: "list_sessions" };
+      case "delete_session":
+        return { type: "delete_session", sessionId: args?.id };
+      case "delete_all_sessions":
+        return { type: "delete_all_sessions" };
       case "load_session":
         return { type: "load_session", sessionId: args?.sessionId, id: args?.id };
       case "new_session":

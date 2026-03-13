@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, MessageSquare, Loader2, Search } from "lucide-react";
+import { Plus, MessageSquare, Loader2, Search, Trash2, CheckSquare, Square, X } from "lucide-react";
 import type { SessionSummary } from "../../../lib/types";
-import { listSessions } from "../../../lib/tauri";
+import { listSessions, deleteSession, deleteAllSessions } from "../../../lib/tauri";
 
 interface SessionsPanelProps {
   currentSessionId: string;
@@ -25,6 +25,8 @@ function formatDate(dateStr: string): string {
   }
 }
 
+type ConfirmAction = { type: "single"; id: string } | { type: "selected" } | { type: "all" };
+
 export function SessionsPanel({
   currentSessionId,
   onLoadSession,
@@ -32,6 +34,10 @@ export function SessionsPanel({
 }: SessionsPanelProps) {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [search, setSearch] = useState("");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -63,9 +69,148 @@ export function SessionsPanel({
     });
   }, [sessions, search]);
 
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    if (!confirmAction) return;
+    try {
+      if (confirmAction.type === "all") {
+        await deleteAllSessions();
+      } else if (confirmAction.type === "single") {
+        await deleteSession(confirmAction.id);
+      } else {
+        for (const id of selectedIds) {
+          await deleteSession(id);
+        }
+      }
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+      await load();
+    } catch (e) {
+      console.error("Failed to delete sessions:", e);
+    } finally {
+      setConfirmAction(null);
+    }
+  }, [confirmAction, selectedIds, load]);
+
+  const confirmLabel = confirmAction?.type === "all"
+    ? `Delete all ${sessions?.length ?? 0} sessions?`
+    : confirmAction?.type === "selected"
+      ? `Delete ${selectedIds.size} session${selectedIds.size !== 1 ? "s" : ""}?`
+      : "Delete this session?";
+
   return (
     <div>
-      {/* Header: search + new session */}
+      {/* Confirmation dialog */}
+      {confirmAction && (
+        <div
+          style={{
+            padding: "8px 12px",
+            background: "rgba(220, 38, 38, 0.1)",
+            borderBottom: "1px solid rgba(220, 38, 38, 0.3)",
+          }}
+        >
+          <div style={{ fontSize: 12, color: "var(--text-primary, #e4e4e7)", marginBottom: 6 }}>
+            {confirmLabel}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
+            This cannot be undone.
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              onClick={() => setConfirmAction(null)}
+              style={{
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text-secondary)",
+                cursor: "pointer",
+                padding: "3px 10px",
+                borderRadius: 4,
+                fontSize: 11,
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmDelete}
+              style={{
+                border: "none",
+                background: "rgba(220, 38, 38, 0.8)",
+                color: "#fff",
+                cursor: "pointer",
+                padding: "3px 10px",
+                borderRadius: 4,
+                fontSize: 11,
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Selection mode toolbar */}
+      {selectionMode && (
+        <div
+          style={{
+            padding: "4px 8px",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <span style={{ fontSize: 11, color: "var(--text-secondary)", flex: 1 }}>
+            {selectedIds.size} selected
+          </span>
+          <button
+            onClick={() => {
+              if (selectedIds.size > 0) setConfirmAction({ type: "selected" });
+            }}
+            disabled={selectedIds.size === 0}
+            title="Delete selected"
+            style={{
+              border: "none",
+              background: "transparent",
+              color: selectedIds.size > 0 ? "rgba(220, 38, 38, 0.8)" : "var(--text-muted)",
+              cursor: selectedIds.size > 0 ? "pointer" : "default",
+              padding: 4,
+              borderRadius: 4,
+              opacity: selectedIds.size > 0 ? 1 : 0.4,
+            }}
+          >
+            <Trash2 size={13} />
+          </button>
+          <button
+            onClick={exitSelectionMode}
+            title="Cancel selection"
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              padding: 4,
+              borderRadius: 4,
+            }}
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
+      {/* Header: search + actions */}
       <div style={{ padding: "4px 8px", display: "flex", alignItems: "center", gap: 4 }}>
         <div
           style={{
@@ -96,6 +241,40 @@ export function SessionsPanel({
             }}
           />
         </div>
+        {!selectionMode && sessions && sessions.length > 0 && (
+          <>
+            <button
+              onClick={() => setSelectionMode(true)}
+              title="Select sessions"
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                padding: 4,
+                borderRadius: 4,
+                flexShrink: 0,
+              }}
+            >
+              <CheckSquare size={13} />
+            </button>
+            <button
+              onClick={() => setConfirmAction({ type: "all" })}
+              title="Delete all sessions"
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                padding: 4,
+                borderRadius: 4,
+                flexShrink: 0,
+              }}
+            >
+              <Trash2 size={13} />
+            </button>
+          </>
+        )}
         <button
           onClick={onNewSession}
           title="New Session"
@@ -124,13 +303,28 @@ export function SessionsPanel({
       ) : (
         filtered.map((session) => {
           const isActive = session.id === currentSessionId;
-          // Show custom name first, fall back to last message
+          const isSelected = selectedIds.has(session.id);
+          const isHovered = hoveredId === session.id;
           const displayName = session.name || session.lastMessage || "New session";
           const subtitle = session.name && session.lastMessage ? session.lastMessage : null;
           return (
             <button
               key={session.id}
-              onClick={() => onLoadSession(session.id, session.name)}
+              onClick={() => {
+                if (selectionMode) {
+                  toggleSelect(session.id);
+                } else {
+                  onLoadSession(session.id, session.name);
+                }
+              }}
+              onMouseEnter={(e) => {
+                setHoveredId(session.id);
+                if (!isActive && !selectionMode) e.currentTarget.style.background = "rgba(50, 50, 50, 0.2)";
+              }}
+              onMouseLeave={(e) => {
+                setHoveredId(null);
+                if (!isActive && !selectionMode) e.currentTarget.style.background = "transparent";
+              }}
               style={{
                 display: "flex",
                 alignItems: "flex-start",
@@ -138,22 +332,34 @@ export function SessionsPanel({
                 width: "100%",
                 padding: "8px 12px",
                 border: "none",
-                background: isActive ? "rgba(60, 60, 60, 0.3)" : "transparent",
+                background: isActive
+                  ? "rgba(60, 60, 60, 0.3)"
+                  : isSelected
+                    ? "rgba(59, 130, 246, 0.1)"
+                    : "transparent",
                 cursor: "pointer",
                 textAlign: "left",
                 transition: "background 100ms ease",
               }}
-              onMouseEnter={(e) => {
-                if (!isActive) e.currentTarget.style.background = "rgba(50, 50, 50, 0.2)";
-              }}
-              onMouseLeave={(e) => {
-                if (!isActive) e.currentTarget.style.background = "transparent";
-              }}
             >
-              <MessageSquare
-                size={13}
-                style={{ color: "var(--text-muted)", marginTop: 2, flexShrink: 0 }}
-              />
+              {selectionMode ? (
+                isSelected ? (
+                  <CheckSquare
+                    size={13}
+                    style={{ color: "rgba(59, 130, 246, 0.8)", marginTop: 2, flexShrink: 0 }}
+                  />
+                ) : (
+                  <Square
+                    size={13}
+                    style={{ color: "var(--text-muted)", marginTop: 2, flexShrink: 0 }}
+                  />
+                )
+              ) : (
+                <MessageSquare
+                  size={13}
+                  style={{ color: "var(--text-muted)", marginTop: 2, flexShrink: 0 }}
+                />
+              )}
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div
                   style={{
@@ -202,6 +408,32 @@ export function SessionsPanel({
                   )}
                 </div>
               </div>
+              {/* Trash icon on hover (non-selection mode) */}
+              {!selectionMode && isHovered && (
+                <div
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmAction({ type: "single", id: session.id });
+                  }}
+                  title="Delete session"
+                  style={{
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    padding: 2,
+                    borderRadius: 3,
+                    flexShrink: 0,
+                    marginTop: 1,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = "rgba(220, 38, 38, 0.8)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = "var(--text-muted)";
+                  }}
+                >
+                  <Trash2 size={12} />
+                </div>
+              )}
             </button>
           );
         })

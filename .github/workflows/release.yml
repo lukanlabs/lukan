@@ -13,10 +13,12 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # ── CLI + Relay binaries (Linux + macOS) ──────────────────────────────────
   build:
     name: Build (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: linux
@@ -28,9 +30,6 @@ jobs:
           - os: darwin
             runner: macos-latest
             platform: darwin-arm64
-          - os: darwin
-            runner: macos-13
-            platform: darwin-amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -56,16 +55,9 @@ jobs:
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ matrix.platform }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ matrix.platform }}-cargo-release-
+          key: ${{ matrix.platform }}-release
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -88,9 +80,97 @@ jobs:
           name: release-${{ matrix.platform }}
           path: dist/
 
+  # ── Desktop app (Tauri bundles: .deb, .AppImage, .dmg) ───────────────────
+  desktop:
+    name: Desktop / ${{ matrix.platform.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Linux x86_64
+            os: ubuntu-22.04
+            args: "--target x86_64-unknown-linux-gnu"
+            rust_target: x86_64-unknown-linux-gnu
+
+          - name: macOS ARM64
+            os: macos-latest
+            args: "--target aarch64-apple-darwin"
+            rust_target: aarch64-apple-darwin
+
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libssl-dev libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.rust_target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-${{ matrix.platform.rust_target }}
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Frontend build
+        run: cd desktop-client && bun install --frozen-lockfile && bun run build
+
+      - name: Build CLI binary (for bundling)
+        run: cargo build --release --target ${{ matrix.platform.rust_target }} -p lukan
+
+      - name: Copy CLI to target/release for Tauri resource
+        run: cp target/${{ matrix.platform.rust_target }}/release/lukan target/release/lukan
+
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS' && env.MAC_CERT_BASE64 != ''
+        env:
+          MAC_CERT_BASE64: ${{ secrets.MAC_CERT_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          echo "$MAC_CERT_BASE64" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import $RUNNER_TEMP/certificate.p12 -P "$MAC_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> $GITHUB_ENV
+          rm -f $RUNNER_TEMP/certificate.p12
+
+      - name: Build and bundle Tauri desktop app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.MAC_NOTARIZE_APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.MAC_NOTARIZE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.MAC_NOTARIZE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "${{ github.ref_name }}"
+          releaseBody: ""
+          releaseDraft: false
+          prerelease: false
+          projectPath: crates/lukan-desktop
+          args: ${{ matrix.platform.args }}
+
+  # ── Create GitHub Release ─────────────────────────────────────────────────
   release:
     name: Create Release
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -133,20 +213,24 @@ jobs:
 
           $CHANGES
 
-          ## Assets
-          - \`lukan-linux-amd64\` — CLI binary (Linux x86_64)
-          - \`lukan-desktop-linux-amd64\` — Desktop app (Linux x86_64)
-          - \`lukan-linux-arm64\` — CLI binary (Linux ARM64)
-          - \`lukan-desktop-linux-arm64\` — Desktop app (Linux ARM64)
-          - \`lukan-darwin-arm64\` — CLI binary (macOS Apple Silicon)
-          - \`lukan-desktop-darwin-arm64\` — Desktop app (macOS Apple Silicon)
-          - \`lukan-darwin-amd64\` — CLI binary (macOS Intel)
-          - \`lukan-desktop-darwin-amd64\` — Desktop app (macOS Intel)
-          - \`lukan-relay-*\` — Relay server (all platforms)
-          - Plugin archives (\`.tar.gz\`)
+          ## CLI Binaries
+          - \`lukan-linux-amd64\` — CLI (Linux x86_64)
+          - \`lukan-linux-arm64\` — CLI (Linux ARM64)
+          - \`lukan-darwin-arm64\` — CLI (macOS Apple Silicon)
+          - \`lukan-relay-*\` — Relay server
+
+          ## Desktop App (includes CLI)
+          - \`Lukan Desktop_*_amd64.deb\` — Linux x86_64 (.deb)
+          - \`Lukan Desktop_*_amd64.AppImage\` — Linux x86_64 (.AppImage)
+          - \`Lukan Desktop.app.tar.gz\` / \`.dmg\` — macOS Apple Silicon
+
+          ## Install
+          \`\`\`bash
+          curl -sSf https://get.lukan.ai/install.sh | bash
+          \`\`\`
           ENDOFBODY
 
-      - name: Create GitHub release
+      - name: Update GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.version }}

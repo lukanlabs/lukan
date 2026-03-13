@@ -85,6 +85,25 @@ impl SessionManager {
             Ok(false)
         }
     }
+
+    /// Delete all session files. Returns the number deleted.
+    pub async fn delete_all() -> Result<u32> {
+        let dir = LukanPaths::sessions_dir();
+        if !dir.exists() {
+            return Ok(0);
+        }
+        let mut entries = tokio::fs::read_dir(&dir).await?;
+        let mut count = 0u32;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                tokio::fs::remove_file(&path).await?;
+                count += 1;
+            }
+        }
+        debug!(count, "Deleted all sessions");
+        Ok(count)
+    }
 }
 
 /// Generate a random 6-char hex string (matches Node's randomBytes(3).toString("hex"))

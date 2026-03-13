@@ -61,6 +61,9 @@ jobs:
       - name: Frontend build
         run: cd desktop-client && bun install --frozen-lockfile && bun run build
 
+      - name: Build CLI binary (needed as Tauri bundled resource)
+        run: cargo build --release -p lukan
+
       - name: Clippy (desktop)
         run: cargo clippy -p lukan-desktop -- -D warnings
 

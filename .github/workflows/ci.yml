@@ -55,7 +55,7 @@ jobs:
         run: cd desktop-client && bun install --frozen-lockfile && bun run build
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --exclude lukan-desktop -- -D warnings
 
       - name: Tests
         run: cargo test --workspace

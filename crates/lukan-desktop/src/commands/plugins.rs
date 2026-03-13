@@ -674,16 +674,18 @@ pub async fn get_web_ui_status() -> Result<WebUiStatus, String> {
 }
 
 #[tauri::command]
-pub async fn start_web_ui(port: u16) -> Result<(), String> {
+pub async fn start_web_ui(port: u16, cwd: Option<String>) -> Result<(), String> {
     if is_web_ui_alive() {
         return Err("Web UI is already running".into());
     }
 
     let lukan_bin = find_lukan_bin()?;
 
+    let working_dir = cwd.unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".into()));
     let child = tokio::process::Command::new(&lukan_bin)
         .args(["chat", "--ui", "web"])
         .env("LUKAN_PORT", port.to_string())
+        .current_dir(&working_dir)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

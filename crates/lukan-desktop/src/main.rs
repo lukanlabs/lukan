@@ -60,7 +60,14 @@ mod cli_install {
         }
     }
 
-    /// Top-level: find bundled CLI, check PATH, create symlink if needed.
+    /// Whether we're running inside an AppImage (temporary mount, paths vanish on exit).
+    fn is_appimage() -> bool {
+        std::env::var_os("APPIMAGE").is_some()
+    }
+
+    /// Top-level: find bundled CLI, check PATH, install if needed.
+    /// AppImage: copies the binary (symlinks would break when mount disappears).
+    /// .deb / .app: creates a symlink.
     pub fn install_cli_symlink() {
         let exe = match std::env::current_exe() {
             Ok(e) => e,
@@ -76,7 +83,24 @@ mod cli_install {
             .unwrap_or_default();
 
         if cli_in_path(&path_dirs) {
-            return;
+            // For AppImage, verify the existing binary isn't a stale symlink
+            if is_appimage() {
+                let existing = path_dirs.iter().find_map(|dir| {
+                    let candidate = dir.join("lukan");
+                    if candidate.is_symlink() && !candidate.exists() {
+                        Some(candidate)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(stale) = existing {
+                    let _ = std::fs::remove_file(&stale);
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            }
         }
 
         let cli_bin = match find_bundled_cli(exe_dir, &path_dirs) {
@@ -91,10 +115,22 @@ mod cli_install {
             return;
         }
 
-        let link_path = link_dir.join("lukan");
+        let dest_path = link_dir.join("lukan");
 
-        #[cfg(unix)]
-        let _ = std::os::unix::fs::symlink(&cli_bin, &link_path);
+        if is_appimage() {
+            // Copy the binary so it persists after AppImage unmounts
+            let _ = std::fs::copy(&cli_bin, &dest_path);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ =
+                    std::fs::set_permissions(&dest_path, std::fs::Permissions::from_mode(0o755));
+            }
+        } else {
+            // Symlink for persistent installs (.deb, .app)
+            #[cfg(unix)]
+            let _ = std::os::unix::fs::symlink(&cli_bin, &dest_path);
+        }
     }
 
     #[cfg(test)]
@@ -418,6 +454,11 @@ fn main() {
             commands::files::open_in_editor,
             commands::files::get_cwd,
             commands::files::open_url,
+            // Project
+            commands::files::set_project_cwd,
+            commands::files::get_recent_projects,
+            commands::files::add_recent_project,
+            commands::files::pick_directory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

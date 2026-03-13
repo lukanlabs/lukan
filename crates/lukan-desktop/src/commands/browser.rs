@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use serde::Serialize;
 use tauri::State;
 
@@ -74,7 +72,7 @@ pub async fn browser_launch(
 
     // Hot-reload all live agents with browser tools
     {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let cwd = state.cwd().await;
         let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
             .await
             .ok()

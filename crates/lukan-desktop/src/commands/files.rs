@@ -1,5 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tauri::State;
+
+use crate::state::ChatState;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,10 +22,13 @@ pub struct DirectoryListing {
 
 /// List files and directories at the given path.
 #[tauri::command]
-pub async fn list_directory(path: Option<String>) -> Result<DirectoryListing, String> {
+pub async fn list_directory(
+    state: State<'_, ChatState>,
+    path: Option<String>,
+) -> Result<DirectoryListing, String> {
     let dir = match path {
         Some(p) => PathBuf::from(p),
-        None => std::env::current_dir().map_err(|e| format!("Failed to get cwd: {e}"))?,
+        None => state.cwd().await,
     };
 
     let mut entries = Vec::new();
@@ -249,12 +255,87 @@ pub async fn open_in_editor(path: String, editor: Option<String>) -> Result<(), 
     Ok(())
 }
 
-/// Get the current working directory.
+/// Get the current working directory (project cwd if set).
 #[tauri::command]
-pub async fn get_cwd() -> Result<String, String> {
-    std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| format!("Failed to get cwd: {e}"))
+pub async fn get_cwd(state: State<'_, ChatState>) -> Result<String, String> {
+    Ok(state.cwd().await.to_string_lossy().to_string())
+}
+
+/// Set the project working directory.
+#[tauri::command]
+pub async fn set_project_cwd(state: State<'_, ChatState>, path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    if !p.is_dir() {
+        return Err(format!("Not a directory: {path}"));
+    }
+    *state.project_cwd.lock().await = Some(p);
+    Ok(())
+}
+
+// ── Recent projects ──────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentProject {
+    pub path: String,
+    pub name: String,
+    pub last_opened: String,
+}
+
+fn recent_projects_path() -> PathBuf {
+    lukan_core::config::LukanPaths::config_dir().join("recent-projects.json")
+}
+
+#[tauri::command]
+pub async fn get_recent_projects() -> Result<Vec<RecentProject>, String> {
+    let path = recent_projects_path();
+    match tokio::fs::read_to_string(&path).await {
+        Ok(data) => serde_json::from_str(&data).map_err(|e| e.to_string()),
+        Err(_) => Ok(vec![]),
+    }
+}
+
+#[tauri::command]
+pub async fn add_recent_project(path: String) -> Result<(), String> {
+    let file = recent_projects_path();
+    let mut projects: Vec<RecentProject> = match tokio::fs::read_to_string(&file).await {
+        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Err(_) => vec![],
+    };
+
+    // Remove existing entry for this path
+    projects.retain(|p| p.path != path);
+
+    let name = PathBuf::from(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.clone());
+
+    projects.insert(
+        0,
+        RecentProject {
+            path,
+            name,
+            last_opened: chrono::Utc::now().to_rfc3339(),
+        },
+    );
+
+    // Keep only last 10
+    projects.truncate(10);
+
+    let data = serde_json::to_string_pretty(&projects).map_err(|e| e.to_string())?;
+    tokio::fs::write(&file, data)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Open a native directory picker dialog.
+#[tauri::command]
+pub async fn pick_directory() -> Result<Option<String>, String> {
+    let result = tokio::task::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(result.map(|p| p.to_string_lossy().to_string()))
 }
 
 /// Open a URL in the system's default browser.

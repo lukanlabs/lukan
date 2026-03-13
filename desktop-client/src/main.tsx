@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import ReactDOM from "react-dom/client";
-import { isRelayMode, initTransport, resetTransport } from "./lib/transport";
+import { IS_TAURI, isRelayMode, initTransport, resetTransport } from "./lib/transport";
 import App from "./App";
 import LoginPage from "./components/LoginPage";
+import ProjectSelector from "./components/ProjectSelector";
 import "./styles/index.css";
 
 /** Extract device name from URL path: /my-pc → "my-pc", / → "" */
@@ -15,6 +16,7 @@ function Root() {
   const [authenticated, setAuthenticated] = useState(!relay);
   const [checking, setChecking] = useState(relay);
   const [ready, setReady] = useState(false);
+  const [projectSelected, setProjectSelected] = useState(!IS_TAURI);
   const [loginMessage, setLoginMessage] = useState("");
   const [transportError, setTransportError] = useState(false);
   const [devices, setDevices] = useState<string[]>([]);
@@ -156,6 +158,11 @@ function Root() {
 
   // Show nothing while transport initializes
   if (!ready) return null;
+
+  // Show project selector for desktop (Tauri) mode
+  if (!projectSelected) {
+    return <ProjectSelector onSelect={() => setProjectSelected(true)} />;
+  }
 
   return <App />;
 }

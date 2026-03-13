@@ -142,7 +142,8 @@ bundle-desktop: build
 	@ls -lh dist/desktop/ 2>/dev/null || true
 
 ## release: Build binary + bundle plugins + generate checksums
-release: build bundle-plugins package-plugins package-whisper
+release: build bundle-plugins package-plugins
+	@$(MAKE) package-whisper || echo "  Warning: whisper plugin build failed (skipped)"
 	@echo "Building release $(VERSION) for $(PLATFORM)..."
 	@mkdir -p dist
 	@cp target/release/$(BINARY_NAME) dist/$(BINARY_NAME)-$(PLATFORM)

@@ -49,7 +49,8 @@ build:
 		rm -f target/release/lukan-desktop target/release/deps/lukan_desktop-* 2>/dev/null || true; \
 		rm -rf target/release/build/lukan-desktop-* 2>/dev/null || true; \
 	fi
-	cargo build --release -p lukan -p lukan-desktop -p lukan-relay
+	cargo build --release -p lukan -p lukan-relay
+	cargo build --release -p lukan-desktop
 
 ## build-debug: Build debug binary
 build-debug:

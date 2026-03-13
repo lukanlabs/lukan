@@ -152,7 +152,8 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> $GITHUB_ENV
           rm -f $RUNNER_TEMP/certificate.p12
 
-      - name: Build and bundle Tauri desktop app
+      - name: Build and bundle Tauri desktop app (signed)
+        if: runner.os != 'macOS' || env.APPLE_SIGNING_IDENTITY != ''
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -160,6 +161,20 @@ jobs:
           APPLE_ID: ${{ secrets.MAC_NOTARIZE_APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.MAC_NOTARIZE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.MAC_NOTARIZE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "${{ github.ref_name }}"
+          releaseBody: ""
+          releaseDraft: false
+          prerelease: false
+          projectPath: crates/lukan-desktop
+          args: ${{ matrix.platform.args }}
+
+      - name: Build and bundle Tauri desktop app (unsigned)
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY == ''
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "${{ github.ref_name }}"

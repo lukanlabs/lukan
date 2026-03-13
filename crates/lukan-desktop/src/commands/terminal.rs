@@ -97,6 +97,21 @@ pub async fn terminal_list(
             id: s.id.clone(),
             cols: s.cols,
             rows: s.rows,
+            name: s.name.clone(),
         })
         .collect())
+}
+
+#[tauri::command]
+pub async fn terminal_rename(
+    state: State<'_, TerminalState>,
+    session_id: String,
+    name: String,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("session not found: {session_id}"))?;
+    session.name = Some(name);
+    Ok(())
 }

@@ -122,6 +122,7 @@ fn main() {
             commands::terminal::terminal_resize,
             commands::terminal::terminal_destroy,
             commands::terminal::terminal_list,
+            commands::terminal::terminal_rename,
             // Memory
             commands::memory::get_global_memory,
             commands::memory::save_global_memory,

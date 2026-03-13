@@ -69,7 +69,7 @@ jobs:
         run: cargo clippy --workspace --exclude lukan-desktop -- -D warnings
 
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude lukan-desktop
 
       - name: Build release
         run: make release

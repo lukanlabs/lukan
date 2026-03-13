@@ -9,6 +9,9 @@
 //
 
 import { createInterface } from "readline";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -17,6 +20,58 @@ let botToken = "";
 let shuttingDown = false;
 let pollingActive = false;
 let lastUpdateId = 0;
+
+// ── Message history persistence ────────────────────────────────────────
+
+const XDG_DATA_HOME = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+const HISTORY_DIR = join(XDG_DATA_HOME, "lukan", "plugins", "telegram");
+const HISTORY_PATH = join(HISTORY_DIR, "message_history.json");
+const MAX_MESSAGES_PER_CHAT = 50;
+const MAX_CHATS = 100;
+
+function loadHistory() {
+  try {
+    return JSON.parse(readFileSync(HISTORY_PATH, "utf8"));
+  } catch {
+    return { chats: {} };
+  }
+}
+
+function saveHistory(history) {
+  mkdirSync(HISTORY_DIR, { recursive: true });
+  writeFileSync(HISTORY_PATH, JSON.stringify(history, null, 2));
+}
+
+function persistMessage(chatId, chatName, chatType, entry) {
+  const history = loadHistory();
+
+  if (!history.chats[chatId]) {
+    // Bound total chats
+    const chatIds = Object.keys(history.chats);
+    if (chatIds.length >= MAX_CHATS) {
+      // Remove chat with oldest last message
+      let oldestId = chatIds[0];
+      let oldestTime = Infinity;
+      for (const id of chatIds) {
+        const msgs = history.chats[id].messages || [];
+        const last = msgs[msgs.length - 1]?.timestamp || Infinity;
+        if (last < oldestTime) { oldestTime = last; oldestId = id; }
+      }
+      delete history.chats[oldestId];
+    }
+    history.chats[chatId] = { name: chatName, type: chatType, messages: [] };
+  }
+
+  history.chats[chatId].name = chatName;
+  history.chats[chatId].messages.push(entry);
+
+  // Bound messages per chat
+  if (history.chats[chatId].messages.length > MAX_MESSAGES_PER_CHAT) {
+    history.chats[chatId].messages = history.chats[chatId].messages.slice(-MAX_MESSAGES_PER_CHAT);
+  }
+
+  saveHistory(history);
+}
 
 // Filtering
 let whitelist = []; // Telegram user IDs (strings)
@@ -151,6 +206,15 @@ function handleMessage(msg) {
   // Get text content
   let content = msg.text || msg.caption || "";
   if (!content) return; // Skip non-text messages
+
+  // Persist to message history
+  const chatName = msg.chat.title || [msg.chat.first_name, msg.chat.last_name].filter(Boolean).join(" ") || "Unknown";
+  persistMessage(chatId, chatName, msg.chat.type, {
+    sender: senderName,
+    text: content,
+    timestamp: (msg.date || Math.floor(Date.now() / 1000)) * 1000,
+    messageId: String(msg.message_id),
+  });
 
   // Filter
   if (!shouldProcess(userId, chatId, isGroup)) return;

@@ -1,0 +1,93 @@
+[
+  {
+    "name": "TelegramSend",
+    "description": "Send a text message to any Telegram chat. Supports Markdown formatting. Auto-splits messages exceeding 4096 chars.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chatId": {
+          "type": "string",
+          "description": "Telegram chat ID (numeric, negative for groups)"
+        },
+        "text": {
+          "type": "string",
+          "description": "Message text to send"
+        }
+      },
+      "required": ["chatId", "text"]
+    }
+  },
+  {
+    "name": "TelegramSendMedia",
+    "description": "Send a media file (photo, document, audio, video) to a Telegram chat.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chatId": {
+          "type": "string",
+          "description": "Telegram chat ID"
+        },
+        "filePath": {
+          "type": "string",
+          "description": "Absolute path to the media file"
+        },
+        "mediaType": {
+          "type": "string",
+          "description": "Type of media: photo, document, audio, or video",
+          "enum": ["photo", "document", "audio", "video"]
+        },
+        "caption": {
+          "type": "string",
+          "description": "Optional caption for the media"
+        }
+      },
+      "required": ["chatId", "filePath", "mediaType"]
+    }
+  },
+  {
+    "name": "TelegramGetChats",
+    "description": "List Telegram chats the bot has interacted with. Returns chat names, IDs, and types from message history.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "number",
+          "description": "Maximum number of chats to return (default: 20)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "TelegramReadMessages",
+    "description": "Read recent messages from a Telegram chat. Returns message history with sender, text, and timestamp.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chatId": {
+          "type": "string",
+          "description": "Telegram chat ID"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum number of messages to return (default: 20)"
+        }
+      },
+      "required": ["chatId"]
+    }
+  },
+  {
+    "name": "TelegramGetChatInfo",
+    "description": "Get details about a Telegram chat (name, type, member count, description).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chatId": {
+          "type": "string",
+          "description": "Telegram chat ID"
+        }
+      },
+      "required": ["chatId"]
+    }
+  }
+]

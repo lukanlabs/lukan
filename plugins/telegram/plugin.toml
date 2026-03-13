@@ -53,11 +53,12 @@ valid_values = [
   "ReadFiles", "WriteFile", "EditFile",
   "Grep", "Glob",
   "WebFetch",
+  "TelegramSend", "TelegramSendMedia", "TelegramGetChats", "TelegramReadMessages", "TelegramGetChatInfo",
 ]
 
 # Security policy
 [security]
-default_tools = ["Grep", "Glob", "ReadFiles", "WebFetch"]
+default_tools = ["Grep", "Glob", "ReadFiles", "WebFetch", "TelegramSend", "TelegramSendMedia", "TelegramGetChats", "TelegramReadMessages", "TelegramGetChatInfo"]
 include_memory = true
 dir_restrictions = true
 dangerous_tools = ["Bash", "WriteFile", "EditFile"]

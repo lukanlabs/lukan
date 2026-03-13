@@ -58,19 +58,34 @@ fn is_plugin_running(name: &str) -> bool {
     false
 }
 
-/// Find the lukan CLI binary (next to lukan-desktop, or in PATH).
+/// Find the lukan CLI binary.
+///
+/// Search order:
+/// 1. Next to our own binary (dev builds, curl installs)
+/// 2. Tauri bundle resources (`.deb`, `.app` installs)
+/// 3. In PATH
 fn find_lukan_bin() -> Result<std::path::PathBuf, String> {
-    // 1. Next to our own binary
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
+        // 1. Next to our own binary
         let candidate = dir.join("lukan");
         if candidate.exists() {
             return Ok(candidate);
         }
+
+        // 2. Tauri bundle resource paths
+        //    macOS: Contents/MacOS/../Resources/lukan
+        //    Linux .deb: /usr/bin/../lib/Lukan Desktop/lukan
+        for relative in &["../Resources/lukan", "../lib/Lukan Desktop/lukan"] {
+            let candidate = dir.join(relative);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
     }
 
-    // 2. In PATH
+    // 3. In PATH
     if let Some(paths) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&paths) {
             let candidate = dir.join("lukan");
@@ -80,10 +95,7 @@ fn find_lukan_bin() -> Result<std::path::PathBuf, String> {
         }
     }
 
-    Err(
-        "lukan binary not found. Ensure it's in the same directory as lukan-desktop or in PATH."
-            .into(),
-    )
+    Err("lukan binary not found. Install the CLI with: curl -sSf https://get.lukan.ai | sh".into())
 }
 
 #[tauri::command]

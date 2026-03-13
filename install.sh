@@ -2,11 +2,32 @@
 set -euo pipefail
 
 # Parse command line arguments
-TARGET="${1:-}"
+TARGET=""
+INSTALL_DESKTOP=true
+
+for arg in "$@"; do
+  case "${arg}" in
+    --no-desktop)
+      INSTALL_DESKTOP=false
+      ;;
+    --help|-h)
+      echo "Usage: $0 [OPTIONS] [stable|latest|daily|VERSION]"
+      echo ""
+      echo "Options:"
+      echo "  --no-desktop    Skip desktop app installation (CLI only)"
+      echo "  --help, -h      Show this help"
+      exit 0
+      ;;
+    *)
+      TARGET="${arg}"
+      ;;
+  esac
+done
 
 # Validate target if provided
 if [[ -n "${TARGET}" ]] && [[ ! "${TARGET}" =~ ^(stable|latest|daily|v?[0-9]+\.[0-9]+\.[0-9]+(-[^[:space:]]+)?)$ ]]; then
-  echo "Usage: $0 [stable|latest|daily|VERSION]" >&2
+  echo "Usage: $0 [OPTIONS] [stable|latest|daily|VERSION]" >&2
+  echo "Run '$0 --help' for more information." >&2
   exit 1
 fi
 
@@ -236,9 +257,11 @@ mkdir -p "${BIN_DIR}"
 install_binary "lukan-${PLATFORM}" "lukan"
 ok "Checksum verified"
 
-# Install lukan-desktop (optional — only if available in release)
-if echo "${CHECKSUMS}" | grep -q "lukan-desktop-${PLATFORM}"; then
+# Install lukan-desktop (unless --no-desktop)
+if [ "${INSTALL_DESKTOP}" = true ] && echo "${CHECKSUMS}" | grep -q "lukan-desktop-${PLATFORM}"; then
   install_binary "lukan-desktop-${PLATFORM}" "lukan-desktop" || warn "Desktop app not installed (optional)"
+elif [ "${INSTALL_DESKTOP}" = false ]; then
+  info "Skipping desktop app (--no-desktop)"
 fi
 
 # --- Restart daemon if running (pick up new binary) ---

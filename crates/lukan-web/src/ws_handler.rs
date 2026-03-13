@@ -363,6 +363,23 @@ async fn dispatch_message(
             }
         }
 
+        ClientMessage::DeleteAllSessions => match SessionManager::delete_all().await {
+            Ok(_) => {
+                if let Ok(sessions) = SessionManager::list().await {
+                    send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
+                }
+            }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to delete all sessions: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
+
         ClientMessage::ListModels => {
             let config = state.config.lock().await;
             let models = config.config.models.clone().unwrap_or_default();

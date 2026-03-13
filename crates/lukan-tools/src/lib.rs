@@ -294,8 +294,10 @@ mod tests {
 
     #[test]
     fn allowed_dir_permits_children() {
-        // Use temp_dir() so macOS resolves /tmp → /private/tmp correctly
-        let tmp = std::env::temp_dir();
+        // Use a real, canonicalized directory so macOS symlinks don't break the test
+        let tmp = std::env::temp_dir()
+            .canonicalize()
+            .expect("temp_dir must exist");
         let tmp_str = tmp.to_str().unwrap();
         let ctx = make_ctx(Some(vec![tmp_str]));
         assert!(ctx.check_path_allowed(&tmp.join("foo.txt")).is_ok());
@@ -304,7 +306,9 @@ mod tests {
 
     #[test]
     fn blocks_outside_allowed_dirs() {
-        let tmp = std::env::temp_dir();
+        let tmp = std::env::temp_dir()
+            .canonicalize()
+            .expect("temp_dir must exist");
         let tmp_str = tmp.to_str().unwrap();
         let ctx = make_ctx(Some(vec![tmp_str]));
         let result = ctx.check_path_allowed("/etc/passwd".as_ref());
@@ -314,7 +318,9 @@ mod tests {
 
     #[test]
     fn multiple_allowed_dirs() {
-        let tmp = std::env::temp_dir();
+        let tmp = std::env::temp_dir()
+            .canonicalize()
+            .expect("temp_dir must exist");
         let tmp_str = tmp.to_str().unwrap();
         let ctx = make_ctx(Some(vec![tmp_str, "/home/enzo/projects"]));
         assert!(ctx.check_path_allowed(&tmp.join("file")).is_ok());

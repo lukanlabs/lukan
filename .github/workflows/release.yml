@@ -28,9 +28,6 @@ jobs:
           - os: darwin
             runner: macos-latest
             platform: darwin-arm64
-          - os: darwin
-            runner: macos-13
-            platform: darwin-amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -140,8 +137,6 @@ jobs:
           - \`lukan-desktop-linux-arm64\` — Desktop app (Linux ARM64)
           - \`lukan-darwin-arm64\` — CLI binary (macOS Apple Silicon)
           - \`lukan-desktop-darwin-arm64\` — Desktop app (macOS Apple Silicon)
-          - \`lukan-darwin-amd64\` — CLI binary (macOS Intel)
-          - \`lukan-desktop-darwin-amd64\` — Desktop app (macOS Intel)
           - \`lukan-relay-*\` — Relay server (all platforms)
           - Plugin archives (\`.tar.gz\`)
           ENDOFBODY

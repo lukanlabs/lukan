@@ -41,13 +41,19 @@ bundle_whatsapp() {
   bun build "$src/cli.js" --target=node --outfile="$dist/cli.js" 2>/dev/null
   bun build "$src/whatsapp-connector/index.js" --target=node --outfile="$dist/whatsapp-connector/index.js" 2>/dev/null
 
+  # Bundle tools handler if present
+  if [ -f "$src/tools.js" ]; then
+    bun build "$src/tools.js" --target=node --outfile="$dist/tools.js" 2>/dev/null
+  fi
+
   # Copy non-JS files needed at runtime
   cp "$src/plugin.toml" "$dist/"
+  cp "$src/tools.json" "$dist/" 2>/dev/null || true
   cp "$src/config.json" "$dist/" 2>/dev/null || true
   cp "$src/prompt.txt" "$dist/" 2>/dev/null || true
   cp "$src"/prompt-dir-*.txt "$dist/" 2>/dev/null || true
 
-  ok "whatsapp → dist/ (bridge.js, cli.js, connector)"
+  ok "whatsapp → dist/ (bridge.js, cli.js, connector, tools)"
 }
 
 bundle_email() {
@@ -148,10 +154,12 @@ bundle_telegram() {
   # No external deps — just copy files
   cp "$src/plugin.toml" "$dist/"
   cp "$src/bridge.js" "$dist/"
+  cp "$src/tools.js" "$dist/" 2>/dev/null || true
+  cp "$src/tools.json" "$dist/" 2>/dev/null || true
   cp "$src/prompt.txt" "$dist/"
   cp "$src"/prompt-dir-*.txt "$dist/" 2>/dev/null || true
 
-  ok "telegram → dist/ (no bundling needed, zero deps)"
+  ok "telegram → dist/ (bridge.js, tools)"
 }
 
 bundle_slack() {

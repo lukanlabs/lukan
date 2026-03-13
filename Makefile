@@ -35,7 +35,7 @@ else
   SHA256CMD := sha256sum
 endif
 
-.PHONY: all build clean test check install release bundle-plugins package-plugins package-whisper upload upload-daily upload-gh help
+.PHONY: all build clean test check install release bundle-plugins package-plugins package-whisper bundle-desktop upload upload-daily upload-gh help
 
 all: build
 
@@ -126,6 +126,20 @@ package-whisper:
 	@cd plugins/whisper/dist && tar czf ../../../dist/plugins/lukan-plugin-whisper-$(WHISPER_PLATFORM).tar.gz .
 	@echo "  Packaged: lukan-plugin-whisper-$(WHISPER_PLATFORM).tar.gz"
 
+## bundle-desktop: Build Tauri desktop bundles (.deb, .AppImage, .dmg)
+bundle-desktop: build
+	@echo "Building Tauri desktop bundles..."
+	@cp target/release/$(BINARY_NAME) target/release/$(BINARY_NAME) 2>/dev/null || true
+	cd crates/lukan-desktop && cargo tauri build
+	@mkdir -p dist/desktop
+	@for f in target/release/bundle/deb/*.deb; do [ -f "$$f" ] && cp "$$f" dist/desktop/"$$(basename "$$f" | tr ' ' '_')"; done
+	@for f in target/release/bundle/rpm/*.rpm; do [ -f "$$f" ] && cp "$$f" dist/desktop/"$$(basename "$$f" | tr ' ' '_')"; done
+	@for f in target/release/bundle/appimage/*.AppImage; do [ -f "$$f" ] && cp "$$f" dist/desktop/"$$(basename "$$f" | tr ' ' '_')"; done
+	@for f in target/release/bundle/dmg/*.dmg; do [ -f "$$f" ] && cp "$$f" dist/desktop/"$$(basename "$$f" | tr ' ' '_')"; done
+	@for f in target/release/bundle/macos/*.app.tar.gz; do [ -f "$$f" ] && cp "$$f" dist/desktop/"$$(basename "$$f" | tr ' ' '_')"; done
+	@echo "Desktop bundles in dist/desktop/"
+	@ls -lh dist/desktop/ 2>/dev/null || true
+
 ## release: Build binary + bundle plugins + generate checksums
 release: build bundle-plugins package-plugins package-whisper
 	@echo "Building release $(VERSION) for $(PLATFORM)..."
@@ -176,6 +190,14 @@ upload: release
 		echo "Uploading plugin: $$name"; \
 		bunx wrangler r2 object put --remote $(R2_BUCKET)/plugins/$$name --file "$$f" --cache-control "public, max-age=60"; \
 	done
+	@# Upload desktop bundles
+	@if [ -d dist/desktop ]; then \
+		for f in dist/desktop/*; do \
+			name=$$(basename "$$f"); \
+			echo "Uploading desktop bundle: $$name"; \
+			bunx wrangler r2 object put --remote "$(R2_BUCKET)/desktop/$$name" --file "$$f" --cache-control "public, max-age=60"; \
+		done; \
+	fi
 	@# Upload registry
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/registry.toml --file registry.toml
 	@echo ""

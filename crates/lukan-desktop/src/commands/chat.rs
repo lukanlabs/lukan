@@ -783,8 +783,8 @@ pub async fn set_permission_mode(state: State<'_, ChatState>, mode: String) -> R
 }
 
 #[tauri::command]
-pub async fn list_tasks() -> Result<Vec<TaskInfoJs>, String> {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+pub async fn list_tasks(state: State<'_, ChatState>) -> Result<Vec<TaskInfoJs>, String> {
+    let cwd = state.cwd().await;
     let tasks = lukan_tools::tasks::read_all_tasks(&cwd).await;
     Ok(tasks
         .iter()

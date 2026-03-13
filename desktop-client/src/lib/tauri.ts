@@ -143,9 +143,24 @@ export const toggleProjectMemory = (path: string, active: boolean) =>
 // Web UI
 export const getWebUiStatus = () =>
   getTransport().call<WebUiStatus>("get_web_ui_status");
-export const startWebUi = (port: number) =>
-  getTransport().call<void>("start_web_ui", { port });
+export const startWebUi = (port: number, cwd?: string) =>
+  getTransport().call<void>("start_web_ui", { port, cwd });
 export const stopWebUi = () => getTransport().call<void>("stop_web_ui");
+
+// Project
+export interface RecentProject {
+  path: string;
+  name: string;
+  lastOpened: string;
+}
+export const setProjectCwd = (path: string) =>
+  getTransport().call<void>("set_project_cwd", { path });
+export const getRecentProjects = () =>
+  getTransport().call<RecentProject[]>("get_recent_projects");
+export const addRecentProject = (path: string) =>
+  getTransport().call<void>("add_recent_project", { path });
+export const pickDirectory = () =>
+  getTransport().call<string | null>("pick_directory");
 
 // Chat — tab management
 export const createAgentTab = () =>

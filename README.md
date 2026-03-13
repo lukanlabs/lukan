@@ -97,6 +97,30 @@ cd lukan
 cargo build --release
 ```
 
+## Uninstall
+
+**curl install:**
+```bash
+rm ~/.local/bin/lukan ~/.local/bin/lukan-desktop ~/.local/bin/lukan-relay
+```
+
+**AppImage:**
+```bash
+rm Lukan_Desktop.AppImage
+rm ~/.local/bin/lukan
+```
+
+**deb package:**
+```bash
+sudo dpkg -r lukan-desktop
+rm ~/.local/bin/lukan
+```
+
+**Config & data** (optional, shared across all install methods):
+```bash
+rm -rf ~/.config/lukan ~/.local/share/lukan
+```
+
 ## Quick Start
 
 ```bash

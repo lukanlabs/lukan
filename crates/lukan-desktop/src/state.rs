@@ -120,6 +120,7 @@ pub struct ChatState {
     pub permission_mode: watch::Sender<PermissionMode>,
     pub provider_name: Mutex<String>,
     pub model_name: Mutex<String>,
+    pub project_cwd: Mutex<Option<PathBuf>>,
 }
 
 impl Default for ChatState {
@@ -131,7 +132,19 @@ impl Default for ChatState {
             permission_mode: permission_mode_tx,
             provider_name: Mutex::new(String::new()),
             model_name: Mutex::new(String::new()),
+            project_cwd: Mutex::new(None),
         }
+    }
+}
+
+impl ChatState {
+    /// Get the effective working directory: project_cwd if set, else HOME, else current_dir.
+    pub async fn cwd(&self) -> PathBuf {
+        self.project_cwd.lock().await.clone().unwrap_or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")))
+        })
     }
 }
 
@@ -144,7 +157,7 @@ impl ChatState {
         let provider = create_provider(config)?;
         let has_browser = BrowserManager::get().is_some();
         let system_prompt = build_system_prompt(has_browser).await;
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let cwd = self.cwd().await;
         let provider_name = self.provider_name.lock().await.clone();
         let model_name = self.model_name.lock().await.clone();
         let permission_mode = self.permission_mode.borrow().clone();
@@ -238,7 +251,7 @@ impl ChatState {
         let provider = create_provider(config)?;
         let has_browser = BrowserManager::get().is_some();
         let system_prompt = build_system_prompt(has_browser).await;
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let cwd = self.cwd().await;
         let provider_name = self.provider_name.lock().await.clone();
         let model_name = self.model_name.lock().await.clone();
         let permission_mode = self.permission_mode.borrow().clone();

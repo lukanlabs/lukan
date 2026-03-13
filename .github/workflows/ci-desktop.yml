@@ -1,13 +1,23 @@
-name: CI
+name: CI Desktop
 
 on:
   push:
     branches: [development]
+    paths:
+      - 'crates/lukan-desktop/**'
+      - 'desktop-client/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
   pull_request:
     branches: [master, development]
+    paths:
+      - 'crates/lukan-desktop/**'
+      - 'desktop-client/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-desktop-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -15,8 +25,8 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  check:
-    name: Check
+  desktop-check:
+    name: Desktop Check (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +41,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
@@ -45,25 +55,17 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Check formatting
-        run: cargo fmt --all --check
+          key: ${{ runner.os }}-cargo-desktop-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-desktop-
 
       - name: Frontend build
         run: cd desktop-client && bun install --frozen-lockfile && bun run build
 
-      - name: Clippy
-        run: cargo clippy --workspace --exclude lukan-desktop -- -D warnings
+      - name: Build CLI binary (needed as Tauri bundled resource)
+        run: cargo build --release -p lukan
 
-      - name: Tests
-        run: cargo test --workspace
+      - name: Clippy (desktop)
+        run: cargo clippy -p lukan-desktop -- -D warnings
 
-      - name: Build release binaries
-        run: cargo build --release -p lukan -p lukan-relay
-
-      - name: Verify binaries exist
-        run: |
-          test -f target/release/lukan
-          test -f target/release/lukan-relay
+      - name: Build desktop
+        run: cargo build --release -p lukan-desktop

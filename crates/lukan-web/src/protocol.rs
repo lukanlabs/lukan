@@ -75,6 +75,10 @@ pub enum ClientMessage {
         session_id: String,
         label: String,
     },
+    LoadAgentTabs,
+    SaveAgentTabs {
+        state: AgentTabsFileDto,
+    },
     SendToBackground {
         #[serde(default)]
         session_id: Option<String>,
@@ -216,6 +220,10 @@ pub enum ServerMessage {
     AgentTabCreated {
         session_id: String,
     },
+    AgentTabsLoaded {
+        state: AgentTabsFileDto,
+    },
+    AgentTabsSaved,
     SessionList {
         sessions: Vec<SessionSummary>,
     },
@@ -313,6 +321,24 @@ pub struct TerminalSessionInfoDto {
     pub rows: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTabStateDto {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTabsFileDto {
+    pub tabs: Vec<AgentTabStateDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_tab_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

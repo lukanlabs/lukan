@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useAgentSessions } from "../hooks/useAgentSessions";
+import { useAgentSessions, getSessionMap, setSessionMapEntry, deleteSessionMapEntry } from "../hooks/useAgentSessions";
 import { ChatPanel } from "./ChatView";
 import AgentTabBar from "../components/chat/AgentTabBar";
 import type { TokenUsage } from "../lib/types";
@@ -17,13 +17,15 @@ export default function AgentView() {
   const [pendingLoads, setPendingLoads] = useState<Record<string, string>>({});
 
   // Track which session each tab has loaded: tabId → sessionId
-  const tabSessionMapRef = useRef<Map<string, string>>(new Map());
+  const tabSessionMapRef = useRef<Map<string, string>>(getSessionMap());
 
   const handleSessionIdChange = useCallback((tabId: string, sessionId: string) => {
     if (sessionId) {
       tabSessionMapRef.current.set(tabId, sessionId);
+      setSessionMapEntry(tabId, sessionId);
     } else {
       tabSessionMapRef.current.delete(tabId);
+      deleteSessionMapEntry(tabId);
     }
   }, []);
 
@@ -64,9 +66,24 @@ export default function AgentView() {
     return () => window.removeEventListener("load-session", onLoad);
   }, [createTab, switchTab, renameTab]);
 
+  // Listen for restored sessions from useAgentSessions
+  useEffect(() => {
+    const onRestore = (e: Event) => {
+      const loads = (e as CustomEvent<Record<string, string>>).detail;
+      setPendingLoads((prev) => ({ ...prev, ...loads }));
+      // Update the session map ref with restored mappings
+      for (const [tabId, sessionId] of Object.entries(loads)) {
+        tabSessionMapRef.current.set(tabId, sessionId);
+      }
+    };
+    window.addEventListener("restore-sessions", onRestore);
+    return () => window.removeEventListener("restore-sessions", onRestore);
+  }, []);
+
   // Wrap destroyTab to also clean up the session map
   const handleDestroyTab = useCallback(async (id: string) => {
     tabSessionMapRef.current.delete(id);
+    deleteSessionMapEntry(id);
     await destroyTab(id);
   }, [destroyTab]);
 

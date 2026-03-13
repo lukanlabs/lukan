@@ -116,6 +116,8 @@ fn main() {
             commands::chat::create_agent_tab,
             commands::chat::destroy_agent_tab,
             commands::chat::rename_agent_tab,
+            commands::chat::load_agent_tabs,
+            commands::chat::save_agent_tabs,
             // Terminal
             commands::terminal::terminal_create,
             commands::terminal::terminal_input,

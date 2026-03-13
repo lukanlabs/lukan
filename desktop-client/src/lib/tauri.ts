@@ -155,6 +155,20 @@ export const destroyAgentTab = (sessionId: string) =>
 export const renameAgentTab = (sessionId: string, label: string) =>
   getTransport().call<void>("rename_agent_tab", { sessionId, label });
 
+export interface AgentTabState {
+  id: string;
+  label?: string;
+  sessionId?: string;
+}
+export interface AgentTabsFile {
+  tabs: AgentTabState[];
+  activeTabId?: string;
+}
+export const loadAgentTabs = () =>
+  getTransport().call<AgentTabsFile>("load_agent_tabs");
+export const saveAgentTabs = (state: AgentTabsFile) =>
+  getTransport().call<void>("save_agent_tabs", { state });
+
 // Chat — global
 export const initializeChat = () =>
   getTransport().call<InitResponse>("initialize_chat");

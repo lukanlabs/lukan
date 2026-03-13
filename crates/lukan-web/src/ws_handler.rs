@@ -287,6 +287,27 @@ async fn dispatch_message(
             }
         }
 
+        ClientMessage::LoadAgentTabs => {
+            let path = lukan_core::config::LukanPaths::agent_tabs_file();
+            let state_data = match tokio::fs::read_to_string(&path).await {
+                Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+                Err(_) => crate::protocol::AgentTabsFileDto::default(),
+            };
+            send_json(
+                ws_tx,
+                &crate::protocol::ServerMessage::AgentTabsLoaded { state: state_data },
+            )
+            .await;
+        }
+
+        ClientMessage::SaveAgentTabs { state: tabs_state } => {
+            let path = lukan_core::config::LukanPaths::agent_tabs_file();
+            if let Ok(data) = serde_json::to_string_pretty(&tabs_state) {
+                let _ = tokio::fs::write(&path, data).await;
+            }
+            send_json(ws_tx, &crate::protocol::ServerMessage::AgentTabsSaved).await;
+        }
+
         ClientMessage::SendToBackground { session_id } => {
             let mut sent = false;
             // Try session-based bg_signal first

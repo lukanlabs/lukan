@@ -17,6 +17,8 @@ const WS_COMMANDS = new Set([
   "create_agent_tab",
   "destroy_agent_tab",
   "rename_agent_tab",
+  "load_agent_tabs",
+  "save_agent_tabs",
   "send_to_background",
   // Terminal (Phase 3)
   "terminal_create",
@@ -521,6 +523,16 @@ export class WebTransport implements Transport {
       return;
     }
 
+    // Agent tabs loaded/saved
+    if (type === "agent_tabs_loaded") {
+      this.resolvePending("load_agent_tabs", msg.state);
+      return;
+    }
+    if (type === "agent_tabs_saved") {
+      this.resolvePending("save_agent_tabs", undefined);
+      return;
+    }
+
     // Session list
     if (type === "session_list") {
       this.resolvePending("list_sessions", msg.sessions);
@@ -666,6 +678,10 @@ export class WebTransport implements Transport {
         return { type: "destroy_agent_tab", sessionId: args?.sessionId };
       case "rename_agent_tab":
         return { type: "rename_agent_tab", sessionId: args?.sessionId, label: args?.label };
+      case "load_agent_tabs":
+        return { type: "load_agent_tabs" };
+      case "save_agent_tabs":
+        return { type: "save_agent_tabs", state: args?.state };
       case "send_to_background":
         return { type: "send_to_background", sessionId: args?.sessionId };
       // Terminal (Phase 3)

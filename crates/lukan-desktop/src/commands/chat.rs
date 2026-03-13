@@ -123,6 +123,44 @@ pub async fn rename_agent_tab(
     Ok(())
 }
 
+// ── Agent tab persistence ────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTabState {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTabsFile {
+    pub tabs: Vec<AgentTabState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_tab_id: Option<String>,
+}
+
+#[tauri::command]
+pub async fn load_agent_tabs() -> Result<AgentTabsFile, String> {
+    let path = lukan_core::config::LukanPaths::agent_tabs_file();
+    match tokio::fs::read_to_string(&path).await {
+        Ok(data) => serde_json::from_str(&data).map_err(|e| e.to_string()),
+        Err(_) => Ok(AgentTabsFile::default()),
+    }
+}
+
+#[tauri::command]
+pub async fn save_agent_tabs(state: AgentTabsFile) -> Result<(), String> {
+    let path = lukan_core::config::LukanPaths::agent_tabs_file();
+    let data = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
+    tokio::fs::write(&path, data)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ── Global commands (unchanged) ──────────────────────────────────────
 
 #[tauri::command]

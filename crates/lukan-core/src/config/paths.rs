@@ -149,6 +149,11 @@ impl LukanPaths {
         Self::config_dir().join("terminal-names.json")
     }
 
+    /// Agent tab state: ~/.config/lukan/agent-tabs.json
+    pub fn agent_tabs_file() -> PathBuf {
+        Self::config_dir().join("agent-tabs.json")
+    }
+
     /// Worker daemon PID file: ~/.config/lukan/daemon.pid
     pub fn daemon_pid_file() -> PathBuf {
         Self::config_dir().join("daemon.pid")

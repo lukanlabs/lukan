@@ -71,6 +71,9 @@ jobs:
       - name: Tests
         run: cargo test --workspace --exclude lukan-desktop
 
+      - name: Clone whisper.cpp (for plugin build)
+        run: git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git plugins/whisper/whisper.cpp
+
       - name: Build release
         run: make release
 

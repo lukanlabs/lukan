@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { FolderOpen, Puzzle, MessageSquare, Globe, Terminal } from "lucide-react";
+import { FolderOpen, Puzzle, MessageSquare, Globe, Terminal, SquareTerminal } from "lucide-react";
 import type { SidePanelId } from "../../lib/types";
 
 const ITEMS: { id: SidePanelId; icon: LucideIcon; label: string }[] = [
@@ -8,6 +8,7 @@ const ITEMS: { id: SidePanelId; icon: LucideIcon; label: string }[] = [
   { id: "processes", icon: Terminal, label: "Processes" },
   { id: "sessions", icon: MessageSquare, label: "Sessions" },
   { id: "browser", icon: Globe, label: "Browser" },
+  { id: "terminals", icon: SquareTerminal, label: "Terminals" },
 ];
 
 export interface DynamicActivityItem {

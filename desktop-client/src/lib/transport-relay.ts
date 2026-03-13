@@ -16,6 +16,13 @@ import {
   performHandshake,
 } from "./e2e-crypto";
 
+/** Decode a base64 string to a proper UTF-8 string (handles multibyte chars like accents). */
+function b64ToUtf8(b64: string): string {
+  const binary = atob(b64);
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 // Commands routed through WebSocket (same as WebTransport)
 const WS_COMMANDS = new Set([
   "send_message",
@@ -111,6 +118,7 @@ export class RelayTransport implements Transport {
   private initResolvers: Array<(v: unknown) => void> = [];
   private processing = false;
   private relayOrigin: string;
+  private device: string;
 
   // Audio recording state (browser MediaRecorder)
   private mediaRecorder: MediaRecorder | null = null;
@@ -124,8 +132,9 @@ export class RelayTransport implements Transport {
   private e2eAckResolver: ((ack: { pk: string; safety_number: string }) => void) | null = null;
   private connectionId: string | null = null;
 
-  constructor(relayOrigin: string) {
+  constructor(relayOrigin: string, device: string) {
     this.relayOrigin = relayOrigin;
+    this.device = device;
   }
 
   private get baseUrl(): string {
@@ -135,7 +144,7 @@ export class RelayTransport implements Transport {
   private get wsUrl(): string {
     const url = new URL(this.relayOrigin);
     const proto = url.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${url.host}/ws/client`;
+    return `${proto}//${url.host}/ws/client?device=${encodeURIComponent(this.device)}`;
   }
 
   async connect(): Promise<void> {
@@ -596,9 +605,10 @@ export class RelayTransport implements Transport {
 
     const { method, url, body } = this.buildRestCall(command, args);
 
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      "x-lukan-device": this.device,
+    };
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    // Auth is via HttpOnly cookie — sent automatically by browser
 
     const resp = await fetch(url, {
       method,
@@ -651,7 +661,10 @@ export class RelayTransport implements Transport {
     // POST to /api/_e2e with connection_id so daemon can find the right E2E session
     const resp = await fetch("/api/_e2e", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-lukan-device": this.device,
+      },
       credentials: "include",
       body: JSON.stringify({ connection_id: this.connectionId, n, d }),
     });
@@ -680,18 +693,18 @@ export class RelayTransport implements Transport {
     const innerResp = JSON.parse(decrypted);
 
     if (innerResp.status >= 400) {
-      const errBody = innerResp.body ? atob(innerResp.body) : "";
+      const errBody = innerResp.body ? b64ToUtf8(innerResp.body) : "";
       throw new Error(`${command} failed: ${innerResp.status} ${errBody}`);
     }
 
-    // Decode body (base64 → parse as JSON if applicable)
+    // Decode body (base64 → UTF-8 string, then parse as JSON if applicable)
     if (innerResp.body) {
-      const bodyBytes = atob(innerResp.body);
+      const bodyText = b64ToUtf8(innerResp.body);
       const ct = innerResp.headers?.["content-type"] || "";
       if (ct.includes("application/json")) {
-        return JSON.parse(bodyBytes);
+        return JSON.parse(bodyText);
       }
-      return (bodyBytes || undefined) as T;
+      return (bodyText || undefined) as T;
     }
     return undefined as T;
   }
@@ -773,7 +786,7 @@ export class RelayTransport implements Transport {
           method: "GET",
           url: `/api/plugins/${encodeURIComponent(args?.name as string)}/config`,
         };
-      case "set_plugin_config":
+      case "set_plugin_config_field":
         return {
           method: "PUT",
           url: `/api/plugins/${encodeURIComponent(args?.name as string)}/config`,
@@ -782,7 +795,7 @@ export class RelayTransport implements Transport {
       case "get_plugin_logs":
         return {
           method: "GET",
-          url: `/api/plugins/${encodeURIComponent(args?.name as string)}/logs`,
+          url: `/api/plugins/${encodeURIComponent(args?.name as string)}/logs?lines=${args?.lines ?? 100}`,
         };
       case "list_providers":
         return { method: "GET", url: "/api/providers" };
@@ -807,7 +820,7 @@ export class RelayTransport implements Transport {
       case "get_models":
         return { method: "GET", url: "/api/models" };
       case "add_model":
-        return { method: "POST", url: "/api/models", body: args };
+        return { method: "POST", url: "/api/models", body: { entry: args?.entry } };
       case "fetch_provider_models":
         return {
           method: "GET",
@@ -828,41 +841,69 @@ export class RelayTransport implements Transport {
           body: { content: args?.content },
         };
       case "get_project_memory":
-        return { method: "GET", url: "/api/memory/project" };
+        return {
+          method: "GET",
+          url: `/api/memory/project?path=${encodeURIComponent(args?.path as string)}`,
+        };
       case "save_project_memory":
         return {
           method: "PUT",
           url: "/api/memory/project",
-          body: { content: args?.content },
+          body: { path: args?.path, content: args?.content },
         };
       case "is_project_memory_active":
-        return { method: "GET", url: "/api/memory/project/active" };
+        return {
+          method: "GET",
+          url: `/api/memory/project/active?path=${encodeURIComponent(args?.path as string)}`,
+        };
       case "toggle_project_memory":
         return {
           method: "PUT",
           url: "/api/memory/project/active",
-          body: { active: args?.active },
+          body: { path: args?.path, active: args?.active },
         };
       case "consume_pending_events":
         return { method: "POST", url: "/api/events/consume" };
       case "get_event_history":
-        return { method: "GET", url: "/api/events/history" };
-      case "clear_event_history":
-        return { method: "DELETE", url: "/api/events/history" };
+        return {
+          method: "GET",
+          url: `/api/events/history?count=${args?.count ?? 50}`,
+        };
+      case "clear_event_history": {
+        const qs = args?.source
+          ? `?source=${encodeURIComponent(args.source as string)}`
+          : "";
+        return { method: "DELETE", url: `/api/events/history${qs}` };
+      }
       case "list_directory": {
         const qs = args?.path
           ? `?path=${encodeURIComponent(args.path as string)}`
           : "";
         return { method: "GET", url: `/api/files${qs}` };
       }
+      case "read_file":
+        return {
+          method: "GET",
+          url: `/api/files/read?path=${encodeURIComponent(args?.path as string)}`,
+        };
+      case "write_file":
+        return {
+          method: "PUT",
+          url: "/api/files/write",
+          body: { path: args?.path, content: args?.content },
+        };
       case "get_cwd":
         return { method: "GET", url: "/api/cwd" };
-      case "list_bg_processes":
-        return { method: "GET", url: "/api/processes" };
+      case "list_bg_processes": {
+        const qs = args?.sessionId
+          ? `?sessionId=${encodeURIComponent(args.sessionId as string)}`
+          : "";
+        return { method: "GET", url: `/api/processes${qs}` };
+      }
       case "get_bg_process_log":
         return {
           method: "GET",
-          url: `/api/processes/${encodeURIComponent(args?.pid as string)}/log`,
+          url: `/api/processes/${args?.pid}/log?maxLines=${args?.maxLines ?? 100}`,
         };
       case "kill_bg_process":
         return {
@@ -877,7 +918,7 @@ export class RelayTransport implements Transport {
       case "list_workers":
         return { method: "GET", url: "/api/workers" };
       case "create_worker":
-        return { method: "POST", url: "/api/workers", body: args?.worker };
+        return { method: "POST", url: "/api/workers", body: args?.input };
       case "get_worker_detail":
         return {
           method: "GET",
@@ -903,7 +944,7 @@ export class RelayTransport implements Transport {
       case "get_worker_run":
         return {
           method: "GET",
-          url: `/api/workers/${encodeURIComponent(args?.id as string)}/runs/${encodeURIComponent(args?.runId as string)}`,
+          url: `/api/workers/${encodeURIComponent(args?.workerId as string)}/runs/${encodeURIComponent(args?.runId as string)}`,
         };
       case "check_transcription_status":
         return { method: "GET", url: "/api/transcription/status" };
@@ -911,7 +952,7 @@ export class RelayTransport implements Transport {
         return {
           method: "POST",
           url: "/api/transcription/transcribe",
-          body: args,
+          body: { audio: args?.audio },
         };
       case "browser_launch":
         return {
@@ -946,7 +987,6 @@ export class RelayTransport implements Transport {
         return {
           method: "POST",
           url: `/api/plugins/${encodeURIComponent(args?.name as string)}/commands/${encodeURIComponent(args?.command as string)}`,
-          body: { args: args?.args },
         };
       case "get_plugin_manifest_info":
         return {
@@ -961,14 +1001,10 @@ export class RelayTransport implements Transport {
       case "get_plugin_view_data":
         return {
           method: "GET",
-          url: `/api/plugins/${encodeURIComponent(args?.name as string)}/views/${encodeURIComponent(args?.viewId as string)}`,
+          url: `/api/plugins/${encodeURIComponent(args?.pluginName as string)}/views/${encodeURIComponent(args?.viewId as string)}`,
         };
-      case "send_to_bg_process":
-        return {
-          method: "POST",
-          url: "/api/processes/background",
-          body: args,
-        };
+      case "send_to_background":
+        return { method: "POST", url: "/api/processes/background" };
       default:
         return { method: "GET", url: `/api/${command}` };
     }

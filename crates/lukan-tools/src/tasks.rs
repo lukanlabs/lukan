@@ -409,3 +409,196 @@ impl Tool for TaskUpdateTool {
         )))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── TaskStatus tests ─────────────────────────────────────────────
+
+    #[test]
+    fn task_status_marker_roundtrip() {
+        assert_eq!(TaskStatus::from_marker(" "), Some(TaskStatus::Pending));
+        assert_eq!(TaskStatus::from_marker("~"), Some(TaskStatus::InProgress));
+        assert_eq!(TaskStatus::from_marker("x"), Some(TaskStatus::Done));
+        assert_eq!(TaskStatus::from_marker("?"), None);
+        assert_eq!(TaskStatus::from_marker("X"), None);
+    }
+
+    #[test]
+    fn task_status_label_roundtrip() {
+        assert_eq!(TaskStatus::from_label("pending"), Some(TaskStatus::Pending));
+        assert_eq!(
+            TaskStatus::from_label("in_progress"),
+            Some(TaskStatus::InProgress)
+        );
+        assert_eq!(TaskStatus::from_label("done"), Some(TaskStatus::Done));
+        assert_eq!(TaskStatus::from_label("unknown"), None);
+        assert_eq!(TaskStatus::from_label(""), None);
+    }
+
+    #[test]
+    fn task_status_marker_values() {
+        assert_eq!(TaskStatus::Pending.marker(), " ");
+        assert_eq!(TaskStatus::InProgress.marker(), "~");
+        assert_eq!(TaskStatus::Done.marker(), "x");
+    }
+
+    #[test]
+    fn task_status_label_values() {
+        assert_eq!(TaskStatus::Pending.label(), "pending");
+        assert_eq!(TaskStatus::InProgress.label(), "in_progress");
+        assert_eq!(TaskStatus::Done.label(), "done");
+    }
+
+    #[test]
+    fn task_status_icon_values() {
+        // Just verify they return non-empty strings
+        assert!(!TaskStatus::Pending.icon().is_empty());
+        assert!(!TaskStatus::InProgress.icon().is_empty());
+        assert!(!TaskStatus::Done.icon().is_empty());
+    }
+
+    // ── parse_tasks tests ────────────────────────────────────────────
+
+    #[test]
+    fn parse_tasks_empty_content() {
+        assert!(parse_tasks("").is_empty());
+    }
+
+    #[test]
+    fn parse_tasks_no_task_lines() {
+        let content = "# Tasks\n\nSome random text\n";
+        assert!(parse_tasks(content).is_empty());
+    }
+
+    #[test]
+    fn parse_tasks_single_pending() {
+        let content = "- [ ] **1** — Implement feature X\n";
+        let tasks = parse_tasks(content);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, 1);
+        assert_eq!(tasks[0].title, "Implement feature X");
+        assert_eq!(tasks[0].status, TaskStatus::Pending);
+    }
+
+    #[test]
+    fn parse_tasks_all_statuses() {
+        let content = "\
+- [ ] **1** — Pending task
+- [~] **2** — In progress task
+- [x] **3** — Done task
+";
+        let tasks = parse_tasks(content);
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0].status, TaskStatus::Pending);
+        assert_eq!(tasks[1].status, TaskStatus::InProgress);
+        assert_eq!(tasks[2].status, TaskStatus::Done);
+    }
+
+    #[test]
+    fn parse_tasks_with_header_and_extra_lines() {
+        let content = "\
+# Tasks
+
+- [ ] **1** — First task
+- [x] **2** — Second task
+
+_No more tasks._
+";
+        let tasks = parse_tasks(content);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].id, 1);
+        assert_eq!(tasks[1].id, 2);
+    }
+
+    #[test]
+    fn parse_tasks_supports_dash_separator() {
+        // The regex supports em-dash, en-dash, and regular dash
+        let content = "- [ ] **1** - Task with dash\n";
+        let tasks = parse_tasks(content);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title, "Task with dash");
+    }
+
+    #[test]
+    fn parse_tasks_supports_en_dash() {
+        let content = "- [ ] **1** \u{2013} Task with en-dash\n";
+        let tasks = parse_tasks(content);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title, "Task with en-dash");
+    }
+
+    // ── format_tasks tests ───────────────────────────────────────────
+
+    #[test]
+    fn format_tasks_empty() {
+        let result = format_tasks(&[]);
+        assert!(result.contains("No tasks"));
+    }
+
+    #[test]
+    fn format_tasks_roundtrip() {
+        let entries = vec![
+            TaskEntry {
+                id: 1,
+                title: "First task".to_string(),
+                status: TaskStatus::Pending,
+            },
+            TaskEntry {
+                id: 2,
+                title: "Second task".to_string(),
+                status: TaskStatus::InProgress,
+            },
+            TaskEntry {
+                id: 3,
+                title: "Third task".to_string(),
+                status: TaskStatus::Done,
+            },
+        ];
+
+        let formatted = format_tasks(&entries);
+        let parsed = parse_tasks(&formatted);
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].id, 1);
+        assert_eq!(parsed[0].title, "First task");
+        assert_eq!(parsed[0].status, TaskStatus::Pending);
+        assert_eq!(parsed[1].id, 2);
+        assert_eq!(parsed[1].status, TaskStatus::InProgress);
+        assert_eq!(parsed[2].id, 3);
+        assert_eq!(parsed[2].status, TaskStatus::Done);
+    }
+
+    #[test]
+    fn format_tasks_contains_header() {
+        let entries = vec![TaskEntry {
+            id: 1,
+            title: "Task".to_string(),
+            status: TaskStatus::Pending,
+        }];
+        let result = format_tasks(&entries);
+        assert!(result.starts_with("# Tasks\n"));
+    }
+
+    // ── Tool metadata tests ──────────────────────────────────────────
+
+    #[test]
+    fn task_tools_have_correct_names() {
+        use crate::Tool;
+        assert_eq!(Tool::name(&TaskAddTool), "TaskAdd");
+        assert_eq!(Tool::name(&TaskListTool), "TaskList");
+        assert_eq!(Tool::name(&TaskUpdateTool), "TaskUpdate");
+    }
+
+    #[test]
+    fn task_tools_schemas_are_valid_objects() {
+        use crate::Tool;
+        for tool in [
+            TaskAddTool.input_schema(),
+            TaskListTool.input_schema(),
+            TaskUpdateTool.input_schema(),
+        ] {
+            assert_eq!(tool.get("type").and_then(|v| v.as_str()), Some("object"));
+        }
+    }
+}

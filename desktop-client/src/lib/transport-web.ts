@@ -17,6 +17,8 @@ const WS_COMMANDS = new Set([
   "create_agent_tab",
   "destroy_agent_tab",
   "rename_agent_tab",
+  "load_agent_tabs",
+  "save_agent_tabs",
   "send_to_background",
   // Terminal (Phase 3)
   "terminal_create",
@@ -24,6 +26,8 @@ const WS_COMMANDS = new Set([
   "terminal_resize",
   "terminal_destroy",
   "terminal_list",
+  "terminal_reconnect",
+  "terminal_rename",
 ]);
 
 // WS commands that return void (resolve immediately after sending)
@@ -43,6 +47,7 @@ const WS_VOID_COMMANDS = new Set([
   "terminal_input",
   "terminal_resize",
   "terminal_destroy",
+  "terminal_rename",
 ]);
 
 // Commands handled entirely in the browser
@@ -411,6 +416,8 @@ export class WebTransport implements Transport {
       if (this.token) {
         ws.send(JSON.stringify({ type: "auth", token: this.token }));
       }
+      // Request terminal list so orphaned tmux sessions can be recovered
+      ws.send(JSON.stringify({ type: "terminal_list" }));
     };
 
     ws.onmessage = (event) => {
@@ -516,6 +523,16 @@ export class WebTransport implements Transport {
       return;
     }
 
+    // Agent tabs loaded/saved
+    if (type === "agent_tabs_loaded") {
+      this.resolvePending("load_agent_tabs", msg.state);
+      return;
+    }
+    if (type === "agent_tabs_saved") {
+      this.resolvePending("save_agent_tabs", undefined);
+      return;
+    }
+
     // Session list
     if (type === "session_list") {
       this.resolvePending("list_sessions", msg.sessions);
@@ -542,15 +559,24 @@ export class WebTransport implements Transport {
 
     // Terminal (Phase 3)
     if (type === "terminal_created") {
-      this.resolvePending("terminal_create", {
+      const info = {
         id: msg.id,
         cols: msg.cols,
         rows: msg.rows,
-      });
+        scrollback: msg.scrollback ?? undefined,
+      };
+      // If there's scrollback, this is a reconnect response — resolve as terminal_reconnect
+      if (msg.scrollback) {
+        this.resolvePending("terminal_reconnect", info);
+      } else {
+        this.resolvePending("terminal_create", info);
+      }
       return;
     }
     if (type === "terminal_sessions") {
       this.resolvePending("terminal_list", msg.sessions);
+      // Also dispatch so hooks can react to recovered sessions on reconnect
+      this.dispatch("terminal-sessions-recovered", msg.sessions);
       return;
     }
     if (type === "terminal_output") {
@@ -652,6 +678,10 @@ export class WebTransport implements Transport {
         return { type: "destroy_agent_tab", sessionId: args?.sessionId };
       case "rename_agent_tab":
         return { type: "rename_agent_tab", sessionId: args?.sessionId, label: args?.label };
+      case "load_agent_tabs":
+        return { type: "load_agent_tabs" };
+      case "save_agent_tabs":
+        return { type: "save_agent_tabs", state: args?.state };
       case "send_to_background":
         return { type: "send_to_background", sessionId: args?.sessionId };
       // Terminal (Phase 3)
@@ -679,6 +709,10 @@ export class WebTransport implements Transport {
         return { type: "terminal_destroy", sessionId: args?.sessionId };
       case "terminal_list":
         return { type: "terminal_list" };
+      case "terminal_reconnect":
+        return { type: "terminal_reconnect", sessionId: args?.sessionId };
+      case "terminal_rename":
+        return { type: "terminal_rename", sessionId: args?.sessionId, name: args?.name };
       default:
         throw new Error(`Unknown WS command: ${command}`);
     }
@@ -961,6 +995,17 @@ export class WebTransport implements Transport {
           : "";
         return { method: "GET", url: `/api/files${qs}` };
       }
+      case "read_file":
+        return {
+          method: "GET",
+          url: `/api/files/read?path=${encodeURIComponent(args?.path as string)}`,
+        };
+      case "write_file":
+        return {
+          method: "PUT",
+          url: "/api/files/write",
+          body: { path: args?.path, content: args?.content },
+        };
       case "get_cwd":
         return { method: "GET", url: "/api/cwd" };
 

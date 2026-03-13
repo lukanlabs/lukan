@@ -706,3 +706,355 @@ struct OpenAiPromptTokensDetails {
     #[serde(default)]
     cached_tokens: Option<u64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lukan_core::models::messages::{ContentBlock, ImageSource, Message, MessageContent, Role};
+    use lukan_core::models::tools::ToolDefinition;
+    use serde_json::json;
+
+    fn make_base(strip_schema: bool) -> OpenAiCompatBase {
+        OpenAiCompatBase::new(OpenAiCompatConfig {
+            base_url: "http://localhost:8080/v1".into(),
+            api_key: "test".into(),
+            model: "test-model".into(),
+            max_tokens: 4096,
+            extra_headers: HashMap::new(),
+            use_think_tags: false,
+            strip_schema,
+            supports_images: true,
+        })
+    }
+
+    // ── normalize_base_url ────────────────────────────────────────────
+
+    #[test]
+    fn normalize_strips_v1_chat_completions() {
+        assert_eq!(
+            normalize_base_url("http://host:8080/v1/chat/completions"),
+            "http://host:8080/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_v1_completions() {
+        assert_eq!(
+            normalize_base_url("http://host:8080/v1/completions"),
+            "http://host:8080/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_v1_messages() {
+        assert_eq!(
+            normalize_base_url("http://host:8080/v1/messages"),
+            "http://host:8080/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_v1_responses() {
+        assert_eq!(
+            normalize_base_url("http://host:8080/v1/responses"),
+            "http://host:8080/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_bare_chat_completions() {
+        assert_eq!(
+            normalize_base_url("http://host:8080/chat/completions"),
+            "http://host:8080"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_bare_messages() {
+        assert_eq!(
+            normalize_base_url("http://host:8080/messages"),
+            "http://host:8080"
+        );
+    }
+
+    #[test]
+    fn normalize_preserves_v1_only() {
+        assert_eq!(
+            normalize_base_url("http://host:8080/v1"),
+            "http://host:8080/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_trailing_slash() {
+        assert_eq!(
+            normalize_base_url("http://host:8080/v1/"),
+            "http://host:8080/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_handles_empty() {
+        assert_eq!(normalize_base_url(""), "");
+        assert_eq!(normalize_base_url("  "), "");
+    }
+
+    #[test]
+    fn normalize_handles_whitespace() {
+        assert_eq!(
+            normalize_base_url("  http://host:8080/v1/chat/completions  "),
+            "http://host:8080/v1"
+        );
+    }
+
+    // ── build_system_content ──────────────────────────────────────────
+
+    #[test]
+    fn build_system_content_text() {
+        let content =
+            OpenAiCompatBase::build_system_content(&SystemPrompt::Text("system msg".into()));
+        assert_eq!(content, "system msg");
+    }
+
+    #[test]
+    fn build_system_content_structured() {
+        let content = OpenAiCompatBase::build_system_content(&SystemPrompt::Structured {
+            cached: vec!["part1".into(), "part2".into()],
+            dynamic: "dynamic".into(),
+        });
+        assert_eq!(content, "part1\n\npart2\n\ndynamic");
+    }
+
+    #[test]
+    fn build_system_content_structured_empty_dynamic() {
+        let content = OpenAiCompatBase::build_system_content(&SystemPrompt::Structured {
+            cached: vec!["only".into()],
+            dynamic: String::new(),
+        });
+        assert_eq!(content, "only");
+    }
+
+    // ── convert_messages ──────────────────────────────────────────────
+
+    #[test]
+    fn convert_messages_basic_user_assistant() {
+        let base = make_base(false);
+        let msgs = vec![Message::user("hi"), Message::assistant("hello")];
+        let result = base.convert_messages("sys", &msgs);
+        // System + user + assistant = 3
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0]["role"], "system");
+        assert_eq!(result[0]["content"], "sys");
+        assert_eq!(result[1]["role"], "user");
+        assert_eq!(result[1]["content"], "hi");
+        assert_eq!(result[2]["role"], "assistant");
+        assert_eq!(result[2]["content"], "hello");
+    }
+
+    #[test]
+    fn convert_messages_tool_role() {
+        let base = make_base(false);
+        let msgs = vec![Message {
+            role: Role::Tool,
+            content: MessageContent::Text("output".into()),
+            tool_call_id: Some("call_1".into()),
+            name: None,
+        }];
+        let result = base.convert_messages("sys", &msgs);
+        assert_eq!(result[1]["role"], "tool");
+        assert_eq!(result[1]["tool_call_id"], "call_1");
+        assert_eq!(result[1]["content"], "output");
+    }
+
+    #[test]
+    fn convert_messages_assistant_with_tool_calls() {
+        let base = make_base(false);
+        let msgs = vec![Message::assistant_blocks(vec![
+            ContentBlock::Text {
+                text: "Let me check".into(),
+            },
+            ContentBlock::ToolUse {
+                id: "call_1".into(),
+                name: "bash".into(),
+                input: json!({"command": "ls"}),
+            },
+        ])];
+        let result = base.convert_messages("sys", &msgs);
+        let assistant = &result[1];
+        assert_eq!(assistant["role"], "assistant");
+        assert_eq!(assistant["content"], "Let me check");
+        let tool_calls = assistant["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], "call_1");
+        assert_eq!(tool_calls[0]["type"], "function");
+        assert_eq!(tool_calls[0]["function"]["name"], "bash");
+    }
+
+    #[test]
+    fn convert_messages_user_blocks_with_only_tool_results() {
+        let base = make_base(false);
+        let msgs = vec![Message {
+            role: Role::User,
+            content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                tool_use_id: "call_1".into(),
+                content: "result text".into(),
+                is_error: None,
+                diff: None,
+                image: None,
+            }]),
+            tool_call_id: None,
+            name: None,
+        }];
+        let result = base.convert_messages("sys", &msgs);
+        // System + tool message (not user, because all blocks are tool results)
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[1]["role"], "tool");
+        assert_eq!(result[1]["tool_call_id"], "call_1");
+    }
+
+    // ── convert_user_blocks ───────────────────────────────────────────
+
+    #[test]
+    fn convert_user_blocks_image_url() {
+        let base = make_base(false);
+        let blocks = vec![ContentBlock::Image {
+            source: ImageSource::Url,
+            data: "https://example.com/img.png".into(),
+            media_type: None,
+        }];
+        let result = base.convert_user_blocks(&blocks);
+        assert_eq!(result[0]["type"], "image_url");
+        assert_eq!(result[0]["image_url"]["url"], "https://example.com/img.png");
+    }
+
+    #[test]
+    fn convert_user_blocks_image_base64() {
+        let base = make_base(false);
+        let blocks = vec![ContentBlock::Image {
+            source: ImageSource::Base64,
+            data: "abc123".into(),
+            media_type: Some("image/png".into()),
+        }];
+        let result = base.convert_user_blocks(&blocks);
+        assert_eq!(result[0]["type"], "image_url");
+        assert!(
+            result[0]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,abc123")
+        );
+    }
+
+    // ── convert_tools ─────────────────────────────────────────────────
+
+    #[test]
+    fn convert_tools_format() {
+        let base = make_base(false);
+        let tools = vec![ToolDefinition {
+            name: "bash".into(),
+            description: "Run shell commands".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "command": { "type": "string" } }
+            }),
+        }];
+        let result = base.convert_tools(&tools);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["type"], "function");
+        assert_eq!(result[0]["function"]["name"], "bash");
+        assert_eq!(result[0]["function"]["description"], "Run shell commands");
+        assert_eq!(
+            result[0]["function"]["parameters"]["properties"]["command"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn convert_tools_strips_schema_when_configured() {
+        let base = make_base(true);
+        let tools = vec![ToolDefinition {
+            name: "test".into(),
+            description: "test".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "val": { "type": "string", "minLength": 1, "pattern": "^[a-z]$" }
+                }
+            }),
+        }];
+        let result = base.convert_tools(&tools);
+        let params = &result[0]["function"]["parameters"];
+        // minLength and pattern should be stripped
+        assert!(params["properties"]["val"].get("minLength").is_none());
+        assert!(params["properties"]["val"].get("pattern").is_none());
+        // type should remain
+        assert_eq!(params["properties"]["val"]["type"], "string");
+    }
+
+    #[test]
+    fn convert_tools_preserves_schema_when_not_stripping() {
+        let base = make_base(false);
+        let tools = vec![ToolDefinition {
+            name: "test".into(),
+            description: "test".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "val": { "type": "string", "minLength": 1 }
+                }
+            }),
+        }];
+        let result = base.convert_tools(&tools);
+        let params = &result[0]["function"]["parameters"];
+        assert_eq!(params["properties"]["val"]["minLength"], 1);
+    }
+
+    // ── OpenAI chunk deserialization ──────────────────────────────────
+
+    #[test]
+    fn deserialize_openai_chunk_text_delta() {
+        let data = r#"{"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}"#;
+        let chunk: OpenAiChunk = serde_json::from_str(data).unwrap();
+        assert_eq!(chunk.choices.len(), 1);
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("Hello"));
+        assert!(chunk.choices[0].finish_reason.is_none());
+    }
+
+    #[test]
+    fn deserialize_openai_chunk_tool_call() {
+        let data = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"bash","arguments":"{\"cmd\":"}}]},"finish_reason":null}]}"#;
+        let chunk: OpenAiChunk = serde_json::from_str(data).unwrap();
+        let tc = &chunk.choices[0].delta.tool_calls.as_ref().unwrap()[0];
+        assert_eq!(tc.index, 0);
+        assert_eq!(tc.id.as_deref(), Some("call_1"));
+        assert_eq!(tc.function.as_ref().unwrap().name.as_deref(), Some("bash"));
+    }
+
+    #[test]
+    fn deserialize_openai_chunk_usage() {
+        let data = r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":25}}}"#;
+        let chunk: OpenAiChunk = serde_json::from_str(data).unwrap();
+        let usage = chunk.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, Some(100));
+        assert_eq!(usage.completion_tokens, Some(50));
+        assert_eq!(usage.prompt_tokens_details.unwrap().cached_tokens, Some(25));
+    }
+
+    #[test]
+    fn deserialize_openai_chunk_finish_reason() {
+        let data = r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#;
+        let chunk: OpenAiChunk = serde_json::from_str(data).unwrap();
+        assert_eq!(chunk.choices[0].finish_reason.as_deref(), Some("stop"));
+    }
+
+    #[test]
+    fn deserialize_openai_chunk_reasoning_content() {
+        let data =
+            r#"{"choices":[{"delta":{"reasoning_content":"thinking..."},"finish_reason":null}]}"#;
+        let chunk: OpenAiChunk = serde_json::from_str(data).unwrap();
+        assert_eq!(
+            chunk.choices[0].delta.reasoning_content.as_deref(),
+            Some("thinking...")
+        );
+    }
+}

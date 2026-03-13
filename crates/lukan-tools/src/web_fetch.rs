@@ -218,3 +218,137 @@ fn strip_html(html: &str) -> String {
 
     result.trim().to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_private_host tests ────────────────────────────────────────
+
+    #[test]
+    fn blocks_localhost() {
+        assert!(is_private_host("localhost"));
+    }
+
+    #[test]
+    fn blocks_loopback_ipv4() {
+        assert!(is_private_host("127.0.0.1"));
+    }
+
+    #[test]
+    fn blocks_loopback_ipv6() {
+        assert!(is_private_host("::1"));
+    }
+
+    #[test]
+    fn blocks_unspecified_ipv4() {
+        assert!(is_private_host("0.0.0.0"));
+    }
+
+    #[test]
+    fn blocks_private_ipv4_ranges() {
+        assert!(is_private_host("10.0.0.1"));
+        assert!(is_private_host("172.16.0.1"));
+        assert!(is_private_host("192.168.1.1"));
+    }
+
+    #[test]
+    fn blocks_link_local() {
+        assert!(is_private_host("169.254.1.1"));
+    }
+
+    #[test]
+    fn allows_public_hosts() {
+        assert!(!is_private_host("example.com"));
+        assert!(!is_private_host("8.8.8.8"));
+        assert!(!is_private_host("1.1.1.1"));
+        assert!(!is_private_host("93.184.216.34"));
+    }
+
+    #[test]
+    fn allows_non_ip_hostnames() {
+        assert!(!is_private_host("api.github.com"));
+        assert!(!is_private_host("docs.rs"));
+    }
+
+    // ── strip_html tests ─────────────────────────────────────────────
+
+    #[test]
+    fn strip_html_plain_text() {
+        assert_eq!(strip_html("hello world"), "hello world");
+    }
+
+    #[test]
+    fn strip_html_removes_tags() {
+        assert_eq!(strip_html("<p>hello</p>"), "hello");
+        assert_eq!(strip_html("<b>bold</b> text"), "bold text");
+    }
+
+    #[test]
+    fn strip_html_removes_script() {
+        let html = "<p>before</p><script>alert('xss')</script><p>after</p>";
+        let result = strip_html(html);
+        assert!(result.contains("before"));
+        assert!(result.contains("after"));
+        assert!(!result.contains("alert"));
+    }
+
+    #[test]
+    fn strip_html_removes_style() {
+        let html = "<style>body { color: red; }</style><p>content</p>";
+        let result = strip_html(html);
+        assert_eq!(result, "content");
+    }
+
+    #[test]
+    fn strip_html_decodes_entities() {
+        assert_eq!(strip_html("&amp;"), "&");
+        assert_eq!(strip_html("&lt;"), "<");
+        assert_eq!(strip_html("&gt;"), ">");
+        assert_eq!(strip_html("&quot;"), "\"");
+        assert_eq!(strip_html("&nbsp;"), ""); // nbsp becomes space, then trim
+    }
+
+    #[test]
+    fn strip_html_collapses_whitespace() {
+        let html = "hello    world\n\n\nfoo";
+        let result = strip_html(html);
+        assert_eq!(result, "hello world foo");
+    }
+
+    #[test]
+    fn strip_html_empty_input() {
+        assert_eq!(strip_html(""), "");
+    }
+
+    #[test]
+    fn strip_html_nested_tags() {
+        let html = "<div><span><a href='x'>link text</a></span></div>";
+        assert_eq!(strip_html(html), "link text");
+    }
+
+    #[test]
+    fn strip_html_preserves_text_between_tags() {
+        let html = "<h1>Title</h1><p>Paragraph 1</p><p>Paragraph 2</p>";
+        let result = strip_html(html);
+        assert!(result.contains("Title"));
+        assert!(result.contains("Paragraph 1"));
+        assert!(result.contains("Paragraph 2"));
+    }
+
+    // ── Tool metadata tests ──────────────────────────────────────────
+
+    #[test]
+    fn web_fetch_tool_name() {
+        use crate::Tool;
+        assert_eq!(Tool::name(&WebFetchTool), "WebFetch");
+    }
+
+    #[test]
+    fn web_fetch_schema_requires_url() {
+        let schema = WebFetchTool.input_schema();
+        let required = schema["required"].as_array().unwrap();
+        let required_strs: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(required_strs.contains(&"url"));
+    }
+}

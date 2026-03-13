@@ -11,24 +11,58 @@ use crate::state::{DaemonConnection, RelayState};
 
 /// Handle a daemon WebSocket connection.
 ///
-/// The daemon authenticates via JWT in the `?token=` query parameter.
+/// The daemon authenticates via JWT in the `Authorization: Bearer` header.
 /// After connecting, the daemon sends a `Register` message and then
 /// begins forwarding messages between the relay and the agent loop.
 pub async fn handle_daemon_ws(socket: WebSocket, state: Arc<RelayState>, user_id: String) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
-    info!(user_id = %user_id, "Daemon connected");
+    info!(user_id = %user_id, "Daemon connected (awaiting Register)");
 
-    // Register daemon connection (replaces any existing one for this user)
-    state.daemon_connections.insert(
-        user_id.clone(),
+    // Wait for the Register message to get device_name and system info
+    let device_name: String;
+    let os: Option<String>;
+    let version: Option<String>;
+    loop {
+        match ws_rx.next().await {
+            Some(Ok(Message::Text(text))) => {
+                if let Ok(DaemonToRelay::Register {
+                    user_id: _,
+                    device_name: name,
+                    os: reg_os,
+                    version: reg_version,
+                }) = serde_json::from_str(&text)
+                {
+                    device_name = name;
+                    os = reg_os;
+                    version = reg_version;
+                    break;
+                }
+            }
+            Some(Ok(Message::Close(_))) | None => {
+                info!(user_id = %user_id, "Daemon disconnected before registering");
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    // Register daemon under user_id + device_name
+    state.register_daemon(
+        &user_id,
+        &device_name,
         DaemonConnection {
             user_id: user_id.clone(),
-            device_name: "unknown".into(),
+            device_name: device_name.clone(),
             tx,
+            connected_at: tokio::time::Instant::now(),
+            os,
+            version,
         },
     );
+
+    info!(user_id = %user_id, device = %device_name, "Daemon registered");
 
     // Spawn writer: relay → daemon
     let user_id_writer = user_id.clone();
@@ -46,22 +80,24 @@ pub async fn handle_daemon_ws(socket: WebSocket, state: Arc<RelayState>, user_id
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
             Message::Text(text) => {
-                handle_daemon_message(&state, &user_id, &text);
+                handle_daemon_message(&state, &user_id, &device_name, &text);
             }
             Message::Close(_) => break,
             _ => {}
         }
     }
 
-    // Cleanup: remove daemon connection
-    state.daemon_connections.remove(&user_id);
+    // Cleanup: remove this specific daemon
+    state.remove_daemon(&user_id, &device_name);
     writer_task.abort();
 
-    // Notify all browser connections for this user that daemon is gone
+    // Notify browser connections for this user+device that daemon is gone
     let browser_ids: Vec<String> = state
         .browser_connections
         .iter()
-        .filter(|entry| entry.value().user_id == user_id)
+        .filter(|entry| {
+            entry.value().user_id == user_id && entry.value().device_name == device_name
+        })
         .map(|entry| entry.key().clone())
         .collect();
 
@@ -73,11 +109,11 @@ pub async fn handle_daemon_ws(socket: WebSocket, state: Arc<RelayState>, user_id
         state.send_to_browser(&conn_id, &err.to_string());
     }
 
-    info!(user_id = %user_id, "Daemon disconnected");
+    info!(user_id = %user_id, device = %device_name, "Daemon disconnected");
 }
 
 /// Process a message from the daemon.
-fn handle_daemon_message(state: &RelayState, user_id: &str, text: &str) {
+fn handle_daemon_message(state: &RelayState, user_id: &str, device_name: &str, text: &str) {
     let msg: DaemonToRelay = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(e) => {
@@ -87,23 +123,13 @@ fn handle_daemon_message(state: &RelayState, user_id: &str, text: &str) {
     };
 
     match msg {
-        DaemonToRelay::Register {
-            user_id: _,
-            device_name,
-        } => {
-            // Update device name
-            if let Some(mut conn) = state.daemon_connections.get_mut(user_id) {
-                conn.device_name = device_name.clone();
-            }
-            info!(user_id = %user_id, device = %device_name, "Daemon registered");
+        DaemonToRelay::Register { .. } => {
+            // Already handled before entering message loop
         }
         DaemonToRelay::Forward {
             connection_id,
             message,
         } => {
-            // Route server message to the specific browser connection,
-            // but ONLY if that connection belongs to the same user.
-            // This prevents a compromised daemon from sending to another user's browser.
             let json = serde_json::to_string(&message).unwrap_or_default();
             if !state.send_to_browser_if_owned(&connection_id, user_id, &json) {
                 warn!(
@@ -118,7 +144,6 @@ fn handle_daemon_message(state: &RelayState, user_id: &str, text: &str) {
             headers,
             body,
         } => {
-            // Complete the pending REST tunnel request
             if let Some((_, pending)) = state.pending_rest.remove(&request_id) {
                 let _ = pending.tx.send(crate::state::RestTunnelResponse {
                     status,
@@ -130,11 +155,8 @@ fn handle_daemon_message(state: &RelayState, user_id: &str, text: &str) {
             }
         }
         DaemonToRelay::Ping => {
-            // Respond with pong via the daemon connection
-            if let Some(conn) = state.daemon_connections.get(user_id) {
-                let pong = serde_json::json!({"type": "pong"});
-                let _ = conn.tx.send(pong.to_string());
-            }
+            let pong = serde_json::json!({"type": "pong"});
+            state.send_to_daemon(user_id, device_name, &pong.to_string());
         }
     }
 }

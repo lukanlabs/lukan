@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { AppConfig, ProviderInfo } from "../../lib/types";
+import type { AppConfig, McpServerConfig, ProviderInfo } from "../../lib/types";
 import {
   getConfig,
   saveConfig,
@@ -24,6 +24,10 @@ import {
   Hash,
   Link,
   Lock,
+  Plus,
+  Trash2,
+  Plug,
+  Terminal,
 } from "lucide-react";
 
 const TIMEZONES = [
@@ -465,7 +469,218 @@ export default function ConfigTab() {
             </Field>
           </Section>
         )}
+
+        {/* MCP Servers Section */}
+        <McpServersSection
+          servers={config.mcpServers ?? {}}
+          onChange={(servers) => update({ mcpServers: Object.keys(servers).length > 0 ? servers : undefined })}
+        />
       </div>
     </div>
+  );
+}
+
+/* ── MCP Servers Section ─────────────────────────────────────────── */
+
+function McpServersSection({
+  servers,
+  onChange,
+}: {
+  servers: Record<string, McpServerConfig>;
+  onChange: (servers: Record<string, McpServerConfig>) => void;
+}) {
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [newName, setNewName] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+
+  const entries = Object.entries(servers);
+  const serverCount = entries.length;
+
+  const addServer = () => {
+    const name = newName.trim();
+    if (!name || servers[name]) return;
+    onChange({ ...servers, [name]: { command: "", args: [], env: {} } });
+    setNewName("");
+    setShowAdd(false);
+    setEditingName(name);
+  };
+
+  const removeServer = (name: string) => {
+    const next = { ...servers };
+    delete next[name];
+    onChange(next);
+    if (editingName === name) setEditingName(null);
+  };
+
+  const updateServer = (name: string, patch: Partial<McpServerConfig>) => {
+    onChange({ ...servers, [name]: { ...servers[name], ...patch } });
+  };
+
+  return (
+    <Section
+      icon={<Plug size={15} />}
+      title="MCP Servers"
+      description="External tool servers (Model Context Protocol)"
+      actions={
+        <span
+          className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+          style={{
+            background: serverCount > 0 ? "rgba(96,165,250,0.1)" : "rgba(255,255,255,0.04)",
+            color: serverCount > 0 ? "#60a5fa" : "#52525b",
+            border: serverCount > 0 ? "1px solid rgba(96,165,250,0.2)" : "1px solid rgba(63,63,70,0.3)",
+          }}
+        >
+          {serverCount} {serverCount === 1 ? "server" : "servers"}
+        </span>
+      }
+    >
+      {/* Server list */}
+      {entries.map(([name, cfg]) => (
+        <div
+          key={name}
+          className="rounded-lg overflow-hidden"
+          style={{
+            background: "rgba(24, 24, 27, 0.5)",
+            border: editingName === name ? "1px solid rgba(96,165,250,0.3)" : "1px solid rgba(63, 63, 70, 0.25)",
+          }}
+        >
+          {/* Server header row */}
+          <div
+            className="flex items-center justify-between px-3.5 py-2.5 cursor-pointer"
+            style={{ borderBottom: editingName === name ? "1px solid rgba(63, 63, 70, 0.2)" : "none" }}
+            onClick={() => setEditingName(editingName === name ? null : name)}
+          >
+            <div className="flex items-center gap-2">
+              <Terminal size={12} style={{ color: "#71717a" }} />
+              <span className="text-xs font-semibold" style={{ color: "#fafafa" }}>{name}</span>
+              <span className="text-[10px]" style={{ color: "#52525b" }}>
+                {cfg.command || "(not configured)"}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={(e) => { e.stopPropagation(); removeServer(name); }}
+                className="flex items-center p-1 rounded cursor-pointer border-none transition-all"
+                style={{ background: "transparent", color: "#52525b" }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = "#fb7185"; e.currentTarget.style.background = "rgba(251,113,133,0.1)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = "#52525b"; e.currentTarget.style.background = "transparent"; }}
+                title="Remove server"
+              >
+                <Trash2 size={12} />
+              </button>
+              <ChevronDown
+                size={12}
+                style={{
+                  color: "#52525b",
+                  transform: editingName === name ? "rotate(180deg)" : "none",
+                  transition: "transform 0.15s",
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Expanded edit form */}
+          {editingName === name && (
+            <div className="p-3.5 flex flex-col gap-3">
+              <Field label="Command" icon={<Terminal size={10} />}>
+                <StyledInput
+                  value={cfg.command}
+                  placeholder="npx, node, python, etc."
+                  onChange={(e) => updateServer(name, { command: e.target.value })}
+                />
+              </Field>
+              <Field label="Arguments" hint="Space-separated">
+                <StyledInput
+                  value={(cfg.args ?? []).join(" ")}
+                  placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    updateServer(name, { args: val ? val.split(" ") : [] });
+                  }}
+                />
+              </Field>
+              <Field label="Environment" hint="KEY=VALUE, one per line">
+                <textarea
+                  value={Object.entries(cfg.env ?? {}).map(([k, v]) => `${k}=${v}`).join("\n")}
+                  placeholder={"API_KEY=sk-...\nDEBUG=1"}
+                  rows={2}
+                  onChange={(e) => {
+                    const env: Record<string, string> = {};
+                    for (const line of e.target.value.split("\n")) {
+                      const idx = line.indexOf("=");
+                      if (idx > 0) {
+                        env[line.slice(0, idx).trim()] = line.slice(idx + 1);
+                      }
+                    }
+                    updateServer(name, { env });
+                  }}
+                  className="w-full px-3 py-2 rounded-lg text-sm outline-none transition-all resize-none font-mono"
+                  style={{
+                    background: "rgba(24, 24, 27, 0.8)",
+                    border: "1px solid rgba(63, 63, 70, 0.4)",
+                    color: "#fafafa",
+                    fontSize: "12px",
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = "rgba(113, 113, 122, 0.6)";
+                    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(113, 113, 122, 0.1)";
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = "rgba(63, 63, 70, 0.4)";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                />
+              </Field>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {/* Add server row */}
+      {showAdd ? (
+        <div className="flex items-center gap-2">
+          <StyledInput
+            value={newName}
+            placeholder="Server name (e.g. filesystem)"
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addServer(); if (e.key === "Escape") { setShowAdd(false); setNewName(""); } }}
+            autoFocus
+          />
+          <button
+            onClick={addServer}
+            disabled={!newName.trim() || !!servers[newName.trim()]}
+            className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium cursor-pointer border-none whitespace-nowrap transition-all"
+            style={{
+              background: newName.trim() && !servers[newName.trim()] ? "rgba(96,165,250,0.15)" : "rgba(255,255,255,0.04)",
+              color: newName.trim() && !servers[newName.trim()] ? "#60a5fa" : "#52525b",
+              border: "1px solid rgba(63,63,70,0.3)",
+            }}
+          >
+            Add
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setShowAdd(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none transition-all self-start"
+          style={{
+            background: "rgba(96,165,250,0.1)",
+            color: "#60a5fa",
+            border: "1px solid rgba(96,165,250,0.15)",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(96,165,250,0.2)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(96,165,250,0.1)"; }}
+        >
+          <Plus size={12} />
+          Add Server
+        </button>
+      )}
+
+      {serverCount === 0 && !showAdd && (
+        <p className="text-[11px]" style={{ color: "#3f3f46" }}>
+          MCP servers provide external tools to the agent. Add a server to get started.
+        </p>
+      )}
+    </Section>
   );
 }

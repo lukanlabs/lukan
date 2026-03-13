@@ -16,7 +16,7 @@ use lukan_core::relay::{DaemonToRelay, RelayConfig, RelayToDaemon};
 /// Relay bridge: connects the local daemon to the cloud relay server.
 ///
 /// The bridge:
-/// 1. Connects outbound to `wss://relay/ws/daemon?token=jwt`
+/// 1. Connects outbound to `wss://relay/ws/daemon` with `Authorization: Bearer` header
 /// 2. Sends a `Register` message
 /// 3. Forwards `RelayToDaemon::Forward` → local WebSocket (per connection)
 /// 4. Forwards `RelayToDaemon::RestRequest` → local HTTP
@@ -103,24 +103,52 @@ async fn connect_and_run(
         .relay_url
         .replace("https://", "wss://")
         .replace("http://", "ws://");
-    let ws_url = format!(
-        "{}/ws/daemon?token={}",
-        base.trim_end_matches('/'),
-        urlencoding::encode(&config.jwt_token)
-    );
+    let ws_url = format!("{}/ws/daemon", base.trim_end_matches('/'));
 
-    let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)
-        .await
-        .context("Failed to connect to relay")?;
+    // Send JWT via Authorization header instead of query string
+    // to prevent token leakage in server logs, proxy logs, and browser history
+    let request = tungstenite::http::Request::builder()
+        .uri(&ws_url)
+        .header("authorization", format!("Bearer {}", config.jwt_token))
+        .header(
+            "sec-websocket-key",
+            tungstenite::handshake::client::generate_key(),
+        )
+        .header("sec-websocket-version", "13")
+        .header("connection", "Upgrade")
+        .header("upgrade", "websocket")
+        .header(
+            "host",
+            tungstenite::http::Uri::try_from(&ws_url)
+                .ok()
+                .and_then(|u| u.host().map(|h| h.to_string()))
+                .unwrap_or_else(|| "localhost".to_string()),
+        )
+        .body(())
+        .context("Failed to build WebSocket request")?;
+
+    let ws_config = tungstenite::protocol::WebSocketConfig::default()
+        .max_frame_size(Some(64 * 1024 * 1024))
+        .max_message_size(Some(64 * 1024 * 1024));
+    let (ws_stream, _) =
+        tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false)
+            .await
+            .context("Failed to connect to relay")?;
 
     info!("Connected to relay server");
 
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
-    // Send Register message
+    // Send Register message with system info
     let register = serde_json::to_string(&DaemonToRelay::Register {
         user_id: config.user_id.clone(),
         device_name: hostname(),
+        os: Some(format!(
+            "{} {}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )),
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
     })?;
     ws_tx
         .send(tungstenite::Message::Text(register.into()))
@@ -137,11 +165,25 @@ async fn connect_and_run(
     // Channel for daemon → relay messages (responses from local processing)
     let (response_tx, mut response_rx) = mpsc::unbounded_channel::<String>();
 
+    // Spawn a dedicated writer task so large messages don't block the main
+    // select! loop (which must keep processing incoming relay messages and pings).
+    // Use a bounded channel for write requests so backpressure is applied
+    // to per-connection tasks rather than stalling the reader.
+    let (write_tx, mut write_rx) = mpsc::channel::<tungstenite::Message>(64);
+    let writer_task = tokio::spawn(async move {
+        while let Some(msg) = write_rx.recv().await {
+            if ws_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+        let _ = ws_tx.close().await;
+    });
+
     // Reset backoff on successful connection
     let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
     ping_interval.tick().await; // skip first tick
 
-    loop {
+    let result = loop {
         tokio::select! {
             // Incoming message from relay
             msg = ws_rx.next() => {
@@ -157,10 +199,10 @@ async fn connect_and_run(
                     }
                     Some(Ok(tungstenite::Message::Close(_))) | None => {
                         info!("Relay connection closed");
-                        return Err(anyhow::anyhow!("Connection closed"));
+                        break Err(anyhow::anyhow!("Connection closed"));
                     }
                     Some(Err(e)) => {
-                        return Err(anyhow::anyhow!("WebSocket error: {e}"));
+                        break Err(anyhow::anyhow!("WebSocket error: {e}"));
                     }
                     _ => {}
                 }
@@ -168,26 +210,43 @@ async fn connect_and_run(
 
             // Outgoing message to relay (forwarded responses)
             Some(msg) = response_rx.recv() => {
-                if ws_tx.send(tungstenite::Message::Text(msg.into())).await.is_err() {
-                    return Err(anyhow::anyhow!("Failed to send to relay"));
+                if write_tx.send(tungstenite::Message::Text(msg.into())).await.is_err() {
+                    break Err(anyhow::anyhow!("Failed to send to relay"));
                 }
             }
 
             // Periodic ping
             _ = ping_interval.tick() => {
                 let ping = serde_json::to_string(&DaemonToRelay::Ping).unwrap();
-                if ws_tx.send(tungstenite::Message::Text(ping.into())).await.is_err() {
-                    return Err(anyhow::anyhow!("Ping failed"));
+                if write_tx.send(tungstenite::Message::Text(ping.into())).await.is_err() {
+                    break Err(anyhow::anyhow!("Ping failed"));
                 }
             }
 
             // Shutdown signal
             _ = shutdown_rx.recv() => {
-                let _ = ws_tx.close().await;
+                drop(write_tx);
+                let _ = writer_task.await;
                 return Ok(());
             }
         }
+    };
+
+    // Cleanup: close all local WS connections so the daemon's ws_handler
+    // runs its disconnect handler (which saves sessions). Without this,
+    // forwarding tasks hang indefinitely after a relay disconnect — their
+    // rx.recv() never returns None because the Arc<HashMap> keeps tx alive.
+    {
+        let mut conns = local_connections.lock().await;
+        for (conn_id, conn) in conns.drain() {
+            info!(connection_id = %conn_id, "Closing local WS on relay disconnect");
+            conn.task.abort();
+        }
     }
+
+    drop(write_tx);
+    writer_task.abort();
+    result
 }
 
 // ── E2E encryption state machine ──────────────────────────────

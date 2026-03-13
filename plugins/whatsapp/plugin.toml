@@ -96,11 +96,12 @@ valid_values = [
   "CalendarList", "CalendarCreate", "CalendarUpdate",
   "DocsRead", "DocsCreate", "DocsUpdate",
   "DriveList", "DriveDownload",
+  "WhatsAppSend", "WhatsAppSendMedia", "WhatsAppListChats", "WhatsAppReadMessages", "WhatsAppSearchContacts",
 ]
 
 # Security policy — generic protocol
 [security]
-default_tools = ["Grep", "Glob", "ReadFiles", "WebFetch"]
+default_tools = ["Grep", "Glob", "ReadFiles", "WebFetch", "WhatsAppSend", "WhatsAppSendMedia", "WhatsAppListChats", "WhatsAppReadMessages", "WhatsAppSearchContacts"]
 include_memory = true
 dir_restrictions = true
 dangerous_tools = ["Bash", "WriteFile", "EditFile"]

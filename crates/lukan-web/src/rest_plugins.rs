@@ -65,6 +65,130 @@ pub struct TranscriptionStatusDto {
     pub port: u16,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_plugin_info_dto_serialization() {
+        let dto = PluginInfoDto {
+            name: "discord".into(),
+            version: "1.0.0".into(),
+            description: "Discord bridge".into(),
+            plugin_type: "bridge".into(),
+            running: true,
+            alias: Some("dc".into()),
+            activity_bar: Some(ActivityBarDto {
+                icon: "chat".into(),
+                label: "Discord".into(),
+            }),
+            views: vec![ViewDeclarationDto {
+                id: "discord-chat".into(),
+                view_type: "webview".into(),
+                label: "Chat".into(),
+            }],
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(
+            json.contains(r#""pluginType""#),
+            "pluginType camelCase: {json}"
+        );
+        assert!(
+            json.contains(r#""activityBar""#),
+            "activityBar camelCase: {json}"
+        );
+        assert!(json.contains(r#""viewType""#), "viewType camelCase: {json}");
+        assert!(
+            !json.contains("plugin_type"),
+            "no snake_case plugin_type: {json}"
+        );
+        assert!(
+            !json.contains("activity_bar"),
+            "no snake_case activity_bar: {json}"
+        );
+        assert!(
+            !json.contains("view_type"),
+            "no snake_case view_type: {json}"
+        );
+    }
+
+    #[test]
+    fn test_remote_plugin_dto_serialization() {
+        let dto = RemotePluginDto {
+            name: "whisper".into(),
+            description: "Speech to text".into(),
+            version: "0.1.0".into(),
+            plugin_type: "service".into(),
+            source: "https://example.com/whisper.tar.gz".into(),
+            available: true,
+            installed: false,
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(
+            json.contains(r#""pluginType""#),
+            "pluginType camelCase: {json}"
+        );
+        assert!(!json.contains("plugin_type"), "no snake_case: {json}");
+    }
+
+    #[test]
+    fn test_plugin_command_dto_serialization() {
+        let dto = PluginCommandDto {
+            name: "sync".into(),
+            description: "Sync data".into(),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains(r#""name":"sync""#), "name: {json}");
+        assert!(
+            json.contains(r#""description":"Sync data""#),
+            "description: {json}"
+        );
+    }
+
+    #[test]
+    fn test_plugin_tools_info_dto_serialization() {
+        let dto = PluginToolsInfoDto {
+            default_tools: vec!["Bash".into(), "ReadFile".into()],
+            all_core_tools: vec!["Bash".into(), "ReadFile".into(), "WriteFile".into()],
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(
+            json.contains(r#""defaultTools""#),
+            "defaultTools camelCase: {json}"
+        );
+        assert!(
+            json.contains(r#""allCoreTools""#),
+            "allCoreTools camelCase: {json}"
+        );
+        assert!(!json.contains("default_tools"), "no snake_case: {json}");
+        assert!(!json.contains("all_core_tools"), "no snake_case: {json}");
+    }
+
+    #[test]
+    fn test_transcription_status_dto_serialization() {
+        let dto = TranscriptionStatusDto {
+            installed: true,
+            running: false,
+            port: 8080,
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains(r#""installed":true"#), "installed: {json}");
+        assert!(json.contains(r#""running":false"#), "running: {json}");
+        assert!(json.contains(r#""port":8080"#), "port: {json}");
+    }
+
+    #[test]
+    fn test_activity_bar_dto_serialization() {
+        let dto = ActivityBarDto {
+            icon: "settings".into(),
+            label: "Settings".into(),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains(r#""icon":"settings""#), "icon: {json}");
+        assert!(json.contains(r#""label":"Settings""#), "label: {json}");
+    }
+}
+
 fn is_plugin_running(name: &str) -> bool {
     let pid_path = LukanPaths::plugin_pid(name);
     if let Ok(content) = std::fs::read_to_string(&pid_path)

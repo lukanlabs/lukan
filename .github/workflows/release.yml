@@ -2,27 +2,41 @@ name: Release
 
 on:
   push:
-    branches: [master]
+    tags: ['v*']
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  release:
-    name: Build & Release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+            platform: linux-amd64
+          - os: darwin
+            runner: macos-latest
+            platform: darwin-arm64
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
             librsvg2-dev patchelf libssl-dev libasound2-dev
+
+      - name: Install coreutils (macOS)
+        if: matrix.os == 'darwin'
+        run: |
+          brew install coreutils
+          ln -s $(which gsha256sum) /usr/local/bin/sha256sum
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -59,13 +73,45 @@ jobs:
       - name: Build release
         run: make release
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts/
+
+      - name: Merge artifacts
+        run: |
+          mkdir -p dist/plugins
+          for dir in artifacts/release-*/; do
+            cp "$dir"/lukan-*-* dist/ 2>/dev/null || true
+            cp "$dir"/plugins/*.tar.gz dist/plugins/ 2>/dev/null || true
+          done
+          # Merge and deduplicate checksums by filename
+          cat artifacts/release-*/checksums.txt | awk '!seen[$2]++' > dist/checksums.txt
+
       - name: Generate release info
         id: release
         run: |
-          VERSION="v0.2.0-$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
+          VERSION="${GITHUB_REF#refs/tags/}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          # Generate changelog from commits since last tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
             CHANGES=$(git log "$PREV_TAG"..HEAD --pretty=format:"- %s" --no-merges | grep -v "^- style:" | grep -v "^- Merge")
@@ -73,27 +119,29 @@ jobs:
             CHANGES=$(git log --pretty=format:"- %s" -20 --no-merges | grep -v "^- style:" | grep -v "^- Merge")
           fi
 
-          # Write body to file (avoids quoting issues)
           cat > /tmp/release-body.md << ENDOFBODY
           ## Changes
 
           $CHANGES
 
           ## Assets
-          - \`lukan-linux-amd64\` — CLI binary
-          - \`lukan-desktop-linux-amd64\` — Desktop app binary
+          - \`lukan-linux-amd64\` — CLI binary (Linux x86_64)
+          - \`lukan-desktop-linux-amd64\` — Desktop app (Linux x86_64)
+          - \`lukan-darwin-arm64\` — CLI binary (macOS Apple Silicon)
+          - \`lukan-desktop-darwin-arm64\` — Desktop app (macOS Apple Silicon)
           - Plugin archives (\`.tar.gz\`)
           ENDOFBODY
 
-      - name: Create GitHub prerelease
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.version }}
           name: ${{ steps.release.outputs.version }}
-          prerelease: true
           body_path: /tmp/release-body.md
           files: |
             dist/lukan-linux-amd64
             dist/lukan-desktop-linux-amd64
+            dist/lukan-darwin-arm64
+            dist/lukan-desktop-darwin-arm64
             dist/checksums.txt
             dist/plugins/*.tar.gz

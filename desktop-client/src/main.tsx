@@ -5,6 +5,11 @@ import App from "./App";
 import LoginPage from "./components/LoginPage";
 import "./styles/index.css";
 
+/** Extract device name from URL path: /my-pc → "my-pc", / → "" */
+function getDeviceFromPath(): string {
+  return window.location.pathname.replace(/^\/+/, "").split("/")[0];
+}
+
 function Root() {
   const relay = isRelayMode();
   const [authenticated, setAuthenticated] = useState(!relay);
@@ -12,6 +17,17 @@ function Root() {
   const [ready, setReady] = useState(false);
   const [loginMessage, setLoginMessage] = useState("");
   const [transportError, setTransportError] = useState(false);
+  const [devices, setDevices] = useState<string[]>([]);
+
+  // In relay mode, check if we already have a device in the URL
+  const selectedDevice = relay ? getDeviceFromPath() : "";
+  // Skip device picker for known non-device paths
+  const isSpecialPath =
+    selectedDevice === "device" || selectedDevice === "auth";
+  // Check if this is a CLI login flow (cli_port in query params)
+  const cliPort = new URLSearchParams(window.location.search).get("cli_port");
+  const needsDevicePicker =
+    relay && !selectedDevice && !isSpecialPath && !cliPort;
 
   // Check auth status via HttpOnly cookie (only in relay mode)
   const checkAuth = useCallback(async () => {
@@ -22,39 +38,52 @@ function Root() {
       if (!data.authenticated) {
         await fetch("/auth/logout", { method: "POST" }).catch(() => {});
         setAuthenticated(false);
-      } else if (!data.daemonConnected) {
-        setAuthenticated(false);
-        setLoginMessage(
-          'No agent connected for this account. Run "lukan login --remote" and "lukan web" on your machine.',
-        );
       } else {
         setAuthenticated(true);
+        setDevices(data.devices ?? []);
         setLoginMessage("");
+
+        // If on a device path, check that the device is actually connected
+        if (selectedDevice && !isSpecialPath) {
+          const deviceList: string[] = data.devices ?? [];
+          if (deviceList.length > 0 && !deviceList.includes(selectedDevice)) {
+            setLoginMessage(
+              `Device "${selectedDevice}" is not connected.`,
+            );
+            setAuthenticated(false);
+          }
+        }
       }
     } catch {
-      // Network error — stay on login
       setAuthenticated(false);
     } finally {
       setChecking(false);
     }
-  }, [relay]);
+  }, [relay, selectedDevice, isSpecialPath]);
 
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
 
-  // Initialize transport once authenticated
+  // CLI login flow: if already authenticated and cli_port is present,
+  // redirect to Google OAuth to complete the CLI callback
   useEffect(() => {
-    if (!authenticated || ready || transportError) return;
+    if (!relay || !authenticated || !cliPort) return;
+    const origin = `${window.location.protocol}//${window.location.host}`;
+    window.location.href = `${origin}/auth/google?cli_port=${cliPort}`;
+  }, [relay, authenticated, cliPort]);
+
+  // Initialize transport once authenticated (and device selected)
+  useEffect(() => {
+    if (!authenticated || ready || transportError || needsDevicePicker || cliPort) return;
     initTransport()
       .then(() => setReady(true))
       .catch(() => {
-        // Transport failed — show error, don't loop
         setTransportError(true);
       });
-  }, [authenticated, ready, transportError]);
+  }, [authenticated, ready, transportError, needsDevicePicker]);
 
-  // Listen for auth-expired events from the transport (e.g. relay restarted)
+  // Listen for auth-expired events from the transport
   useEffect(() => {
     const handleExpired = () => {
       resetTransport();
@@ -70,15 +99,15 @@ function Root() {
   // Show nothing while checking auth
   if (checking) return null;
 
-  // Transport error — show a static error instead of looping
+  // Transport error
   if (transportError) {
     return (
       <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-300">
         <div className="text-center space-y-4 max-w-md px-4">
           <p className="text-lg font-medium">Connection failed</p>
           <p className="text-sm text-zinc-500">
-            Could not connect to the daemon. Make sure &quot;lukan web&quot; is
-            running on your machine.
+            Could not connect to the daemon. Make sure it is running on your
+            machine.
           </p>
           <button
             onClick={() => {
@@ -102,11 +131,25 @@ function Root() {
     return (
       <LoginPage
         onAuthenticated={() => {
-          // Re-check auth status without reloading
           setChecking(true);
           checkAuth();
         }}
         message={loginMessage}
+      />
+    );
+  }
+
+  // Authenticated but no device selected → show device picker (same UI as login)
+  if (needsDevicePicker) {
+    return (
+      <LoginPage
+        onAuthenticated={() => {}}
+        devices={devices}
+        onLogout={() => {
+          fetch("/auth/logout", { method: "POST" }).catch(() => {});
+          setAuthenticated(false);
+          setDevices([]);
+        }}
       />
     );
   }

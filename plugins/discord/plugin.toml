@@ -1,0 +1,132 @@
+[plugin]
+name = "discord"
+version = "0.1.0"
+description = "Discord bot channel via Gateway WebSocket"
+plugin_type = "channel"
+protocol_version = 1
+alias = "dc"
+
+[run]
+command = "node"
+args = ["bridge.js"]
+
+[auth]
+type = "token"
+check_field = "botToken"
+
+# Config schema
+[config.botToken]
+type = "string"
+label = "Bot Token"
+description = "Discord bot token from Developer Portal (https://discord.com/developers/applications)"
+format = "password"
+group = "Connection"
+order = 0
+
+[config.allowedChannels]
+type = "string[]"
+label = "Allowed Channels"
+description = "Discord channel IDs where the bot responds (leave empty to respond everywhere)"
+group = "Access Control"
+order = 0
+
+[config.allowedUsers]
+type = "string[]"
+label = "Allowed Users"
+description = "Discord user IDs allowed to interact (leave empty to allow all)"
+group = "Access Control"
+order = 1
+
+[config.prefix]
+type = "string"
+label = "Command Prefix"
+description = "Only messages starting with this prefix will be processed"
+group = "Connection"
+order = 1
+
+[config.replyInThread]
+type = "bool"
+label = "Reply in Thread"
+description = "Create/reply in threads instead of replying in the channel directly"
+default = true
+group = "Connection"
+order = 2
+
+[config.enableVoice]
+type = "bool"
+label = "Enable Voice Notes"
+description = "Allow the bot to join voice channels and transcribe meetings with !notes start/stop"
+default = false
+group = "Voice"
+order = 0
+
+[config.transcriptionBackend]
+type = "string"
+label = "Transcription Backend"
+description = "Which transcription service to use"
+valid_values = ["local", "openai"]
+default = "local"
+group = "Voice"
+order = 1
+
+[config.transcriptionBackend.depends_on]
+field = "enableVoice"
+values = ["true"]
+
+[config.whisperUrl]
+type = "string"
+label = "Whisper Server URL"
+description = "URL of local Whisper transcription server"
+default = "http://localhost:8787"
+group = "Voice"
+order = 2
+
+[config.whisperUrl.depends_on]
+field = "transcriptionBackend"
+values = ["local"]
+
+[config.openaiApiKey]
+type = "string"
+label = "OpenAI API Key"
+description = "OpenAI API key for transcription (or set OPENAI_API_KEY env var)"
+format = "password"
+group = "Voice"
+order = 3
+
+[config.openaiApiKey.depends_on]
+field = "transcriptionBackend"
+values = ["openai"]
+
+[config.notesAutoSummary]
+type = "bool"
+label = "Auto-generate Summary"
+description = "Automatically generate meeting summary with action items when notes stop"
+default = true
+group = "Voice"
+order = 4
+
+[config.notesAutoSummary.depends_on]
+field = "enableVoice"
+values = ["true"]
+
+[config.tools]
+type = "string[]"
+description = "Agent tools"
+hidden = true
+valid_values = [
+  "Bash",
+  "ReadFiles", "WriteFile", "EditFile",
+  "Grep", "Glob",
+  "WebFetch",
+]
+
+# Security policy
+[security]
+default_tools = ["Grep", "Glob", "ReadFiles", "WebFetch"]
+include_memory = true
+dir_restrictions = true
+dangerous_tools = ["Bash", "WriteFile", "EditFile"]
+
+[security.prompts]
+dir_none = "prompt-dir-none.txt"
+dir_allowed = "prompt-dir-allowed.txt"

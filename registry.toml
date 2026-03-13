@@ -75,6 +75,33 @@ source = "archive"
 [plugins.nano-banana-pro.assets.all]
 url = "https://get.lukan.ai/plugins/lukan-plugin-nano-banana-pro.tar.gz"
 
+[plugins.telegram]
+description = "Telegram bot channel via Bot API (long polling)"
+version = "0.1.0"
+plugin_type = "channel"
+source = "archive"
+
+[plugins.telegram.assets.all]
+url = "https://get.lukan.ai/plugins/lukan-plugin-telegram.tar.gz"
+
+[plugins.slack]
+description = "Slack bot channel via Socket Mode (no public URL needed)"
+version = "0.1.0"
+plugin_type = "channel"
+source = "archive"
+
+[plugins.slack.assets.all]
+url = "https://get.lukan.ai/plugins/lukan-plugin-slack.tar.gz"
+
+[plugins.discord]
+description = "Discord bot channel via Gateway WebSocket"
+version = "0.1.0"
+plugin_type = "channel"
+source = "archive"
+
+[plugins.discord.assets.all]
+url = "https://get.lukan.ai/plugins/lukan-plugin-discord.tar.gz"
+
 # ── Native plugins (platform-specific) ─────────────────────────────────
 
 [plugins.whisper]

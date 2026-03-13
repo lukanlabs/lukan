@@ -25,6 +25,43 @@ pub struct FetchedModelDto {
     pub name: String,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provider_info_dto_serialization() {
+        let dto = ProviderInfoDto {
+            name: "anthropic".into(),
+            default_model: "claude-sonnet".into(),
+            active: true,
+            current_model: Some("claude-opus-4-20250514".into()),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(
+            json.contains(r#""defaultModel""#),
+            "defaultModel camelCase: {json}"
+        );
+        assert!(
+            json.contains(r#""currentModel""#),
+            "currentModel camelCase: {json}"
+        );
+        assert!(!json.contains("default_model"), "no snake_case: {json}");
+        assert!(!json.contains("current_model"), "no snake_case: {json}");
+    }
+
+    #[test]
+    fn test_fetched_model_dto_serialization() {
+        let dto = FetchedModelDto {
+            id: "claude-sonnet-4-20250514".into(),
+            name: "Claude Sonnet".into(),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains(r#""id""#), "id: {json}");
+        assert!(json.contains(r#""name""#), "name: {json}");
+    }
+}
+
 /// GET /api/providers
 pub async fn list_providers() -> impl IntoResponse {
     let config = match ConfigManager::load().await {
@@ -41,6 +78,8 @@ pub async fn list_providers() -> impl IntoResponse {
         ProviderName::Zai,
         ProviderName::OllamaCloud,
         ProviderName::OpenaiCompatible,
+        ProviderName::LukanCloud,
+        ProviderName::Gemini,
     ];
 
     let current_model = config.model.clone();
@@ -212,6 +251,28 @@ pub async fn fetch_provider_models(Path(provider): Path<String>) -> impl IntoRes
                 name: "GLM-4".into(),
             },
         ]),
+        ProviderName::LukanCloud => {
+            lukan_providers::lukan_cloud::fetch_lukan_cloud_models(&api_key)
+                .await
+                .map(|m| {
+                    m.into_iter()
+                        .map(|m| FetchedModelDto {
+                            name: format!("{} ({})", m.name, m.tier),
+                            id: m.id,
+                        })
+                        .collect()
+                })
+        }
+        ProviderName::Gemini => lukan_providers::gemini::fetch_gemini_models(&api_key)
+            .await
+            .map(|m| {
+                m.into_iter()
+                    .map(|m| FetchedModelDto {
+                        name: m.display_name,
+                        id: m.id,
+                    })
+                    .collect()
+            }),
         _ => Ok(vec![]),
     };
 

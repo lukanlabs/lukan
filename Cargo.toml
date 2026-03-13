@@ -5,6 +5,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [workspace.dependencies]
 # Async
@@ -100,6 +101,7 @@ lukan-browser = { path = "crates/lukan-browser" }
 name = "lukan"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "lukan"

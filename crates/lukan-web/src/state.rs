@@ -5,7 +5,7 @@ use lukan_agent::{AgentLoop, WorkerNotification};
 use lukan_core::config::ResolvedConfig;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse};
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{Mutex, broadcast, mpsc, watch};
 
 use crate::protocol::ServerMessage;
 use crate::terminal::TerminalManager;
@@ -16,8 +16,11 @@ pub struct WebAgentSession {
     pub approval_tx: Option<mpsc::Sender<ApprovalResponse>>,
     pub plan_review_tx: Option<mpsc::Sender<PlanReviewResponse>>,
     pub planner_answer_tx: Option<mpsc::Sender<String>>,
+    pub bg_signal_tx: Option<watch::Sender<()>>,
     /// Human-readable label for this tab (e.g. "Agent 2")
     pub label: String,
+    /// The persisted ChatSession ID (6-char hex) so we can reload after agent loss.
+    pub last_session_id: Option<String>,
 }
 
 impl WebAgentSession {
@@ -27,7 +30,9 @@ impl WebAgentSession {
             approval_tx: None,
             plan_review_tx: None,
             planner_answer_tx: None,
+            bg_signal_tx: None,
             label: "Agent 1".to_string(),
+            last_session_id: None,
         }
     }
 }
@@ -54,14 +59,16 @@ pub struct AppState {
     pub model_name: Mutex<String>,
     /// Connection ID counter
     connection_counter: AtomicUsize,
-    /// Current permission mode
-    pub permission_mode: Mutex<PermissionMode>,
+    /// Current permission mode (watch channel for live updates to agents)
+    pub permission_mode: watch::Sender<PermissionMode>,
     /// Sender half of the approval channel (sent to the agent) — legacy singleton
     pub approval_tx: Mutex<Option<mpsc::Sender<ApprovalResponse>>>,
     /// Sender half of the plan review channel — legacy singleton
     pub plan_review_tx: Mutex<Option<mpsc::Sender<PlanReviewResponse>>>,
     /// Sender half of the planner answer channel — legacy singleton
     pub planner_answer_tx: Mutex<Option<mpsc::Sender<String>>>,
+    /// Sender for background signal — legacy singleton
+    pub bg_signal_tx: Mutex<Option<watch::Sender<()>>>,
     /// Broadcast channel for worker notifications from the daemon
     pub notification_tx: broadcast::Sender<WorkerNotification>,
     /// Terminal PTY manager
@@ -98,10 +105,11 @@ impl AppState {
             provider_name: Mutex::new(provider_name),
             model_name: Mutex::new(model_name),
             connection_counter: AtomicUsize::new(1),
-            permission_mode: Mutex::new(PermissionMode::Auto),
+            permission_mode: watch::Sender::new(PermissionMode::Auto),
             approval_tx: Mutex::new(None),
             plan_review_tx: Mutex::new(None),
             planner_answer_tx: Mutex::new(None),
+            bg_signal_tx: Mutex::new(None),
             notification_tx,
             terminal_manager: TerminalManager::default(),
             terminal_tx,

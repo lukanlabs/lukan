@@ -88,25 +88,54 @@ pub fn is_process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
-/// Recursively find all descendant PIDs of a process by walking `/proc`.
+/// Recursively find all descendant PIDs of a process.
+///
+/// On Linux, walks `/proc/<pid>/task/<pid>/children`.
+/// On macOS (and other platforms), falls back to `pgrep -P <pid>`.
 /// Returns descendants in depth-first order (children before grandchildren),
 /// which means reversing the result gives a bottom-up order for killing.
 fn find_descendants(pid: u32) -> Vec<u32> {
     let mut result = Vec::new();
     let mut stack = vec![pid];
     while let Some(p) = stack.pop() {
-        // Read /proc/<p>/task/<p>/children to get direct children
-        let path = format!("/proc/{p}/task/{p}/children");
-        if let Ok(children_str) = std::fs::read_to_string(&path) {
-            for token in children_str.split_whitespace() {
-                if let Ok(child_pid) = token.parse::<u32>() {
-                    result.push(child_pid);
-                    stack.push(child_pid);
-                }
-            }
+        let children = get_direct_children(p);
+        for child_pid in children {
+            result.push(child_pid);
+            stack.push(child_pid);
         }
     }
     result
+}
+
+/// Get direct child PIDs of a process.
+#[cfg(target_os = "linux")]
+fn get_direct_children(pid: u32) -> Vec<u32> {
+    let path = format!("/proc/{pid}/task/{pid}/children");
+    match std::fs::read_to_string(&path) {
+        Ok(children_str) => children_str
+            .split_whitespace()
+            .filter_map(|t| t.parse::<u32>().ok())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Get direct child PIDs of a process using `pgrep -P`.
+#[cfg(not(target_os = "linux"))]
+fn get_direct_children(pid: u32) -> Vec<u32> {
+    match std::process::Command::new("pgrep")
+        .args(["-P", &pid.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+    {
+        Ok(output) => String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .filter_map(|t| t.parse::<u32>().ok())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Send a signal to a process and all its descendants (found via /proc tree walk).
@@ -186,28 +215,51 @@ pub fn get_bg_processes_for_session(session_id: &str) -> Vec<BgProcessSnapshot> 
     result
 }
 
-/// Read the last `max_lines` from a background process log file
+/// Read the last `max_lines` from a background process log file.
+/// Uses a tail-seek approach: reads only the last ~32KB of the file
+/// to avoid reading megabytes of output on every poll.
 pub fn get_bg_log(pid: u32, max_lines: usize) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
     let log_path = {
         let t = tracker().lock().unwrap();
         let process = t.processes.get(&pid)?;
         process.log_file.clone()
     };
 
-    match std::fs::read_to_string(&log_path) {
-        Ok(content) => {
-            let lines: Vec<&str> = content.lines().collect();
-            if lines.len() <= max_lines {
-                Some(content)
-            } else {
-                let start = lines.len() - max_lines;
-                Some(lines[start..].join("\n"))
-            }
-        }
+    let mut file = match std::fs::File::open(&log_path) {
+        Ok(f) => f,
         Err(e) => {
             warn!(pid, error = %e, "Failed to read bg process log");
-            None
+            return None;
         }
+    };
+
+    let metadata = file.metadata().ok()?;
+    let file_len = metadata.len();
+
+    // For small files, read everything. For large files, seek near the end.
+    // 32KB is enough for ~200 lines of typical terminal output.
+    const TAIL_BYTES: u64 = 32 * 1024;
+    let mut content = String::new();
+
+    if file_len > TAIL_BYTES {
+        let _ = file.seek(SeekFrom::End(-(TAIL_BYTES as i64)));
+        let _ = file.read_to_string(&mut content);
+        // Drop the first partial line (we likely seeked into the middle of one)
+        if let Some(pos) = content.find('\n') {
+            content = content[pos + 1..].to_string();
+        }
+    } else {
+        let _ = file.read_to_string(&mut content);
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() <= max_lines {
+        Some(content)
+    } else {
+        let start = lines.len() - max_lines;
+        Some(lines[start..].join("\n"))
     }
 }
 

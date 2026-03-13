@@ -189,3 +189,226 @@ pub enum ApprovalResponse {
         tools: Vec<ToolApprovalRequest>,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── StopReason ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_stop_reason_serde() {
+        assert_eq!(
+            serde_json::to_string(&StopReason::EndTurn).unwrap(),
+            r#""end_turn""#
+        );
+        assert_eq!(
+            serde_json::to_string(&StopReason::ToolUse).unwrap(),
+            r#""tool_use""#
+        );
+        assert_eq!(
+            serde_json::to_string(&StopReason::MaxTokens).unwrap(),
+            r#""max_tokens""#
+        );
+        assert_eq!(
+            serde_json::to_string(&StopReason::Error).unwrap(),
+            r#""error""#
+        );
+
+        let parsed: StopReason = serde_json::from_str(r#""end_turn""#).unwrap();
+        assert_eq!(parsed, StopReason::EndTurn);
+    }
+
+    // ── PlanTask ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_plan_task_serde() {
+        let task = PlanTask {
+            title: "Refactor module".into(),
+            detail: "Split into smaller files".into(),
+        };
+        let json = serde_json::to_string(&task).unwrap();
+        let parsed: PlanTask = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.title, "Refactor module");
+        assert_eq!(parsed.detail, "Split into smaller files");
+    }
+
+    // ── TaskInfo ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_task_info_serde() {
+        let info = TaskInfo {
+            id: 1,
+            title: "Build".into(),
+            status: "running".into(),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: TaskInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, 1);
+        assert_eq!(parsed.status, "running");
+    }
+
+    // ── PlannerQuestionItem / PlannerQuestionOption ──────────────────
+
+    #[test]
+    fn test_planner_question_serde() {
+        let item = PlannerQuestionItem {
+            header: "Architecture".into(),
+            question: "Which pattern?".into(),
+            options: vec![
+                PlannerQuestionOption {
+                    label: "MVC".into(),
+                    description: Some("Model-View-Controller".into()),
+                },
+                PlannerQuestionOption {
+                    label: "Hexagonal".into(),
+                    description: None,
+                },
+            ],
+            multi_select: true,
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains(r#""multiSelect":true"#));
+
+        let parsed: PlannerQuestionItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.options.len(), 2);
+        assert!(parsed.multi_select);
+        assert_eq!(parsed.options[0].label, "MVC");
+        assert!(parsed.options[1].description.is_none());
+    }
+
+    #[test]
+    fn test_planner_question_multi_select_default() {
+        let json = r#"{"header":"h","question":"q","options":[]}"#;
+        let parsed: PlannerQuestionItem = serde_json::from_str(json).unwrap();
+        assert!(!parsed.multi_select);
+    }
+
+    // ── StreamEvent ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_stream_event_text_delta_serde() {
+        let event = StreamEvent::TextDelta {
+            text: "Hello".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"text_delta""#));
+        assert!(json.contains(r#""text":"Hello""#));
+
+        let parsed: StreamEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            StreamEvent::TextDelta { text } => assert_eq!(text, "Hello"),
+            _ => panic!("Expected TextDelta"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_message_start_serde() {
+        let event = StreamEvent::MessageStart;
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"message_start""#));
+    }
+
+    #[test]
+    fn test_stream_event_tool_use_start_serde() {
+        let event = StreamEvent::ToolUseStart {
+            id: "t1".into(),
+            name: "Bash".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"tool_use_start""#));
+
+        let parsed: StreamEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            StreamEvent::ToolUseStart { id, name } => {
+                assert_eq!(id, "t1");
+                assert_eq!(name, "Bash");
+            }
+            _ => panic!("Expected ToolUseStart"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_usage_serde() {
+        let event = StreamEvent::Usage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_tokens: Some(10),
+            cache_read_tokens: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""inputTokens":100"#));
+        assert!(json.contains(r#""outputTokens":50"#));
+        // cache_read_tokens is None, should be skipped
+        assert!(!json.contains("cacheReadTokens"));
+
+        let parsed: StreamEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            StreamEvent::Usage {
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+            } => {
+                assert_eq!(input_tokens, 100);
+                assert_eq!(output_tokens, 50);
+                assert_eq!(cache_creation_tokens, Some(10));
+                assert!(cache_read_tokens.is_none());
+            }
+            _ => panic!("Expected Usage"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_message_end_serde() {
+        let event = StreamEvent::MessageEnd {
+            stop_reason: StopReason::EndTurn,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""stopReason":"end_turn""#));
+    }
+
+    #[test]
+    fn test_stream_event_error_serde() {
+        let event = StreamEvent::Error {
+            error: "timeout".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"error""#));
+        assert!(json.contains(r#""error":"timeout""#));
+    }
+
+    #[test]
+    fn test_stream_event_tool_result_serde() {
+        let event = StreamEvent::ToolResult {
+            id: "t1".into(),
+            name: "Bash".into(),
+            content: "output".into(),
+            is_error: Some(false),
+            diff: None,
+            image: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"tool_result""#));
+        // diff and image should be omitted
+        assert!(!json.contains("diff"));
+        assert!(!json.contains("image"));
+    }
+
+    // ── ToolApprovalRequest ─────────────────────────────────────────
+
+    #[test]
+    fn test_tool_approval_request_serde() {
+        let req = ToolApprovalRequest {
+            id: "tu-1".into(),
+            name: "Bash".into(),
+            input: serde_json::json!({"command": "rm -rf /"}),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains(r#""name":"Bash""#));
+
+        let parsed: ToolApprovalRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "tu-1");
+        assert_eq!(parsed.input["command"], "rm -rf /");
+    }
+}

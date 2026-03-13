@@ -45,8 +45,6 @@ let whisperReady = false;
 let requestCounter = 0;
 // Map: requestId → chatId (so we know where to send the agent response)
 const pendingRequests = new Map();
-// Dedup: set of chatIds currently being processed
-const processing = new Set();
 
 // ── Plugin protocol helpers ────────────────────────────────────────────
 
@@ -321,20 +319,13 @@ function handleConnectorEvent(event) {
       // Strip prefix if configured
       const message = stripPrefix(content);
 
-      // Dedup by chatId
-      if (processing.has(chatId)) {
-        log("info", `Already processing ${chatId}, skipping`);
-        return;
-      }
-      processing.add(chatId);
-
       // Generate requestId and track it
       const requestId = `wa-${++requestCounter}`;
       pendingRequests.set(requestId, chatId);
 
       log("info", `Message from ${sender} in ${chatId}: ${message.slice(0, 80)}`);
 
-      // Send to host as channelMessage
+      // Send to host — messages queue in the Rust channel loop and process sequentially
       send({
         type: "channelMessage",
         requestId,
@@ -382,13 +373,6 @@ function handleConnectorEvent(event) {
         break;
       }
 
-      // Dedup by chatId
-      if (processing.has(chatId)) {
-        log("info", `Already processing ${chatId}, skipping audio`);
-        break;
-      }
-      processing.add(chatId);
-
       log("info", `Audio from ${sender} (${seconds || "?"}s, ptt=${!!ptt}) — transcribing...`);
 
       // Transcribe and forward as channelMessage
@@ -396,7 +380,6 @@ function handleConnectorEvent(event) {
         .then((transcript) => {
           if (!transcript || !transcript.trim()) {
             log("warn", `Empty transcription for audio from ${sender}`);
-            processing.delete(chatId);
             return;
           }
 
@@ -419,7 +402,6 @@ function handleConnectorEvent(event) {
         })
         .catch((err) => {
           log("error", `Transcription failed: ${err.message}`);
-          processing.delete(chatId);
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(
               JSON.stringify({
@@ -611,7 +593,6 @@ function handleHostMessage(msg) {
       }
 
       pendingRequests.delete(requestId);
-      processing.delete(chatId);
 
       if (isError) {
         log("error", `Agent error for ${requestId}: ${text}`);

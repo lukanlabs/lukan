@@ -17,6 +17,13 @@ export interface AppConfig {
   plugins?: PluginsConfig;
   browserCdpUrl?: string;
   disabledTools?: string[];
+  mcpServers?: Record<string, McpServerConfig>;
+}
+
+export interface McpServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
 }
 
 export interface PluginsConfig {
@@ -47,7 +54,10 @@ export interface Credentials {
   codexRefreshToken?: string;
   codexTokenExpiry?: number;
   zaiApiKey?: string;
+  ollamaCloudApiKey?: string;
   openaiCompatibleApiKey?: string;
+  lukanCloudApiKey?: string;
+  geminiApiKey?: string;
 }
 
 export interface ProviderStatus {
@@ -166,7 +176,7 @@ export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" |
 
 export type WorkspaceMode = "agent" | "terminal";
 
-export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes" | "events" | "plugin";
+export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes" | "events" | "plugin" | "terminals";
 
 export interface SystemEvent {
   ts: string;
@@ -209,6 +219,16 @@ export interface FileEntry {
 export interface DirectoryListing {
   path: string;
   entries: FileEntry[];
+}
+
+export interface FileContent {
+  path: string;
+  name: string;
+  content: string;
+  encoding: "utf8" | "base64";
+  size: number;
+  language?: string;
+  mimeType?: string;
 }
 
 // ── Worker types ──────────────────────────────────────────────────────
@@ -283,6 +303,7 @@ export interface TerminalSessionInfo {
   id: string;
   cols: number;
   rows: number;
+  name?: string;
 }
 
 export interface TerminalOutputEvent {
@@ -391,13 +412,13 @@ export interface TaskInfo {
 // Session types
 export interface SessionSummary {
   id: string;
-  name: string;
+  name?: string;
   createdAt: string;
   updatedAt: string;
   messageCount: number;
-  firstUserMessage: string;
-  lastUserMessage: string;
-  model: string;
+  provider?: string;
+  model?: string;
+  lastMessage?: string;
 }
 
 // Init response from backend
@@ -423,4 +444,5 @@ export interface TurnComplete {
   messages: Message[];
   contextSize: number;
   tokenUsage: TokenUsage;
+  aborted?: boolean;
 }

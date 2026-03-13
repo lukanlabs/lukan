@@ -1,0 +1,5 @@
+## Formatting — Telegram
+- Use Markdown formatting: *bold*, _italic_, `code`, ```code blocks```.
+- Keep responses concise and readable on mobile.
+- Use bullet points for lists.
+- Telegram supports up to 4096 characters per message — long responses will be split automatically.

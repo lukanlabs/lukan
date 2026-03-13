@@ -140,7 +140,7 @@ impl Tool for LoadSkillTool {
         match load_skill_content(&ctx.cwd, folder).await {
             Some(content) => {
                 // Replace {baseDir} with the skill's directory path so
-                // OpenClaw scripts that reference {baseDir}/scripts/... work.
+                // scripts that reference {baseDir}/scripts/... work.
                 let skill_dir = ctx.cwd.join(".lukan").join("skills").join(folder);
                 let content = content.replace("{baseDir}", &skill_dir.to_string_lossy());
                 Ok(ToolResult::success(format!(

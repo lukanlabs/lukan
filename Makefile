@@ -28,7 +28,14 @@ else
 endif
 PLATFORM := $(OS)-$(ARCH)
 
-.PHONY: all build clean test check install release bundle-plugins package-plugins upload upload-daily upload-gh help
+# Cross-platform sha256: macOS has shasum, Linux has sha256sum
+ifeq ($(UNAME_S),Darwin)
+  SHA256CMD := shasum -a 256
+else
+  SHA256CMD := sha256sum
+endif
+
+.PHONY: all build clean test check install release bundle-plugins package-plugins package-whisper upload upload-daily upload-gh help
 
 all: build
 
@@ -42,7 +49,7 @@ build:
 		rm -f target/release/lukan-desktop target/release/deps/lukan_desktop-* 2>/dev/null || true; \
 		rm -rf target/release/build/lukan-desktop-* 2>/dev/null || true; \
 	fi
-	cargo build --release -p lukan -p lukan-desktop
+	cargo build --release -p lukan -p lukan-desktop -p lukan-relay
 
 ## build-debug: Build debug binary
 build-debug:
@@ -96,28 +103,57 @@ package-plugins: bundle-plugins
 	@# Nano Banana Pro plugin
 	@cd plugins/nano-banana-pro/dist && tar czf ../../../dist/plugins/lukan-plugin-nano-banana-pro.tar.gz .
 	@echo "  Packaged: lukan-plugin-nano-banana-pro.tar.gz"
+	@# Telegram plugin
+	@cd plugins/telegram/dist && tar czf ../../../dist/plugins/lukan-plugin-telegram.tar.gz .
+	@echo "  Packaged: lukan-plugin-telegram.tar.gz"
+	@# Slack plugin
+	@cd plugins/slack/dist && tar czf ../../../dist/plugins/lukan-plugin-slack.tar.gz .
+	@echo "  Packaged: lukan-plugin-slack.tar.gz"
+	@# Discord plugin
+	@cd plugins/discord/dist && tar czf ../../../dist/plugins/lukan-plugin-discord.tar.gz .
+	@echo "  Packaged: lukan-plugin-discord.tar.gz"
+
+## package-whisper: Build whisper plugin binary and create platform-specific tarball
+WHISPER_ARCH := $(if $(filter x86_64 x86,$(UNAME_M)),x86_64,$(if $(filter aarch64 arm64,$(UNAME_M)),aarch64,$(UNAME_M)))
+WHISPER_OS := $(if $(filter Linux,$(UNAME_S)),linux,$(if $(filter Darwin,$(UNAME_S)),macos,$(UNAME_S)))
+WHISPER_PLATFORM := $(WHISPER_OS)-$(WHISPER_ARCH)
+package-whisper:
+	@echo "Building whisper plugin ($(WHISPER_PLATFORM))..."
+	cd plugins/whisper && cargo build --release
+	@mkdir -p dist/plugins plugins/whisper/dist
+	@cp plugins/whisper/target/release/lukan-whisper plugins/whisper/dist/
+	@cp plugins/whisper/plugin.toml plugins/whisper/dist/
+	@cd plugins/whisper/dist && tar czf ../../../dist/plugins/lukan-plugin-whisper-$(WHISPER_PLATFORM).tar.gz .
+	@echo "  Packaged: lukan-plugin-whisper-$(WHISPER_PLATFORM).tar.gz"
 
 ## release: Build binary + bundle plugins + generate checksums
-release: build bundle-plugins package-plugins
+release: build bundle-plugins package-plugins package-whisper
 	@echo "Building release $(VERSION) for $(PLATFORM)..."
 	@mkdir -p dist
 	@cp target/release/$(BINARY_NAME) dist/$(BINARY_NAME)-$(PLATFORM)
 	@if [ -f target/release/$(BINARY_NAME)-desktop ]; then \
 		cp target/release/$(BINARY_NAME)-desktop dist/$(BINARY_NAME)-desktop-$(PLATFORM); \
 	fi
-	@# Generate checksums
-	@cd dist && sha256sum $(BINARY_NAME)-$(PLATFORM) > checksums.txt
-	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
-		cd dist && sha256sum $(BINARY_NAME)-desktop-$(PLATFORM) >> checksums.txt; \
+	@if [ -f target/release/$(BINARY_NAME)-relay ]; then \
+		cp target/release/$(BINARY_NAME)-relay dist/$(BINARY_NAME)-relay-$(PLATFORM); \
 	fi
-	@cd dist && sha256sum ../install.sh | sed 's#  \.\./install\.sh$$#  install.sh#' >> checksums.txt
-	@cd dist/plugins && sha256sum *.tar.gz >> ../checksums.txt
+	@# Generate checksums
+	@cd dist && $(SHA256CMD) $(BINARY_NAME)-$(PLATFORM) > checksums.txt
+	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
+		cd dist && $(SHA256CMD) $(BINARY_NAME)-desktop-$(PLATFORM) >> checksums.txt; \
+	fi
+	@if [ -f dist/$(BINARY_NAME)-relay-$(PLATFORM) ]; then \
+		cd dist && $(SHA256CMD) $(BINARY_NAME)-relay-$(PLATFORM) >> checksums.txt; \
+	fi
+	@cd dist && $(SHA256CMD) ../install.sh | sed 's#  \.\./install\.sh$$#  install.sh#' >> checksums.txt
+	@cd dist/plugins && $(SHA256CMD) *.tar.gz >> ../checksums.txt
 	@# Write version file
 	@echo "$(VERSION)" > dist/latest
 	@echo ""
 	@echo "Release $(VERSION) built in dist/"
 	@echo "  Binary:  dist/$(BINARY_NAME)-$(PLATFORM)"
 	@echo "  Desktop: dist/$(BINARY_NAME)-desktop-$(PLATFORM)"
+	@echo "  Relay:   dist/$(BINARY_NAME)-relay-$(PLATFORM)"
 	@echo "  Plugins: dist/plugins/*.tar.gz"
 	@echo "  Checksums: dist/checksums.txt"
 
@@ -127,6 +163,9 @@ upload: release
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/$(BINARY_NAME)-$(PLATFORM) --file dist/$(BINARY_NAME)-$(PLATFORM)
 	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
 		bunx wrangler r2 object put --remote $(R2_BUCKET)/$(BINARY_NAME)-desktop-$(PLATFORM) --file dist/$(BINARY_NAME)-desktop-$(PLATFORM); \
+	fi
+	@if [ -f dist/$(BINARY_NAME)-relay-$(PLATFORM) ]; then \
+		bunx wrangler r2 object put --remote $(R2_BUCKET)/$(BINARY_NAME)-relay-$(PLATFORM) --file dist/$(BINARY_NAME)-relay-$(PLATFORM); \
 	fi
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/checksums.txt --file dist/checksums.txt --cache-control "public, max-age=60"
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/latest --file dist/latest --cache-control "public, max-age=60"
@@ -149,6 +188,9 @@ upload-daily: release
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/$(BINARY_NAME)-$(PLATFORM) --file dist/$(BINARY_NAME)-$(PLATFORM)
 	@if [ -f dist/$(BINARY_NAME)-desktop-$(PLATFORM) ]; then \
 		bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/$(BINARY_NAME)-desktop-$(PLATFORM) --file dist/$(BINARY_NAME)-desktop-$(PLATFORM); \
+	fi
+	@if [ -f dist/$(BINARY_NAME)-relay-$(PLATFORM) ]; then \
+		bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/$(BINARY_NAME)-relay-$(PLATFORM) --file dist/$(BINARY_NAME)-relay-$(PLATFORM); \
 	fi
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/checksums.txt --file dist/checksums.txt --cache-control "public, max-age=60"
 	bunx wrangler r2 object put --remote $(R2_BUCKET)/daily/latest --file dist/latest --cache-control "public, max-age=60"

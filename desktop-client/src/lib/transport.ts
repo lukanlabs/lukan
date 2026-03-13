@@ -45,7 +45,10 @@ export async function initTransport(): Promise<void> {
     } else if (isRelayMode()) {
       const { RelayTransport } = await import("./transport-relay");
       const origin = `${window.location.protocol}//${window.location.host}`;
-      const rt = new RelayTransport(origin);
+      // Device name from URL path: e.g. /my-pc → "my-pc"
+      const pathDevice = window.location.pathname.replace(/^\/+/, "").split("/")[0];
+      const device = pathDevice || "default";
+      const rt = new RelayTransport(origin, device);
       await rt.connect();
       transport = rt;
     } else {

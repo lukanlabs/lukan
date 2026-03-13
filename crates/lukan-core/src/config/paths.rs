@@ -144,6 +144,16 @@ impl LukanPaths {
             .join(format!("{view_id}.json"))
     }
 
+    /// Terminal session names: ~/.config/lukan/terminal-names.json
+    pub fn terminal_names_file() -> PathBuf {
+        Self::config_dir().join("terminal-names.json")
+    }
+
+    /// Agent tab state: ~/.config/lukan/agent-tabs.json
+    pub fn agent_tabs_file() -> PathBuf {
+        Self::config_dir().join("agent-tabs.json")
+    }
+
     /// Worker daemon PID file: ~/.config/lukan/daemon.pid
     pub fn daemon_pid_file() -> PathBuf {
         Self::config_dir().join("daemon.pid")
@@ -188,5 +198,157 @@ impl LukanPaths {
         tokio::fs::create_dir_all(Self::events_dir()).await?;
         tokio::fs::create_dir_all(Self::workers_runs_dir()).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_dir_ends_with_lukan() {
+        let dir = LukanPaths::config_dir();
+        assert!(dir.ends_with("lukan"));
+    }
+
+    #[test]
+    fn test_config_file_is_json() {
+        let file = LukanPaths::config_file();
+        assert_eq!(file.file_name().unwrap(), "config.json");
+        assert!(file.starts_with(LukanPaths::config_dir()));
+    }
+
+    #[test]
+    fn test_credentials_file_is_json() {
+        let file = LukanPaths::credentials_file();
+        assert_eq!(file.file_name().unwrap(), "credentials.json");
+        assert!(file.starts_with(LukanPaths::config_dir()));
+    }
+
+    #[test]
+    fn test_sessions_dir_under_config() {
+        let dir = LukanPaths::sessions_dir();
+        assert!(dir.starts_with(LukanPaths::config_dir()));
+        assert!(dir.ends_with("sessions"));
+    }
+
+    #[test]
+    fn test_session_file_format() {
+        let file = LukanPaths::session_file("abc-123");
+        assert_eq!(file.file_name().unwrap(), "abc-123.json");
+        assert!(file.starts_with(LukanPaths::sessions_dir()));
+    }
+
+    #[test]
+    fn test_reminders_file() {
+        let file = LukanPaths::reminders_file();
+        assert_eq!(file.file_name().unwrap(), "reminders.md");
+    }
+
+    #[test]
+    fn test_global_memory_file() {
+        let file = LukanPaths::global_memory_file();
+        assert_eq!(file.file_name().unwrap(), "MEMORY.md");
+    }
+
+    #[test]
+    fn test_project_memory_paths() {
+        let dir = LukanPaths::project_memory_dir();
+        assert_eq!(dir, PathBuf::from(".lukan/memories"));
+
+        let file = LukanPaths::project_memory_file();
+        assert_eq!(file, PathBuf::from(".lukan/memories/MEMORY.md"));
+
+        let active = LukanPaths::project_memory_active_file();
+        assert_eq!(active, PathBuf::from(".lukan/memories/.active"));
+    }
+
+    #[test]
+    fn test_data_dir_ends_with_lukan() {
+        let dir = LukanPaths::data_dir();
+        assert!(dir.ends_with("lukan"));
+    }
+
+    #[test]
+    fn test_plugin_paths() {
+        let plugins_dir = LukanPaths::plugins_dir();
+        assert!(plugins_dir.ends_with("plugins"));
+
+        let dir = LukanPaths::plugin_dir("whatsapp");
+        assert!(dir.ends_with("whatsapp"));
+        assert!(dir.starts_with(&plugins_dir));
+
+        let manifest = LukanPaths::plugin_manifest("whatsapp");
+        assert_eq!(manifest.file_name().unwrap(), "plugin.toml");
+
+        let config = LukanPaths::plugin_config("whatsapp");
+        assert_eq!(config.file_name().unwrap(), "config.json");
+
+        let log = LukanPaths::plugin_log("whatsapp");
+        assert_eq!(log.file_name().unwrap(), "plugin.log");
+
+        let pid = LukanPaths::plugin_pid("whatsapp");
+        assert_eq!(pid.file_name().unwrap(), "plugin.pid");
+    }
+
+    #[test]
+    fn test_events_paths() {
+        let dir = LukanPaths::events_dir();
+        assert!(dir.ends_with("events"));
+
+        let pending = LukanPaths::pending_events_file();
+        assert_eq!(pending.file_name().unwrap(), "pending.jsonl");
+
+        let history = LukanPaths::events_history_file();
+        assert_eq!(history.file_name().unwrap(), "history.jsonl");
+    }
+
+    #[test]
+    fn test_plugin_view_file() {
+        let file = LukanPaths::plugin_view_file("discord", "status-panel");
+        assert_eq!(file.file_name().unwrap(), "status-panel.json");
+        assert!(file.to_string_lossy().contains("discord"));
+    }
+
+    #[test]
+    fn test_daemon_paths() {
+        let pid = LukanPaths::daemon_pid_file();
+        assert_eq!(pid.file_name().unwrap(), "daemon.pid");
+
+        let log = LukanPaths::daemon_log_file();
+        assert_eq!(log.file_name().unwrap(), "daemon.log");
+    }
+
+    #[test]
+    fn test_worker_paths() {
+        let notifications = LukanPaths::worker_notifications_file();
+        assert_eq!(
+            notifications.file_name().unwrap(),
+            "worker_notifications.jsonl"
+        );
+
+        let workers_file = LukanPaths::workers_file();
+        assert_eq!(workers_file.file_name().unwrap(), "workers.json");
+
+        let runs_dir = LukanPaths::workers_runs_dir();
+        assert!(runs_dir.ends_with("workers"));
+
+        let worker_dir = LukanPaths::worker_runs_dir("w123");
+        assert!(worker_dir.ends_with("w123"));
+
+        let run_file = LukanPaths::worker_run_file("w123", "r456");
+        assert_eq!(run_file.file_name().unwrap(), "r456.json");
+    }
+
+    #[test]
+    fn test_symbol_index_file() {
+        let file = LukanPaths::symbol_index_file();
+        assert_eq!(file.file_name().unwrap(), "symbol-index.json");
+    }
+
+    #[test]
+    fn test_views_dir() {
+        let dir = LukanPaths::views_dir();
+        assert!(dir.ends_with("views"));
     }
 }

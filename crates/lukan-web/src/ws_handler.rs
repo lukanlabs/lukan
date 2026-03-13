@@ -6,7 +6,8 @@ use axum::{
     extract::{State, WebSocketUpgrade},
     response::IntoResponse,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
@@ -19,6 +20,15 @@ use lukan_tools::create_configured_registry;
 
 use crate::protocol::{ClientMessage, ServerMessage, TokenUsage};
 use crate::state::{AppState, WebAgentSession};
+
+/// Bundles the mutable stream handles passed into `handle_send_message`
+/// so we stay under clippy's argument limit.
+struct WsStreams<'a> {
+    ws_tx: &'a mut futures::stream::SplitSink<WebSocket, Message>,
+    ws_rx: &'a mut futures::stream::SplitStream<WebSocket>,
+    terminal_rx: &'a mut tokio::sync::broadcast::Receiver<ServerMessage>,
+    notify_rx: &'a mut tokio::sync::broadcast::Receiver<lukan_agent::WorkerNotification>,
+}
 
 /// WebSocket upgrade handler
 pub async fn ws_upgrade_handler(
@@ -153,7 +163,16 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
         }
 
         // Dispatch authenticated messages
-        dispatch_message(client_msg, conn_id, &state, &mut ws_tx, &mut ws_rx).await;
+        dispatch_message(
+            client_msg,
+            conn_id,
+            &state,
+            &mut ws_tx,
+            &mut ws_rx,
+            &mut terminal_rx,
+            &mut notify_rx,
+        )
+        .await;
     }
 
     // On disconnect: release processing lock if owned, save sessions
@@ -197,6 +216,8 @@ async fn dispatch_message(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     ws_rx: &mut futures::stream::SplitStream<WebSocket>,
+    terminal_rx: &mut tokio::sync::broadcast::Receiver<ServerMessage>,
+    notify_rx: &mut tokio::sync::broadcast::Receiver<lukan_agent::WorkerNotification>,
 ) {
     match msg {
         ClientMessage::SendMessage {
@@ -208,21 +229,24 @@ async fn dispatch_message(
                 &content,
                 session_id.as_deref(),
                 state,
-                ws_tx,
-                ws_rx,
+                &mut WsStreams {
+                    ws_tx,
+                    ws_rx,
+                    terminal_rx,
+                    notify_rx,
+                },
             )
             .await;
         }
 
         ClientMessage::Abort { session_id: _ } => {
-            // Release processing lock
+            // Release processing lock (outside a turn — mid-turn abort is handled
+            // directly in handle_send_message's select loop with CancellationToken).
             let mut owner = state.processing_owner.lock().await;
             if *owner == Some(conn_id) {
                 *owner = None;
                 info!(conn_id, "Aborted processing");
             }
-            // Note: the actual abort mechanism works by dropping the event channel
-            // sender, which causes the agent's event_tx.send() to fail.
         }
 
         ClientMessage::LoadSession { session_id, id } => {
@@ -255,12 +279,53 @@ async fn dispatch_message(
         ClientMessage::RenameAgentTab { session_id, label } => {
             let mut sessions = state.sessions.lock().await;
             if let Some(session) = sessions.get_mut(&session_id) {
-                session.label = label;
+                session.label = label.clone();
+                // Persist the name to the chat session on disk
+                if let Some(ref mut agent) = session.agent {
+                    let _ = agent.set_session_name(label).await;
+                }
             }
         }
 
-        ClientMessage::SendToBackground { session_id: _ } => {
-            // Background signal not yet implemented in web
+        ClientMessage::LoadAgentTabs => {
+            let path = lukan_core::config::LukanPaths::agent_tabs_file();
+            let state_data = match tokio::fs::read_to_string(&path).await {
+                Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+                Err(_) => crate::protocol::AgentTabsFileDto::default(),
+            };
+            send_json(
+                ws_tx,
+                &crate::protocol::ServerMessage::AgentTabsLoaded { state: state_data },
+            )
+            .await;
+        }
+
+        ClientMessage::SaveAgentTabs { state: tabs_state } => {
+            let path = lukan_core::config::LukanPaths::agent_tabs_file();
+            if let Ok(data) = serde_json::to_string_pretty(&tabs_state) {
+                let _ = tokio::fs::write(&path, data).await;
+            }
+            send_json(ws_tx, &crate::protocol::ServerMessage::AgentTabsSaved).await;
+        }
+
+        ClientMessage::SendToBackground { session_id } => {
+            let mut sent = false;
+            // Try session-based bg_signal first
+            if let Some(ref sid) = session_id {
+                let sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get(sid)
+                    && let Some(ref tx) = session.bg_signal_tx
+                {
+                    sent = tx.send(()).is_ok();
+                }
+            }
+            // Fallback to legacy singleton
+            if !sent {
+                let tx = state.bg_signal_tx.lock().await;
+                if let Some(ref tx) = *tx {
+                    let _ = tx.send(());
+                }
+            }
         }
 
         ClientMessage::ListSessions => match SessionManager::list().await {
@@ -332,26 +397,8 @@ async fn dispatch_message(
                 serde_json::from_value(serde_json::Value::String(mode.clone()))
                     .unwrap_or(PermissionMode::Auto);
 
-            // Store in state
-            *state.permission_mode.lock().await = parsed.clone();
-
-            // Update legacy singleton agent
-            {
-                let mut agent_lock = state.agent.lock().await;
-                if let Some(ref mut agent) = *agent_lock {
-                    agent.set_permission_mode(parsed.clone());
-                }
-            }
-
-            // Update all session agents
-            {
-                let mut sessions = state.sessions.lock().await;
-                for session in sessions.values_mut() {
-                    if let Some(ref mut agent) = session.agent {
-                        agent.set_permission_mode(parsed.clone());
-                    }
-                }
-            }
+            // Update via watch channel — all agents with a receiver see the change immediately
+            let _ = state.permission_mode.send(parsed);
 
             send_json(ws_tx, &ServerMessage::ModeChanged { mode }).await;
         }
@@ -627,6 +674,7 @@ async fn dispatch_message(
                             id: info.id,
                             cols: info.cols,
                             rows: info.rows,
+                            scrollback: None,
                         },
                     )
                     .await;
@@ -684,6 +732,57 @@ async fn dispatch_message(
         }
 
         ClientMessage::TerminalList => {
+            // Recover any orphaned tmux sessions before listing
+            let _ = state
+                .terminal_manager
+                .recover_sessions(state.terminal_tx.clone())
+                .await;
+            let sessions = state.terminal_manager.list().await;
+            send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
+        }
+
+        ClientMessage::TerminalReconnect { session_id } => {
+            // Reset pipe-pane so the output stream starts clean.
+            // Fixes rendering corruption when re-attaching sessions
+            // that were running TUI apps (e.g. Claude Code with Ink/React).
+            state
+                .terminal_manager
+                .reset_output_reader(&session_id, state.terminal_tx.clone())
+                .await;
+
+            match state.terminal_manager.capture_scrollback(&session_id).await {
+                Ok(scrollback) => {
+                    let sessions = state.terminal_manager.list().await;
+                    if let Some(info) = sessions.iter().find(|s| s.id == session_id) {
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::TerminalCreated {
+                                id: info.id.clone(),
+                                cols: info.cols,
+                                rows: info.rows,
+                                scrollback: Some(scrollback),
+                            },
+                        )
+                        .await;
+                    }
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Terminal reconnect failed: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::TerminalRename { session_id, name } => {
+            state
+                .terminal_manager
+                .rename_session(&session_id, name)
+                .await;
             let sessions = state.terminal_manager.list().await;
             send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
         }
@@ -709,10 +808,16 @@ async fn handle_send_message(
     content: &str,
     tab_id: Option<&str>,
     state: &Arc<AppState>,
-    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
-    ws_rx: &mut futures::stream::SplitStream<WebSocket>,
+    streams: &mut WsStreams<'_>,
 ) {
     use futures::{SinkExt, StreamExt};
+
+    let WsStreams {
+        ws_tx,
+        ws_rx,
+        terminal_rx,
+        notify_rx,
+    } = streams;
 
     // Try to acquire processing lock
     {
@@ -733,7 +838,7 @@ async fn handle_send_message(
     // Determine whether to use a session or the legacy singleton
     let use_session = tab_id.is_some();
 
-    // Ensure agent exists (session or singleton)
+    // Ensure agent exists (session or singleton) — reload from last_session_id if available
     if use_session {
         let tab = tab_id.unwrap();
         let mut sessions = state.sessions.lock().await;
@@ -741,7 +846,12 @@ async fn handle_send_message(
             .entry(tab.to_string())
             .or_insert_with(WebAgentSession::new);
         if session.agent.is_none() {
-            match create_agent(state).await {
+            let result = if let Some(ref last_id) = session.last_session_id {
+                create_agent_with_session(state, last_id).await
+            } else {
+                create_agent(state).await
+            };
+            match result {
                 Ok(agent) => {
                     session.agent = Some(agent);
                 }
@@ -779,15 +889,17 @@ async fn handle_send_message(
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
         let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        let (bg_signal_tx, bg_signal_rx) = watch::channel(());
         session.approval_tx = Some(approval_tx);
         session.plan_review_tx = Some(plan_review_tx);
         session.planner_answer_tx = Some(planner_answer_tx);
+        session.bg_signal_tx = Some(bg_signal_tx);
         let mut agent = session.agent.take().unwrap();
         agent.set_channels(
             Some(approval_rx),
             Some(plan_review_rx),
             Some(planner_answer_rx),
-            None,
+            Some(bg_signal_rx),
         );
         agent.label = Some(session.label.clone());
         agent.tab_id = Some(tab.to_string());
@@ -797,16 +909,18 @@ async fn handle_send_message(
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
         let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
+        let (bg_signal_tx, bg_signal_rx) = watch::channel(());
         *state.approval_tx.lock().await = Some(approval_tx);
         *state.plan_review_tx.lock().await = Some(plan_review_tx);
         *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
+        *state.bg_signal_tx.lock().await = Some(bg_signal_tx);
         let mut lock = state.agent.lock().await;
         let mut agent = lock.take().unwrap();
         agent.set_channels(
             Some(approval_rx),
             Some(plan_review_rx),
             Some(planner_answer_rx),
-            None,
+            Some(bg_signal_rx),
         );
         agent.label = Some("Agent 1".to_string());
         agent
@@ -818,9 +932,15 @@ async fn handle_send_message(
     let content_owned = content.to_string();
     let tab_id_owned = tab_id.map(String::from);
 
+    // Create cancellation token so abort can signal the agent to stop
+    let cancel_token = CancellationToken::new();
+    let cancel_for_agent = cancel_token.clone();
+
     // Spawn the agent turn
     let agent_handle = tokio::spawn(async move {
-        let result = agent.run_turn(&content_owned, event_tx, None, None).await;
+        let result = agent
+            .run_turn(&content_owned, event_tx, Some(cancel_for_agent), None)
+            .await;
         (agent, result)
     });
 
@@ -828,6 +948,7 @@ async fn handle_send_message(
     // client messages so that approval / abort / plan / terminal messages
     // are processed without deadlocking.
     let mut client_disconnected = false;
+    let mut aborted = false;
     loop {
         tokio::select! {
             // Agent produced a stream event → forward to client
@@ -843,6 +964,7 @@ async fn handle_send_message(
                         if ws_tx.send(Message::Text(json.into())).await.is_err() {
                             warn!(conn_id, "WebSocket send failed, client likely disconnected");
                             client_disconnected = true;
+                            cancel_token.cancel();
                             break;
                         }
                     }
@@ -855,6 +977,12 @@ async fn handle_send_message(
                     Some(Ok(Message::Text(text))) => {
                         let text = text.to_string();
                         match serde_json::from_str::<ClientMessage>(&text) {
+                            Ok(ClientMessage::Abort { .. }) => {
+                                info!(conn_id, "Abort received mid-turn, cancelling agent");
+                                cancel_token.cancel();
+                                aborted = true;
+                                break;
+                            }
                             Ok(client_msg) => {
                                 handle_mid_turn_message(client_msg, conn_id, state, ws_tx).await;
                             }
@@ -865,17 +993,64 @@ async fn handle_send_message(
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
                         client_disconnected = true;
+                        cancel_token.cancel();
                         break;
                     }
                     _ => {} // ping/pong/binary — ignore
                 }
             }
+            // Terminal output must keep flowing during agent turns
+            Ok(term_msg) = terminal_rx.recv() => {
+                send_json(ws_tx, &term_msg).await;
+            }
+            // Worker notifications must keep flowing during agent turns
+            Ok(notif) = notify_rx.recv() => {
+                let msg = ServerMessage::WorkerNotification {
+                    worker_id: notif.worker_id,
+                    worker_name: notif.worker_name,
+                    status: notif.status,
+                    summary: notif.summary,
+                };
+                send_json(ws_tx, &msg).await;
+            }
         }
     }
 
-    // Wait for agent turn to complete
-    match agent_handle.await {
-        Ok((returned_agent, result)) => {
+    // Drain any remaining buffered events before dropping the receiver.
+    // This ensures tool results (e.g. "Tool denied by user.") that were
+    // queued while the abort was processed still get forwarded to the client.
+    if !client_disconnected {
+        while let Ok(ev) = event_rx.try_recv() {
+            let json = if let Some(ref tid) = tab_id_owned {
+                inject_tab_id(&ev, tid)
+            } else {
+                serde_json::to_string(&ev).unwrap_or_default()
+            };
+            let _ = ws_tx.send(Message::Text(json.into())).await;
+        }
+    }
+
+    // Drop the event receiver so the agent's event_tx.send() fails immediately
+    // instead of blocking on a full channel buffer when nobody is reading.
+    // Without this, the agent can hang indefinitely and the timeout below
+    // would fire, losing the agent (and its unsaved session) entirely.
+    drop(event_rx);
+
+    // Wait for agent turn to complete (with timeout for abort/disconnect cases)
+    let wait_result = if aborted || client_disconnected {
+        match tokio::time::timeout(std::time::Duration::from_secs(10), agent_handle).await {
+            Ok(result) => Some(result),
+            Err(_) => {
+                warn!(conn_id, "Agent did not stop within 10s after cancellation");
+                None
+            }
+        }
+    } else {
+        Some(agent_handle.await)
+    };
+
+    match wait_result {
+        Some(Ok((returned_agent, result))) => {
             if let Err(e) = result {
                 error!(conn_id, error = %e, "Agent turn error");
                 if !client_disconnected {
@@ -890,7 +1065,7 @@ async fn handle_send_message(
             }
 
             if !client_disconnected {
-                // Send processing_complete with updated state
+                // Send processing_complete so the UI resets its state
                 let session_id = returned_agent.session_id().to_string();
                 let messages = returned_agent.messages_json();
                 let checkpoints = returned_agent.checkpoints().to_vec();
@@ -904,6 +1079,7 @@ async fn handle_send_message(
                         checkpoints,
                         context_size: Some(context_size),
                         tab_id: tab_id_owned.clone(),
+                        aborted: if aborted { Some(true) } else { None },
                     },
                 )
                 .await;
@@ -913,6 +1089,7 @@ async fn handle_send_message(
             if let Some(ref tid) = tab_id_owned {
                 let mut sessions = state.sessions.lock().await;
                 if let Some(session) = sessions.get_mut(tid) {
+                    session.last_session_id = Some(returned_agent.session_id().to_string());
                     session.agent = Some(returned_agent);
                 }
                 // If session was destroyed mid-turn, agent is dropped
@@ -921,7 +1098,7 @@ async fn handle_send_message(
                 *lock = Some(returned_agent);
             }
         }
-        Err(e) => {
+        Some(Err(e)) => {
             error!(conn_id, error = %e, "Agent task panicked");
             if !client_disconnected {
                 send_json(
@@ -932,6 +1109,11 @@ async fn handle_send_message(
                 )
                 .await;
             }
+        }
+        None => {
+            // Timeout: agent didn't stop after cancellation — agent is lost,
+            // session will recreate it on the next message.
+            warn!(conn_id, "Agent lost after cancellation timeout");
         }
     }
 
@@ -1009,7 +1191,7 @@ async fn handle_mid_turn_message(
     msg: ClientMessage,
     conn_id: usize,
     state: &Arc<AppState>,
-    _ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
     match msg {
         ClientMessage::Approve {
@@ -1073,12 +1255,11 @@ async fn handle_mid_turn_message(
             send_planner_answer(state, session_id.as_deref(), answer).await;
         }
 
-        ClientMessage::Abort { session_id: _ } => {
-            let mut owner = state.processing_owner.lock().await;
-            if *owner == Some(conn_id) {
-                *owner = None;
-                info!(conn_id, "Aborted processing (mid-turn)");
-            }
+        ClientMessage::Abort { .. } => {
+            // Abort is now handled directly in the select loop of handle_send_message
+            // (cancels the CancellationToken and breaks the loop). This arm should
+            // not be reached, but is kept for safety.
+            warn!(conn_id, "Unexpected Abort in handle_mid_turn_message");
         }
 
         // Terminal messages are valid mid-turn
@@ -1096,6 +1277,91 @@ async fn handle_mid_turn_message(
 
         ClientMessage::TerminalDestroy { session_id } => {
             let _ = state.terminal_manager.destroy(&session_id).await;
+        }
+
+        ClientMessage::SendToBackground { session_id } => {
+            let mut sent = false;
+            if let Some(ref sid) = session_id {
+                let sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get(sid)
+                    && let Some(ref tx) = session.bg_signal_tx
+                {
+                    sent = tx.send(()).is_ok();
+                }
+            }
+            if !sent {
+                let tx = state.bg_signal_tx.lock().await;
+                if let Some(ref tx) = *tx {
+                    let _ = tx.send(());
+                }
+            }
+        }
+
+        // Terminal management is valid mid-turn
+        ClientMessage::TerminalList => {
+            let _ = state
+                .terminal_manager
+                .recover_sessions(state.terminal_tx.clone())
+                .await;
+            let sessions = state.terminal_manager.list().await;
+            send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
+        }
+
+        ClientMessage::TerminalCreate { cwd, cols, rows } => {
+            if let Ok(info) = state
+                .terminal_manager
+                .create_session(state.terminal_tx.clone(), cwd, cols, rows)
+                .await
+            {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::TerminalCreated {
+                        id: info.id,
+                        cols: info.cols,
+                        rows: info.rows,
+                        scrollback: None,
+                    },
+                )
+                .await;
+            }
+        }
+
+        ClientMessage::TerminalReconnect { session_id } => {
+            state
+                .terminal_manager
+                .reset_output_reader(&session_id, state.terminal_tx.clone())
+                .await;
+            if let Ok(scrollback) = state.terminal_manager.capture_scrollback(&session_id).await {
+                let sessions = state.terminal_manager.list().await;
+                if let Some(info) = sessions.iter().find(|s| s.id == session_id) {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::TerminalCreated {
+                            id: info.id.clone(),
+                            cols: info.cols,
+                            rows: info.rows,
+                            scrollback: Some(scrollback),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::TerminalRename { session_id, name } => {
+            state
+                .terminal_manager
+                .rename_session(&session_id, name)
+                .await;
+            let sessions = state.terminal_manager.list().await;
+            send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
+        }
+
+        // Session management is valid mid-turn
+        ClientMessage::ListSessions => {
+            if let Ok(sessions) = lukan_agent::SessionManager::list().await {
+                send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
+            }
         }
 
         // Ignore all other messages during a turn
@@ -1409,7 +1675,7 @@ async fn send_init(
     let agent_lock = state.agent.lock().await;
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.to_string();
+    let permission_mode = state.permission_mode.borrow().to_string();
 
     let (session_id, messages, checkpoints, token_usage, context_size) =
         if let Some(ref agent) = *agent_lock {
@@ -1522,7 +1788,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.clone();
+    let permission_mode = state.permission_mode.borrow().clone();
 
     let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
         .await
@@ -1552,11 +1818,26 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
     let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
     *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
 
-    let tools = if has_browser {
+    let mut tools = if has_browser {
         lukan_tools::create_configured_browser_registry(&permissions, &allowed)
     } else {
         create_configured_registry(&permissions, &allowed)
     };
+
+    // Register MCP tools if configured
+    if !config.config.mcp_servers.is_empty() {
+        let result = lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
+        if result.tool_count > 0 {
+            tracing::info!(count = result.tool_count, "MCP tools registered (web)");
+        }
+        for (server, err) in &result.errors {
+            tracing::warn!(server = %server, "MCP error: {err}");
+        }
+        Box::leak(Box::new(result.manager));
+    }
+
+    let (bg_signal_tx, bg_signal_rx) = watch::channel(());
+    *state.bg_signal_tx.lock().await = Some(bg_signal_tx);
 
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
@@ -1565,10 +1846,10 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         cwd,
         provider_name,
         model_name,
-        bg_signal: None,
+        bg_signal: Some(bg_signal_rx),
         allowed_paths: Some(allowed),
         permission_mode,
-        permission_mode_rx: None,
+        permission_mode_rx: Some(state.permission_mode.subscribe()),
         permissions,
         approval_rx: Some(approval_rx),
         plan_review_rx: Some(plan_review_rx),
@@ -1583,7 +1864,16 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
         extra_env: config.credentials.flatten_skill_env(),
     };
 
-    AgentLoop::new(agent_config).await
+    let mut agent = AgentLoop::new(agent_config).await?;
+    if let Some(disabled) = &config.config.disabled_tools {
+        agent.set_disabled_tools(
+            disabled
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
+        );
+    }
+    Ok(agent)
 }
 
 /// Create an AgentLoop with a loaded session
@@ -1598,7 +1888,7 @@ async fn create_agent_with_session(
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
-    let permission_mode = state.permission_mode.lock().await.clone();
+    let permission_mode = state.permission_mode.borrow().clone();
 
     let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
         .await
@@ -1628,11 +1918,30 @@ async fn create_agent_with_session(
     let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
     *state.planner_answer_tx.lock().await = Some(planner_answer_tx);
 
-    let tools = if has_browser {
+    // Create bg signal channel
+    let (bg_signal_tx, bg_signal_rx) = watch::channel(());
+    *state.bg_signal_tx.lock().await = Some(bg_signal_tx);
+
+    let mut tools = if has_browser {
         lukan_tools::create_configured_browser_registry(&permissions, &allowed)
     } else {
         create_configured_registry(&permissions, &allowed)
     };
+
+    // Register MCP tools if configured
+    if !config.config.mcp_servers.is_empty() {
+        let result = lukan_tools::init_mcp_tools(&mut tools, &config.config.mcp_servers).await;
+        if result.tool_count > 0 {
+            tracing::info!(
+                count = result.tool_count,
+                "MCP tools registered (web/session)"
+            );
+        }
+        for (server, err) in &result.errors {
+            tracing::warn!(server = %server, "MCP error: {err}");
+        }
+        Box::leak(Box::new(result.manager));
+    }
 
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
@@ -1641,10 +1950,10 @@ async fn create_agent_with_session(
         cwd,
         provider_name,
         model_name,
-        bg_signal: None,
+        bg_signal: Some(bg_signal_rx),
         allowed_paths: Some(allowed),
         permission_mode,
-        permission_mode_rx: None,
+        permission_mode_rx: Some(state.permission_mode.subscribe()),
         permissions,
         approval_rx: Some(approval_rx),
         plan_review_rx: Some(plan_review_rx),
@@ -1659,7 +1968,16 @@ async fn create_agent_with_session(
         extra_env: config.credentials.flatten_skill_env(),
     };
 
-    AgentLoop::load_session(agent_config, session_id).await
+    let mut agent = AgentLoop::load_session(agent_config, session_id).await?;
+    if let Some(disabled) = &config.config.disabled_tools {
+        agent.set_disabled_tools(
+            disabled
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
+        );
+    }
+    Ok(agent)
 }
 
 /// Build system prompt (matches TUI logic)

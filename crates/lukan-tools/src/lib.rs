@@ -4,6 +4,8 @@ pub mod browser;
 mod edit_file;
 mod glob_tool;
 mod grep;
+pub mod mcp;
+pub mod mcp_tools;
 pub mod planner_tools;
 pub mod plugin_tools;
 mod read_file;
@@ -462,6 +464,171 @@ mod tests {
     }
 }
 
+// ── Additional unit tests ────────────────────────────────────────────────
+
+#[cfg(test)]
+mod format_and_registry_tests {
+    use super::*;
+
+    // ── format_stats tests ───────────────────────────────────────────
+
+    #[test]
+    fn format_stats_no_changes() {
+        assert_eq!(format_stats(0, 0), "No changes");
+    }
+
+    #[test]
+    fn format_stats_only_added() {
+        assert_eq!(format_stats(5, 0), "Added 5 lines");
+        assert_eq!(format_stats(1, 0), "Added 1 lines");
+    }
+
+    #[test]
+    fn format_stats_only_removed() {
+        assert_eq!(format_stats(0, 3), "Removed 3 lines");
+    }
+
+    #[test]
+    fn format_stats_both() {
+        assert_eq!(format_stats(5, 2), "Added 5 lines, removed 2 lines");
+    }
+
+    // ── ToolRegistry tests ───────────────────────────────────────────
+
+    #[test]
+    fn registry_new_is_empty() {
+        let registry = ToolRegistry::new();
+        assert!(registry.definitions().is_empty());
+    }
+
+    #[test]
+    fn registry_default_is_empty() {
+        let registry = ToolRegistry::default();
+        assert!(registry.definitions().is_empty());
+    }
+
+    #[test]
+    fn registry_get_nonexistent_returns_none() {
+        let registry = ToolRegistry::new();
+        assert!(registry.get("NonExistent").is_none());
+    }
+
+    #[test]
+    fn registry_definitions_are_sorted() {
+        let registry = create_default_registry();
+        let defs = registry.definitions();
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "Tool definitions should be sorted by name");
+    }
+
+    #[test]
+    fn registry_contains_core_tools() {
+        let registry = create_default_registry();
+        let expected = [
+            "Bash",
+            "ReadFiles",
+            "WriteFile",
+            "EditFile",
+            "Grep",
+            "Glob",
+            "WebFetch",
+            "TaskAdd",
+            "TaskList",
+            "TaskUpdate",
+            "SubmitPlan",
+            "PlannerQuestion",
+            "LoadSkill",
+        ];
+        for name in &expected {
+            assert!(
+                registry.get(name).is_some(),
+                "Registry should contain tool '{name}'"
+            );
+        }
+    }
+
+    #[test]
+    fn registry_retain_filters_tools() {
+        let mut registry = create_default_registry();
+        registry.retain(&["Bash", "Grep"]);
+        assert!(registry.get("Bash").is_some());
+        assert!(registry.get("Grep").is_some());
+        assert!(registry.get("ReadFiles").is_none());
+        assert!(registry.get("EditFile").is_none());
+        assert_eq!(registry.definitions().len(), 2);
+    }
+
+    #[test]
+    fn registry_retain_empty_removes_all() {
+        let mut registry = create_default_registry();
+        registry.retain(&[]);
+        assert!(registry.definitions().is_empty());
+    }
+
+    #[test]
+    fn registry_sandbox_settings() {
+        let mut registry = ToolRegistry::new();
+        assert!(!registry.is_sandbox_enabled());
+        assert!(registry.allowed_dirs().is_empty());
+        assert!(registry.sensitive_patterns().is_empty());
+
+        registry.set_sandbox(
+            true,
+            vec!["/home/user/project".to_string()],
+            vec!["*.pem".to_string(), ".env*".to_string()],
+        );
+        assert!(registry.is_sandbox_enabled());
+        assert_eq!(registry.allowed_dirs(), &["/home/user/project"]);
+        assert_eq!(
+            registry.sensitive_patterns(),
+            &["*.pem".to_string(), ".env*".to_string()]
+        );
+    }
+
+    #[test]
+    fn tool_definitions_have_valid_schemas() {
+        let registry = create_default_registry();
+        for def in registry.definitions() {
+            assert!(!def.name.is_empty(), "Tool name should not be empty");
+            assert!(
+                !def.description.is_empty(),
+                "Tool '{}' description should not be empty",
+                def.name
+            );
+            // Input schema should be a JSON object with "type": "object"
+            assert_eq!(
+                def.input_schema.get("type").and_then(|v| v.as_str()),
+                Some("object"),
+                "Tool '{}' input_schema should have type: object",
+                def.name
+            );
+        }
+    }
+
+    #[test]
+    fn all_tool_names_returns_sorted() {
+        let names = all_tool_names();
+        assert!(!names.is_empty());
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "all_tool_names should return sorted names");
+    }
+
+    #[test]
+    fn all_tool_info_built_in_have_no_source() {
+        let info = all_tool_info();
+        // Built-in tools should have source = None
+        let bash = info.iter().find(|t| t.name == "Bash");
+        assert!(bash.is_some());
+        assert!(
+            bash.unwrap().source.is_none(),
+            "Built-in Bash tool should have no source"
+        );
+    }
+}
+
 /// Format diff stats like "Added 5 lines, removed 2 lines"
 pub(crate) fn format_stats(added: usize, removed: usize) -> String {
     match (added, removed) {
@@ -561,6 +728,34 @@ pub fn create_configured_browser_registry(
         permissions.sensitive_patterns.clone(),
     );
     registry
+}
+
+/// Result of MCP initialization.
+pub struct McpInitResult {
+    /// The manager (must be kept alive for tool proxies to work).
+    pub manager: mcp::McpManager,
+    /// Number of tools successfully registered.
+    pub tool_count: usize,
+    /// Per-server errors encountered during init.
+    pub errors: Vec<(String, String)>,
+}
+
+/// Initialize MCP servers and register their tools into a registry.
+///
+/// Returns the `McpManager` which must be kept alive for the tool proxies to work,
+/// along with diagnostic info about what was loaded.
+pub async fn init_mcp_tools(
+    registry: &mut ToolRegistry,
+    configs: &std::collections::HashMap<String, lukan_core::config::types::McpServerConfig>,
+) -> McpInitResult {
+    let (manager, errors) = mcp::McpManager::init(configs).await;
+    let tool_count = manager.tool_defs.len();
+    mcp_tools::register_mcp_tools(registry, &manager);
+    McpInitResult {
+        manager,
+        tool_count,
+        errors,
+    }
 }
 
 /// Create a registry configured with project permissions.

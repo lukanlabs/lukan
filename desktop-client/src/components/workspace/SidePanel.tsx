@@ -7,15 +7,20 @@ import { BrowserPanel } from "./panels/BrowserPanel";
 import { ProcessesPanel } from "./panels/ProcessesPanel";
 import { EventsPanel } from "./panels/EventsPanel";
 import { PluginViewPanel } from "./panels/PluginViewPanel";
+import { TerminalsPanel } from "./panels/TerminalsPanel";
 
 interface SidePanelProps {
   activePanel: SidePanelId;
   eventSourceFilter?: string | null;
   // Session props
   currentSessionId: string;
-  onLoadSession: (id: string) => void;
+  onLoadSession: (id: string, name?: string) => void;
   onNewSession: () => void;
   onOpenProcessLog?: (process: BgProcessInfo) => void;
+  onPreviewFile?: (path: string, size: number) => void;
+  // Terminal props
+  terminalAttachedIds?: string[];
+  onSwitchToTerminal?: (sessionId: string) => void;
   // Plugin view props
   activePluginName?: string | null;
   activePluginViews?: ViewDeclaration[];
@@ -31,6 +36,7 @@ const PANEL_TITLES: Record<SidePanelId, string> = {
   browser: "Browser",
   events: "System Events",
   plugin: "Plugin",
+  terminals: "Terminals",
 };
 
 export function SidePanel({
@@ -40,6 +46,9 @@ export function SidePanel({
   onLoadSession,
   onNewSession,
   onOpenProcessLog,
+  onPreviewFile,
+  terminalAttachedIds,
+  onSwitchToTerminal,
   activePluginName,
   activePluginViews,
   activePluginRunning,
@@ -66,7 +75,7 @@ export function SidePanel({
         )}
       </div>
       <div className="side-panel-content">
-        {activePanel === "files" && <FilesPanel />}
+        {activePanel === "files" && <FilesPanel onPreviewFile={onPreviewFile} />}
         {activePanel === "workers" && <WorkersPanel />}
         {activePanel === "sessions" && (
           <SessionsPanel
@@ -80,6 +89,12 @@ export function SidePanel({
         )}
         {activePanel === "browser" && <BrowserPanel />}
         {activePanel === "events" && <EventsPanel sourceFilter={eventSourceFilter} />}
+        {activePanel === "terminals" && (
+          <TerminalsPanel
+            attachedIds={terminalAttachedIds ?? []}
+            onSwitchToTerminal={onSwitchToTerminal}
+          />
+        )}
         {activePanel === "plugin" && activePluginName && (
           <PluginViewPanel
             pluginName={activePluginName}

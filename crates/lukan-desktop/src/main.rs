@@ -116,12 +116,15 @@ fn main() {
             commands::chat::create_agent_tab,
             commands::chat::destroy_agent_tab,
             commands::chat::rename_agent_tab,
+            commands::chat::load_agent_tabs,
+            commands::chat::save_agent_tabs,
             // Terminal
             commands::terminal::terminal_create,
             commands::terminal::terminal_input,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_destroy,
             commands::terminal::terminal_list,
+            commands::terminal::terminal_rename,
             // Memory
             commands::memory::get_global_memory,
             commands::memory::save_global_memory,
@@ -161,6 +164,8 @@ fn main() {
             commands::audio::list_audio_devices,
             // Files
             commands::files::list_directory,
+            commands::files::read_file,
+            commands::files::write_file,
             commands::files::open_in_editor,
             commands::files::get_cwd,
             commands::files::open_url,

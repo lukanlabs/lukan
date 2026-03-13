@@ -17,6 +17,7 @@ pub struct TerminalSession {
     pub child: Box<dyn portable_pty::Child + Send>,
     pub cols: u16,
     pub rows: u16,
+    pub name: Option<String>,
 }
 
 /// Event payload emitted to the frontend per session.
@@ -36,6 +37,8 @@ pub struct TerminalSessionInfo {
     pub id: String,
     pub cols: u16,
     pub rows: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// Shared state for all terminal sessions, managed via `tauri::State`.
@@ -126,6 +129,7 @@ impl TerminalState {
             id: id.clone(),
             cols,
             rows,
+            name: None,
         };
 
         sessions.insert(
@@ -137,6 +141,7 @@ impl TerminalState {
                 child,
                 cols,
                 rows,
+                name: None,
             },
         );
 

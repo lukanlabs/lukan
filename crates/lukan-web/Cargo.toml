@@ -2,6 +2,7 @@
 name = "lukan-web"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 lukan-core.workspace = true
@@ -13,6 +14,7 @@ lukan-browser.workspace = true
 axum.workspace = true
 tower-http.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -25,8 +27,8 @@ base64.workspace = true
 open.workspace = true
 reqwest.workspace = true
 libc.workspace = true
-portable-pty.workspace = true
 uuid.workspace = true
+portable-pty.workspace = true
 rust-embed.workspace = true
 mime_guess = "2"
 toml.workspace = true

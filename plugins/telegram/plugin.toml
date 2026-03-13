@@ -1,0 +1,68 @@
+[plugin]
+name = "telegram"
+version = "0.1.0"
+description = "Telegram bot channel via Bot API"
+plugin_type = "channel"
+protocol_version = 1
+alias = "tg"
+
+[run]
+command = "node"
+args = ["bridge.js"]
+
+[auth]
+type = "token"
+check_field = "botToken"
+
+# Config schema
+[config.botToken]
+type = "string"
+label = "Bot Token"
+description = "Telegram Bot API token from @BotFather"
+format = "password"
+group = "Connection"
+order = 0
+
+[config.whitelist]
+type = "string[]"
+label = "Allowed User IDs"
+description = "Telegram user IDs allowed to interact (numeric). Leave empty to allow all."
+group = "Access Control"
+order = 0
+
+[config.allowedGroups]
+type = "string[]"
+label = "Allowed Group IDs"
+description = "Telegram group/chat IDs allowed (numeric, negative for groups)"
+group = "Access Control"
+order = 1
+
+[config.prefix]
+type = "string"
+label = "Command Prefix"
+description = "Only messages starting with this prefix will be processed (e.g. /ai)"
+group = "Connection"
+order = 1
+
+[config.tools]
+type = "string[]"
+description = "Agent tools"
+hidden = true
+valid_values = [
+  "Bash",
+  "ReadFiles", "WriteFile", "EditFile",
+  "Grep", "Glob",
+  "WebFetch",
+  "TelegramSend", "TelegramSendMedia", "TelegramGetChats", "TelegramReadMessages", "TelegramGetChatInfo",
+]
+
+# Security policy
+[security]
+default_tools = ["Grep", "Glob", "ReadFiles", "WebFetch", "TelegramSend", "TelegramSendMedia", "TelegramGetChats", "TelegramReadMessages", "TelegramGetChatInfo"]
+include_memory = true
+dir_restrictions = true
+dangerous_tools = ["Bash", "WriteFile", "EditFile"]
+
+[security.prompts]
+dir_none = "prompt-dir-none.txt"
+dir_allowed = "prompt-dir-allowed.txt"

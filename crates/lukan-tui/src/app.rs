@@ -158,6 +158,8 @@ pub struct App {
     event_buffer: Vec<(String, String, String)>,
     /// Whether browser tools are enabled (--browser flag)
     browser_tools: bool,
+    /// MCP server manager (kept alive for tool proxies)
+    mcp_manager: Option<lukan_tools::mcp::McpManager>,
     /// Currently active view (Main or EventAgent)
     active_view: ActiveView,
     /// The Event Agent sub-agent (autonomous, Skip mode)
@@ -311,6 +313,13 @@ impl App {
         let provider = Arc::from(provider);
         let (bg_signal_tx, bg_signal_rx) = watch::channel(());
 
+        let disabled_tools = config
+            .config
+            .disabled_tools
+            .as_ref()
+            .map(|d| d.iter().cloned().collect::<HashSet<_>>())
+            .unwrap_or_default();
+
         Self {
             messages: Vec::new(),
             input: String::new(),
@@ -364,6 +373,7 @@ impl App {
             last_event_poll: Instant::now(),
             event_buffer: Vec::new(),
             browser_tools: false,
+            mcp_manager: None,
             active_view: ActiveView::Main,
             event_agent: None,
             event_agent_return_rx: None,
@@ -378,7 +388,7 @@ impl App {
             event_agent_has_unread: false,
             turn_text_msg_idx: None,
             tool_picker: None,
-            disabled_tools: HashSet::new(),
+            disabled_tools,
             event_picker: None,
             event_auto_mode: false,
             continue_session: false,
@@ -601,11 +611,24 @@ impl App {
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
         self.planner_answer_tx = Some(planner_answer_tx);
 
-        let tools = if self.browser_tools {
+        let mut tools = if self.browser_tools {
             create_configured_browser_registry(&permissions, &allowed)
         } else {
             create_configured_registry(&permissions, &allowed)
         };
+
+        // Register MCP tools if configured
+        if !self.config.config.mcp_servers.is_empty() {
+            let result =
+                lukan_tools::init_mcp_tools(&mut tools, &self.config.config.mcp_servers).await;
+            if result.tool_count > 0 {
+                tracing::info!(count = result.tool_count, "MCP tools registered");
+            }
+            for (server, err) in &result.errors {
+                tracing::warn!(server = %server, "MCP error: {err}");
+            }
+            self.mcp_manager = Some(result.manager);
+        }
 
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),
@@ -3043,7 +3066,7 @@ impl App {
                                 && self.model_picker.is_none()
                                 && self.reasoning_picker.is_none()
                             {
-                                let char_count = text.len();
+                                let char_count = text.chars().count();
                                 let label = format!("[Pasted Content {char_count} chars]");
                                 let start = self.cursor_pos;
                                 self.input.insert_str(start, &text);
@@ -3151,12 +3174,27 @@ impl App {
                 }
                 Some(stream_event) = agent_rx.recv() => {
                     self.handle_stream_event(stream_event);
+                    // Drain all ready agent events before re-rendering so rapid
+                    // streaming doesn't starve terminal input / Tick processing.
+                    while let Ok(ev) = agent_rx.try_recv() {
+                        self.handle_stream_event(ev);
+                    }
+                    // Keep terminal responsive during agent streaming
+                    if let Some(ref mut modal) = self.terminal_modal {
+                        modal.process_output();
+                    }
                 }
                 Some(event_stream_event) = event_agent_rx.recv() => {
                     self.handle_event_agent_stream_event(event_stream_event);
+                    while let Ok(ev) = event_agent_rx.try_recv() {
+                        self.handle_event_agent_stream_event(ev);
+                    }
                 }
                 Some(update) = subagent_update_rx.recv() => {
                     self.handle_subagent_update(update);
+                    while let Ok(ev) = subagent_update_rx.try_recv() {
+                        self.handle_subagent_update(ev);
+                    }
                 }
             }
 
@@ -3230,6 +3268,13 @@ impl App {
             if self.should_quit {
                 break;
             }
+        }
+
+        // Save session before exiting so no conversation is lost
+        if let Some(ref mut agent) = self.agent
+            && let Err(e) = agent.save_session_public().await
+        {
+            tracing::warn!(error = %e, "Failed to save session on exit");
         }
 
         // Close terminal modal if open
@@ -3814,11 +3859,27 @@ impl App {
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
         self.planner_answer_tx = Some(planner_answer_tx);
 
-        let tools = if self.browser_tools {
+        let mut tools = if self.browser_tools {
             create_configured_browser_registry(&permissions, &allowed)
         } else {
             create_configured_registry(&permissions, &allowed)
         };
+
+        // Register MCP tools if configured
+        if !self.config.config.mcp_servers.is_empty() {
+            let result =
+                lukan_tools::init_mcp_tools(&mut tools, &self.config.config.mcp_servers).await;
+            if result.tool_count > 0 {
+                tracing::info!(
+                    count = result.tool_count,
+                    "MCP tools registered (session restore)"
+                );
+            }
+            for (server, err) in &result.errors {
+                tracing::warn!(server = %server, "MCP error: {err}");
+            }
+            self.mcp_manager = Some(result.manager);
+        }
 
         let config = AgentConfig {
             provider: Arc::clone(&self.provider),

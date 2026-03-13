@@ -1,6 +1,14 @@
-use axum::{Json, extract::Path, http::StatusCode, response::IntoResponse};
+use std::sync::Arc;
+
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde::Serialize;
 
+use crate::state::AppState;
 use lukan_core::config::{ConfigManager, Credentials, CredentialsManager, ProviderName};
 
 #[derive(Serialize)]
@@ -9,6 +17,27 @@ pub struct ProviderStatusDto {
     pub name: String,
     pub configured: bool,
     pub default_model: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provider_status_dto_serialization() {
+        let dto = ProviderStatusDto {
+            name: "anthropic".into(),
+            configured: true,
+            default_model: "claude-sonnet-4-20250514".into(),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(
+            json.contains(r#""defaultModel""#),
+            "defaultModel camelCase: {json}"
+        );
+        assert!(!json.contains("default_model"), "no snake_case: {json}");
+        assert!(json.contains(r#""configured":true"#), "configured: {json}");
+    }
 }
 
 /// GET /api/credentials
@@ -20,9 +49,16 @@ pub async fn get_credentials() -> impl IntoResponse {
 }
 
 /// PUT /api/credentials
-pub async fn save_credentials(Json(credentials): Json<Credentials>) -> impl IntoResponse {
+pub async fn save_credentials(
+    State(state): State<Arc<AppState>>,
+    Json(credentials): Json<Credentials>,
+) -> impl IntoResponse {
     match CredentialsManager::save(&credentials).await {
-        Ok(()) => StatusCode::OK.into_response(),
+        Ok(()) => {
+            // Update in-memory config so create_agent() uses fresh credentials
+            state.config.lock().await.credentials = credentials;
+            StatusCode::OK.into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -42,6 +78,7 @@ pub async fn get_provider_status() -> impl IntoResponse {
         ProviderName::OpenaiCodex,
         ProviderName::Zai,
         ProviderName::OpenaiCompatible,
+        ProviderName::Gemini,
     ];
 
     let statuses: Vec<ProviderStatusDto> = providers
@@ -113,6 +150,9 @@ pub async fn test_provider(Path(provider): Path<String>) -> impl IntoResponse {
                 "No base URL configured for openai-compatible"
             )),
         },
+        ProviderName::Gemini => lukan_providers::gemini::fetch_gemini_models(&api_key)
+            .await
+            .map(|m| format!("Connected. {} models available.", m.len())),
         _ => Ok(format!("Provider {provider} configured.")),
     };
 

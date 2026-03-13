@@ -33,7 +33,10 @@ const PROVIDERS: ProviderEntry[] = [
   { provider: "github-copilot", field: "copilotToken", label: "GitHub Copilot", envVar: "GITHUB_TOKEN" },
   { provider: "openai-codex", field: "codexAccessToken", label: "OpenAI Codex", envVar: "" },
   { provider: "zai", field: "zaiApiKey", label: "Zai", envVar: "ZAI_API_KEY" },
+  { provider: "ollama-cloud", field: "ollamaCloudApiKey", label: "Ollama Cloud", envVar: "OLLAMA_API_KEY" },
   { provider: "openai-compatible", field: "openaiCompatibleApiKey", label: "OpenAI Compatible", envVar: "OPENAI_COMPATIBLE_API_KEY" },
+  { provider: "lukan-cloud", field: "lukanCloudApiKey", label: "Lukan Cloud", envVar: "LUKAN_CLOUD_API_KEY" },
+  { provider: "gemini", field: "geminiApiKey", label: "Google Gemini", envVar: "GEMINI_API_KEY" },
 ];
 
 type TestResult = { status: "success" | "error"; message: string } | null;

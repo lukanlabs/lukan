@@ -1,11 +1,15 @@
+use std::sync::Arc;
+
 use axum::{
     Json,
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use lukan_tools::bg_processes::{self, BgProcessStatus};
 use serde::Serialize;
+
+use crate::state::AppState;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +28,53 @@ pub struct BgProcessDto {
 pub struct SessionQuery {
     #[serde(rename = "sessionId")]
     session_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bg_process_dto_serialization() {
+        let dto = BgProcessDto {
+            pid: 12345,
+            command: "cargo build".into(),
+            started_at: "2024-01-01T00:00:00Z".into(),
+            exited_at: None,
+            status: "running".into(),
+            label: Some("build".into()),
+            session_id: Some("sess-1".into()),
+            tab_id: None,
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains(r#""pid":12345"#), "pid: {json}");
+        assert!(
+            json.contains(r#""startedAt""#),
+            "startedAt camelCase: {json}"
+        );
+        assert!(json.contains(r#""exitedAt""#), "exitedAt camelCase: {json}");
+        assert!(
+            json.contains(r#""sessionId""#),
+            "sessionId camelCase: {json}"
+        );
+        assert!(json.contains(r#""tabId""#), "tabId camelCase: {json}");
+        assert!(!json.contains("started_at"), "no snake_case: {json}");
+        assert!(!json.contains("exited_at"), "no snake_case: {json}");
+        assert!(!json.contains("session_id"), "no snake_case: {json}");
+        assert!(!json.contains("tab_id"), "no snake_case: {json}");
+    }
+
+    #[test]
+    fn test_session_query_deserialize() {
+        let q: SessionQuery = serde_json::from_str(r#"{"sessionId":"abc"}"#).unwrap();
+        assert_eq!(q.session_id, Some("abc".to_string()));
+    }
+
+    #[test]
+    fn test_session_query_deserialize_empty() {
+        let q: SessionQuery = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(q.session_id.is_none());
+    }
 }
 
 /// GET /api/processes?sessionId=...
@@ -80,9 +131,30 @@ pub async fn kill_bg_process(Path(pid): Path<u32>) -> Json<bool> {
 }
 
 /// POST /api/processes/background
-pub async fn send_to_background() -> impl IntoResponse {
-    // In web mode, we don't have access to the bg_signal_tx from ChatState.
-    // This would require access to the shared AppState.
-    // For now, return false as this is a Tauri-specific feature.
-    (StatusCode::OK, Json(serde_json::json!(false)))
+pub async fn send_to_background(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Try session-based bg_signal first, then legacy singleton
+    let mut sent = false;
+
+    // Check all sessions for an active bg_signal_tx
+    {
+        let sessions = state.sessions.lock().await;
+        for session in sessions.values() {
+            if let Some(ref tx) = session.bg_signal_tx
+                && tx.send(()).is_ok()
+            {
+                sent = true;
+                break;
+            }
+        }
+    }
+
+    // Fallback to legacy singleton
+    if !sent {
+        let tx = state.bg_signal_tx.lock().await;
+        if let Some(ref tx) = *tx {
+            sent = tx.send(()).is_ok();
+        }
+    }
+
+    (StatusCode::OK, Json(serde_json::json!(sent)))
 }

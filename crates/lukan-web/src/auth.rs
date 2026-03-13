@@ -97,4 +97,122 @@ mod tests {
         assert!(!verify_auth_token("abc.def", "secret"));
         assert!(!verify_auth_token("", "secret"));
     }
+
+    #[test]
+    fn test_token_has_dot_separator() {
+        let token = create_auth_token("mysecret", 60_000);
+        assert!(
+            token.contains('.'),
+            "Token should have a dot separator: {token}"
+        );
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 2, "Token should have exactly 2 parts");
+        assert!(!parts[0].is_empty(), "Payload part should not be empty");
+        assert!(!parts[1].is_empty(), "Signature part should not be empty");
+    }
+
+    #[test]
+    fn test_different_secrets_produce_different_tokens() {
+        let token1 = create_auth_token("secret-a", 60_000);
+        let token2 = create_auth_token("secret-b", 60_000);
+        // Payloads might differ by iat, but signatures certainly differ
+        let sig1 = token1.split('.').nth(1).unwrap();
+        let sig2 = token2.split('.').nth(1).unwrap();
+        assert_ne!(
+            sig1, sig2,
+            "Different secrets should produce different signatures"
+        );
+    }
+
+    #[test]
+    fn test_verify_rejects_tampered_payload() {
+        let secret = "test-secret";
+        let token = create_auth_token(secret, 60_000);
+        // Tamper with the payload (change first char)
+        let mut tampered = token.clone();
+        let replacement = if &token[..1] == "A" { "B" } else { "A" };
+        tampered.replace_range(..1, replacement);
+        assert!(
+            !verify_auth_token(&tampered, secret),
+            "Tampered payload should not verify"
+        );
+    }
+
+    #[test]
+    fn test_verify_rejects_tampered_signature() {
+        let secret = "test-secret";
+        let token = create_auth_token(secret, 60_000);
+        let dot = token.find('.').unwrap();
+        // Tamper with the signature
+        let payload = &token[..dot];
+        let tampered = format!("{payload}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        assert!(
+            !verify_auth_token(&tampered, secret),
+            "Tampered signature should not verify"
+        );
+    }
+
+    #[test]
+    fn test_token_payload_is_valid_base64_json() {
+        let token = create_auth_token("secret", 60_000);
+        let dot = token.find('.').unwrap();
+        let b64_payload = &token[..dot];
+        let decoded = URL_SAFE_NO_PAD.decode(b64_payload).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&decoded).unwrap();
+        assert!(json.get("iat").is_some(), "Payload should have iat field");
+        assert!(json.get("ttl").is_some(), "Payload should have ttl field");
+        assert_eq!(json["ttl"].as_u64().unwrap(), 60_000, "TTL should match");
+    }
+
+    #[test]
+    fn test_hmac_sha256_with_long_key() {
+        // Key longer than block size (64 bytes) should be hashed first
+        let long_key = vec![0xABu8; 128];
+        let data = b"test data";
+        let result = hmac_sha256(&long_key, data);
+        assert_eq!(result.len(), 32, "HMAC-SHA256 output should be 32 bytes");
+        // Verify it's deterministic
+        let result2 = hmac_sha256(&long_key, data);
+        assert_eq!(result, result2);
+    }
+
+    #[test]
+    fn test_hmac_sha256_with_short_key() {
+        let short_key = b"key";
+        let data = b"message";
+        let result = hmac_sha256(short_key, data);
+        assert_eq!(result.len(), 32);
+        // Different data produces different HMAC
+        let result2 = hmac_sha256(short_key, b"other message");
+        assert_ne!(result, result2);
+    }
+
+    #[test]
+    fn test_hmac_sha256_with_empty_data() {
+        let key = b"secret";
+        let result = hmac_sha256(key, b"");
+        assert_eq!(result.len(), 32);
+    }
+
+    #[test]
+    fn test_verify_no_dot_returns_false() {
+        assert!(!verify_auth_token("nodothere", "secret"));
+    }
+
+    #[test]
+    fn test_verify_empty_parts() {
+        // dot at start
+        assert!(!verify_auth_token(".signature", "secret"));
+        // dot at end
+        assert!(!verify_auth_token("payload.", "secret"));
+    }
+
+    #[test]
+    fn test_token_with_large_ttl() {
+        let secret = "s";
+        let big_ttl = u64::MAX / 2;
+        let token = create_auth_token(secret, big_ttl);
+        // Should still be valid since iat is ~now and TTL is enormous
+        assert!(verify_auth_token(&token, secret));
+    }
 }

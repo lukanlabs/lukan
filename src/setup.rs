@@ -86,6 +86,8 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
         ("zai", "z.ai (GLM models)"),
         ("ollama-cloud", "Ollama Cloud"),
         ("openai-compatible", "OpenAI-compatible endpoint"),
+        ("lukan-cloud", "Lukan Cloud"),
+        ("gemini", "Google Gemini"),
     ];
 
     let current_str = config.provider.to_string();
@@ -217,6 +219,22 @@ fn setup_credentials(provider: &ProviderName, mut creds: Credentials) -> Result<
                 creds.openai_compatible_api_key.as_deref(),
             )?
             .or(creds.openai_compatible_api_key);
+        }
+        ProviderName::LukanCloud => {
+            creds.lukan_cloud_api_key = prompt_credential(
+                "Lukan Cloud API key",
+                "LUKAN_CLOUD_API_KEY",
+                creds.lukan_cloud_api_key.as_deref(),
+            )?
+            .or(creds.lukan_cloud_api_key);
+        }
+        ProviderName::Gemini => {
+            creds.gemini_api_key = prompt_credential(
+                "Gemini API key",
+                "GEMINI_API_KEY",
+                creds.gemini_api_key.as_deref(),
+            )?
+            .or(creds.gemini_api_key);
         }
     }
 
@@ -401,11 +419,7 @@ pub async fn run_doctor() -> Result<()> {
         creds.copilot_token.as_deref(),
         "lukan copilot-auth",
     );
-    print_key_status(
-        "GitHub token",
-        creds.github_token.as_deref(),
-        "GITHUB_TOKEN",
-    );
+
     print_key_status(
         "Codex",
         creds.codex_access_token.as_deref(),
@@ -421,6 +435,11 @@ pub async fn run_doctor() -> Result<()> {
         "OpenAI-compat",
         creds.openai_compatible_api_key.as_deref(),
         "OPENAI_COMPATIBLE_API_KEY",
+    );
+    print_key_status(
+        "Lukan Cloud",
+        creds.lukan_cloud_api_key.as_deref(),
+        "LUKAN_CLOUD_API_KEY",
     );
     print_key_status(
         "Brave Search",
@@ -461,21 +480,34 @@ pub async fn run_doctor() -> Result<()> {
     }
     println!();
 
-    // ── Sandbox (bwrap) ──
+    // ── Sandbox ──
     println!("{BOLD}Sandbox{RESET}");
-    let bwrap_available = lukan_tools::sandbox::is_bwrap_available();
-    if bwrap_available {
-        println!("  {GREEN}✓{RESET} OS sandbox (bwrap): {GREEN}available{RESET}");
+    if cfg!(target_os = "linux") {
+        let bwrap_available = lukan_tools::sandbox::is_bwrap_available();
+        if bwrap_available {
+            println!("  {GREEN}✓{RESET} OS sandbox (bwrap):    {GREEN}available{RESET}");
+        } else {
+            println!("  {YELLOW}!{RESET} OS sandbox (bwrap):    {YELLOW}not available{RESET}");
+            let diagnosis = lukan_tools::sandbox::diagnose_bwrap();
+            println!("  {DIM}Diagnosis: {diagnosis}{RESET}");
+        }
+        let has_profile = lukan_tools::sandbox::has_apparmor_profile();
+        if has_profile {
+            println!("  {GREEN}✓{RESET} AppArmor profile:      {GREEN}installed{RESET}");
+        } else {
+            println!("  {DIM}✗ AppArmor profile:      not installed{RESET}");
+        }
+    } else if cfg!(target_os = "macos") {
+        let sandbox_exec = lukan_tools::sandbox::is_sandbox_exec_available();
+        if sandbox_exec {
+            println!("  {GREEN}✓{RESET} OS sandbox (sandbox-exec): {GREEN}available{RESET}");
+        } else {
+            println!("  {YELLOW}!{RESET} OS sandbox (sandbox-exec): {YELLOW}not available{RESET}");
+            let diagnosis = lukan_tools::sandbox::diagnose_sandbox_exec();
+            println!("  {DIM}Diagnosis: {diagnosis}{RESET}");
+        }
     } else {
-        println!("  {YELLOW}!{RESET} OS sandbox (bwrap): {YELLOW}not available{RESET}");
-        let diagnosis = lukan_tools::sandbox::diagnose_bwrap();
-        println!("  {DIM}Diagnosis: {diagnosis}{RESET}");
-    }
-    let has_profile = lukan_tools::sandbox::has_apparmor_profile();
-    if has_profile {
-        println!("  {GREEN}✓{RESET} AppArmor profile:   {GREEN}installed{RESET}");
-    } else {
-        println!("  {DIM}✗ AppArmor profile:   not installed{RESET}");
+        println!("  {DIM}No OS-level sandbox available on this platform{RESET}");
     }
     println!();
 
@@ -559,5 +591,7 @@ fn env_var_for_provider(provider: &ProviderName) -> &'static str {
         ProviderName::Zai => "ZAI_API_KEY",
         ProviderName::OllamaCloud => "OLLAMA_API_KEY",
         ProviderName::OpenaiCompatible => "OPENAI_COMPATIBLE_API_KEY",
+        ProviderName::LukanCloud => "LUKAN_CLOUD_API_KEY",
+        ProviderName::Gemini => "GEMINI_API_KEY",
     }
 }

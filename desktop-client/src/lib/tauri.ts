@@ -25,6 +25,7 @@ import type {
   BrowserStatus,
   BrowserTab,
   DirectoryListing,
+  FileContent,
   WorkerSummary,
   WorkerDetail,
   WorkerDefinition,
@@ -58,10 +59,14 @@ export const testProvider = (provider: string) =>
 // Plugins
 export const listPlugins = () =>
   getTransport().call<PluginInfo[]>("list_plugins");
-export const installPlugin = (path: string) =>
-  getTransport().call<string>("install_plugin", { path });
-export const installRemotePlugin = (name: string) =>
-  getTransport().call<string>("install_remote_plugin", { name });
+export const installPlugin = async (path: string): Promise<string> => {
+  const res = await getTransport().call<string | { message: string }>("install_plugin", { path });
+  return typeof res === "object" && res !== null ? (res as { message: string }).message : (res as string);
+};
+export const installRemotePlugin = async (name: string): Promise<string> => {
+  const res = await getTransport().call<string | { message: string }>("install_remote_plugin", { name });
+  return typeof res === "object" && res !== null ? (res as { message: string }).message : (res as string);
+};
 export const removePlugin = (name: string) =>
   getTransport().call<void>("remove_plugin", { name });
 export const startPlugin = (name: string) =>
@@ -150,6 +155,20 @@ export const destroyAgentTab = (sessionId: string) =>
 export const renameAgentTab = (sessionId: string, label: string) =>
   getTransport().call<void>("rename_agent_tab", { sessionId, label });
 
+export interface AgentTabState {
+  id: string;
+  label?: string;
+  sessionId?: string;
+}
+export interface AgentTabsFile {
+  tabs: AgentTabState[];
+  activeTabId?: string;
+}
+export const loadAgentTabs = () =>
+  getTransport().call<AgentTabsFile>("load_agent_tabs");
+export const saveAgentTabs = (state: AgentTabsFile) =>
+  getTransport().call<void>("save_agent_tabs", { state });
+
 // Chat — global
 export const initializeChat = () =>
   getTransport().call<InitResponse>("initialize_chat");
@@ -206,12 +225,26 @@ export const terminalDestroy = (sessionId: string) =>
   getTransport().call<void>("terminal_destroy", { sessionId });
 export const terminalList = () =>
   getTransport().call<TerminalSessionInfo[]>("terminal_list");
+export const terminalReconnect = (sessionId: string) =>
+  getTransport().call<TerminalSessionInfo & { scrollback?: string }>(
+    "terminal_reconnect",
+    { sessionId },
+  );
+export const terminalRename = (sessionId: string, name: string) =>
+  getTransport().call<void>("terminal_rename", { sessionId, name });
 export const onTerminalOutput = (
   sessionId: string,
   cb: (event: TerminalOutputEvent) => void,
 ) =>
   getTransport().subscribe(
     `terminal-output-${sessionId}`,
+    cb as (p: unknown) => void,
+  );
+export const onTerminalSessionsRecovered = (
+  cb: (sessions: TerminalSessionInfo[]) => void,
+) =>
+  getTransport().subscribe(
+    "terminal-sessions-recovered",
     cb as (p: unknown) => void,
   );
 
@@ -250,6 +283,10 @@ export const browserClose = () =>
 // Files
 export const listDirectory = (path?: string) =>
   getTransport().call<DirectoryListing>("list_directory", { path });
+export const readFile = (path: string) =>
+  getTransport().call<FileContent>("read_file", { path });
+export const writeFile = (path: string, content: string) =>
+  getTransport().call<void>("write_file", { path, content });
 export const openInEditor = (path: string, editor?: string) =>
   getTransport().call<void>("open_in_editor", { path, editor });
 export const getCwd = () => getTransport().call<string>("get_cwd");

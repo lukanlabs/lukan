@@ -30,6 +30,37 @@ const THEME = {
   brightWhite: "#ffffff",
 };
 
+/** Encode a string to base64, handling UTF-8 correctly (btoa only supports Latin-1). */
+function toBase64(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  return bytesToBase64(bytes);
+}
+
+/** Encode a Uint8Array to base64 without spread operator (avoids stack overflow on large data). */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/** Send input to PTY in chunks to avoid IPC/WebSocket message size issues. */
+const CHAR_CHUNK = 8192; // Split by characters, not bytes, to avoid splitting multi-byte UTF-8
+
+function sendInput(sessionId: string, data: string): void {
+  if (data.length <= CHAR_CHUNK) {
+    terminalInput(sessionId, toBase64(data)).catch(() => {});
+    return;
+  }
+  // Split by characters so we never break a multi-byte UTF-8 sequence
+  let chain: Promise<void> = Promise.resolve();
+  for (let offset = 0; offset < data.length; offset += CHAR_CHUNK) {
+    const chunk = data.slice(offset, offset + CHAR_CHUNK);
+    chain = chain.then(() => terminalInput(sessionId, toBase64(chunk))).catch(() => {});
+  }
+}
+
 interface UseTerminalOptions {
   /** Fixed session ID — does not change for this panel's lifetime. */
   sessionId: string;
@@ -84,9 +115,13 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
       terminalResize(sessionId, term.cols, term.rows).catch(() => {});
     });
 
-    // Keyboard → PTY
+    // Track whether we're currently handling a paste (to suppress xterm.js onData echo)
+    let pasteInProgress = false;
+
+    // Keyboard + paste → PTY. xterm.js fires onData for ALL input including paste.
     const inputDisposable = term.onData((data) => {
-      terminalInput(sessionId, btoa(data)).catch(() => {});
+      if (pasteInProgress) return; // paste handled by our own onPaste handler
+      sendInput(sessionId, data);
     });
 
     const binaryDisposable = term.onBinary((data) => {
@@ -94,7 +129,52 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
       for (let i = 0; i < data.length; i++) {
         bytes[i] = data.charCodeAt(i);
       }
-      terminalInput(sessionId, btoa(String.fromCharCode(...bytes))).catch(() => {});
+      terminalInput(sessionId, bytesToBase64(bytes)).catch(() => {});
+    });
+
+    // Intercept paste at the document level (capture phase) so we handle it
+    // before xterm.js. This ensures UTF-8 text with special characters
+    // (em-dashes, accents, arrows, etc.) is encoded correctly via sendInput.
+    const onPaste = (e: ClipboardEvent) => {
+      // Only handle if the terminal has focus
+      if (!container.contains(document.activeElement)) return;
+      const text = e.clipboardData?.getData("text/plain");
+      if (!text) return;
+      e.preventDefault();
+      // Suppress xterm.js onData for this paste cycle
+      pasteInProgress = true;
+      sendInput(sessionId, text);
+      // Re-enable onData after the current event loop tick
+      // (xterm.js fires onData synchronously during paste processing)
+      setTimeout(() => { pasteInProgress = false; }, 0);
+    };
+    document.addEventListener("paste", onPaste, true);
+
+    // Terminal keyboard shortcuts
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown") return true;
+      // Ctrl+Shift+C → copy selection to clipboard
+      if (e.key === "c" && e.ctrlKey && e.shiftKey) {
+        const sel = term.getSelection();
+        if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+        return false;
+      }
+      // Ctrl+C → copy if there's a selection, otherwise send SIGINT
+      if (e.key === "c" && e.ctrlKey && !e.shiftKey && term.hasSelection()) {
+        return false;
+      }
+      // Ctrl+Shift+V → paste from clipboard via async API
+      if (e.key === "v" && e.ctrlKey && e.shiftKey) {
+        navigator.clipboard.readText().then((text) => {
+          if (text) sendInput(sessionId, text);
+        }).catch(() => {});
+        return false;
+      }
+      // Ctrl+V → let browser handle natively (xterm.js processes the paste event)
+      if (e.key === "v" && e.ctrlKey && !e.shiftKey) {
+        return false;
+      }
+      return true;
     });
 
     // PTY output → xterm
@@ -128,6 +208,7 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
     return () => {
       inputDisposable.dispose();
       binaryDisposable.dispose();
+      document.removeEventListener("paste", onPaste, true);
       if (unlisten) unlisten();
       observer.disconnect();
       term.dispose();

@@ -183,6 +183,15 @@ pub enum ClientMessage {
         session_id: String,
         name: String,
     },
+
+    // Background processes
+    ListBgProcesses,
+    GetBgProcessLog {
+        pid: u32,
+    },
+    KillBgProcess {
+        pid: u32,
+    },
 }
 
 /// Messages sent from the server to the client (browser)
@@ -312,6 +321,30 @@ pub enum ServerMessage {
     TerminalExited {
         session_id: String,
     },
+
+    // Background processes
+    BgProcessList {
+        processes: Vec<BgProcessDto>,
+    },
+    BgProcessLog {
+        pid: u32,
+        log: String,
+    },
+    BgProcessKilled {
+        pid: u32,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BgProcessDto {
+    pub pid: u32,
+    pub command: String,
+    pub status: String,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub log_file: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

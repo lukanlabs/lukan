@@ -3661,13 +3661,18 @@ impl App {
 
         // Handle /bg
         if text == "/bg" {
-            let processes = lukan_tools::bg_processes::get_bg_processes();
-            if processes.is_empty() {
-                self.messages
-                    .push(ChatMessage::new("system", "No background processes."));
+            if let Some(ref daemon) = self.daemon_tx {
+                // In daemon mode, request bg processes from daemon
+                let _ = daemon.send(&crate::ws_client::OutMessage::ListBgProcesses);
             } else {
-                let entries: Vec<BgEntry> = processes.into_iter().map(BgEntry::from).collect();
-                self.bg_picker = Some(BgPicker::new(entries));
+                let processes = lukan_tools::bg_processes::get_bg_processes();
+                if processes.is_empty() {
+                    self.messages
+                        .push(ChatMessage::new("system", "No background processes."));
+                } else {
+                    let entries: Vec<BgEntry> = processes.into_iter().map(BgEntry::from).collect();
+                    self.bg_picker = Some(BgPicker::new(entries));
+                }
             }
             return;
         }
@@ -4639,6 +4644,40 @@ impl App {
                     "system",
                     format!("Model changed to {provider_name}:{model_name}"),
                 ));
+            }
+            DaemonEvent::BgProcessList { processes } => {
+                if processes.is_empty() {
+                    self.messages
+                        .push(ChatMessage::new("system", "No background processes."));
+                } else {
+                    let entries: Vec<BgEntry> = processes
+                        .into_iter()
+                        .map(|p| {
+                            let alive = p.status == "Running";
+                            let started_at = chrono::DateTime::parse_from_rfc3339(&p.started_at)
+                                .map(|dt| dt.with_timezone(&Utc))
+                                .unwrap_or_else(|_| Utc::now());
+                            BgEntry {
+                                pid: p.pid,
+                                command: p.command,
+                                started_at,
+                                alive,
+                            }
+                        })
+                        .collect();
+                    self.bg_picker = Some(BgPicker::new(entries));
+                }
+                self.force_redraw = true;
+            }
+            DaemonEvent::BgProcessLog { pid, log } => {
+                // Update the bg_picker log view if it's showing this process
+                if let Some(ref mut picker) = self.bg_picker {
+                    if picker.log_pid == pid || picker.log_pid == 0 {
+                        picker.log_content = log;
+                        picker.log_pid = pid;
+                    }
+                }
+                self.force_redraw = true;
             }
             DaemonEvent::Error(error) => {
                 self.is_streaming = false;

@@ -79,6 +79,13 @@ pub enum OutMessage {
     },
     ListSessions,
     CreateAgentTab,
+    ListBgProcesses,
+    GetBgProcessLog {
+        pid: u32,
+    },
+    KillBgProcess {
+        pid: u32,
+    },
     SetPermissionMode {
         mode: String,
     },
@@ -124,10 +131,30 @@ pub enum DaemonEvent {
         provider_name: String,
         model_name: String,
     },
+    /// Background process list
+    BgProcessList {
+        processes: Vec<BgProcessInfo>,
+    },
+    /// Background process log
+    BgProcessLog {
+        pid: u32,
+        log: String,
+    },
     /// Error from the daemon
     Error(String),
     /// Connection lost
     Disconnected,
+}
+
+/// Background process info from daemon.
+#[derive(Debug, Clone)]
+pub struct BgProcessInfo {
+    pub pid: u32,
+    pub command: String,
+    pub status: String,
+    pub started_at: String,
+    pub label: Option<String>,
+    pub log_file: String,
 }
 
 /// Handle to send messages to the daemon.
@@ -361,6 +388,43 @@ fn dispatch_message(text: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) {
                 provider_name,
                 model_name,
             });
+        }
+        "bg_process_list" => {
+            let processes: Vec<BgProcessInfo> = value
+                .get("processes")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|p| {
+                            Some(BgProcessInfo {
+                                pid: p.get("pid")?.as_u64()? as u32,
+                                command: p.get("command")?.as_str()?.to_string(),
+                                status: p.get("status")?.as_str()?.to_string(),
+                                started_at: p.get("startedAt")?.as_str()?.to_string(),
+                                label: p.get("label").and_then(|v| v.as_str()).map(String::from),
+                                log_file: p
+                                    .get("logFile")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let _ = tx.send(DaemonEvent::BgProcessList { processes });
+        }
+        "bg_process_log" => {
+            let pid = value.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let log = value
+                .get("log")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let _ = tx.send(DaemonEvent::BgProcessLog { pid, log });
+        }
+        "bg_process_killed" => {
+            // Silently handled — TUI will refresh list
         }
         "error" => {
             let error = value

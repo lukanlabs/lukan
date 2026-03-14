@@ -829,6 +829,38 @@ async fn dispatch_message(
             send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
         }
 
+        // Background processes
+        ClientMessage::ListBgProcesses => {
+            let processes = lukan_tools::bg_processes::get_bg_processes();
+            let dtos: Vec<crate::protocol::BgProcessDto> = processes
+                .iter()
+                .map(|p| crate::protocol::BgProcessDto {
+                    pid: p.pid,
+                    command: p.command.clone(),
+                    status: format!("{:?}", p.status),
+                    started_at: p.started_at.to_rfc3339(),
+                    label: p.label.clone(),
+                    log_file: lukan_tools::bg_processes::log_file_path(p.pid)
+                        .display()
+                        .to_string(),
+                })
+                .collect();
+            send_json(
+                ws_tx,
+                &ServerMessage::BgProcessList { processes: dtos },
+            )
+            .await;
+        }
+        ClientMessage::GetBgProcessLog { pid } => {
+            let log = lukan_tools::bg_processes::get_bg_log(pid, 500)
+                .unwrap_or_else(|| "(no log found)".to_string());
+            send_json(ws_tx, &ServerMessage::BgProcessLog { pid, log }).await;
+        }
+        ClientMessage::KillBgProcess { pid } => {
+            lukan_tools::bg_processes::kill_bg_process(pid);
+            send_json(ws_tx, &ServerMessage::BgProcessKilled { pid }).await;
+        }
+
         // Auth messages handled above
         ClientMessage::Auth { .. } | ClientMessage::AuthLogin { .. } => {}
     }

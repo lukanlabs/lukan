@@ -998,7 +998,7 @@ async fn handle_send_message(
         let user_event = serde_json::json!({
             "type": "user_message",
             "content": content,
-            "sessionId": &broadcast_session_id,
+            "savedSessionId": &broadcast_session_id,
         });
         let _ = state.stream_tx.send(StreamBroadcast {
             tab_id: broadcast_session_id.clone(),
@@ -1024,10 +1024,12 @@ async fn handle_send_message(
                         } else {
                             serde_json::to_string(&ev).unwrap_or_default()
                         };
-                        // Broadcast to other watchers of this saved session
+                        // Broadcast to other clients — inject savedSessionId
+                        // so the frontend can filter by active session
+                        let broadcast_json = inject_field(&json, "savedSessionId", &broadcast_session_id);
                         let _ = state.stream_tx.send(StreamBroadcast {
                             tab_id: broadcast_session_id.clone(),
-                            json: json.clone(),
+                            json: broadcast_json,
                             origin_conn_id: conn_id,
                         });
                         if ws_tx.send(Message::Text(json.into())).await.is_err() {
@@ -1148,12 +1150,13 @@ async fn handle_send_message(
                 aborted: if aborted { Some(true) } else { None },
             };
 
-            // Broadcast to other watchers of this saved session
+            // Broadcast to other clients — inject savedSessionId for filtering
             let broadcast_sid = returned_agent.session_id().to_string();
             if let Ok(json) = serde_json::to_string(&complete_msg) {
+                let broadcast_json = inject_field(&json, "savedSessionId", &broadcast_sid);
                 let _ = state.stream_tx.send(StreamBroadcast {
                     tab_id: broadcast_sid,
-                    json: json.clone(),
+                    json: broadcast_json,
                     origin_conn_id: conn_id,
                 });
             }
@@ -1258,6 +1261,18 @@ fn inject_tab_id(ev: &StreamEvent, tab_id: &str) -> String {
         serde_json::to_string(&value).unwrap_or_default()
     } else {
         serde_json::to_string(ev).unwrap_or_default()
+    }
+}
+
+/// Inject a field into a JSON string (for broadcast events).
+fn inject_field(json: &str, key: &str, value: &str) -> String {
+    if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(json) {
+        if let Some(obj) = parsed.as_object_mut() {
+            obj.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+        }
+        serde_json::to_string(&parsed).unwrap_or_else(|_| json.to_string())
+    } else {
+        json.to_string()
     }
 }
 

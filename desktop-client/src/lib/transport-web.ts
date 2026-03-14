@@ -611,9 +611,12 @@ export class WebTransport implements Transport {
       const routeId = (msg.tabId || msg.sessionId) as string | undefined;
       if (routeId) {
         this.dispatch(`stream-event-${routeId}`, JSON.stringify(msg));
+      } else if (msg.savedSessionId) {
+        // Broadcast event from another client (TUI, etc.) — route to tabs
+        // that have this saved session loaded via savedSessionId matching
+        this.broadcastStreamEvent(JSON.stringify(msg));
       } else {
-        // No specific route → broadcast to ALL session-scoped subscribers
-        // (includes events from daemon singleton used by TUI)
+        // Global events (mode_changed, error, etc.) — broadcast to ALL
         this.broadcastStreamEvent(JSON.stringify(msg));
       }
       return;

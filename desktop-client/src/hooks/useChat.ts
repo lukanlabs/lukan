@@ -105,6 +105,9 @@ export function useChat(tabId: string) {
   const modelNameRef = useRef(state.modelName);
   modelNameRef.current = state.modelName;
 
+  const sessionIdRef = useRef(state.sessionId);
+  sessionIdRef.current = state.sessionId;
+
   const blocksRef = useRef<StreamingBlock[]>([]);
   const blockIdCounter = useRef(0);
   const renderTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -133,6 +136,16 @@ export function useChat(tabId: string) {
   // Handle a stream event from the backend
   const handleStreamEvent = useCallback(
     (event: StreamEvent) => {
+      // Filter broadcast events: only process if savedSessionId matches our session
+      // (or if there's no savedSessionId, it's our own turn — always process)
+      const broadcastSid = (event as Record<string, unknown>).savedSessionId as string | undefined;
+      if (broadcastSid) {
+        const ourSid = sessionIdRef.current;
+        if (ourSid && broadcastSid !== ourSid) {
+          return; // Different session, skip
+        }
+      }
+
       switch (event.type) {
         case "message_start":
           pendingTextRef.current = "";

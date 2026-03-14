@@ -211,8 +211,6 @@ pub struct App {
     daemon_rx: Option<mpsc::UnboundedReceiver<crate::ws_client::DaemonEvent>>,
     /// Port of the daemon server (0 = not using daemon)
     daemon_port: u16,
-    /// Tab ID on the daemon (used as session_id in all daemon messages)
-    daemon_tab_id: Option<String>,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -407,7 +405,6 @@ impl App {
             daemon_tx: None,
             daemon_rx: None,
             daemon_port: 0,
-            daemon_tab_id: None,
         }
     }
 
@@ -422,11 +419,10 @@ impl App {
         app.daemon_port = port;
 
         match crate::ws_client::connect(port).await {
-            Ok((tx, rx, tab_id)) => {
-                tracing::info!(port, tab_id = %tab_id, "TUI connected to daemon");
+            Ok((tx, rx)) => {
+                tracing::info!(port, "TUI connected to daemon");
                 app.daemon_tx = Some(tx);
                 app.daemon_rx = Some(rx);
-                app.daemon_tab_id = Some(tab_id);
             }
             Err(e) => {
                 tracing::warn!(port, error = %e, "Failed to connect to daemon, using in-process agent");
@@ -2669,7 +2665,7 @@ impl App {
                                 } else {
                                     if let Some(ref daemon) = self.daemon_tx {
                                         let _ = daemon.send(&crate::ws_client::OutMessage::Abort {
-                                            session_id: self.daemon_tab_id.clone(),
+                                            session_id: None,
                                         });
                                     } else if let Some(token) = self.cancel_token.take() {
                                         token.cancel();
@@ -3389,7 +3385,7 @@ impl App {
             if let Some(ref daemon) = self.daemon_tx {
                 let _ = daemon.send(&crate::ws_client::OutMessage::NewSession {
                     name: None,
-                    session_id: self.daemon_tab_id.clone(),
+                    session_id: None,
                 });
             }
             self.agent = None;
@@ -3805,7 +3801,7 @@ impl App {
         if let Some(ref daemon) = self.daemon_tx {
             let msg = crate::ws_client::OutMessage::SendMessage {
                 content: text,
-                session_id: self.daemon_tab_id.clone(),
+                session_id: None,
             };
             if let Err(e) = daemon.send(&msg) {
                 self.is_streaming = false;
@@ -3909,7 +3905,7 @@ impl App {
         // ── Daemon mode: send LoadSession to daemon ──
         if let Some(ref daemon) = self.daemon_tx {
             let msg = crate::ws_client::OutMessage::LoadSession {
-                session_id: self.daemon_tab_id.clone(),
+                session_id: None,
                 id: Some(session_id.clone()),
             };
             if let Err(e) = daemon.send(&msg) {
@@ -4436,7 +4432,7 @@ impl App {
     /// Send an approval response — routes to daemon or in-process channel.
     fn send_approval(&self, response: ApprovalResponse) {
         if let Some(ref daemon) = self.daemon_tx {
-            let tab = self.daemon_tab_id.clone();
+            let tab: Option<String> = None;
             let msg = match &response {
                 ApprovalResponse::Approved { approved_ids } => {
                     crate::ws_client::OutMessage::Approve {
@@ -4465,7 +4461,7 @@ impl App {
     /// Send a plan review response — routes to daemon or in-process channel.
     fn send_plan_review(&self, response: PlanReviewResponse) {
         if let Some(ref daemon) = self.daemon_tx {
-            let tab = self.daemon_tab_id.clone();
+            let tab: Option<String> = None;
             let msg = match &response {
                 PlanReviewResponse::Accepted { modified_tasks } => {
                     crate::ws_client::OutMessage::PlanAccept {
@@ -4501,7 +4497,7 @@ impl App {
         if let Some(ref daemon) = self.daemon_tx {
             let msg = crate::ws_client::OutMessage::AnswerQuestion {
                 answer,
-                session_id: self.daemon_tab_id.clone(),
+                session_id: None,
             };
             let _ = daemon.send(&msg);
         } else if let Some(ref tx) = self.planner_answer_tx {
@@ -4528,9 +4524,8 @@ impl App {
                 }
                 self.context_size = context_size;
             }
-            DaemonEvent::TabCreated { tab_id } => {
-                // Update tab_id if daemon created a new one
-                self.daemon_tab_id = Some(tab_id);
+            DaemonEvent::TabCreated { .. } => {
+                // Unused in singleton mode
             }
             DaemonEvent::ProcessingComplete {
                 session_id,
@@ -4579,16 +4574,24 @@ impl App {
                 self.committed_msg_idx = 0;
                 self.viewport_scroll = 0;
                 for msg in &loaded_messages {
-                    let role = msg.role.as_str();
-                    for block in &msg.content {
-                        use lukan_core::models::messages::ContentBlock;
+                    use lukan_core::models::messages::{ContentBlock, MessageContent, Role};
+                    let display_role = match msg.role {
+                        Role::User => "user",
+                        Role::Assistant => "assistant",
+                        _ => "system",
+                    };
+                    let blocks = match &msg.content {
+                        MessageContent::Text(text) => {
+                            if !text.trim().is_empty() {
+                                self.messages.push(ChatMessage::new(display_role, text));
+                            }
+                            continue;
+                        }
+                        MessageContent::Blocks(blocks) => blocks,
+                    };
+                    for block in blocks {
                         match block {
                             ContentBlock::Text { text } => {
-                                let display_role = match role {
-                                    "user" => "user",
-                                    "assistant" => "assistant",
-                                    _ => "system",
-                                };
                                 if !text.trim().is_empty() {
                                     self.messages.push(ChatMessage::new(display_role, text));
                                 }

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lukan_agent::{AgentLoop, WorkerNotification};
@@ -85,10 +85,8 @@ pub struct AppState {
     pub terminal_manager: TerminalManager,
     /// Broadcast channel for terminal output (sent to all WS clients)
     pub terminal_tx: broadcast::Sender<ServerMessage>,
-    /// Broadcast channel for agent stream events (sent to all watchers of a session)
+    /// Broadcast channel for agent stream events (sent to all connected clients)
     pub stream_tx: broadcast::Sender<StreamBroadcast>,
-    /// Maps session/tab ID → set of connection IDs watching that session
-    pub session_watchers: Mutex<HashMap<String, HashSet<usize>>>,
 }
 
 impl AppState {
@@ -129,7 +127,6 @@ impl AppState {
             terminal_manager: TerminalManager::default(),
             terminal_tx,
             stream_tx,
-            session_watchers: Mutex::new(HashMap::new()),
         }
     }
 

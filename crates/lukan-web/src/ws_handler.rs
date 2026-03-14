@@ -94,18 +94,12 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
                 continue;
             }
             Ok(broadcast) = stream_rx.recv() => {
-                // Forward stream events from other clients' agent turns
-                // Skip if we are the originating connection (we already got it directly)
+                // Forward stream events from other clients' agent turns.
+                // Skip if we are the originating connection (we already got it directly).
+                // Send to ALL authenticated clients — for a local daemon with few
+                // clients, filtering by session watchers adds complexity without benefit.
                 if authenticated && broadcast.origin_conn_id != conn_id {
-                    let is_watching = {
-                        let watchers = state.session_watchers.lock().await;
-                        watchers
-                            .get(&broadcast.tab_id)
-                            .is_some_and(|set| set.contains(&conn_id))
-                    };
-                    if is_watching {
-                        let _ = ws_tx.send(Message::Text(broadcast.json.into())).await;
-                    }
+                    let _ = ws_tx.send(Message::Text(broadcast.json.into())).await;
                 }
                 continue;
             }
@@ -201,14 +195,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
         }
     }
 
-    // Remove this connection from all session watcher sets
-    {
-        let mut watchers = state.session_watchers.lock().await;
-        watchers.retain(|_, set| {
-            set.remove(&conn_id);
-            !set.is_empty()
-        });
-    }
+
 
     // Save legacy singleton session
     {
@@ -992,8 +979,7 @@ async fn handle_send_message(
     // the same saved session see each other's streaming, regardless of tab_id)
     let broadcast_session_id = agent.session_id().to_string();
 
-    // Auto-watch: register this connection as a watcher of this saved session
-    watch_session(state, conn_id, &broadcast_session_id).await;
+
 
     // Create cancellation token so abort can signal the agent to stop
     let cancel_token = CancellationToken::new();
@@ -1206,15 +1192,6 @@ async fn release_processing_lock(conn_id: usize, state: &Arc<AppState>) {
     }
 }
 
-/// Register a connection as a watcher of a session/tab.
-/// Watchers receive broadcast stream events from agent turns on that session.
-async fn watch_session(state: &Arc<AppState>, conn_id: usize, tab_id: &str) {
-    let mut watchers = state.session_watchers.lock().await;
-    watchers
-        .entry(tab_id.to_string())
-        .or_default()
-        .insert(conn_id);
-}
 
 /// Send an appropriate error when agent creation fails.
 async fn send_agent_creation_error(
@@ -1543,12 +1520,10 @@ async fn evict_session_from_memory(session_id: &str, state: &Arc<AppState>) {
 async fn handle_load_session(
     saved_session_id: &str,
     tab_id: Option<&str>,
-    conn_id: usize,
+    _conn_id: usize,
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
-    // Auto-watch: register this connection as a watcher of the loaded session
-    watch_session(state, conn_id, saved_session_id).await;
     // Save current session first (session or legacy)
     if let Some(tid) = tab_id {
         let mut sessions = state.sessions.lock().await;

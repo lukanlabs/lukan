@@ -4569,15 +4569,52 @@ impl App {
             }
             DaemonEvent::SessionLoaded {
                 session_id,
-                messages: _loaded_messages,
+                messages: loaded_messages,
                 context_size,
             } => {
                 self.session_id = Some(session_id.clone());
                 self.context_size = context_size;
-                // TODO: populate self.messages from _loaded_messages for full context display
+                // Clear current messages and populate from loaded session
+                self.messages.clear();
+                self.committed_msg_idx = 0;
+                self.viewport_scroll = 0;
+                for msg in &loaded_messages {
+                    let role = msg.role.as_str();
+                    for block in &msg.content {
+                        use lukan_core::models::messages::ContentBlock;
+                        match block {
+                            ContentBlock::Text { text } => {
+                                let display_role = match role {
+                                    "user" => "user",
+                                    "assistant" => "assistant",
+                                    _ => "system",
+                                };
+                                if !text.trim().is_empty() {
+                                    self.messages.push(ChatMessage::new(display_role, text));
+                                }
+                            }
+                            ContentBlock::ToolUse { name, .. } => {
+                                self.messages.push(ChatMessage::new(
+                                    "tool_call",
+                                    format!("● {name}(...)"),
+                                ));
+                            }
+                            ContentBlock::ToolResult { content, .. } => {
+                                let preview = if content.len() > 200 {
+                                    format!("{}...", &content[..200])
+                                } else {
+                                    content.clone()
+                                };
+                                self.messages
+                                    .push(ChatMessage::new("tool_result", preview));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 self.messages.push(ChatMessage::new(
                     "system",
-                    format!("Loaded session {session_id}"),
+                    format!("Loaded session {session_id} ({} messages)", loaded_messages.len()),
                 ));
                 self.force_redraw = true;
             }

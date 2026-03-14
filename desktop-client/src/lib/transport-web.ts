@@ -71,6 +71,7 @@ const LOCAL_COMMANDS = new Set([
 
 // Stream event types dispatched to "stream-event" subscribers
 const STREAM_EVENT_TYPES = new Set([
+  "user_message",
   "message_start",
   "text_delta",
   "thinking_delta",
@@ -516,15 +517,16 @@ export class WebTransport implements Transport {
       return;
     }
 
-    // Processing complete → turn-complete (session-scoped)
+    // Processing complete → turn-complete (session-scoped or broadcast)
     if (type === "processing_complete") {
       this.processing = false;
       const routeId = (msg.tabId || msg.sessionId) as string | undefined;
       if (routeId) {
         this.dispatch(`turn-complete-${routeId}`, JSON.stringify(msg));
-      } else {
-        this.dispatch("turn-complete", JSON.stringify(msg));
       }
+      // Also broadcast to all turn-complete subscribers so remote turns
+      // (from TUI/other clients) properly finalize in the web UI
+      this.broadcastTurnComplete(JSON.stringify(msg));
       return;
     }
 
@@ -610,8 +612,8 @@ export class WebTransport implements Transport {
       if (routeId) {
         this.dispatch(`stream-event-${routeId}`, JSON.stringify(msg));
       } else {
-        // Global events (mode_changed, error, etc.) — broadcast to ALL
-        // session-scoped subscribers since there's no specific routeId
+        // No specific route → broadcast to ALL session-scoped subscribers
+        // (includes events from daemon singleton used by TUI)
         this.broadcastStreamEvent(JSON.stringify(msg));
       }
       return;
@@ -1233,6 +1235,21 @@ export class WebTransport implements Transport {
   private broadcastStreamEvent(payload: unknown): void {
     for (const [key, subs] of this.subscribers) {
       if (key.startsWith("stream-event")) {
+        for (const cb of subs) {
+          try {
+            cb(payload);
+          } catch {
+            /* ignore subscriber errors */
+          }
+        }
+      }
+    }
+  }
+
+  /** Broadcast a turn-complete event to all turn-complete subscribers. */
+  private broadcastTurnComplete(payload: unknown): void {
+    for (const [key, subs] of this.subscribers) {
+      if (key.startsWith("turn-complete")) {
         for (const cb of subs) {
           try {
             cb(payload);

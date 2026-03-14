@@ -993,6 +993,20 @@ async fn handle_send_message(
         (agent, result)
     });
 
+    // Broadcast the user message to other clients so they can display it
+    {
+        let user_event = serde_json::json!({
+            "type": "user_message",
+            "content": content,
+            "sessionId": &broadcast_session_id,
+        });
+        let _ = state.stream_tx.send(StreamBroadcast {
+            tab_id: broadcast_session_id.clone(),
+            json: user_event.to_string(),
+            origin_conn_id: conn_id,
+        });
+    }
+
     // Forward stream events to WebSocket, while also reading incoming
     // client messages so that approval / abort / plan / terminal messages
     // are processed without deadlocking.

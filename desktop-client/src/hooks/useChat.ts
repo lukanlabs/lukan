@@ -280,6 +280,20 @@ export function useChat(tabId: string) {
           setState((s) => ({ ...s, error: event.error, isProcessing: false, streamingBlocks: [] }));
           break;
 
+        // Remote user message (from TUI or another client via broadcast)
+        case "user_message" as string:
+          setState((s) => ({
+            ...s,
+            messages: [
+              ...s.messages,
+              {
+                role: "user",
+                content: [{ type: "text", text: (event as Record<string, unknown>).content as string || "" }],
+              } as Message,
+            ],
+          }));
+          break;
+
         default:
           break;
       }

@@ -211,6 +211,8 @@ pub struct App {
     daemon_rx: Option<mpsc::UnboundedReceiver<crate::ws_client::DaemonEvent>>,
     /// Port of the daemon server (0 = not using daemon)
     daemon_port: u16,
+    /// Tab ID on the daemon (TUI's own agent tab)
+    daemon_tab_id: Option<String>,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -405,6 +407,7 @@ impl App {
             daemon_tx: None,
             daemon_rx: None,
             daemon_port: 0,
+            daemon_tab_id: None,
         }
     }
 
@@ -419,8 +422,9 @@ impl App {
         app.daemon_port = port;
 
         match crate::ws_client::connect(port).await {
-            Ok((tx, rx)) => {
-                tracing::info!(port, "TUI connected to daemon");
+            Ok((tx, rx, tab_id)) => {
+                tracing::info!(port, tab_id = %tab_id, "TUI connected to daemon");
+                app.daemon_tab_id = Some(tab_id);
                 app.daemon_tx = Some(tx);
                 app.daemon_rx = Some(rx);
             }
@@ -2665,7 +2669,7 @@ impl App {
                                 } else {
                                     if let Some(ref daemon) = self.daemon_tx {
                                         let _ = daemon.send(&crate::ws_client::OutMessage::Abort {
-                                            session_id: None,
+                                            session_id: self.daemon_tab_id.clone(),
                                         });
                                     } else if let Some(token) = self.cancel_token.take() {
                                         token.cancel();
@@ -3385,7 +3389,7 @@ impl App {
             if let Some(ref daemon) = self.daemon_tx {
                 let _ = daemon.send(&crate::ws_client::OutMessage::NewSession {
                     name: None,
-                    session_id: None,
+                    session_id: self.daemon_tab_id.clone(),
                 });
             }
             self.agent = None;
@@ -3801,7 +3805,7 @@ impl App {
         if let Some(ref daemon) = self.daemon_tx {
             let msg = crate::ws_client::OutMessage::SendMessage {
                 content: text,
-                session_id: None,
+                session_id: self.daemon_tab_id.clone(),
             };
             if let Err(e) = daemon.send(&msg) {
                 self.is_streaming = false;
@@ -3905,7 +3909,7 @@ impl App {
         // ── Daemon mode: send LoadSession to daemon ──
         if let Some(ref daemon) = self.daemon_tx {
             let msg = crate::ws_client::OutMessage::LoadSession {
-                session_id: None,
+                session_id: self.daemon_tab_id.clone(),
                 id: Some(session_id.clone()),
             };
             if let Err(e) = daemon.send(&msg) {
@@ -4432,7 +4436,7 @@ impl App {
     /// Send an approval response — routes to daemon or in-process channel.
     fn send_approval(&self, response: ApprovalResponse) {
         if let Some(ref daemon) = self.daemon_tx {
-            let tab: Option<String> = None;
+            let tab = self.daemon_tab_id.clone();
             let msg = match &response {
                 ApprovalResponse::Approved { approved_ids } => {
                     crate::ws_client::OutMessage::Approve {
@@ -4461,7 +4465,7 @@ impl App {
     /// Send a plan review response — routes to daemon or in-process channel.
     fn send_plan_review(&self, response: PlanReviewResponse) {
         if let Some(ref daemon) = self.daemon_tx {
-            let tab: Option<String> = None;
+            let tab = self.daemon_tab_id.clone();
             let msg = match &response {
                 PlanReviewResponse::Accepted { modified_tasks } => {
                     crate::ws_client::OutMessage::PlanAccept {
@@ -4497,7 +4501,7 @@ impl App {
         if let Some(ref daemon) = self.daemon_tx {
             let msg = crate::ws_client::OutMessage::AnswerQuestion {
                 answer,
-                session_id: None,
+                session_id: self.daemon_tab_id.clone(),
             };
             let _ = daemon.send(&msg);
         } else if let Some(ref tx) = self.planner_answer_tx {

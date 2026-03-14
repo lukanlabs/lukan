@@ -144,12 +144,11 @@ impl DaemonSender {
 
 /// Connect to the daemon's WebSocket server.
 ///
-/// Returns `(sender, receiver)`. Does NOT create a tab — sends messages
-/// with `session_id: None` to use the daemon's shared singleton agent.
-/// Use `LoadSession` to load a specific saved session into the singleton.
+/// Creates its own agent tab so it doesn't interfere with the web UI's tabs.
+/// Returns `(sender, receiver, tab_id)`.
 pub async fn connect(
     port: u16,
-) -> Result<(DaemonSender, mpsc::UnboundedReceiver<DaemonEvent>)> {
+) -> Result<(DaemonSender, mpsc::UnboundedReceiver<DaemonEvent>, String)> {
     let url = format!("ws://127.0.0.1:{port}/ws");
     info!(url, "Connecting to daemon WebSocket");
 
@@ -174,6 +173,36 @@ pub async fn connect(
     info!("Connected to daemon");
 
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
+
+    // Create our own agent tab so TUI doesn't share the singleton with web
+    let create_msg = serde_json::to_string(&OutMessage::CreateAgentTab)?;
+    ws_tx
+        .send(tungstenite::Message::Text(create_msg.into()))
+        .await
+        .context("Failed to send CreateAgentTab")?;
+
+    // Wait for agent_tab_created response (skip init and other setup messages)
+    let tab_id = {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut found = None;
+        while tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), ws_rx.next()).await {
+                Ok(Some(Ok(tungstenite::Message::Text(text)))) => {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if v.get("type").and_then(|t| t.as_str()) == Some("agent_tab_created") {
+                            found = v.get("sessionId").and_then(|s| s.as_str()).map(String::from);
+                            break;
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        found.context("Did not receive agent_tab_created from daemon")?
+    };
+
+    info!(tab_id = %tab_id, "TUI agent tab created on daemon");
+
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
     let (event_tx, event_rx) = mpsc::unbounded_channel::<DaemonEvent>();
 
@@ -207,7 +236,7 @@ pub async fn connect(
         }
     });
 
-    Ok((DaemonSender { tx: out_tx }, event_rx))
+    Ok((DaemonSender { tx: out_tx }, event_rx, tab_id))
 }
 
 /// Parse an incoming WebSocket message and dispatch it as a DaemonEvent.

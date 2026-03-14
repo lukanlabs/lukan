@@ -517,16 +517,18 @@ export class WebTransport implements Transport {
       return;
     }
 
-    // Processing complete → turn-complete (session-scoped or broadcast)
+    // Processing complete → turn-complete (session-scoped)
     if (type === "processing_complete") {
       this.processing = false;
       const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      const savedSid = msg.savedSessionId as string | undefined;
       if (routeId) {
         this.dispatch(`turn-complete-${routeId}`, JSON.stringify(msg));
       }
-      // Also broadcast to all turn-complete subscribers so remote turns
-      // (from TUI/other clients) properly finalize in the web UI
-      this.broadcastTurnComplete(JSON.stringify(msg));
+      if (savedSid) {
+        // Route to tabs watching this saved session (cross-client sync)
+        this.dispatch(`turn-complete-saved-${savedSid}`, JSON.stringify(msg));
+      }
       return;
     }
 
@@ -609,13 +611,15 @@ export class WebTransport implements Transport {
     // Stream events (during agent processing) — route to session-scoped subscribers
     if (STREAM_EVENT_TYPES.has(type)) {
       const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      const savedSid = msg.savedSessionId as string | undefined;
       if (routeId) {
         this.dispatch(`stream-event-${routeId}`, JSON.stringify(msg));
-      } else if (msg.savedSessionId) {
-        // Broadcast event from another client (TUI, etc.) — route to tabs
-        // that have this saved session loaded via savedSessionId matching
-        this.broadcastStreamEvent(JSON.stringify(msg));
-      } else {
+      }
+      if (savedSid) {
+        // Route to tabs watching this saved session (cross-client sync)
+        this.dispatch(`stream-event-saved-${savedSid}`, JSON.stringify(msg));
+      }
+      if (!routeId && !savedSid) {
         // Global events (mode_changed, error, etc.) — broadcast to ALL
         this.broadcastStreamEvent(JSON.stringify(msg));
       }

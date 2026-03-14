@@ -20,6 +20,7 @@ import {
   startTool,
 } from "../lib/streaming-blocks";
 import * as api from "../lib/tauri";
+import { getTransport } from "../lib/transport";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -105,9 +106,6 @@ export function useChat(tabId: string) {
   const modelNameRef = useRef(state.modelName);
   modelNameRef.current = state.modelName;
 
-  const sessionIdRef = useRef(state.sessionId);
-  sessionIdRef.current = state.sessionId;
-
   const blocksRef = useRef<StreamingBlock[]>([]);
   const blockIdCounter = useRef(0);
   const renderTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,17 +134,6 @@ export function useChat(tabId: string) {
   // Handle a stream event from the backend
   const handleStreamEvent = useCallback(
     (event: StreamEvent) => {
-      // Filter broadcast events: only process if savedSessionId matches our session.
-      // If no savedSessionId → it's our own turn, always process.
-      // If savedSessionId present → only process if it matches our loaded session.
-      const broadcastSid = (event as Record<string, unknown>).savedSessionId as string | undefined;
-      if (broadcastSid) {
-        const ourSid = sessionIdRef.current;
-        if (!ourSid || broadcastSid !== ourSid) {
-          return; // No session loaded or different session — skip
-        }
-      }
-
       switch (event.type) {
         case "message_start":
           pendingTextRef.current = "";
@@ -370,7 +357,7 @@ export function useChat(tabId: string) {
         setState((s) => ({ ...s, error: `Init failed: ${e}`, initialized: true }));
       }
 
-      // Subscribe to session-scoped stream events
+      // Subscribe to session-scoped stream events (by tab ID)
       const unlistenStream = await api.onStreamEvent(tabId, (payload) => {
         if (!mounted) return;
         try {
@@ -405,6 +392,50 @@ export function useChat(tabId: string) {
       cleanupPromise.then((cleanup) => cleanup?.());
     };
   }, [tabId, handleStreamEvent, handleTurnComplete]);
+
+  // Subscribe to cross-client sync events by saved session ID.
+  // When another client (TUI, etc.) sends a message on the same saved session,
+  // we receive the stream events here.
+  useEffect(() => {
+    const sid = state.sessionId;
+    if (!sid) return;
+
+    let mounted = true;
+    const cleanups: Array<() => void> = [];
+
+    const setup = async () => {
+      const unStream = await getTransport().subscribe(
+        `stream-event-saved-${sid}`,
+        (payload) => {
+          if (!mounted) return;
+          try {
+            const event: StreamEvent = JSON.parse(payload as string);
+            handleStreamEvent(event);
+          } catch { /* ignore */ }
+        },
+      );
+      cleanups.push(unStream);
+
+      const unComplete = await getTransport().subscribe(
+        `turn-complete-saved-${sid}`,
+        (payload) => {
+          if (!mounted) return;
+          try {
+            const complete: TurnComplete = JSON.parse(payload as string);
+            handleTurnComplete(complete);
+          } catch { /* ignore */ }
+        },
+      );
+      cleanups.push(unComplete);
+    };
+
+    setup();
+
+    return () => {
+      mounted = false;
+      cleanups.forEach((fn) => fn());
+    };
+  }, [state.sessionId, handleStreamEvent, handleTurnComplete]);
 
   // Listen for provider/model changes from Toolbar or ProvidersTab
   useEffect(() => {

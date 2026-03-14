@@ -4,10 +4,17 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use tokio::io::AsyncWriteExt;
 use tokio::signal;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use lukan_agent::WorkerScheduler;
 use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, ResolvedConfig};
+
+/// JSON structure written to daemon.lock
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DaemonLock {
+    pid: u32,
+    port: u16,
+}
 
 #[derive(Subcommand)]
 pub enum DaemonCommands {
@@ -36,11 +43,21 @@ pub async fn handle_daemon_command(command: DaemonCommands) -> Result<()> {
             stop_daemon()?;
         }
         DaemonCommands::Status => {
-            if is_daemon_running() {
+            if let Some(lock) = read_lock_file() {
+                if is_process_alive(lock.pid) {
+                    println!(
+                        "  Daemon is running (PID {}, port {})",
+                        lock.pid, lock.port
+                    );
+                } else {
+                    cleanup_lock_files();
+                    println!("  Daemon is not running (cleaned stale lock file)");
+                }
+            } else if is_daemon_running() {
                 let pid = read_pid_file().unwrap_or(0);
-                println!("  Worker daemon is running (PID {pid})");
+                println!("  Worker daemon is running (PID {pid}) — legacy PID file, no port info");
             } else {
-                println!("  Worker daemon is not running");
+                println!("  Daemon is not running");
             }
         }
     }
@@ -48,18 +65,20 @@ pub async fn handle_daemon_command(command: DaemonCommands) -> Result<()> {
 }
 
 /// Run the daemon in the current process (foreground).
+/// Starts both the web server and the worker scheduler.
 async fn run_daemon() -> Result<()> {
     if is_daemon_running() {
         let pid = read_pid_file().unwrap_or(0);
-        bail!("Worker daemon already running (PID {pid})");
+        bail!("Daemon already running (PID {pid})");
     }
 
-    // Write PID file
     let pid = std::process::id();
+
+    // Write legacy PID file (for backward compat during transition)
     let pid_path = LukanPaths::daemon_pid_file();
     std::fs::write(&pid_path, pid.to_string()).context("Failed to write daemon PID file")?;
 
-    info!(pid, "Worker daemon starting");
+    info!(pid, "Daemon starting");
 
     // Load config
     let config = ConfigManager::load().await?;
@@ -69,7 +88,49 @@ async fn run_daemon() -> Result<()> {
         credentials,
     };
 
-    // Create and start scheduler
+    // ── Start web server ──
+    let preferred_port = std::env::var("LUKAN_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000u16);
+
+    // Try preferred port first, then fall back to nearby ports
+    let (actual_port, _web_handle) = {
+        let mut last_err = None;
+        let mut result = None;
+        for port in preferred_port..preferred_port.saturating_add(10) {
+            match lukan_web::start_daemon_server(resolved.clone(), port).await {
+                Ok(r) => {
+                    result = Some(r);
+                    break;
+                }
+                Err(e) => {
+                    info!(port, error = %e, "Port unavailable, trying next");
+                    last_err = Some(e);
+                }
+            }
+        }
+        match result {
+            Some(r) => r,
+            None => return Err(last_err.unwrap().context("All ports 3000-3009 unavailable")),
+        }
+    };
+
+    info!(port = actual_port, "Web server started inside daemon");
+
+    // Write JSON lock file with PID + port
+    let lock_path = LukanPaths::daemon_lock_file();
+    let lock = DaemonLock {
+        pid,
+        port: actual_port,
+    };
+    std::fs::write(
+        &lock_path,
+        serde_json::to_string(&lock).context("Failed to serialize daemon lock")?,
+    )
+    .context("Failed to write daemon lock file")?;
+
+    // ── Start worker scheduler ──
     let scheduler = WorkerScheduler::new(resolved);
     scheduler.start().await;
 
@@ -96,25 +157,25 @@ async fn run_daemon() -> Result<()> {
         }
     });
 
-    // Start relay bridge if relay credentials exist
+    // ── Start relay bridge if relay credentials exist ──
     let mut relay_bridge = None;
-    if let Some(relay_config) = lukan_core::relay::RelayConfig::load().await {
-        let relay_port = std::env::var("LUKAN_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(3000u16);
+    if let Some(relay_config) = lukan_core::relay::RelayConfig::load_if_enabled().await {
         info!(
             relay_url = %relay_config.relay_url,
-            "Starting relay bridge"
+            "Starting relay bridge on port {actual_port}"
         );
-        let mut bridge = crate::relay_bridge::RelayBridge::new(relay_config, relay_port);
+        let mut bridge = crate::relay_bridge::RelayBridge::new(relay_config, actual_port);
         bridge.start();
         relay_bridge = Some(bridge);
     }
 
-    info!("Worker daemon running, polling workers.json for changes");
+    info!(
+        pid,
+        port = actual_port,
+        "Daemon running (web + workers + relay)"
+    );
 
-    // Track file mtime for change detection
+    // ── Poll workers.json for changes ──
     let workers_file = LukanPaths::workers_file();
     let mut last_mtime = file_mtime(&workers_file);
 
@@ -122,7 +183,6 @@ async fn run_daemon() -> Result<()> {
     poll_interval.tick().await; // skip first immediate tick
 
     let shutdown = async {
-        // Wait for either SIGINT or SIGTERM
         let ctrl_c = signal::ctrl_c();
         #[cfg(unix)]
         {
@@ -143,7 +203,7 @@ async fn run_daemon() -> Result<()> {
     loop {
         tokio::select! {
             _ = &mut shutdown => {
-                info!("Worker daemon received shutdown signal");
+                info!("Daemon received shutdown signal");
                 break;
             }
             _ = poll_interval.tick() => {
@@ -163,7 +223,8 @@ async fn run_daemon() -> Result<()> {
     }
     scheduler.stop();
     let _ = std::fs::remove_file(&pid_path);
-    info!("Worker daemon stopped");
+    let _ = std::fs::remove_file(&lock_path);
+    info!("Daemon stopped");
 
     Ok(())
 }
@@ -172,7 +233,7 @@ async fn run_daemon() -> Result<()> {
 fn start_detached() -> Result<()> {
     if is_daemon_running() {
         let pid = read_pid_file().unwrap_or(0);
-        println!("  Worker daemon already running (PID {pid})");
+        println!("  Daemon already running (PID {pid})");
         return Ok(());
     }
 
@@ -194,7 +255,7 @@ fn start_detached() -> Result<()> {
         .spawn()
         .context("Failed to spawn daemon process")?;
 
-    println!("  Worker daemon started (PID {})", child.id());
+    println!("  Daemon started (PID {})", child.id());
     println!("  Log: {}", log_path.display());
 
     Ok(())
@@ -205,15 +266,14 @@ pub fn stop_daemon() -> Result<()> {
     let pid = match read_pid_file() {
         Some(pid) => pid,
         None => {
-            println!("  Worker daemon is not running");
+            println!("  Daemon is not running");
             return Ok(());
         }
     };
 
     if !is_process_alive(pid) {
-        // Stale PID file
-        let _ = std::fs::remove_file(LukanPaths::daemon_pid_file());
-        println!("  Worker daemon is not running (cleaned stale PID file)");
+        cleanup_lock_files();
+        println!("  Daemon is not running (cleaned stale lock files)");
         return Ok(());
     }
 
@@ -234,89 +294,116 @@ pub fn stop_daemon() -> Result<()> {
     if is_process_alive(pid) {
         println!("  Sent SIGTERM to daemon (PID {pid}), waiting for shutdown...");
     } else {
-        let _ = std::fs::remove_file(LukanPaths::daemon_pid_file());
-        println!("  Worker daemon stopped (PID {pid})");
+        cleanup_lock_files();
+        println!("  Daemon stopped (PID {pid})");
     }
 
     Ok(())
 }
 
 /// Ensure the daemon is running; start it detached if not.
+/// Returns the port the daemon's web server is listening on.
 /// Called automatically from UIs and CLI worker commands.
-pub fn ensure_daemon_running() {
-    if is_daemon_running() {
-        return;
+pub fn ensure_daemon_running() -> Result<u16> {
+    // Check lock file first (new format with port)
+    if let Some(lock) = read_lock_file() {
+        if is_process_alive(lock.pid) {
+            return Ok(lock.port);
+        }
+        // Stale lock file
+        cleanup_lock_files();
     }
 
-    let self_exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            error!(error = %e, "Cannot auto-start daemon: failed to get executable path");
-            return;
+    // Check legacy PID file
+    if let Some(pid) = read_pid_file() {
+        if is_process_alive(pid) {
+            // Legacy daemon without port info — return default
+            warn!("Daemon running with legacy PID file (no port info), assuming port 3000");
+            return Ok(3000);
         }
-    };
+        cleanup_lock_files();
+    }
 
+    // Not running — spawn it
+    let self_exe = std::env::current_exe().context("Cannot auto-start daemon: failed to get executable path")?;
     let log_path = LukanPaths::daemon_log_file();
 
-    let log_file = match std::fs::OpenOptions::new()
+    let log_file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(&log_path)
-    {
-        Ok(f) => f,
-        Err(e) => {
-            error!(error = %e, "Cannot auto-start daemon: failed to create log file");
-            return;
-        }
-    };
+        .context("Cannot auto-start daemon: failed to create log file")?;
 
-    let log_clone = match log_file.try_clone() {
-        Ok(f) => f,
-        Err(e) => {
-            error!(error = %e, "Cannot auto-start daemon: failed to clone log file handle");
-            return;
-        }
-    };
+    let log_clone = log_file
+        .try_clone()
+        .context("Cannot auto-start daemon: failed to clone log file handle")?;
 
-    match std::process::Command::new(&self_exe)
+    let child = std::process::Command::new(&self_exe)
         .args(["daemon", "start"])
         .stdin(std::process::Stdio::null())
         .stdout(log_clone)
         .stderr(log_file)
         .spawn()
-    {
-        Ok(child) => {
-            info!(pid = child.id(), "Auto-started worker daemon");
+        .context("Failed to auto-start daemon")?;
+
+    info!(pid = child.id(), "Auto-started daemon");
+
+    // Wait for the lock file to appear (up to 10s)
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if std::time::Instant::now() > deadline {
+            // Timeout — daemon may still be starting, return default port
+            warn!("Daemon lock file not found after 10s, assuming port 3000");
+            return Ok(3000);
         }
-        Err(e) => {
-            error!(error = %e, "Failed to auto-start worker daemon");
+        std::thread::sleep(Duration::from_millis(100));
+        if let Some(lock) = read_lock_file() {
+            if is_process_alive(lock.pid) {
+                info!(pid = lock.pid, port = lock.port, "Daemon is ready");
+                return Ok(lock.port);
+            }
         }
     }
 }
 
-/// Check if the daemon is alive by reading the PID file and checking the process.
+/// Check if the daemon is alive by reading lock/PID files and checking the process.
 pub fn is_daemon_running() -> bool {
+    if let Some(lock) = read_lock_file() {
+        return is_process_alive(lock.pid);
+    }
     match read_pid_file() {
         Some(pid) => is_process_alive(pid),
         None => false,
     }
 }
 
+/// Read the new JSON lock file.
+fn read_lock_file() -> Option<DaemonLock> {
+    let path = LukanPaths::daemon_lock_file();
+    let content = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// Read the legacy PID file.
 fn read_pid_file() -> Option<u32> {
     let path = LukanPaths::daemon_pid_file();
     std::fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 
+/// Remove both lock and PID files.
+fn cleanup_lock_files() {
+    let _ = std::fs::remove_file(LukanPaths::daemon_lock_file());
+    let _ = std::fs::remove_file(LukanPaths::daemon_pid_file());
+}
+
 fn is_process_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        // kill(pid, 0) checks if process exists without sending a signal
         unsafe { libc::kill(pid as i32, 0) == 0 }
     }
     #[cfg(not(unix))]
     {
-        // On non-Unix, assume alive if PID file exists
         let _ = pid;
         true
     }

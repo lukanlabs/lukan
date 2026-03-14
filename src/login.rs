@@ -105,6 +105,7 @@ async fn run_device_code_login(relay_url: &str) -> Result<()> {
                     jwt_token: token,
                     user_id: user_id.clone(),
                     email: email.clone(),
+                    enabled: true,
                 };
                 config.save().await?;
 
@@ -229,6 +230,7 @@ async fn run_local_login(relay_url: &str) -> Result<()> {
         jwt_token,
         user_id: user_id.clone(),
         email: email.clone(),
+        enabled: true,
     };
     config.save().await?;
 
@@ -249,7 +251,7 @@ async fn restart_daemon_if_running() {
         println!("  Restarting daemon...");
         let _ = crate::daemon::stop_daemon();
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        crate::daemon::ensure_daemon_running();
+        let _ = crate::daemon::ensure_daemon_running();
         println!("  Daemon restarted with new relay config.");
     } else {
         println!("  Relay config saved. Run `lukan daemon start` to connect.");
@@ -268,7 +270,8 @@ pub async fn run_logout() -> Result<()> {
 pub async fn show_relay_status() -> Result<()> {
     match RelayConfig::load().await {
         Some(config) => {
-            println!("  Relay: connected");
+            let status = if config.enabled { "enabled" } else { "disabled" };
+            println!("  Relay: configured ({status})");
             println!("  URL: {}", config.relay_url);
             println!("  Email: {}", config.email);
             println!("  User ID: {}", config.user_id);

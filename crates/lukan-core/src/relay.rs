@@ -78,6 +78,13 @@ pub struct RelayConfig {
     pub jwt_token: String,
     pub user_id: String,
     pub email: String,
+    /// Whether the relay connection is enabled. Defaults to true for backward compat.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl RelayConfig {
@@ -86,6 +93,21 @@ impl RelayConfig {
         let path = crate::config::LukanPaths::config_dir().join("relay.json");
         let data = tokio::fs::read_to_string(&path).await.ok()?;
         serde_json::from_str(&data).ok()
+    }
+
+    /// Load relay config only if it exists AND is enabled.
+    pub async fn load_if_enabled() -> Option<Self> {
+        let config = Self::load().await?;
+        if config.enabled { Some(config) } else { None }
+    }
+
+    /// Set the enabled flag and save.
+    pub async fn set_enabled(enabled: bool) -> anyhow::Result<()> {
+        let mut config = Self::load()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("No relay credentials found. Run `lukan login` first."))?;
+        config.enabled = enabled;
+        config.save().await
     }
 
     /// Save relay config to the standard path.

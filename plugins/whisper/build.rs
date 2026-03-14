@@ -5,7 +5,7 @@ fn main() {
     if !whisper_dir.exists() {
         panic!(
             "\n\nwhisper.cpp source not found!\n\
-             Run: git clone https://github.com/ggml-org/whisper.cpp.git plugins/whisper/whisper.cpp\n\n"
+             Run: git submodule update --init\n\n"
         );
     }
 
@@ -20,7 +20,8 @@ fn main() {
 
     // Auto-detect GPU support
     if cfg!(target_os = "macos") {
-        cfg.define("GGML_METAL", "ON");
+        cfg.define("GGML_METAL", "ON")
+            .define("GGML_BLAS", "ON");
     }
 
     // Check for CUDA
@@ -38,11 +39,24 @@ fn main() {
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-search=native={}/lib64", dst.display());
 
-    // Link whisper and ggml libraries (order matters for static linking)
+    // Build our C shim against whisper headers (must be before whisper libs
+    // so the linker can resolve shim -> whisper dependencies)
+    cc::Build::new()
+        .file("shim.c")
+        .include(format!("{}/include", dst.display()))
+        .compile("whisper_shim");
+
+    // Link whisper and ggml libraries (order matters for static linking:
+    // dependents first, dependencies last)
     println!("cargo:rustc-link-lib=static=whisper");
     println!("cargo:rustc-link-lib=static=ggml");
     println!("cargo:rustc-link-lib=static=ggml-base");
     println!("cargo:rustc-link-lib=static=ggml-cpu");
+
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-lib=static=ggml-metal");
+        println!("cargo:rustc-link-lib=static=ggml-blas");
+    }
 
     if has_cuda {
         println!("cargo:rustc-link-lib=static=ggml-cuda");
@@ -64,10 +78,4 @@ fn main() {
         println!("cargo:rustc-link-framework=MetalKit");
         println!("cargo:rustc-link-framework=Foundation");
     }
-
-    // Build our C shim against whisper headers
-    cc::Build::new()
-        .file("shim.c")
-        .include(format!("{}/include", dst.display()))
-        .compile("whisper_shim");
 }

@@ -197,6 +197,10 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
     // Resize observer
     const observer = new ResizeObserver(() => {
       try {
+        // Skip resize when container is hidden (minimized) to avoid
+        // tmux redrawing and duplicating the prompt through the pipe
+        const rect = container.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return;
         fitAddon.fit();
         terminalResize(sessionId, term.cols, term.rows).catch(() => {});
       } catch {

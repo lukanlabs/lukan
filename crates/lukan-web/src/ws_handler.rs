@@ -346,7 +346,8 @@ async fn dispatch_message(
         ClientMessage::DeleteSession { session_id } => {
             match SessionManager::delete(&session_id).await {
                 Ok(_) => {
-                    // Re-send session list
+                    // Remove agent from memory so disconnect handler won't recreate the file
+                    evict_session_from_memory(&session_id, state).await;
                     if let Ok(sessions) = SessionManager::list().await {
                         send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
                     }
@@ -365,6 +366,17 @@ async fn dispatch_message(
 
         ClientMessage::DeleteAllSessions => match SessionManager::delete_all().await {
             Ok(_) => {
+                // Clear all agents from memory so disconnect handler won't recreate files
+                {
+                    let mut sessions = state.sessions.lock().await;
+                    for session in sessions.values_mut() {
+                        session.agent = None;
+                    }
+                }
+                {
+                    let mut agent = state.agent.lock().await;
+                    *agent = None;
+                }
                 if let Ok(sessions) = SessionManager::list().await {
                     send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
                 }
@@ -413,6 +425,8 @@ async fn dispatch_message(
             let parsed: PermissionMode =
                 serde_json::from_value(serde_json::Value::String(mode.clone()))
                     .unwrap_or(PermissionMode::Auto);
+
+            info!(conn_id, %mode, ?parsed, "Permission mode changed");
 
             // Update via watch channel — all agents with a receiver see the change immediately
             let _ = state.permission_mode.send(parsed);
@@ -1381,9 +1395,92 @@ async fn handle_mid_turn_message(
             }
         }
 
+        ClientMessage::DeleteSession { session_id } => {
+            match lukan_agent::SessionManager::delete(&session_id).await {
+                Ok(_) => {
+                    evict_session_from_memory(&session_id, state).await;
+                    if let Ok(sessions) = lukan_agent::SessionManager::list().await {
+                        send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
+                    }
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to delete session: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::DeleteAllSessions => {
+            match lukan_agent::SessionManager::delete_all().await {
+                Ok(_) => {
+                    {
+                        let mut sessions = state.sessions.lock().await;
+                        for session in sessions.values_mut() {
+                            session.agent = None;
+                        }
+                    }
+                    {
+                        let mut agent = state.agent.lock().await;
+                        *agent = None;
+                    }
+                    if let Ok(sessions) = lukan_agent::SessionManager::list().await {
+                        send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
+                    }
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to delete all sessions: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::SetPermissionMode { mode } => {
+            let parsed: PermissionMode =
+                serde_json::from_value(serde_json::Value::String(mode.clone()))
+                    .unwrap_or(PermissionMode::Auto);
+            info!(conn_id, %mode, "Permission mode changed mid-turn");
+            let _ = state.permission_mode.send(parsed);
+            send_json(ws_tx, &ServerMessage::ModeChanged { mode }).await;
+        }
+
         // Ignore all other messages during a turn
         other => {
             warn!(conn_id, msg = ?other, "Ignoring message received mid-turn");
+        }
+    }
+}
+
+/// Remove an agent from memory when its session file has been deleted.
+/// This prevents the disconnect handler from re-saving it to disk.
+async fn evict_session_from_memory(session_id: &str, state: &Arc<AppState>) {
+    // Check multi-tab sessions
+    {
+        let mut sessions = state.sessions.lock().await;
+        for session in sessions.values_mut() {
+            if let Some(ref agent) = session.agent {
+                if agent.session_id() == session_id {
+                    session.agent = None;
+                }
+            }
+        }
+    }
+    // Check legacy singleton agent
+    {
+        let mut agent_lock = state.agent.lock().await;
+        if let Some(ref agent) = *agent_lock {
+            if agent.session_id() == session_id {
+                *agent_lock = None;
+            }
         }
     }
 }

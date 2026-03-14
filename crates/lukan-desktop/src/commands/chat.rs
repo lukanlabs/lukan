@@ -812,10 +812,10 @@ pub async fn get_daemon_port() -> Result<u16, String> {
         }
     }
     // Fallback to env var (set by `lukan chat --desktop`)
-    if let Ok(port) = std::env::var("LUKAN_DAEMON_PORT") {
-        if let Ok(p) = port.parse::<u16>() {
-            return Ok(p);
-        }
+    if let Ok(port) = std::env::var("LUKAN_DAEMON_PORT")
+        && let Ok(p) = port.parse::<u16>()
+    {
+        return Ok(p);
     }
     // Default
     Ok(3000)

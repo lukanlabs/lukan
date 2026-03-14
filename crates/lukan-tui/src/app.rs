@@ -2917,7 +2917,11 @@ impl App {
                             } else if key.code == KeyCode::BackTab {
                                 // Shift+Tab: cycle permission mode (works during streaming too)
                                 self.permission_mode = self.permission_mode.next();
-                                if let Some(ref mut agent) = self.agent {
+                                if let Some(ref daemon) = self.daemon_tx {
+                                    let _ = daemon.send(&crate::ws_client::OutMessage::SetPermissionMode {
+                                        mode: self.permission_mode.to_string(),
+                                    });
+                                } else if let Some(ref mut agent) = self.agent {
                                     agent.set_permission_mode(self.permission_mode.clone());
                                 }
                                 self.messages.push(ChatMessage::new(
@@ -3428,6 +3432,13 @@ impl App {
 
         // Handle /compact
         if text == "/compact" {
+            if self.is_daemon_mode() {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "/compact is not yet supported in daemon mode. Use the web UI instead.",
+                ));
+                return;
+            }
             if self.is_streaming {
                 self.messages.push(ChatMessage::new(
                     "system",
@@ -3702,6 +3713,13 @@ impl App {
 
         // Handle /checkpoints — open rewind picker
         if text == "/checkpoints" {
+            if self.is_daemon_mode() {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "/checkpoints is not yet supported in daemon mode. Use the web UI instead.",
+                ));
+                return;
+            }
             let checkpoints = self
                 .agent
                 .as_ref()

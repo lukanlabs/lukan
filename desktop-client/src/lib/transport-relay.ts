@@ -88,6 +88,7 @@ const LOCAL_COMMANDS = new Set([
 ]);
 
 const STREAM_EVENT_TYPES = new Set([
+  "user_message",
   "message_start",
   "text_delta",
   "thinking_delta",
@@ -419,10 +420,12 @@ export class RelayTransport implements Transport {
     if (type === "processing_complete") {
       this.processing = false;
       const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      const savedSid = msg.savedSessionId as string | undefined;
       if (routeId) {
         this.dispatch(`turn-complete-${routeId}`, JSON.stringify(msg));
-      } else {
-        this.dispatch("turn-complete", JSON.stringify(msg));
+      }
+      if (savedSid) {
+        this.dispatch(`turn-complete-saved-${savedSid}`, JSON.stringify(msg));
       }
       return;
     }
@@ -494,11 +497,16 @@ export class RelayTransport implements Transport {
     // Stream events
     if (STREAM_EVENT_TYPES.has(type)) {
       const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      const savedSid = msg.savedSessionId as string | undefined;
       if (routeId) {
         this.dispatch(`stream-event-${routeId}`, JSON.stringify(msg));
-      } else {
+      }
+      if (savedSid) {
+        // Route to tabs watching this saved session (cross-client sync)
+        this.dispatch(`stream-event-saved-${savedSid}`, JSON.stringify(msg));
+      }
+      if (!routeId && !savedSid) {
         // Global events (mode_changed, error, etc.) — broadcast to ALL
-        // session-scoped subscribers since there's no specific routeId
         this.broadcastStreamEvent(JSON.stringify(msg));
       }
       return;

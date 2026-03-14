@@ -408,6 +408,32 @@ impl AgentLoop {
         self.save_session().await
     }
 
+    /// Reload session from disk if another process has updated it.
+    /// Compares the on-disk `updated_at` with our in-memory copy;
+    /// if the disk version is newer, replaces our history and metadata.
+    async fn reload_if_stale(&mut self) {
+        let disk_session = match SessionManager::load(&self.session.id).await {
+            Ok(Some(s)) => s,
+            _ => return, // file missing or unreadable — keep in-memory state
+        };
+
+        if disk_session.updated_at > self.session.updated_at {
+            info!(
+                session_id = %self.session.id,
+                in_memory = %self.session.updated_at,
+                on_disk = %disk_session.updated_at,
+                "Session updated by another client, reloading from disk"
+            );
+            self.history = MessageHistory::new();
+            self.history.load_from_json(disk_session.messages.clone());
+            self.input_tokens = disk_session.total_input_tokens;
+            self.output_tokens = disk_session.total_output_tokens;
+            self.last_context_size = disk_session.last_context_size;
+            self.last_memory_update_tokens = disk_session.last_memory_update_tokens;
+            self.session = disk_session;
+        }
+    }
+
     /// Get a reference to the provider name stored in the session
     pub fn provider_name(&self) -> Option<&str> {
         self.session.provider.as_deref()
@@ -709,6 +735,9 @@ impl AgentLoop {
         cancel: Option<CancellationToken>,
         queued: Option<Arc<std::sync::Mutex<Vec<String>>>>,
     ) -> Result<()> {
+        // Reload from disk if another client (CLI / Web) updated this session
+        self.reload_if_stale().await;
+
         // Capture message index *before* adding the user message.
         // This is the truncation point used by restore_checkpoint().
         let message_index_before = self.history.messages().len();

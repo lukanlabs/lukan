@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lukan_agent::{AgentLoop, WorkerNotification};
@@ -9,6 +9,15 @@ use tokio::sync::{Mutex, broadcast, mpsc, watch};
 
 use crate::protocol::ServerMessage;
 use crate::terminal::TerminalManager;
+
+/// A stream event broadcast entry: (tab_id, event_json, originating_conn_id)
+/// `tab_id` is empty string for legacy singleton sessions.
+#[derive(Clone, Debug)]
+pub struct StreamBroadcast {
+    pub tab_id: String,
+    pub json: String,
+    pub origin_conn_id: usize,
+}
 
 /// Per-session agent state (one per tab/agent instance).
 pub struct WebAgentSession {
@@ -75,6 +84,10 @@ pub struct AppState {
     pub terminal_manager: TerminalManager,
     /// Broadcast channel for terminal output (sent to all WS clients)
     pub terminal_tx: broadcast::Sender<ServerMessage>,
+    /// Broadcast channel for agent stream events (sent to all watchers of a session)
+    pub stream_tx: broadcast::Sender<StreamBroadcast>,
+    /// Maps session/tab ID → set of connection IDs watching that session
+    pub session_watchers: Mutex<HashMap<String, HashSet<usize>>>,
 }
 
 impl AppState {
@@ -93,6 +106,7 @@ impl AppState {
         let model_name = resolved.effective_model().unwrap_or_default();
         let (notification_tx, _) = broadcast::channel(64);
         let (terminal_tx, _) = broadcast::channel(256);
+        let (stream_tx, _) = broadcast::channel(512);
 
         Self {
             sessions: Mutex::new(HashMap::new()),
@@ -113,6 +127,8 @@ impl AppState {
             notification_tx,
             terminal_manager: TerminalManager::default(),
             terminal_tx,
+            stream_tx,
+            session_watchers: Mutex::new(HashMap::new()),
         }
     }
 

@@ -19,7 +19,7 @@ use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::create_configured_registry;
 
 use crate::protocol::{ClientMessage, ServerMessage, TokenUsage};
-use crate::state::{AppState, WebAgentSession};
+use crate::state::{AppState, StreamBroadcast, WebAgentSession};
 
 /// Bundles the mutable stream handles passed into `handle_send_message`
 /// so we stay under clippy's argument limit.
@@ -53,6 +53,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
     let mut authenticated = !state.auth_required() || is_relay;
     let mut notify_rx = state.notification_tx.subscribe();
     let mut terminal_rx = state.terminal_tx.subscribe();
+    let mut stream_rx = state.stream_tx.subscribe();
 
     // If auth required, send auth_required message
     if !authenticated {
@@ -89,6 +90,22 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
             Ok(term_msg) = terminal_rx.recv() => {
                 if authenticated {
                     send_json(&mut ws_tx, &term_msg).await;
+                }
+                continue;
+            }
+            Ok(broadcast) = stream_rx.recv() => {
+                // Forward stream events from other clients' agent turns
+                // Skip if we are the originating connection (we already got it directly)
+                if authenticated && broadcast.origin_conn_id != conn_id {
+                    let is_watching = {
+                        let watchers = state.session_watchers.lock().await;
+                        watchers
+                            .get(&broadcast.tab_id)
+                            .is_some_and(|set| set.contains(&conn_id))
+                    };
+                    if is_watching {
+                        let _ = ws_tx.send(Message::Text(broadcast.json.into())).await;
+                    }
                 }
                 continue;
             }
@@ -184,6 +201,15 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
         }
     }
 
+    // Remove this connection from all session watcher sets
+    {
+        let mut watchers = state.session_watchers.lock().await;
+        watchers.retain(|_, set| {
+            set.remove(&conn_id);
+            !set.is_empty()
+        });
+    }
+
     // Save legacy singleton session
     {
         let mut agent_lock = state.agent.lock().await;
@@ -224,6 +250,8 @@ async fn dispatch_message(
             content,
             session_id,
         } => {
+            // Auto-watch: register this connection as a watcher of the session
+            watch_session(state, conn_id, session_id.as_deref().unwrap_or("")).await;
             handle_send_message(
                 conn_id,
                 &content,
@@ -258,6 +286,8 @@ async fn dispatch_message(
             } else {
                 None
             };
+            // Auto-watch: register this connection as a watcher of the tab
+            watch_session(state, conn_id, tab_id.unwrap_or("")).await;
             handle_load_session(saved_session, tab_id, state, ws_tx).await;
         }
 
@@ -982,7 +1012,7 @@ async fn handle_send_message(
     let mut aborted = false;
     loop {
         tokio::select! {
-            // Agent produced a stream event → forward to client
+            // Agent produced a stream event → forward to client + broadcast
             event = event_rx.recv() => {
                 match event {
                     Some(ev) => {
@@ -992,6 +1022,12 @@ async fn handle_send_message(
                         } else {
                             serde_json::to_string(&ev).unwrap_or_default()
                         };
+                        // Broadcast to other watchers of this session
+                        let _ = state.stream_tx.send(StreamBroadcast {
+                            tab_id: tab_id_owned.clone().unwrap_or_default(),
+                            json: json.clone(),
+                            origin_conn_id: conn_id,
+                        });
                         if ws_tx.send(Message::Text(json.into())).await.is_err() {
                             warn!(conn_id, "WebSocket send failed, client likely disconnected");
                             client_disconnected = true;
@@ -1095,25 +1131,32 @@ async fn handle_send_message(
                 }
             }
 
-            if !client_disconnected {
-                // Send processing_complete so the UI resets its state
-                let session_id = returned_agent.session_id().to_string();
-                let messages = returned_agent.messages_json();
-                let checkpoints = returned_agent.checkpoints().to_vec();
-                let context_size = returned_agent.last_context_size();
+            // Send processing_complete so the UI resets its state
+            let session_id = returned_agent.session_id().to_string();
+            let messages = returned_agent.messages_json();
+            let checkpoints = returned_agent.checkpoints().to_vec();
+            let context_size = returned_agent.last_context_size();
 
-                send_json(
-                    ws_tx,
-                    &ServerMessage::ProcessingComplete {
-                        session_id,
-                        messages,
-                        checkpoints,
-                        context_size: Some(context_size),
-                        tab_id: tab_id_owned.clone(),
-                        aborted: if aborted { Some(true) } else { None },
-                    },
-                )
-                .await;
+            let complete_msg = ServerMessage::ProcessingComplete {
+                session_id,
+                messages,
+                checkpoints,
+                context_size: Some(context_size),
+                tab_id: tab_id_owned.clone(),
+                aborted: if aborted { Some(true) } else { None },
+            };
+
+            // Broadcast to other watchers
+            if let Ok(json) = serde_json::to_string(&complete_msg) {
+                let _ = state.stream_tx.send(StreamBroadcast {
+                    tab_id: tab_id_owned.clone().unwrap_or_default(),
+                    json: json.clone(),
+                    origin_conn_id: conn_id,
+                });
+            }
+
+            if !client_disconnected {
+                send_json(ws_tx, &complete_msg).await;
             }
 
             // Put agent back
@@ -1158,6 +1201,16 @@ async fn release_processing_lock(conn_id: usize, state: &Arc<AppState>) {
     if *owner == Some(conn_id) {
         *owner = None;
     }
+}
+
+/// Register a connection as a watcher of a session/tab.
+/// Watchers receive broadcast stream events from agent turns on that session.
+async fn watch_session(state: &Arc<AppState>, conn_id: usize, tab_id: &str) {
+    let mut watchers = state.session_watchers.lock().await;
+    watchers
+        .entry(tab_id.to_string())
+        .or_default()
+        .insert(conn_id);
 }
 
 /// Send an appropriate error when agent creation fails.

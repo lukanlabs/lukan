@@ -3386,6 +3386,12 @@ impl App {
             self.cache_creation_tokens = 0;
             self.context_size = 0;
             // Reset agent — a new session will be created on next message
+            if let Some(ref daemon) = self.daemon_tx {
+                let _ = daemon.send(&crate::ws_client::OutMessage::NewSession {
+                    name: None,
+                    session_id: self.daemon_tab_id.clone(),
+                });
+            }
             self.agent = None;
             self.session_id = None;
             return;
@@ -3900,6 +3906,28 @@ impl App {
             return;
         }
 
+        // ── Daemon mode: send LoadSession to daemon ──
+        if let Some(ref daemon) = self.daemon_tx {
+            let msg = crate::ws_client::OutMessage::LoadSession {
+                session_id: self.daemon_tab_id.clone(),
+                id: Some(session_id.clone()),
+            };
+            if let Err(e) = daemon.send(&msg) {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Failed to load session: {e}"),
+                ));
+            } else {
+                self.session_id = Some(session_id.clone());
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Loaded session {session_id}"),
+                ));
+            }
+            return;
+        }
+
+        // ── In-process mode ──
         let system_prompt = build_system_prompt_with_opts(self.browser_tools).await;
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
 

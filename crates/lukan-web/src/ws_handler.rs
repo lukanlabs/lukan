@@ -784,9 +784,10 @@ async fn dispatch_message(
         }
 
         ClientMessage::TerminalReconnect { session_id } => {
-            // Capture scrollback BEFORE resetting pipe-pane to avoid duplication.
-            // pipe-pane reset causes tmux to dump the current pane buffer, which
-            // would overlap with the scrollback capture if done first.
+            // Only capture scrollback — do NOT reset pipe-pane.
+            // Resetting pipe-pane causes tmux to dump the visible pane buffer,
+            // which duplicates the prompt (especially with zsh/powerlevel10k).
+            // The original pipe reader is still running from session creation.
             match state.terminal_manager.capture_scrollback(&session_id).await {
                 Ok(scrollback) => {
                     let sessions = state.terminal_manager.list().await;
@@ -813,13 +814,6 @@ async fn dispatch_message(
                     .await;
                 }
             }
-
-            // Reset pipe-pane AFTER sending scrollback so the pipe dump
-            // (which re-emits the visible pane) doesn't duplicate content.
-            state
-                .terminal_manager
-                .reset_output_reader(&session_id, state.terminal_tx.clone())
-                .await;
         }
 
         ClientMessage::TerminalRename { session_id, name } => {

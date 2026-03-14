@@ -136,13 +136,14 @@ export function useChat(tabId: string) {
   // Handle a stream event from the backend
   const handleStreamEvent = useCallback(
     (event: StreamEvent) => {
-      // Filter broadcast events: only process if savedSessionId matches our session
-      // (or if there's no savedSessionId, it's our own turn — always process)
+      // Filter broadcast events: only process if savedSessionId matches our session.
+      // If no savedSessionId → it's our own turn, always process.
+      // If savedSessionId present → only process if it matches our loaded session.
       const broadcastSid = (event as Record<string, unknown>).savedSessionId as string | undefined;
       if (broadcastSid) {
         const ourSid = sessionIdRef.current;
-        if (ourSid && broadcastSid !== ourSid) {
-          return; // Different session, skip
+        if (!ourSid || broadcastSid !== ourSid) {
+          return; // No session loaded or different session — skip
         }
       }
 

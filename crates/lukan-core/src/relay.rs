@@ -247,6 +247,7 @@ mod tests {
             jwt_token: "token123".into(),
             user_id: "user1".into(),
             email: "test@example.com".into(),
+            enabled: true,
         };
         let json = serde_json::to_string_pretty(&config).unwrap();
         assert!(json.contains(r#""relayUrl""#));

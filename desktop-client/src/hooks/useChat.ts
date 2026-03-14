@@ -20,6 +20,7 @@ import {
   startTool,
 } from "../lib/streaming-blocks";
 import * as api from "../lib/tauri";
+import { getTransport } from "../lib/transport";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -280,6 +281,20 @@ export function useChat(tabId: string) {
           setState((s) => ({ ...s, error: event.error, isProcessing: false, streamingBlocks: [] }));
           break;
 
+        // Remote user message (from TUI or another client via broadcast)
+        case "user_message" as string:
+          setState((s) => ({
+            ...s,
+            messages: [
+              ...s.messages,
+              {
+                role: "user",
+                content: [{ type: "text", text: (event as Record<string, unknown>).content as string || "" }],
+              } as Message,
+            ],
+          }));
+          break;
+
         default:
           break;
       }
@@ -342,7 +357,7 @@ export function useChat(tabId: string) {
         setState((s) => ({ ...s, error: `Init failed: ${e}`, initialized: true }));
       }
 
-      // Subscribe to session-scoped stream events
+      // Subscribe to session-scoped stream events (by tab ID)
       const unlistenStream = await api.onStreamEvent(tabId, (payload) => {
         if (!mounted) return;
         try {
@@ -377,6 +392,50 @@ export function useChat(tabId: string) {
       cleanupPromise.then((cleanup) => cleanup?.());
     };
   }, [tabId, handleStreamEvent, handleTurnComplete]);
+
+  // Subscribe to cross-client sync events by saved session ID.
+  // When another client (TUI, etc.) sends a message on the same saved session,
+  // we receive the stream events here.
+  useEffect(() => {
+    const sid = state.sessionId;
+    if (!sid) return;
+
+    let mounted = true;
+    const cleanups: Array<() => void> = [];
+
+    const setup = async () => {
+      const unStream = await getTransport().subscribe(
+        `stream-event-saved-${sid}`,
+        (payload) => {
+          if (!mounted) return;
+          try {
+            const event: StreamEvent = JSON.parse(payload as string);
+            handleStreamEvent(event);
+          } catch { /* ignore */ }
+        },
+      );
+      cleanups.push(unStream);
+
+      const unComplete = await getTransport().subscribe(
+        `turn-complete-saved-${sid}`,
+        (payload) => {
+          if (!mounted) return;
+          try {
+            const complete: TurnComplete = JSON.parse(payload as string);
+            handleTurnComplete(complete);
+          } catch { /* ignore */ }
+        },
+      );
+      cleanups.push(unComplete);
+    };
+
+    setup();
+
+    return () => {
+      mounted = false;
+      cleanups.forEach((fn) => fn());
+    };
+  }, [state.sessionId, handleStreamEvent, handleTurnComplete]);
 
   // Listen for provider/model changes from Toolbar or ProvidersTab
   useEffect(() => {

@@ -74,11 +74,31 @@ fn install_terminal_guard() {
     }
 }
 
-/// Start the web server with embedded React UI
+/// Start the web server with embedded React UI (interactive mode — opens browser, blocks)
 pub async fn start_web_server(resolved: ResolvedConfig, port: u16) -> Result<()> {
     #[cfg(unix)]
     install_terminal_guard();
 
+    let (actual_port, handle) = start_daemon_server(resolved, port).await?;
+
+    println!("\n  \x1b[1m\x1b[36mlukan web\x1b[0m");
+    println!("  \x1b[2mWeb UI running at\x1b[0m \x1b[4mhttp://localhost:{actual_port}\x1b[0m\n");
+
+    // Try to open browser
+    let _ = open::that(format!("http://localhost:{actual_port}"));
+
+    // Block until server exits
+    handle.await??;
+
+    Ok(())
+}
+
+/// Start the web server in the background without opening a browser.
+/// Returns `(actual_port, join_handle)`. Useful for embedding in the daemon.
+pub async fn start_daemon_server(
+    resolved: ResolvedConfig,
+    port: u16,
+) -> Result<(u16, tokio::task::JoinHandle<Result<(), std::io::Error>>)> {
     let state = Arc::new(AppState::new(resolved));
 
     // Spawn background task to poll notification file and broadcast to WebSocket clients
@@ -97,20 +117,11 @@ pub async fn start_web_server(resolved: ResolvedConfig, port: u16) -> Result<()>
     let router = server::create_router(Arc::clone(&state));
 
     let addr = format!("0.0.0.0:{port}");
-    println!("\n  \x1b[1m\x1b[36mlukan web\x1b[0m");
-    println!("  \x1b[2mWeb UI running at\x1b[0m \x1b[4mhttp://localhost:{port}\x1b[0m\n");
-
-    // Try to open browser
-    let _ = open::that(format!("http://localhost:{port}"));
-
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("Web server listening on {addr}");
+    let actual_port = listener.local_addr()?.port();
+    tracing::info!("Web server listening on 0.0.0.0:{actual_port}");
 
-    // The terminal guard (install_terminal_guard) handles SIGINT/SIGTERM
-    // directly via libc signal handlers, restoring termios and exiting.
-    // No need for tokio graceful shutdown — axum will be killed cleanly
-    // and chat sessions are saved incrementally.
-    axum::serve(listener, router).await?;
+    let handle = tokio::spawn(async move { axum::serve(listener, router).await });
 
-    Ok(())
+    Ok((actual_port, handle))
 }

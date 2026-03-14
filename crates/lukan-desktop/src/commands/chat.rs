@@ -795,3 +795,28 @@ pub async fn list_tasks(state: State<'_, ChatState>) -> Result<Vec<TaskInfoJs>, 
         })
         .collect())
 }
+
+/// Read the daemon lock file and return the port.
+/// Falls back to LUKAN_DAEMON_PORT env var, then default 3000.
+#[tauri::command]
+pub async fn get_daemon_port() -> Result<u16, String> {
+    // Try lock file first
+    let lock_path = lukan_core::config::LukanPaths::daemon_lock_file();
+    if let Ok(content) = tokio::fs::read_to_string(&lock_path).await {
+        #[derive(serde::Deserialize)]
+        struct Lock {
+            port: u16,
+        }
+        if let Ok(lock) = serde_json::from_str::<Lock>(&content) {
+            return Ok(lock.port);
+        }
+    }
+    // Fallback to env var (set by `lukan chat --desktop`)
+    if let Ok(port) = std::env::var("LUKAN_DAEMON_PORT")
+        && let Ok(p) = port.parse::<u16>()
+    {
+        return Ok(p);
+    }
+    // Default
+    Ok(3000)
+}

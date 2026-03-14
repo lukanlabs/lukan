@@ -10,6 +10,13 @@ use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use crate::protocol::ServerMessage;
 use crate::terminal::TerminalManager;
 
+/// A stream event broadcast entry sent to all connected clients.
+#[derive(Clone, Debug)]
+pub struct StreamBroadcast {
+    pub json: String,
+    pub origin_conn_id: usize,
+}
+
 /// Per-session agent state (one per tab/agent instance).
 pub struct WebAgentSession {
     pub agent: Option<AgentLoop>,
@@ -75,6 +82,8 @@ pub struct AppState {
     pub terminal_manager: TerminalManager,
     /// Broadcast channel for terminal output (sent to all WS clients)
     pub terminal_tx: broadcast::Sender<ServerMessage>,
+    /// Broadcast channel for agent stream events (sent to all connected clients)
+    pub stream_tx: broadcast::Sender<StreamBroadcast>,
 }
 
 impl AppState {
@@ -93,6 +102,7 @@ impl AppState {
         let model_name = resolved.effective_model().unwrap_or_default();
         let (notification_tx, _) = broadcast::channel(64);
         let (terminal_tx, _) = broadcast::channel(256);
+        let (stream_tx, _) = broadcast::channel(512);
 
         Self {
             sessions: Mutex::new(HashMap::new()),
@@ -113,6 +123,7 @@ impl AppState {
             notification_tx,
             terminal_manager: TerminalManager::default(),
             terminal_tx,
+            stream_tx,
         }
     }
 

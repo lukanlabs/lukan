@@ -431,7 +431,14 @@ impl TerminalManager {
 
         let text = String::from_utf8_lossy(&output.stdout);
         let trimmed = text.trim_end();
-        let b64 = base64::engine::general_purpose::STANDARD.encode(trimmed.as_bytes());
+        // Drop the last line (usually the current prompt) because the
+        // pipe reader will re-emit it once the new FIFO is established.
+        // This prevents the prompt from appearing twice on reconnect.
+        let without_last_line = match trimmed.rfind('\n') {
+            Some(pos) => &trimmed[..pos],
+            None => "", // single line = just the prompt, skip entirely
+        };
+        let b64 = base64::engine::general_purpose::STANDARD.encode(without_last_line.as_bytes());
         Ok(b64)
     }
 

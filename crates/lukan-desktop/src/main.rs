@@ -398,6 +398,7 @@ fn main() {
             commands::chat::new_session,
             commands::chat::set_permission_mode,
             commands::chat::list_tasks,
+            commands::chat::get_daemon_port,
             commands::chat::create_agent_tab,
             commands::chat::destroy_agent_tab,
             commands::chat::rename_agent_tab,

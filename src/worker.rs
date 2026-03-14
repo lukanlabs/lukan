@@ -79,7 +79,7 @@ pub async fn handle_worker_command(command: WorkerCommands) -> Result<()> {
             println!("\n  Created worker '{}' (ID: {})", worker.name, worker.id);
             println!("  Schedule: {schedule}");
             println!("  Enabled: true\n");
-            daemon::ensure_daemon_running();
+            let _ = daemon::ensure_daemon_running();
         }
 
         WorkerCommands::Remove { id } => {
@@ -112,7 +112,7 @@ pub async fn handle_worker_command(command: WorkerCommands) -> Result<()> {
             match WorkerManager::update(&id, patch).await? {
                 Some(w) => {
                     println!("  Paused worker '{}' ({})", w.name, w.id);
-                    daemon::ensure_daemon_running();
+                    let _ = daemon::ensure_daemon_running();
                 }
                 None => println!("  Worker not found: {id}"),
             }
@@ -136,7 +136,7 @@ pub async fn handle_worker_command(command: WorkerCommands) -> Result<()> {
             match WorkerManager::update(&id, patch).await? {
                 Some(w) => {
                     println!("  Resumed worker '{}' ({})", w.name, w.id);
-                    daemon::ensure_daemon_running();
+                    let _ = daemon::ensure_daemon_running();
                 }
                 None => println!("  Worker not found: {id}"),
             }

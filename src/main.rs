@@ -719,10 +719,10 @@ async fn run_chat(
     continue_session: bool,
 ) -> Result<()> {
     // Ensure daemon is running (workers + web server)
-    let _daemon_port = daemon::ensure_daemon_running()
+    let daemon_port = daemon::ensure_daemon_running()
         .unwrap_or_else(|e| {
             tracing::warn!(error = %e, "Failed to auto-start daemon, continuing without it");
-            3000
+            0 // 0 = no daemon, use in-process agent
         });
 
     // Load config
@@ -779,8 +779,12 @@ async fn run_chat(
     let provider =
         create_provider(&resolved).unwrap_or_else(|_| Box::new(lukan_providers::NullProvider));
 
-    // Run TUI
-    let mut app = App::new(provider, resolved);
+    // Run TUI — connect to daemon if available, otherwise use in-process agent
+    let mut app = if daemon_port > 0 {
+        App::new_daemon(provider, resolved, daemon_port).await
+    } else {
+        App::new(provider, resolved)
+    };
     if browser_opts.is_some() {
         app.enable_browser_tools();
     }

@@ -205,6 +205,12 @@ pub struct App {
     mouse_capture_enabled: bool,
     /// Cached inner area of the terminal overlay (set during render, used for mouse hit-testing)
     terminal_overlay_inner: Option<ratatui::layout::Rect>,
+    /// Daemon WebSocket sender (Some = daemon mode, None = in-process agent)
+    daemon_tx: Option<crate::ws_client::DaemonSender>,
+    /// Daemon WebSocket event receiver
+    daemon_rx: Option<mpsc::UnboundedReceiver<crate::ws_client::DaemonEvent>>,
+    /// Port of the daemon server (0 = not using daemon)
+    daemon_port: u16,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -396,7 +402,39 @@ impl App {
             terminal_visible: false,
             mouse_capture_enabled: false,
             terminal_overlay_inner: None,
+            daemon_tx: None,
+            daemon_rx: None,
+            daemon_port: 0,
         }
+    }
+
+    /// Create an App that connects to the daemon via WebSocket.
+    /// Falls back to in-process agent mode if the connection fails.
+    pub async fn new_daemon(
+        provider: Box<dyn Provider>,
+        config: ResolvedConfig,
+        port: u16,
+    ) -> Self {
+        let mut app = Self::new(provider, config);
+        app.daemon_port = port;
+
+        match crate::ws_client::connect(port).await {
+            Ok((tx, rx)) => {
+                app.daemon_tx = Some(tx);
+                app.daemon_rx = Some(rx);
+                tracing::info!(port, "TUI connected to daemon");
+            }
+            Err(e) => {
+                tracing::warn!(port, error = %e, "Failed to connect to daemon, using in-process agent");
+            }
+        }
+
+        app
+    }
+
+    /// Whether we're connected to the daemon (vs in-process agent mode).
+    fn is_daemon_mode(&self) -> bool {
+        self.daemon_tx.is_some()
     }
 
     /// Mark this app to auto-load the most recent session on startup.
@@ -1984,9 +2022,7 @@ impl App {
                                             } else {
                                                 ApprovalResponse::Approved { approved_ids }
                                             };
-                                            if let Some(ref tx) = self.approval_tx {
-                                                let _ = tx.try_send(response);
-                                            }
+                                            self.send_approval(response);
                                             self.force_redraw = true;
                                         }
                                     }
@@ -1995,11 +2031,9 @@ impl App {
                                         if let Some(prompt) = self.approval_prompt.take() {
                                             let approved_ids: Vec<String> =
                                                 prompt.tools.iter().map(|t| t.id.clone()).collect();
-                                            if let Some(ref tx) = self.approval_tx {
-                                                let _ = tx.try_send(ApprovalResponse::Approved {
-                                                    approved_ids,
-                                                });
-                                            }
+                                            self.send_approval(ApprovalResponse::Approved {
+                                                approved_ids,
+                                            });
                                             self.force_redraw = true;
                                         }
                                     }
@@ -2009,23 +2043,17 @@ impl App {
                                             let approved_ids: Vec<String> =
                                                 prompt.tools.iter().map(|t| t.id.clone()).collect();
                                             let tools = prompt.tools.clone();
-                                            if let Some(ref tx) = self.approval_tx {
-                                                let _ = tx.try_send(
-                                                    ApprovalResponse::AlwaysAllow {
-                                                        approved_ids,
-                                                        tools,
-                                                    },
-                                                );
-                                            }
+                                            self.send_approval(ApprovalResponse::AlwaysAllow {
+                                                approved_ids,
+                                                tools,
+                                            });
                                             self.force_redraw = true;
                                         }
                                     }
                                     KeyCode::Esc => {
                                         // Deny all
                                         self.approval_prompt = None;
-                                        if let Some(ref tx) = self.approval_tx {
-                                            let _ = tx.try_send(ApprovalResponse::DeniedAll);
-                                        }
+                                        self.send_approval(ApprovalResponse::DeniedAll);
                                         self.force_redraw = true;
                                     }
                                     _ => {}
@@ -2635,7 +2663,11 @@ impl App {
                                 if !self.queued_messages.lock().unwrap().is_empty() {
                                     self.queued_messages.lock().unwrap().clear();
                                 } else {
-                                    if let Some(token) = self.cancel_token.take() {
+                                    if let Some(ref daemon) = self.daemon_tx {
+                                        let _ = daemon.send(&crate::ws_client::OutMessage::Abort {
+                                            session_id: self.session_id.clone(),
+                                        });
+                                    } else if let Some(token) = self.cancel_token.take() {
                                         token.cancel();
                                     }
                                     self.is_streaming = false;
@@ -3196,6 +3228,25 @@ impl App {
                         self.handle_subagent_update(ev);
                     }
                 }
+                // Daemon WebSocket events (when in daemon mode)
+                Some(daemon_ev) = async {
+                    match self.daemon_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.handle_daemon_event(daemon_ev);
+                    // Drain ready events (collect first to avoid borrow conflict)
+                    let mut drained = Vec::new();
+                    if let Some(ref mut rx) = self.daemon_rx {
+                        while let Ok(ev) = rx.try_recv() {
+                            drained.push(ev);
+                        }
+                    }
+                    for ev in drained {
+                        self.handle_daemon_event(ev);
+                    }
+                }
             }
 
             // Auto-refresh task panel after task tool events
@@ -3740,6 +3791,23 @@ impl App {
         self.streaming_thinking.clear();
         self.active_tool = None;
 
+        // ── Daemon mode: send via WebSocket ──
+        if let Some(ref daemon) = self.daemon_tx {
+            let msg = crate::ws_client::OutMessage::SendMessage {
+                content: text,
+                session_id: self.session_id.clone(),
+            };
+            if let Err(e) = daemon.send(&msg) {
+                self.is_streaming = false;
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Failed to send to daemon: {e}"),
+                ));
+            }
+            return;
+        }
+
+        // ── In-process mode: run agent turn directly ──
         // Ensure agent exists (create new session if needed) and run the turn
         // We need to take the agent out to avoid borrow issues with self
         if let Some(ref mut agent) = self.agent {
@@ -4333,6 +4401,159 @@ impl App {
         }
     }
 
+    /// Send an approval response — routes to daemon or in-process channel.
+    fn send_approval(&self, response: ApprovalResponse) {
+        if let Some(ref daemon) = self.daemon_tx {
+            let msg = match &response {
+                ApprovalResponse::Approved { approved_ids } => {
+                    crate::ws_client::OutMessage::Approve {
+                        approved_ids: approved_ids.clone(),
+                        session_id: self.session_id.clone(),
+                    }
+                }
+                ApprovalResponse::AlwaysAllow {
+                    approved_ids,
+                    tools,
+                } => crate::ws_client::OutMessage::AlwaysAllow {
+                    approved_ids: approved_ids.clone(),
+                    tools: tools.clone(),
+                    session_id: self.session_id.clone(),
+                },
+                ApprovalResponse::DeniedAll => crate::ws_client::OutMessage::DenyAll {
+                    session_id: self.session_id.clone(),
+                },
+            };
+            let _ = daemon.send(&msg);
+        } else if let Some(ref tx) = self.approval_tx {
+            let _ = tx.try_send(response);
+        }
+    }
+
+    /// Send a plan review response — routes to daemon or in-process channel.
+    fn send_plan_review(&self, response: PlanReviewResponse) {
+        if let Some(ref daemon) = self.daemon_tx {
+            let msg = match &response {
+                PlanReviewResponse::Accepted { modified_tasks } => {
+                    crate::ws_client::OutMessage::PlanAccept {
+                        tasks: modified_tasks
+                            .as_ref()
+                            .and_then(|t| serde_json::to_value(t).ok()),
+                        session_id: self.session_id.clone(),
+                    }
+                }
+                PlanReviewResponse::Rejected { feedback } => {
+                    crate::ws_client::OutMessage::PlanReject {
+                        feedback: feedback.clone(),
+                        session_id: self.session_id.clone(),
+                    }
+                }
+                PlanReviewResponse::TaskFeedback {
+                    task_index,
+                    feedback,
+                } => crate::ws_client::OutMessage::PlanTaskFeedback {
+                    task_index: *task_index as u32,
+                    feedback: feedback.clone(),
+                    session_id: self.session_id.clone(),
+                },
+            };
+            let _ = daemon.send(&msg);
+        } else if let Some(ref tx) = self.plan_review_tx {
+            let _ = tx.try_send(response);
+        }
+    }
+
+    /// Send a planner answer — routes to daemon or in-process channel.
+    fn send_planner_answer(&self, answer: String) {
+        if let Some(ref daemon) = self.daemon_tx {
+            let msg = crate::ws_client::OutMessage::AnswerQuestion {
+                answer,
+                session_id: self.session_id.clone(),
+            };
+            let _ = daemon.send(&msg);
+        } else if let Some(ref tx) = self.planner_answer_tx {
+            let _ = tx.try_send(answer);
+        }
+    }
+
+    /// Handle events from the daemon WebSocket connection.
+    fn handle_daemon_event(&mut self, event: crate::ws_client::DaemonEvent) {
+        use crate::ws_client::DaemonEvent;
+        match event {
+            DaemonEvent::Stream(stream_event) => {
+                self.handle_stream_event(stream_event);
+            }
+            DaemonEvent::ProcessingComplete {
+                session_id,
+                context_size,
+                aborted: _,
+            } => {
+                self.session_id = Some(session_id);
+                if let Some(cs) = context_size {
+                    self.context_size = cs;
+                }
+                // Ensure streaming is stopped (handle_stream_event should have done this
+                // via MessageEnd, but this is a safety net)
+                if self.is_streaming {
+                    self.is_streaming = false;
+                }
+            }
+            DaemonEvent::SessionList { sessions } => {
+                self.session_picker = Some(SessionPicker {
+                    sessions: sessions
+                        .into_iter()
+                        .map(|s| SessionSummary {
+                            id: s.id,
+                            name: s.name,
+                            created_at: s.created_at,
+                            updated_at: s.updated_at,
+                            message_count: s.message_count,
+                            provider: s.provider,
+                            model: s.model,
+                            last_message: s.last_message,
+                        })
+                        .collect(),
+                    selected: 0,
+                    current_id: self.session_id.clone(),
+                });
+                self.force_redraw = true;
+            }
+            DaemonEvent::SessionLoaded {
+                session_id,
+                context_size,
+            } => {
+                self.session_id = Some(session_id.clone());
+                self.context_size = context_size;
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Loaded session {session_id}"),
+                ));
+                self.force_redraw = true;
+            }
+            DaemonEvent::ModelChanged {
+                provider_name,
+                model_name,
+            } => {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Model changed to {provider_name}:{model_name}"),
+                ));
+            }
+            DaemonEvent::Error(error) => {
+                self.is_streaming = false;
+                self.messages
+                    .push(ChatMessage::new("system", format!("Error: {error}")));
+            }
+            DaemonEvent::Disconnected => {
+                self.is_streaming = false;
+                self.daemon_tx = None;
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "Disconnected from daemon. Falling back to in-process mode.",
+                ));
+            }
+        }
+    }
+
     fn handle_stream_event(&mut self, event: StreamEvent) {
         match event {
             StreamEvent::MessageStart => {
@@ -4609,11 +4830,9 @@ impl App {
                 KeyCode::Char('a') => {
                     // Accept plan
                     if let Some(state) = self.plan_review.take() {
-                        if let Some(ref tx) = self.plan_review_tx {
-                            let _ = tx.try_send(PlanReviewResponse::Accepted {
-                                modified_tasks: None,
-                            });
-                        }
+                        self.send_plan_review(PlanReviewResponse::Accepted {
+                            modified_tasks: None,
+                        });
                         self.messages.push(ChatMessage::new(
                             "system",
                             format!("Plan accepted: {}", state.title),
@@ -4629,11 +4848,9 @@ impl App {
                 KeyCode::Esc => {
                     // Reject plan
                     if let Some(_state) = self.plan_review.take() {
-                        if let Some(ref tx) = self.plan_review_tx {
-                            let _ = tx.try_send(PlanReviewResponse::Rejected {
-                                feedback: "User rejected the plan.".to_string(),
-                            });
-                        }
+                        self.send_plan_review(PlanReviewResponse::Rejected {
+                            feedback: "User rejected the plan.".to_string(),
+                        });
                         self.messages
                             .push(ChatMessage::new("system", "Plan rejected."));
                         self.force_redraw = true;
@@ -4650,9 +4867,7 @@ impl App {
                 KeyCode::Enter => {
                     let feedback = state.feedback_input.clone();
                     if let Some(_state) = self.plan_review.take() {
-                        if let Some(ref tx) = self.plan_review_tx {
-                            let _ = tx.try_send(PlanReviewResponse::Rejected { feedback });
-                        }
+                        self.send_plan_review(PlanReviewResponse::Rejected { feedback });
                         self.messages.push(ChatMessage::new(
                             "system",
                             "Feedback submitted. Waiting for revised plan...",
@@ -4693,9 +4908,7 @@ impl App {
                     // Submit (same as normal Enter below)
                     if let Some(state) = self.planner_question.take() {
                         let answer_text = Self::build_planner_answers(&state);
-                        if let Some(ref tx) = self.planner_answer_tx {
-                            let _ = tx.try_send(answer_text);
-                        }
+                        self.send_planner_answer(answer_text);
                         self.force_redraw = true;
                     }
                     return;
@@ -4755,18 +4968,14 @@ impl App {
                     // Submit answers for all questions
                     if let Some(state) = self.planner_question.take() {
                         let answer_text = Self::build_planner_answers(&state);
-                        if let Some(ref tx) = self.planner_answer_tx {
-                            let _ = tx.try_send(answer_text);
-                        }
+                        self.send_planner_answer(answer_text);
                         self.force_redraw = true;
                     }
                 }
             }
             KeyCode::Esc => {
                 self.planner_question = None;
-                if let Some(ref tx) = self.planner_answer_tx {
-                    let _ = tx.try_send("User cancelled the question.".to_string());
-                }
+                self.send_planner_answer("User cancelled the question.".to_string());
                 self.force_redraw = true;
             }
             _ => {}

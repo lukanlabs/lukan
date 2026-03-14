@@ -3436,10 +3436,8 @@ impl App {
                 let _ = daemon.send(&crate::ws_client::OutMessage::Compact {
                     session_id: self.daemon_tab_id.clone(),
                 });
-                self.messages.push(ChatMessage::new(
-                    "system",
-                    "Compacting session...",
-                ));
+                self.messages
+                    .push(ChatMessage::new("system", "Compacting session..."));
                 return;
             }
             if self.is_streaming {
@@ -4708,15 +4706,21 @@ impl App {
                     let entries: Vec<RewindEntry> = checkpoints
                         .iter()
                         .map(|cp| {
-                            let (additions, deletions) = cp.snapshots.iter().fold(
-                                (0u32, 0u32),
-                                |(a, d), snap| {
+                            let (additions, deletions) =
+                                cp.snapshots.iter().fold((0u32, 0u32), |(a, d), snap| {
                                     (
-                                        a + snap.diff.as_ref().map(|d| d.matches("\n+").count() as u32).unwrap_or(0),
-                                        d + snap.diff.as_ref().map(|d| d.matches("\n-").count() as u32).unwrap_or(0),
+                                        a + snap
+                                            .diff
+                                            .as_ref()
+                                            .map(|d| d.matches("\n+").count() as u32)
+                                            .unwrap_or(0),
+                                        d + snap
+                                            .diff
+                                            .as_ref()
+                                            .map(|d| d.matches("\n-").count() as u32)
+                                            .unwrap_or(0),
                                     )
-                                },
-                            );
+                                });
                             RewindEntry {
                                 checkpoint_id: Some(cp.id.clone()),
                                 message: cp.message.clone(),
@@ -4746,10 +4750,8 @@ impl App {
                 messages: _,
             } => {
                 self.session_id = Some(session_id);
-                self.messages.push(ChatMessage::new(
-                    "system",
-                    "Checkpoint restored.",
-                ));
+                self.messages
+                    .push(ChatMessage::new("system", "Checkpoint restored."));
                 self.force_redraw = true;
             }
             DaemonEvent::BgProcessList { processes } => {

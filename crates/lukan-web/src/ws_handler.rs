@@ -845,11 +845,7 @@ async fn dispatch_message(
                         .to_string(),
                 })
                 .collect();
-            send_json(
-                ws_tx,
-                &ServerMessage::BgProcessList { processes: dtos },
-            )
-            .await;
+            send_json(ws_tx, &ServerMessage::BgProcessList { processes: dtos }).await;
         }
         ClientMessage::GetBgProcessLog { pid } => {
             let log = lukan_tools::bg_processes::get_bg_log(pid, 500)

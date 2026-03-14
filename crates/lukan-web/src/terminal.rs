@@ -438,8 +438,7 @@ impl TerminalManager {
             Some(pos) => &trimmed[..pos],
             None => "", // single line = just the prompt, skip entirely
         };
-        let b64 =
-            base64::engine::general_purpose::STANDARD.encode(without_last_line.as_bytes());
+        let b64 = base64::engine::general_purpose::STANDARD.encode(without_last_line.as_bytes());
         Ok(b64)
     }
 

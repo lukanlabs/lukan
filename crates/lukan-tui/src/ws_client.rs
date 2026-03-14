@@ -160,14 +160,9 @@ pub enum DaemonEvent {
         messages: Vec<Message>,
     },
     /// Background process list
-    BgProcessList {
-        processes: Vec<BgProcessInfo>,
-    },
+    BgProcessList { processes: Vec<BgProcessInfo> },
     /// Background process log
-    BgProcessLog {
-        pid: u32,
-        log: String,
-    },
+    BgProcessLog { pid: u32, log: String },
     /// Error from the daemon
     Error(String),
     /// Connection lost

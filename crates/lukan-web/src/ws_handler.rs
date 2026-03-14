@@ -250,8 +250,6 @@ async fn dispatch_message(
             content,
             session_id,
         } => {
-            // Auto-watch: register this connection as a watcher of the session
-            watch_session(state, conn_id, session_id.as_deref().unwrap_or("")).await;
             handle_send_message(
                 conn_id,
                 &content,
@@ -286,9 +284,7 @@ async fn dispatch_message(
             } else {
                 None
             };
-            // Auto-watch: register this connection as a watcher of the tab
-            watch_session(state, conn_id, tab_id.unwrap_or("")).await;
-            handle_load_session(saved_session, tab_id, state, ws_tx).await;
+            handle_load_session(saved_session, tab_id, conn_id, state, ws_tx).await;
         }
 
         ClientMessage::NewSession {
@@ -992,6 +988,12 @@ async fn handle_send_message(
 
     let content_owned = content.to_string();
     let tab_id_owned = tab_id.map(String::from);
+    // Capture the persisted session ID for broadcasting (so all UIs watching
+    // the same saved session see each other's streaming, regardless of tab_id)
+    let broadcast_session_id = agent.session_id().to_string();
+
+    // Auto-watch: register this connection as a watcher of this saved session
+    watch_session(state, conn_id, &broadcast_session_id).await;
 
     // Create cancellation token so abort can signal the agent to stop
     let cancel_token = CancellationToken::new();
@@ -1022,9 +1024,9 @@ async fn handle_send_message(
                         } else {
                             serde_json::to_string(&ev).unwrap_or_default()
                         };
-                        // Broadcast to other watchers of this session
+                        // Broadcast to other watchers of this saved session
                         let _ = state.stream_tx.send(StreamBroadcast {
-                            tab_id: tab_id_owned.clone().unwrap_or_default(),
+                            tab_id: broadcast_session_id.clone(),
                             json: json.clone(),
                             origin_conn_id: conn_id,
                         });
@@ -1146,10 +1148,11 @@ async fn handle_send_message(
                 aborted: if aborted { Some(true) } else { None },
             };
 
-            // Broadcast to other watchers
+            // Broadcast to other watchers of this saved session
+            let broadcast_sid = returned_agent.session_id().to_string();
             if let Ok(json) = serde_json::to_string(&complete_msg) {
                 let _ = state.stream_tx.send(StreamBroadcast {
-                    tab_id: tab_id_owned.clone().unwrap_or_default(),
+                    tab_id: broadcast_sid,
                     json: json.clone(),
                     origin_conn_id: conn_id,
                 });
@@ -1540,9 +1543,12 @@ async fn evict_session_from_memory(session_id: &str, state: &Arc<AppState>) {
 async fn handle_load_session(
     saved_session_id: &str,
     tab_id: Option<&str>,
+    conn_id: usize,
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
+    // Auto-watch: register this connection as a watcher of the loaded session
+    watch_session(state, conn_id, saved_session_id).await;
     // Save current session first (session or legacy)
     if let Some(tid) = tab_id {
         let mut sessions = state.sessions.lock().await;

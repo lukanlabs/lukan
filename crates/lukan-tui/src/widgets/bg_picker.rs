@@ -84,6 +84,16 @@ impl BgPicker {
         }
     }
 
+    /// Check if enough time has passed since last log refresh (500ms throttle).
+    pub fn last_log_refresh_elapsed(&mut self) -> bool {
+        if self.last_log_refresh.elapsed().as_millis() >= 500 {
+            self.last_log_refresh = std::time::Instant::now();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Refresh the log content if in log view (throttled to every 500ms)
     pub fn refresh_log(&mut self) {
         if self.view == BgPickerView::Log

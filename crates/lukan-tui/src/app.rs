@@ -2281,7 +2281,16 @@ impl App {
                                         if let Some(ref mut picker) = self.bg_picker
                                             && picker.view == BgPickerView::List
                                         {
-                                            picker.load_log();
+                                            if let Some(ref daemon) = self.daemon_tx {
+                                                // Daemon mode: request log from daemon
+                                                if let Some(pid) = picker.selected_pid() {
+                                                    picker.log_pid = pid;
+                                                    picker.view = BgPickerView::Log;
+                                                    let _ = daemon.send(&crate::ws_client::OutMessage::GetBgProcessLog { pid });
+                                                }
+                                            } else {
+                                                picker.load_log();
+                                            }
                                         }
                                     }
                                     KeyCode::Char('k') | KeyCode::Delete => {
@@ -3183,7 +3192,21 @@ impl App {
                             }
                             // Auto-refresh bg_picker log view
                             if let Some(ref mut picker) = self.bg_picker {
-                                picker.refresh_log();
+                                if self.daemon_tx.is_some() {
+                                    // Daemon mode: request fresh log from daemon (throttled)
+                                    if picker.view == BgPickerView::Log
+                                        && picker.log_pid > 0
+                                        && picker.last_log_refresh_elapsed()
+                                    {
+                                        if let Some(ref daemon) = self.daemon_tx {
+                                            let _ = daemon.send(&crate::ws_client::OutMessage::GetBgProcessLog {
+                                                pid: picker.log_pid,
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    picker.refresh_log();
+                                }
                             }
                             // Expire old toast notifications (5 seconds)
                             self.toast_notifications

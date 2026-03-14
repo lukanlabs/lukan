@@ -3201,12 +3201,13 @@ impl App {
                                     if picker.view == BgPickerView::Log
                                         && picker.log_pid > 0
                                         && picker.last_log_refresh_elapsed()
+                                        && let Some(ref daemon) = self.daemon_tx
                                     {
-                                        if let Some(ref daemon) = self.daemon_tx {
-                                            let _ = daemon.send(&crate::ws_client::OutMessage::GetBgProcessLog {
+                                        let _ = daemon.send(
+                                            &crate::ws_client::OutMessage::GetBgProcessLog {
                                                 pid: picker.log_pid,
-                                            });
-                                        }
+                                            },
+                                        );
                                     }
                                 } else {
                                     picker.refresh_log();
@@ -4780,11 +4781,11 @@ impl App {
             }
             DaemonEvent::BgProcessLog { pid, log } => {
                 // Update the bg_picker log view if it's showing this process
-                if let Some(ref mut picker) = self.bg_picker {
-                    if picker.log_pid == pid || picker.log_pid == 0 {
-                        picker.log_content = log;
-                        picker.log_pid = pid;
-                    }
+                if let Some(ref mut picker) = self.bg_picker
+                    && (picker.log_pid == pid || picker.log_pid == 0)
+                {
+                    picker.log_content = log;
+                    picker.log_pid = pid;
                 }
                 self.force_redraw = true;
             }

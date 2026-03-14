@@ -19,7 +19,7 @@ use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::create_configured_registry;
 
 use crate::protocol::{ClientMessage, ServerMessage, TokenUsage};
-use crate::state::{AppState, WebAgentSession};
+use crate::state::{AppState, StreamBroadcast, WebAgentSession};
 
 /// Bundles the mutable stream handles passed into `handle_send_message`
 /// so we stay under clippy's argument limit.
@@ -53,6 +53,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
     let mut authenticated = !state.auth_required() || is_relay;
     let mut notify_rx = state.notification_tx.subscribe();
     let mut terminal_rx = state.terminal_tx.subscribe();
+    let mut stream_rx = state.stream_tx.subscribe();
 
     // If auth required, send auth_required message
     if !authenticated {
@@ -89,6 +90,16 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
             Ok(term_msg) = terminal_rx.recv() => {
                 if authenticated {
                     send_json(&mut ws_tx, &term_msg).await;
+                }
+                continue;
+            }
+            Ok(broadcast) = stream_rx.recv() => {
+                // Forward stream events from other clients' agent turns.
+                // Skip if we are the originating connection (we already got it directly).
+                // Send to ALL authenticated clients — for a local daemon with few
+                // clients, filtering by session watchers adds complexity without benefit.
+                if authenticated && broadcast.origin_conn_id != conn_id {
+                    let _ = ws_tx.send(Message::Text(broadcast.json.into())).await;
                 }
                 continue;
             }
@@ -258,7 +269,7 @@ async fn dispatch_message(
             } else {
                 None
             };
-            handle_load_session(saved_session, tab_id, state, ws_tx).await;
+            handle_load_session(saved_session, tab_id, conn_id, state, ws_tx).await;
         }
 
         ClientMessage::NewSession {
@@ -346,7 +357,8 @@ async fn dispatch_message(
         ClientMessage::DeleteSession { session_id } => {
             match SessionManager::delete(&session_id).await {
                 Ok(_) => {
-                    // Re-send session list
+                    // Remove agent from memory so disconnect handler won't recreate the file
+                    evict_session_from_memory(&session_id, state).await;
                     if let Ok(sessions) = SessionManager::list().await {
                         send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
                     }
@@ -365,6 +377,17 @@ async fn dispatch_message(
 
         ClientMessage::DeleteAllSessions => match SessionManager::delete_all().await {
             Ok(_) => {
+                // Clear all agents from memory so disconnect handler won't recreate files
+                {
+                    let mut sessions = state.sessions.lock().await;
+                    for session in sessions.values_mut() {
+                        session.agent = None;
+                    }
+                }
+                {
+                    let mut agent = state.agent.lock().await;
+                    *agent = None;
+                }
                 if let Ok(sessions) = SessionManager::list().await {
                     send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
                 }
@@ -413,6 +436,8 @@ async fn dispatch_message(
             let parsed: PermissionMode =
                 serde_json::from_value(serde_json::Value::String(mode.clone()))
                     .unwrap_or(PermissionMode::Auto);
+
+            info!(conn_id, %mode, ?parsed, "Permission mode changed");
 
             // Update via watch channel — all agents with a receiver see the change immediately
             let _ = state.permission_mode.send(parsed);
@@ -759,14 +784,10 @@ async fn dispatch_message(
         }
 
         ClientMessage::TerminalReconnect { session_id } => {
-            // Reset pipe-pane so the output stream starts clean.
-            // Fixes rendering corruption when re-attaching sessions
-            // that were running TUI apps (e.g. Claude Code with Ink/React).
-            state
-                .terminal_manager
-                .reset_output_reader(&session_id, state.terminal_tx.clone())
-                .await;
-
+            // Only capture scrollback — do NOT reset pipe-pane.
+            // Resetting pipe-pane causes tmux to dump the visible pane buffer,
+            // which duplicates the prompt (especially with zsh/powerlevel10k).
+            // The original pipe reader is still running from session creation.
             match state.terminal_manager.capture_scrollback(&session_id).await {
                 Ok(scrollback) => {
                     let sessions = state.terminal_manager.list().await;
@@ -802,6 +823,185 @@ async fn dispatch_message(
                 .await;
             let sessions = state.terminal_manager.list().await;
             send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
+        }
+
+        // Background processes
+        ClientMessage::ListBgProcesses => {
+            let processes = lukan_tools::bg_processes::get_bg_processes();
+            let dtos: Vec<crate::protocol::BgProcessDto> = processes
+                .iter()
+                .map(|p| crate::protocol::BgProcessDto {
+                    pid: p.pid,
+                    command: p.command.clone(),
+                    status: format!("{:?}", p.status),
+                    started_at: p.started_at.to_rfc3339(),
+                    label: p.label.clone(),
+                    log_file: lukan_tools::bg_processes::log_file_path(p.pid)
+                        .display()
+                        .to_string(),
+                })
+                .collect();
+            send_json(ws_tx, &ServerMessage::BgProcessList { processes: dtos }).await;
+        }
+        ClientMessage::GetBgProcessLog { pid } => {
+            let log = lukan_tools::bg_processes::get_bg_log(pid, 500)
+                .unwrap_or_else(|| "(no log found)".to_string());
+            send_json(ws_tx, &ServerMessage::BgProcessLog { pid, log }).await;
+        }
+        ClientMessage::KillBgProcess { pid } => {
+            lukan_tools::bg_processes::kill_bg_process(pid);
+            send_json(ws_tx, &ServerMessage::BgProcessKilled { pid }).await;
+        }
+
+        ClientMessage::Compact { session_id } => {
+            let tab_id = session_id.as_deref();
+            let (event_tx, _event_rx) = mpsc::channel::<StreamEvent>(256);
+
+            // Get agent from session or singleton
+            let mut agent_opt = if let Some(tid) = tab_id {
+                let mut sessions = state.sessions.lock().await;
+                sessions.get_mut(tid).and_then(|s| s.agent.take())
+            } else {
+                state.agent.lock().await.take()
+            };
+
+            if let Some(ref mut agent) = agent_opt {
+                match agent.compact(event_tx).await {
+                    Ok(_) => {
+                        let sid = agent.session_id().to_string();
+                        let messages = agent.messages_json();
+                        let checkpoints = agent.checkpoints().to_vec();
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::CompactComplete {
+                                session_id: sid,
+                                messages,
+                                checkpoints,
+                            },
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::Error {
+                                error: format!("Compact failed: {e}"),
+                            },
+                        )
+                        .await;
+                    }
+                }
+            } else {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: "No active session to compact.".to_string(),
+                    },
+                )
+                .await;
+            }
+
+            // Put agent back
+            if let Some(agent) = agent_opt {
+                if let Some(tid) = tab_id {
+                    let mut sessions = state.sessions.lock().await;
+                    if let Some(session) = sessions.get_mut(tid) {
+                        session.agent = Some(agent);
+                    }
+                } else {
+                    *state.agent.lock().await = Some(agent);
+                }
+            }
+        }
+
+        ClientMessage::ListCheckpoints { session_id } => {
+            let tab_id = session_id.as_deref();
+            let checkpoints = if let Some(tid) = tab_id {
+                let sessions = state.sessions.lock().await;
+                sessions
+                    .get(tid)
+                    .and_then(|s| s.agent.as_ref())
+                    .map(|a| a.checkpoints().to_vec())
+                    .unwrap_or_default()
+            } else {
+                let agent = state.agent.lock().await;
+                agent
+                    .as_ref()
+                    .map(|a| a.checkpoints().to_vec())
+                    .unwrap_or_default()
+            };
+            send_json(ws_tx, &ServerMessage::CheckpointList { checkpoints }).await;
+        }
+
+        ClientMessage::RestoreCheckpoint {
+            checkpoint_id,
+            restore_code,
+            session_id,
+        } => {
+            let tab_id = session_id.as_deref();
+            let mut agent_opt = if let Some(tid) = tab_id {
+                let mut sessions = state.sessions.lock().await;
+                sessions.get_mut(tid).and_then(|s| s.agent.take())
+            } else {
+                state.agent.lock().await.take()
+            };
+
+            if let Some(ref mut agent) = agent_opt {
+                match agent.restore_checkpoint(&checkpoint_id, restore_code).await {
+                    Ok(true) => {
+                        let sid = agent.session_id().to_string();
+                        let messages = agent.messages_json();
+                        let checkpoints = agent.checkpoints().to_vec();
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::CheckpointRestored {
+                                session_id: sid,
+                                messages,
+                                checkpoints,
+                            },
+                        )
+                        .await;
+                    }
+                    Ok(false) => {
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::Error {
+                                error: format!("Checkpoint not found: {checkpoint_id}"),
+                            },
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::Error {
+                                error: format!("Failed to restore checkpoint: {e}"),
+                            },
+                        )
+                        .await;
+                    }
+                }
+            } else {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: "No active session.".to_string(),
+                    },
+                )
+                .await;
+            }
+
+            // Put agent back
+            if let Some(agent) = agent_opt {
+                if let Some(tid) = tab_id {
+                    let mut sessions = state.sessions.lock().await;
+                    if let Some(session) = sessions.get_mut(tid) {
+                        session.agent = Some(agent);
+                    }
+                } else {
+                    *state.agent.lock().await = Some(agent);
+                }
+            }
         }
 
         // Auth messages handled above
@@ -948,6 +1148,9 @@ async fn handle_send_message(
 
     let content_owned = content.to_string();
     let tab_id_owned = tab_id.map(String::from);
+    // Capture the persisted session ID for broadcasting (so all UIs watching
+    // the same saved session see each other's streaming, regardless of tab_id)
+    let broadcast_session_id = agent.session_id().to_string();
 
     // Create cancellation token so abort can signal the agent to stop
     let cancel_token = CancellationToken::new();
@@ -961,6 +1164,19 @@ async fn handle_send_message(
         (agent, result)
     });
 
+    // Broadcast the user message to other clients so they can display it
+    {
+        let user_event = serde_json::json!({
+            "type": "user_message",
+            "content": content,
+            "savedSessionId": &broadcast_session_id,
+        });
+        let _ = state.stream_tx.send(StreamBroadcast {
+            json: user_event.to_string(),
+            origin_conn_id: conn_id,
+        });
+    }
+
     // Forward stream events to WebSocket, while also reading incoming
     // client messages so that approval / abort / plan / terminal messages
     // are processed without deadlocking.
@@ -968,7 +1184,7 @@ async fn handle_send_message(
     let mut aborted = false;
     loop {
         tokio::select! {
-            // Agent produced a stream event → forward to client
+            // Agent produced a stream event → forward to client + broadcast
             event = event_rx.recv() => {
                 match event {
                     Some(ev) => {
@@ -978,6 +1194,13 @@ async fn handle_send_message(
                         } else {
                             serde_json::to_string(&ev).unwrap_or_default()
                         };
+                        // Broadcast to other clients — inject savedSessionId
+                        // so the frontend can filter by active session
+                        let broadcast_json = inject_field(&json, "savedSessionId", &broadcast_session_id);
+                        let _ = state.stream_tx.send(StreamBroadcast {
+                            json: broadcast_json,
+                            origin_conn_id: conn_id,
+                        });
                         if ws_tx.send(Message::Text(json.into())).await.is_err() {
                             warn!(conn_id, "WebSocket send failed, client likely disconnected");
                             client_disconnected = true;
@@ -1081,25 +1304,33 @@ async fn handle_send_message(
                 }
             }
 
-            if !client_disconnected {
-                // Send processing_complete so the UI resets its state
-                let session_id = returned_agent.session_id().to_string();
-                let messages = returned_agent.messages_json();
-                let checkpoints = returned_agent.checkpoints().to_vec();
-                let context_size = returned_agent.last_context_size();
+            // Send processing_complete so the UI resets its state
+            let session_id = returned_agent.session_id().to_string();
+            let messages = returned_agent.messages_json();
+            let checkpoints = returned_agent.checkpoints().to_vec();
+            let context_size = returned_agent.last_context_size();
 
-                send_json(
-                    ws_tx,
-                    &ServerMessage::ProcessingComplete {
-                        session_id,
-                        messages,
-                        checkpoints,
-                        context_size: Some(context_size),
-                        tab_id: tab_id_owned.clone(),
-                        aborted: if aborted { Some(true) } else { None },
-                    },
-                )
-                .await;
+            let complete_msg = ServerMessage::ProcessingComplete {
+                session_id,
+                messages,
+                checkpoints,
+                context_size: Some(context_size),
+                tab_id: tab_id_owned.clone(),
+                aborted: if aborted { Some(true) } else { None },
+            };
+
+            // Broadcast to other clients — inject savedSessionId for filtering
+            let broadcast_sid = returned_agent.session_id().to_string();
+            if let Ok(json) = serde_json::to_string(&complete_msg) {
+                let broadcast_json = inject_field(&json, "savedSessionId", &broadcast_sid);
+                let _ = state.stream_tx.send(StreamBroadcast {
+                    json: broadcast_json,
+                    origin_conn_id: conn_id,
+                });
+            }
+
+            if !client_disconnected {
+                send_json(ws_tx, &complete_msg).await;
             }
 
             // Put agent back
@@ -1197,6 +1428,21 @@ fn inject_tab_id(ev: &StreamEvent, tab_id: &str) -> String {
         serde_json::to_string(&value).unwrap_or_default()
     } else {
         serde_json::to_string(ev).unwrap_or_default()
+    }
+}
+
+/// Inject a field into a JSON string (for broadcast events).
+fn inject_field(json: &str, key: &str, value: &str) -> String {
+    if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(json) {
+        if let Some(obj) = parsed.as_object_mut() {
+            obj.insert(
+                key.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+        }
+        serde_json::to_string(&parsed).unwrap_or_else(|_| json.to_string())
+    } else {
+        json.to_string()
     }
 }
 
@@ -1381,9 +1627,90 @@ async fn handle_mid_turn_message(
             }
         }
 
+        ClientMessage::DeleteSession { session_id } => {
+            match lukan_agent::SessionManager::delete(&session_id).await {
+                Ok(_) => {
+                    evict_session_from_memory(&session_id, state).await;
+                    if let Ok(sessions) = lukan_agent::SessionManager::list().await {
+                        send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
+                    }
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to delete session: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::DeleteAllSessions => match lukan_agent::SessionManager::delete_all().await {
+            Ok(_) => {
+                {
+                    let mut sessions = state.sessions.lock().await;
+                    for session in sessions.values_mut() {
+                        session.agent = None;
+                    }
+                }
+                {
+                    let mut agent = state.agent.lock().await;
+                    *agent = None;
+                }
+                if let Ok(sessions) = lukan_agent::SessionManager::list().await {
+                    send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
+                }
+            }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to delete all sessions: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
+
+        ClientMessage::SetPermissionMode { mode } => {
+            let parsed: PermissionMode =
+                serde_json::from_value(serde_json::Value::String(mode.clone()))
+                    .unwrap_or(PermissionMode::Auto);
+            info!(conn_id, %mode, "Permission mode changed mid-turn");
+            let _ = state.permission_mode.send(parsed);
+            send_json(ws_tx, &ServerMessage::ModeChanged { mode }).await;
+        }
+
         // Ignore all other messages during a turn
         other => {
             warn!(conn_id, msg = ?other, "Ignoring message received mid-turn");
+        }
+    }
+}
+
+/// Remove an agent from memory when its session file has been deleted.
+/// This prevents the disconnect handler from re-saving it to disk.
+async fn evict_session_from_memory(session_id: &str, state: &Arc<AppState>) {
+    // Check multi-tab sessions
+    {
+        let mut sessions = state.sessions.lock().await;
+        for session in sessions.values_mut() {
+            if let Some(ref agent) = session.agent
+                && agent.session_id() == session_id
+            {
+                session.agent = None;
+            }
+        }
+    }
+    // Check legacy singleton agent
+    {
+        let mut agent_lock = state.agent.lock().await;
+        if let Some(ref agent) = *agent_lock
+            && agent.session_id() == session_id
+        {
+            *agent_lock = None;
         }
     }
 }
@@ -1392,6 +1719,7 @@ async fn handle_mid_turn_message(
 async fn handle_load_session(
     saved_session_id: &str,
     tab_id: Option<&str>,
+    _conn_id: usize,
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {

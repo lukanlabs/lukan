@@ -34,6 +34,8 @@ const WS_COMMANDS = new Set([
   "reject_plan",
   "answer_question",
   "list_sessions",
+  "delete_session",
+  "delete_all_sessions",
   "load_session",
   "new_session",
   "set_permission_mode",
@@ -60,6 +62,8 @@ const WS_VOID_COMMANDS = new Set([
   "reject_plan",
   "answer_question",
   "set_permission_mode",
+  "delete_session",
+  "delete_all_sessions",
   "destroy_agent_tab",
   "rename_agent_tab",
   "send_to_background",
@@ -84,6 +88,7 @@ const LOCAL_COMMANDS = new Set([
 ]);
 
 const STREAM_EVENT_TYPES = new Set([
+  "user_message",
   "message_start",
   "text_delta",
   "thinking_delta",
@@ -116,7 +121,7 @@ type PendingRequest = {
 export class RelayTransport implements Transport {
   private ws: WebSocket | null = null;
   private subscribers = new Map<string, Set<(payload: unknown) => void>>();
-  private pendingWs = new Map<string, PendingRequest>();
+  private pendingWs = new Map<string, PendingRequest[]>();
   private initData: Record<string, unknown> | null = null;
   private initResolvers: Array<(v: unknown) => void> = [];
   private processing = false;
@@ -404,14 +409,8 @@ export class RelayTransport implements Transport {
     // Init
     if (type === "init") {
       this.initData = this.convertInitResponse(msg);
-      const pending =
-        this.pendingWs.get("new_session") ||
-        this.pendingWs.get("initialize_chat");
-      if (pending) {
-        pending.resolve(this.initData);
-        this.pendingWs.delete("new_session");
-        this.pendingWs.delete("initialize_chat");
-      }
+      this.resolvePending("new_session", this.initData);
+      this.resolvePending("initialize_chat", this.initData);
       for (const r of this.initResolvers) r(this.initData);
       this.initResolvers = [];
       return;
@@ -421,10 +420,12 @@ export class RelayTransport implements Transport {
     if (type === "processing_complete") {
       this.processing = false;
       const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      const savedSid = msg.savedSessionId as string | undefined;
       if (routeId) {
         this.dispatch(`turn-complete-${routeId}`, JSON.stringify(msg));
-      } else {
-        this.dispatch("turn-complete", JSON.stringify(msg));
+      }
+      if (savedSid) {
+        this.dispatch(`turn-complete-saved-${savedSid}`, JSON.stringify(msg));
       }
       return;
     }
@@ -496,10 +497,17 @@ export class RelayTransport implements Transport {
     // Stream events
     if (STREAM_EVENT_TYPES.has(type)) {
       const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      const savedSid = msg.savedSessionId as string | undefined;
       if (routeId) {
         this.dispatch(`stream-event-${routeId}`, JSON.stringify(msg));
-      } else {
-        this.dispatch("stream-event", JSON.stringify(msg));
+      }
+      if (savedSid) {
+        // Route to tabs watching this saved session (cross-client sync)
+        this.dispatch(`stream-event-saved-${savedSid}`, JSON.stringify(msg));
+      }
+      if (!routeId && !savedSid) {
+        // Global events (mode_changed, error, etc.) — broadcast to ALL
+        this.broadcastStreamEvent(JSON.stringify(msg));
       }
       return;
     }
@@ -531,14 +539,22 @@ export class RelayTransport implements Transport {
     }
 
     return new Promise<T>((resolve, reject) => {
-      this.pendingWs.set(command, {
-        resolve: resolve as (v: unknown) => void,
-        reject,
-      });
+      const entry = { resolve: resolve as (v: unknown) => void, reject };
+      const queue = this.pendingWs.get(command);
+      if (queue) {
+        queue.push(entry);
+      } else {
+        this.pendingWs.set(command, [entry]);
+      }
       setTimeout(() => {
-        if (this.pendingWs.has(command)) {
-          this.pendingWs.delete(command);
-          reject(new Error(`WS command '${command}' timed out`));
+        const q = this.pendingWs.get(command);
+        if (q) {
+          const idx = q.indexOf(entry);
+          if (idx !== -1) {
+            q.splice(idx, 1);
+            if (q.length === 0) this.pendingWs.delete(command);
+            reject(new Error(`WS command '${command}' timed out`));
+          }
         }
       }, 30000);
     });
@@ -572,6 +588,10 @@ export class RelayTransport implements Transport {
         return { type: "answer_question", answer: args?.answer, sessionId: args?.sessionId };
       case "list_sessions":
         return { type: "list_sessions" };
+      case "delete_session":
+        return { type: "delete_session", sessionId: args?.id };
+      case "delete_all_sessions":
+        return { type: "delete_all_sessions" };
       case "load_session":
         return { type: "load_session", sessionId: args?.sessionId, id: args?.id };
       case "new_session":
@@ -924,11 +944,6 @@ export class RelayTransport implements Transport {
           method: "POST",
           url: `/api/processes/${encodeURIComponent(args?.pid as string)}/kill`,
         };
-      case "delete_session":
-        return {
-          method: "DELETE",
-          url: `/api/sessions/${encodeURIComponent(args?.sessionId as string)}`,
-        };
       case "list_workers":
         return { method: "GET", url: "/api/workers" };
       case "create_worker":
@@ -1114,11 +1129,21 @@ export class RelayTransport implements Transport {
     }
   }
 
+  /** Broadcast a stream event to ALL stream-event-* subscribers (for global events without routeId). */
+  private broadcastStreamEvent(payload: unknown): void {
+    for (const [key, subs] of this.subscribers) {
+      if (key.startsWith("stream-event")) {
+        for (const cb of subs) cb(payload);
+      }
+    }
+  }
+
   private resolvePending(command: string, value: unknown): void {
-    const pending = this.pendingWs.get(command);
-    if (pending) {
+    const queue = this.pendingWs.get(command);
+    if (queue && queue.length > 0) {
+      const pending = queue.shift()!;
       pending.resolve(value);
-      this.pendingWs.delete(command);
+      if (queue.length === 0) this.pendingWs.delete(command);
     }
   }
 

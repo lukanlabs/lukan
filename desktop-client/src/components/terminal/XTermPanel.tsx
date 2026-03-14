@@ -43,15 +43,6 @@ export default function XTermPanel({
       } catch {
         // ignore decode errors
       }
-      // Force a resize toggle to trigger SIGWINCH → TUI apps redraw cleanly
-      const term = termRef.current;
-      const cols = term.cols;
-      const rows = term.rows;
-      setTimeout(() => {
-        terminalResize(sessionId, Math.max(cols - 1, 1), rows)
-          .then(() => terminalResize(sessionId, cols, rows))
-          .catch(() => {});
-      }, 100);
       onScrollbackReplayed?.();
     }
   }, [scrollback, termRef, onScrollbackReplayed]);

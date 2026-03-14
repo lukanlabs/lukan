@@ -150,6 +150,10 @@ enum RelayCommands {
     Status,
     /// Disconnect from relay (same as logout)
     Disconnect,
+    /// Enable remote access via relay (keeps credentials)
+    Enable,
+    /// Disable remote access via relay (keeps credentials)
+    Disable,
 }
 
 #[tokio::main]
@@ -241,6 +245,18 @@ async fn main() -> Result<()> {
             RelayCommands::Disconnect => {
                 login::run_logout().await?;
             }
+            RelayCommands::Enable => {
+                lukan_core::relay::RelayConfig::set_enabled(true).await?;
+                println!(
+                    "  Relay enabled. Restart daemon to apply: lukan daemon stop && lukan daemon start -d"
+                );
+            }
+            RelayCommands::Disable => {
+                lukan_core::relay::RelayConfig::set_enabled(false).await?;
+                println!(
+                    "  Relay disabled. Restart daemon to apply: lukan daemon stop && lukan daemon start -d"
+                );
+            }
         },
         Some(Commands::External(args)) => {
             dispatch_alias_command(&args).await?;
@@ -264,7 +280,13 @@ async fn main() -> Result<()> {
                 let model_override = model.or(cli.model);
                 let do_continue = continue_session || cli.r#continue;
                 if ui == "web" {
-                    run_web(provider_override, model_override).await?;
+                    if provider_override.is_some() || model_override.is_some() {
+                        eprintln!(
+                            "  \x1b[33mNote:\x1b[0m --provider/--model flags are ignored in web mode."
+                        );
+                        eprintln!("  Change provider/model from the web UI instead.\n");
+                    }
+                    run_web().await?;
                 } else {
                     let browser_opts =
                         if browser.is_some() || browser_cdp.is_some() || browser_visible {
@@ -527,48 +549,27 @@ fn parse_logs_flags(args: &[String]) -> (bool, String) {
 
 // ── Existing command handlers ────────────────────────────────────────
 
-async fn run_web(provider_override: Option<String>, model_override: Option<String>) -> Result<()> {
-    // Ensure worker daemon is running
-    daemon::ensure_daemon_running();
+async fn run_web() -> Result<()> {
+    // Ensure daemon (web + workers) is running — get the port it's listening on
+    let port = daemon::ensure_daemon_running().context("Failed to start daemon")?;
 
-    // Load config
-    let mut config = ConfigManager::load().await?;
+    println!("\n  \x1b[1m\x1b[36mlukan web\x1b[0m");
+    println!("  \x1b[2mOpening browser at\x1b[0m \x1b[4mhttp://localhost:{port}\x1b[0m\n");
 
-    // Apply CLI overrides
-    if let Some(p) = provider_override {
-        let new_provider: ProviderName = serde_json::from_value(serde_json::Value::String(p))
-            .context("Invalid provider name. Valid: anthropic, nebius, fireworks, github-copilot, openai-codex, zai, ollama-cloud, openai-compatible")?;
-        // When switching provider via CLI without --model, reset to the new provider's default
-        if config.provider != new_provider && model_override.is_none() {
-            config.model = None;
-        }
-        config.provider = new_provider;
-    }
-    if let Some(m) = model_override {
-        config.model = Some(m);
-    }
+    // Open browser pointing to the daemon's web server
+    let _ = open::that(format!("http://localhost:{port}"));
 
-    // Load credentials
-    let credentials = CredentialsManager::load().await?;
-
-    let resolved = ResolvedConfig {
-        config,
-        credentials,
-    };
-
-    let port = std::env::var("LUKAN_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(3000u16);
-
-    lukan_web::start_web_server(resolved, port).await?;
+    // Keep the process alive so the user can Ctrl-C to return to the shell.
+    // The actual server lives in the daemon process.
+    println!("  \x1b[2mPress Ctrl-C to return to shell (daemon keeps running)\x1b[0m");
+    tokio::signal::ctrl_c().await.ok();
 
     Ok(())
 }
 
 async fn run_desktop() -> Result<()> {
-    // Ensure worker daemon is running
-    daemon::ensure_daemon_running();
+    // Ensure daemon is running and get the port
+    let daemon_port = daemon::ensure_daemon_running().context("Failed to start daemon")?;
 
     // Desktop requires a graphical display (X11 or Wayland)
     let has_display = std::env::var("DISPLAY").is_ok_and(|v| !v.is_empty())
@@ -600,6 +601,7 @@ async fn run_desktop() -> Result<()> {
     info!("Launching lukan-desktop from {}", desktop_bin.display());
 
     let output = tokio::process::Command::new(&desktop_bin)
+        .env("LUKAN_DAEMON_PORT", daemon_port.to_string())
         .stderr(std::process::Stdio::piped())
         .output()
         .await
@@ -720,8 +722,11 @@ async fn run_chat(
     browser_opts: Option<BrowserOpts>,
     continue_session: bool,
 ) -> Result<()> {
-    // Ensure worker daemon is running
-    daemon::ensure_daemon_running();
+    // Ensure daemon is running (workers + web server)
+    let daemon_port = daemon::ensure_daemon_running().unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "Failed to auto-start daemon, continuing without it");
+        0 // 0 = no daemon, use in-process agent
+    });
 
     // Load config
     let mut config = ConfigManager::load().await?;
@@ -777,8 +782,12 @@ async fn run_chat(
     let provider =
         create_provider(&resolved).unwrap_or_else(|_| Box::new(lukan_providers::NullProvider));
 
-    // Run TUI
-    let mut app = App::new(provider, resolved);
+    // Run TUI — connect to daemon if available, otherwise use in-process agent
+    let mut app = if daemon_port > 0 {
+        App::new_daemon(provider, resolved, daemon_port).await
+    } else {
+        App::new(provider, resolved)
+    };
     if browser_opts.is_some() {
         app.enable_browser_tools();
     }

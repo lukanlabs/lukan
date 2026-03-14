@@ -40,8 +40,10 @@ export async function initTransport(): Promise<void> {
 
   initPromise = (async () => {
     if (IS_TAURI) {
-      const { TauriTransport } = await import("./transport-tauri");
-      transport = new TauriTransport();
+      const { invoke } = await import("@tauri-apps/api/core");
+      const port = await invoke<number>("get_daemon_port");
+      const { DaemonTransport } = await import("./transport-daemon");
+      transport = new DaemonTransport(port);
     } else if (isRelayMode()) {
       const { RelayTransport } = await import("./transport-relay");
       const origin = `${window.location.protocol}//${window.location.host}`;

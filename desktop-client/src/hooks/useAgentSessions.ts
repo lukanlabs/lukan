@@ -48,6 +48,7 @@ export function deleteSessionMapEntry(tabId: string) {
 export function useAgentSessions() {
   const [tabs, setTabs] = useState<AgentTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [initialPendingLoads, setInitialPendingLoads] = useState<Record<string, string>>({});
   const initializedRef = useRef(false);
   const tabsRef = useRef<AgentTab[]>([]);
   const activeRef = useRef<string | null>(null);
@@ -168,21 +169,17 @@ export function useAgentSessions() {
           }
         }
 
-        // Emit restore event so AgentView loads the sessions
-        if (Object.keys(pendingLoads).length > 0) {
-          window.dispatchEvent(
-            new CustomEvent("restore-sessions", { detail: pendingLoads }),
-          );
-        }
-
-        setTabs(restoredTabs);
-
         // Restore active tab
         const newActiveId = stored.activeTabId
           ? oldToNew.get(stored.activeTabId)
           : null;
         const activeId = newActiveId ?? restoredTabs[0]?.id ?? null;
+
+        // Set tabs, active tab, and pending loads in the same batch
+        // so ChatPanel components receive pendingSessionId on their first render
+        setTabs(restoredTabs);
         setActiveTabId(activeId);
+        setInitialPendingLoads(pendingLoads);
         persistTabs(restoredTabs, activeId, _sessionMap);
       } else {
         // No stored tabs — create a fresh one
@@ -197,12 +194,19 @@ export function useAgentSessions() {
     restore();
   }, []);
 
+  // Persist current state (call when session map changes externally)
+  const persistNow = useCallback(() => {
+    persistTabs(tabsRef.current, activeRef.current, _sessionMap);
+  }, []);
+
   return {
     tabs,
     activeTabId,
+    initialPendingLoads,
     createTab,
     destroyTab,
     switchTab,
     renameTab,
+    persistNow,
   };
 }

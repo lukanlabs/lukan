@@ -85,25 +85,32 @@ export function SessionsPanel({
 
   const confirmDelete = useCallback(async () => {
     if (!confirmAction) return;
+    const deletedIds: string[] = [];
     try {
       if (confirmAction.type === "all") {
+        if (sessions) deletedIds.push(...sessions.map((s) => s.id));
         await deleteAllSessions();
       } else if (confirmAction.type === "single") {
+        deletedIds.push(confirmAction.id);
         await deleteSession(confirmAction.id);
       } else {
         for (const id of selectedIds) {
+          deletedIds.push(id);
           await deleteSession(id);
         }
       }
       setSelectedIds(new Set());
       setSelectionMode(false);
       await load();
+      if (deletedIds.length > 0) {
+        window.dispatchEvent(new CustomEvent("sessions-deleted", { detail: deletedIds }));
+      }
     } catch (e) {
       console.error("Failed to delete sessions:", e);
     } finally {
       setConfirmAction(null);
     }
-  }, [confirmAction, selectedIds, load]);
+  }, [confirmAction, selectedIds, load, sessions]);
 
   const confirmLabel = confirmAction?.type === "all"
     ? `Delete all ${sessions?.length ?? 0} sessions?`

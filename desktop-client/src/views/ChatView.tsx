@@ -68,6 +68,7 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
     }
   }, [pendingSessionId, tabId, chat.loadSession, onPendingLoadConsumed]);
 
+
   // Listen for sidebar session events (only on the active panel)
   useEffect(() => {
     if (!isActive) return;

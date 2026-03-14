@@ -71,6 +71,7 @@ const LOCAL_COMMANDS = new Set([
 
 // Stream event types dispatched to "stream-event" subscribers
 const STREAM_EVENT_TYPES = new Set([
+  "user_message",
   "message_start",
   "text_delta",
   "thinking_delta",
@@ -98,7 +99,7 @@ export class WebTransport implements Transport {
   private ws: WebSocket | null = null;
   private token: string | null = null;
   private subscribers = new Map<string, Set<(payload: unknown) => void>>();
-  private pendingWs = new Map<string, PendingRequest>();
+  private pendingWs = new Map<string, PendingRequest[]>();
   private initData: Record<string, unknown> | null = null;
   private initResolvers: Array<(v: unknown) => void> = [];
   private processing = false;
@@ -108,11 +109,23 @@ export class WebTransport implements Transport {
   private audioChunks: Blob[] = [];
   private recording = false;
 
+  // Optional URL overrides (used by DaemonTransport)
+  private _baseUrl: string | null;
+  private _wsUrl: string | null;
+  private skipAuth: boolean;
+
+  constructor(opts?: { baseUrl?: string; wsUrl?: string; skipAuth?: boolean }) {
+    this._baseUrl = opts?.baseUrl ?? null;
+    this._wsUrl = opts?.wsUrl ?? null;
+    this.skipAuth = opts?.skipAuth ?? false;
+  }
+
   private get baseUrl(): string {
-    return `${window.location.protocol}//${window.location.host}`;
+    return this._baseUrl ?? `${window.location.protocol}//${window.location.host}`;
   }
 
   private get wsUrl(): string {
+    if (this._wsUrl) return this._wsUrl;
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${proto}//${window.location.host}/ws`;
   }
@@ -172,6 +185,7 @@ export class WebTransport implements Transport {
 
   /** Validate existing token or obtain a new one. Shows login UI if password required. */
   private async ensureAuthToken(): Promise<void> {
+    if (this.skipAuth) return;
     try {
       // If we have a token, verify it's still valid
       if (this.token) {
@@ -496,14 +510,8 @@ export class WebTransport implements Transport {
     if (type === "init") {
       this.initData = this.convertInitResponse(msg);
       // Resolve pending new_session or initialize_chat waiters
-      const pending =
-        this.pendingWs.get("new_session") ||
-        this.pendingWs.get("initialize_chat");
-      if (pending) {
-        pending.resolve(this.initData);
-        this.pendingWs.delete("new_session");
-        this.pendingWs.delete("initialize_chat");
-      }
+      this.resolvePending("new_session", this.initData);
+      this.resolvePending("initialize_chat", this.initData);
       for (const r of this.initResolvers) r(this.initData);
       this.initResolvers = [];
       return;
@@ -513,10 +521,13 @@ export class WebTransport implements Transport {
     if (type === "processing_complete") {
       this.processing = false;
       const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      const savedSid = msg.savedSessionId as string | undefined;
       if (routeId) {
         this.dispatch(`turn-complete-${routeId}`, JSON.stringify(msg));
-      } else {
-        this.dispatch("turn-complete", JSON.stringify(msg));
+      }
+      if (savedSid) {
+        // Route to tabs watching this saved session (cross-client sync)
+        this.dispatch(`turn-complete-saved-${savedSid}`, JSON.stringify(msg));
       }
       return;
     }
@@ -600,11 +611,17 @@ export class WebTransport implements Transport {
     // Stream events (during agent processing) — route to session-scoped subscribers
     if (STREAM_EVENT_TYPES.has(type)) {
       const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      const savedSid = msg.savedSessionId as string | undefined;
       if (routeId) {
         this.dispatch(`stream-event-${routeId}`, JSON.stringify(msg));
-      } else {
-        // Fallback: broadcast to all stream-event-* subscribers
-        this.dispatch("stream-event", JSON.stringify(msg));
+      }
+      if (savedSid) {
+        // Route to tabs watching this saved session (cross-client sync)
+        this.dispatch(`stream-event-saved-${savedSid}`, JSON.stringify(msg));
+      }
+      if (!routeId && !savedSid) {
+        // Global events (mode_changed, error, etc.) — broadcast to ALL
+        this.broadcastStreamEvent(JSON.stringify(msg));
       }
       return;
     }
@@ -629,14 +646,22 @@ export class WebTransport implements Transport {
     }
 
     return new Promise<T>((resolve, reject) => {
-      this.pendingWs.set(command, {
-        resolve: resolve as (v: unknown) => void,
-        reject,
-      });
+      const entry = { resolve: resolve as (v: unknown) => void, reject };
+      const queue = this.pendingWs.get(command);
+      if (queue) {
+        queue.push(entry);
+      } else {
+        this.pendingWs.set(command, [entry]);
+      }
       setTimeout(() => {
-        if (this.pendingWs.has(command)) {
-          this.pendingWs.delete(command);
-          reject(new Error(`WS command '${command}' timed out`));
+        const q = this.pendingWs.get(command);
+        if (q) {
+          const idx = q.indexOf(entry);
+          if (idx !== -1) {
+            q.splice(idx, 1);
+            if (q.length === 0) this.pendingWs.delete(command);
+            reject(new Error(`WS command '${command}' timed out`));
+          }
         }
       }, 30000);
     });
@@ -1213,11 +1238,42 @@ export class WebTransport implements Transport {
     }
   }
 
+  /** Broadcast a stream event to ALL stream-event-* subscribers (for global events without routeId). */
+  private broadcastStreamEvent(payload: unknown): void {
+    for (const [key, subs] of this.subscribers) {
+      if (key.startsWith("stream-event")) {
+        for (const cb of subs) {
+          try {
+            cb(payload);
+          } catch {
+            /* ignore subscriber errors */
+          }
+        }
+      }
+    }
+  }
+
+  /** Broadcast a turn-complete event to all turn-complete subscribers. */
+  private broadcastTurnComplete(payload: unknown): void {
+    for (const [key, subs] of this.subscribers) {
+      if (key.startsWith("turn-complete")) {
+        for (const cb of subs) {
+          try {
+            cb(payload);
+          } catch {
+            /* ignore subscriber errors */
+          }
+        }
+      }
+    }
+  }
+
   private resolvePending(key: string, value: unknown): void {
-    const pending = this.pendingWs.get(key);
-    if (pending) {
+    const queue = this.pendingWs.get(key);
+    if (queue && queue.length > 0) {
+      const pending = queue.shift()!;
       pending.resolve(value);
-      this.pendingWs.delete(key);
+      if (queue.length === 0) this.pendingWs.delete(key);
     }
   }
 }

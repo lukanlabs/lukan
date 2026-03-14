@@ -159,6 +159,11 @@ impl LukanPaths {
         Self::config_dir().join("daemon.pid")
     }
 
+    /// Daemon lock file (JSON with pid + port): ~/.config/lukan/daemon.lock
+    pub fn daemon_lock_file() -> PathBuf {
+        Self::config_dir().join("daemon.lock")
+    }
+
     /// Worker daemon log file: ~/.config/lukan/daemon.log
     pub fn daemon_log_file() -> PathBuf {
         Self::config_dir().join("daemon.log")

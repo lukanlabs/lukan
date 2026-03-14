@@ -10,11 +10,12 @@ interface TabStats {
 }
 
 export default function AgentView() {
-  const { tabs, activeTabId, createTab, destroyTab, switchTab, renameTab } =
+  const { tabs, activeTabId, initialPendingLoads, createTab, destroyTab, switchTab, renameTab, persistNow } =
     useAgentSessions();
 
-  // Pending session loads keyed by tab ID
+  // Pending session loads keyed by tab ID — seeded with initial restores
   const [pendingLoads, setPendingLoads] = useState<Record<string, string>>({});
+  const appliedInitialRef = useRef(false);
 
   // Track which session each tab has loaded: tabId → sessionId
   const tabSessionMapRef = useRef<Map<string, string>>(getSessionMap());
@@ -27,7 +28,22 @@ export default function AgentView() {
       tabSessionMapRef.current.delete(tabId);
       deleteSessionMapEntry(tabId);
     }
-  }, []);
+    // Persist tab→session mapping to disk so it survives restarts
+    persistNow();
+  }, [persistNow]);
+
+  // Apply initial pending loads from tab restoration (runs after tabs are rendered)
+  useEffect(() => {
+    if (appliedInitialRef.current) return;
+    const keys = Object.keys(initialPendingLoads);
+    if (keys.length === 0) return;
+    appliedInitialRef.current = true;
+    setPendingLoads((prev) => ({ ...prev, ...initialPendingLoads }));
+    // Update the session map ref with restored mappings
+    for (const [tabId, sessionId] of Object.entries(initialPendingLoads)) {
+      tabSessionMapRef.current.set(tabId, sessionId);
+    }
+  }, [initialPendingLoads]);
 
   // Broadcast tab labels so ProcessesPanel can resolve names dynamically
   useEffect(() => {
@@ -66,26 +82,37 @@ export default function AgentView() {
     return () => window.removeEventListener("load-session", onLoad);
   }, [createTab, switchTab, renameTab]);
 
-  // Listen for restored sessions from useAgentSessions
-  useEffect(() => {
-    const onRestore = (e: Event) => {
-      const loads = (e as CustomEvent<Record<string, string>>).detail;
-      setPendingLoads((prev) => ({ ...prev, ...loads }));
-      // Update the session map ref with restored mappings
-      for (const [tabId, sessionId] of Object.entries(loads)) {
-        tabSessionMapRef.current.set(tabId, sessionId);
-      }
-    };
-    window.addEventListener("restore-sessions", onRestore);
-    return () => window.removeEventListener("restore-sessions", onRestore);
-  }, []);
-
   // Wrap destroyTab to also clean up the session map
   const handleDestroyTab = useCallback(async (id: string) => {
     tabSessionMapRef.current.delete(id);
     deleteSessionMapEntry(id);
     await destroyTab(id);
   }, [destroyTab]);
+
+  // When sessions are deleted, close affected tabs (create a new one only if none remain)
+  useEffect(() => {
+    const onDeleted = async (e: Event) => {
+      const deletedIds = new Set((e as CustomEvent<string[]>).detail);
+      const tabsToClose: string[] = [];
+      for (const [tabId, sid] of tabSessionMapRef.current.entries()) {
+        if (deletedIds.has(sid)) {
+          tabsToClose.push(tabId);
+        }
+      }
+      if (tabsToClose.length === 0) return;
+      for (const tabId of tabsToClose) {
+        tabSessionMapRef.current.delete(tabId);
+        deleteSessionMapEntry(tabId);
+        await destroyTab(tabId);
+      }
+      // If all tabs were closed, open a fresh one
+      if (tabsToClose.length >= tabs.length) {
+        await createTab();
+      }
+    };
+    window.addEventListener("sessions-deleted", onDeleted);
+    return () => window.removeEventListener("sessions-deleted", onDeleted);
+  }, [destroyTab, createTab, tabs.length]);
 
   const clearPendingLoad = useCallback((tabId: string) => {
     setPendingLoads((prev) => {

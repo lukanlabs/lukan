@@ -108,11 +108,23 @@ export class WebTransport implements Transport {
   private audioChunks: Blob[] = [];
   private recording = false;
 
+  // Optional URL overrides (used by DaemonTransport)
+  private _baseUrl: string | null;
+  private _wsUrl: string | null;
+  private skipAuth: boolean;
+
+  constructor(opts?: { baseUrl?: string; wsUrl?: string; skipAuth?: boolean }) {
+    this._baseUrl = opts?.baseUrl ?? null;
+    this._wsUrl = opts?.wsUrl ?? null;
+    this.skipAuth = opts?.skipAuth ?? false;
+  }
+
   private get baseUrl(): string {
-    return `${window.location.protocol}//${window.location.host}`;
+    return this._baseUrl ?? `${window.location.protocol}//${window.location.host}`;
   }
 
   private get wsUrl(): string {
+    if (this._wsUrl) return this._wsUrl;
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${proto}//${window.location.host}/ws`;
   }
@@ -172,6 +184,7 @@ export class WebTransport implements Transport {
 
   /** Validate existing token or obtain a new one. Shows login UI if password required. */
   private async ensureAuthToken(): Promise<void> {
+    if (this.skipAuth) return;
     try {
       // If we have a token, verify it's still valid
       if (this.token) {

@@ -11,6 +11,7 @@ use tokio_tungstenite::tungstenite;
 use tracing::{info, warn};
 
 use lukan_core::models::events::{StreamEvent, ToolApprovalRequest};
+use lukan_core::models::messages::Message;
 
 /// Messages we send to the daemon (mirrors lukan-web's ClientMessage).
 #[derive(Serialize)]
@@ -73,6 +74,7 @@ pub enum OutMessage {
         session_id: Option<String>,
     },
     ListSessions,
+    CreateAgentTab,
     SetPermissionMode {
         mode: String,
     },
@@ -87,6 +89,16 @@ pub enum OutMessage {
 pub enum DaemonEvent {
     /// A stream event from the agent (text delta, tool use, approval, etc.)
     Stream(StreamEvent),
+    /// Initialization data from the daemon (session state, provider info)
+    Init {
+        session_id: String,
+        messages: Vec<Message>,
+        provider_name: String,
+        model_name: String,
+        context_size: u64,
+    },
+    /// Agent tab created — contains the tab_id to use for all messages
+    TabCreated { tab_id: String },
     /// Processing complete with session state
     ProcessingComplete {
         session_id: String,
@@ -100,6 +112,7 @@ pub enum DaemonEvent {
     /// Session loaded with messages
     SessionLoaded {
         session_id: String,
+        messages: Vec<Message>,
         context_size: u64,
     },
     /// Model changed on the daemon
@@ -130,11 +143,12 @@ impl DaemonSender {
 }
 
 /// Connect to the daemon's WebSocket server.
+/// Creates an agent tab on the daemon and returns the tab_id.
 ///
-/// Returns a sender for outgoing messages and a receiver for incoming events.
+/// Returns `(sender, receiver, tab_id)`.
 pub async fn connect(
     port: u16,
-) -> Result<(DaemonSender, mpsc::UnboundedReceiver<DaemonEvent>)> {
+) -> Result<(DaemonSender, mpsc::UnboundedReceiver<DaemonEvent>, String)> {
     let url = format!("ws://127.0.0.1:{port}/ws");
     info!(url, "Connecting to daemon WebSocket");
 
@@ -159,6 +173,43 @@ pub async fn connect(
     info!("Connected to daemon");
 
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
+
+    // Send CreateAgentTab immediately to get a tab_id
+    let create_msg = serde_json::to_string(&OutMessage::CreateAgentTab)?;
+    ws_tx
+        .send(tungstenite::Message::Text(create_msg.into()))
+        .await
+        .context("Failed to send CreateAgentTab")?;
+
+    // Wait for agent_tab_created response (with timeout)
+    let tab_id = {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut found_tab_id = None;
+
+        while tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), ws_rx.next()).await {
+                Ok(Some(Ok(tungstenite::Message::Text(text)))) => {
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                        let msg_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        if msg_type == "agent_tab_created" {
+                            found_tab_id = value
+                                .get("sessionId")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            break;
+                        }
+                        // Skip init and other setup messages
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        found_tab_id.context("Did not receive agent_tab_created from daemon")?
+    };
+
+    info!(tab_id = %tab_id, "Agent tab created on daemon");
+
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
     let (event_tx, event_rx) = mpsc::unbounded_channel::<DaemonEvent>();
 
@@ -192,7 +243,7 @@ pub async fn connect(
         }
     });
 
-    Ok((DaemonSender { tx: out_tx }, event_rx))
+    Ok((DaemonSender { tx: out_tx }, event_rx, tab_id))
 }
 
 /// Parse an incoming WebSocket message and dispatch it as a DaemonEvent.
@@ -209,15 +260,54 @@ fn dispatch_message(text: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) {
 
     match msg_type {
         // ── ServerMessage types ──
+        "init" => {
+            let session_id = value
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let messages: Vec<Message> = value
+                .get("messages")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default();
+            let provider_name = value
+                .get("providerName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let model_name = value
+                .get("modelName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let context_size = value
+                .get("contextSize")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let _ = tx.send(DaemonEvent::Init {
+                session_id,
+                messages,
+                provider_name,
+                model_name,
+                context_size,
+            });
+        }
+        "agent_tab_created" => {
+            let tab_id = value
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let _ = tx.send(DaemonEvent::TabCreated { tab_id });
+        }
         "processing_complete" => {
             let session_id = value
                 .get("sessionId")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let context_size = value
-                .get("contextSize")
-                .and_then(|v| v.as_u64());
+            let context_size = value.get("contextSize").and_then(|v| v.as_u64());
             let aborted = value
                 .get("aborted")
                 .and_then(|v| v.as_bool())
@@ -241,12 +331,18 @@ fn dispatch_message(text: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            let messages: Vec<Message> = value
+                .get("messages")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default();
             let context_size = value
                 .get("contextSize")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
             let _ = tx.send(DaemonEvent::SessionLoaded {
                 session_id,
+                messages,
                 context_size,
             });
         }
@@ -275,23 +371,20 @@ fn dispatch_message(text: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) {
             let _ = tx.send(DaemonEvent::Error(error));
         }
         // ── Ignore server housekeeping ──
-        "init" | "auth_required" | "auth_ok" | "auth_error" | "config_values"
-        | "config_saved" | "workers_update" | "worker_detail" | "worker_run_detail"
-        | "worker_notification" | "sub_agents_update" | "model_list"
-        | "agent_tab_created" | "agent_tabs_loaded" | "agent_tabs_saved"
-        | "terminal_created" | "terminal_sessions" | "terminal_output"
-        | "terminal_exited" | "screenshots_changed" => {}
+        "auth_required" | "auth_ok" | "auth_error" | "config_values" | "config_saved"
+        | "workers_update" | "worker_detail" | "worker_run_detail" | "worker_notification"
+        | "sub_agents_update" | "model_list" | "agent_tabs_loaded" | "agent_tabs_saved"
+        | "terminal_created" | "terminal_sessions" | "terminal_output" | "terminal_exited"
+        | "screenshots_changed" | "mode_changed" => {}
 
         // ── StreamEvent types — deserialize and forward ──
-        _ => {
-            match serde_json::from_str::<StreamEvent>(text) {
-                Ok(ev) => {
-                    let _ = tx.send(DaemonEvent::Stream(ev));
-                }
-                Err(_) => {
-                    // Unknown message type — ignore silently
-                }
+        _ => match serde_json::from_str::<StreamEvent>(text) {
+            Ok(ev) => {
+                let _ = tx.send(DaemonEvent::Stream(ev));
             }
-        }
+            Err(_) => {
+                // Unknown message type — ignore silently
+            }
+        },
     }
 }

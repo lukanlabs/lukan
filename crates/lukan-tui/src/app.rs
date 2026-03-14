@@ -211,6 +211,8 @@ pub struct App {
     daemon_rx: Option<mpsc::UnboundedReceiver<crate::ws_client::DaemonEvent>>,
     /// Port of the daemon server (0 = not using daemon)
     daemon_port: u16,
+    /// Tab ID on the daemon (used as session_id in all daemon messages)
+    daemon_tab_id: Option<String>,
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
@@ -405,6 +407,7 @@ impl App {
             daemon_tx: None,
             daemon_rx: None,
             daemon_port: 0,
+            daemon_tab_id: None,
         }
     }
 
@@ -419,10 +422,11 @@ impl App {
         app.daemon_port = port;
 
         match crate::ws_client::connect(port).await {
-            Ok((tx, rx)) => {
+            Ok((tx, rx, tab_id)) => {
+                tracing::info!(port, tab_id = %tab_id, "TUI connected to daemon");
                 app.daemon_tx = Some(tx);
                 app.daemon_rx = Some(rx);
-                tracing::info!(port, "TUI connected to daemon");
+                app.daemon_tab_id = Some(tab_id);
             }
             Err(e) => {
                 tracing::warn!(port, error = %e, "Failed to connect to daemon, using in-process agent");
@@ -2665,7 +2669,7 @@ impl App {
                                 } else {
                                     if let Some(ref daemon) = self.daemon_tx {
                                         let _ = daemon.send(&crate::ws_client::OutMessage::Abort {
-                                            session_id: self.session_id.clone(),
+                                            session_id: self.daemon_tab_id.clone(),
                                         });
                                     } else if let Some(token) = self.cancel_token.take() {
                                         token.cancel();
@@ -3795,7 +3799,7 @@ impl App {
         if let Some(ref daemon) = self.daemon_tx {
             let msg = crate::ws_client::OutMessage::SendMessage {
                 content: text,
-                session_id: self.session_id.clone(),
+                session_id: self.daemon_tab_id.clone(),
             };
             if let Err(e) = daemon.send(&msg) {
                 self.is_streaming = false;
@@ -4404,11 +4408,12 @@ impl App {
     /// Send an approval response — routes to daemon or in-process channel.
     fn send_approval(&self, response: ApprovalResponse) {
         if let Some(ref daemon) = self.daemon_tx {
+            let tab = self.daemon_tab_id.clone();
             let msg = match &response {
                 ApprovalResponse::Approved { approved_ids } => {
                     crate::ws_client::OutMessage::Approve {
                         approved_ids: approved_ids.clone(),
-                        session_id: self.session_id.clone(),
+                        session_id: tab,
                     }
                 }
                 ApprovalResponse::AlwaysAllow {
@@ -4417,10 +4422,10 @@ impl App {
                 } => crate::ws_client::OutMessage::AlwaysAllow {
                     approved_ids: approved_ids.clone(),
                     tools: tools.clone(),
-                    session_id: self.session_id.clone(),
+                    session_id: tab,
                 },
                 ApprovalResponse::DeniedAll => crate::ws_client::OutMessage::DenyAll {
-                    session_id: self.session_id.clone(),
+                    session_id: tab,
                 },
             };
             let _ = daemon.send(&msg);
@@ -4432,19 +4437,20 @@ impl App {
     /// Send a plan review response — routes to daemon or in-process channel.
     fn send_plan_review(&self, response: PlanReviewResponse) {
         if let Some(ref daemon) = self.daemon_tx {
+            let tab = self.daemon_tab_id.clone();
             let msg = match &response {
                 PlanReviewResponse::Accepted { modified_tasks } => {
                     crate::ws_client::OutMessage::PlanAccept {
                         tasks: modified_tasks
                             .as_ref()
                             .and_then(|t| serde_json::to_value(t).ok()),
-                        session_id: self.session_id.clone(),
+                        session_id: tab,
                     }
                 }
                 PlanReviewResponse::Rejected { feedback } => {
                     crate::ws_client::OutMessage::PlanReject {
                         feedback: feedback.clone(),
-                        session_id: self.session_id.clone(),
+                        session_id: tab,
                     }
                 }
                 PlanReviewResponse::TaskFeedback {
@@ -4453,7 +4459,7 @@ impl App {
                 } => crate::ws_client::OutMessage::PlanTaskFeedback {
                     task_index: *task_index as u32,
                     feedback: feedback.clone(),
-                    session_id: self.session_id.clone(),
+                    session_id: tab,
                 },
             };
             let _ = daemon.send(&msg);
@@ -4467,7 +4473,7 @@ impl App {
         if let Some(ref daemon) = self.daemon_tx {
             let msg = crate::ws_client::OutMessage::AnswerQuestion {
                 answer,
-                session_id: self.session_id.clone(),
+                session_id: self.daemon_tab_id.clone(),
             };
             let _ = daemon.send(&msg);
         } else if let Some(ref tx) = self.planner_answer_tx {
@@ -4481,6 +4487,22 @@ impl App {
         match event {
             DaemonEvent::Stream(stream_event) => {
                 self.handle_stream_event(stream_event);
+            }
+            DaemonEvent::Init {
+                session_id,
+                messages: _,
+                provider_name: _,
+                model_name: _,
+                context_size,
+            } => {
+                if !session_id.is_empty() {
+                    self.session_id = Some(session_id);
+                }
+                self.context_size = context_size;
+            }
+            DaemonEvent::TabCreated { tab_id } => {
+                // Update tab_id if daemon created a new one
+                self.daemon_tab_id = Some(tab_id);
             }
             DaemonEvent::ProcessingComplete {
                 session_id,
@@ -4519,10 +4541,12 @@ impl App {
             }
             DaemonEvent::SessionLoaded {
                 session_id,
+                messages: _loaded_messages,
                 context_size,
             } => {
                 self.session_id = Some(session_id.clone());
                 self.context_size = context_size;
+                // TODO: populate self.messages from _loaded_messages for full context display
                 self.messages.push(ChatMessage::new(
                     "system",
                     format!("Loaded session {session_id}"),

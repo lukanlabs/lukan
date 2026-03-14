@@ -58,7 +58,7 @@ jobs:
         run: cargo clippy --workspace --exclude lukan-desktop -- -D warnings
 
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude lukan-desktop
 
       - name: Build release binaries
         run: cargo build --release -p lukan -p lukan-relay

@@ -3432,10 +3432,13 @@ impl App {
 
         // Handle /compact
         if text == "/compact" {
-            if self.is_daemon_mode() {
+            if let Some(ref daemon) = self.daemon_tx {
+                let _ = daemon.send(&crate::ws_client::OutMessage::Compact {
+                    session_id: self.daemon_tab_id.clone(),
+                });
                 self.messages.push(ChatMessage::new(
                     "system",
-                    "/compact is not yet supported in daemon mode. Use the web UI instead.",
+                    "Compacting session...",
                 ));
                 return;
             }
@@ -3713,11 +3716,10 @@ impl App {
 
         // Handle /checkpoints — open rewind picker
         if text == "/checkpoints" {
-            if self.is_daemon_mode() {
-                self.messages.push(ChatMessage::new(
-                    "system",
-                    "/checkpoints is not yet supported in daemon mode. Use the web UI instead.",
-                ));
+            if let Some(ref daemon) = self.daemon_tx {
+                let _ = daemon.send(&crate::ws_client::OutMessage::ListCheckpoints {
+                    session_id: self.daemon_tab_id.clone(),
+                });
                 return;
             }
             let checkpoints = self
@@ -4201,6 +4203,16 @@ impl App {
 
     /// Restore to a checkpoint, truncating agent history and optionally reverting files
     async fn restore_to_checkpoint(&mut self, checkpoint_id: &str, restore_code: bool) {
+        // Daemon mode: send to daemon
+        if let Some(ref daemon) = self.daemon_tx {
+            let _ = daemon.send(&crate::ws_client::OutMessage::RestoreCheckpoint {
+                checkpoint_id: checkpoint_id.to_string(),
+                restore_code,
+                session_id: self.daemon_tab_id.clone(),
+            });
+            return;
+        }
+
         let agent = match self.agent.as_mut() {
             Some(a) => a,
             None => {
@@ -4685,6 +4697,60 @@ impl App {
                     "system",
                     format!("Model changed to {provider_name}:{model_name}"),
                 ));
+            }
+            DaemonEvent::CheckpointList { checkpoints } => {
+                if checkpoints.is_empty() {
+                    self.messages.push(ChatMessage::new(
+                        "system",
+                        "No checkpoints in current session.",
+                    ));
+                } else {
+                    let entries: Vec<RewindEntry> = checkpoints
+                        .iter()
+                        .map(|cp| {
+                            let (additions, deletions) = cp.snapshots.iter().fold(
+                                (0u32, 0u32),
+                                |(a, d), snap| {
+                                    (
+                                        a + snap.diff.as_ref().map(|d| d.matches("\n+").count() as u32).unwrap_or(0),
+                                        d + snap.diff.as_ref().map(|d| d.matches("\n-").count() as u32).unwrap_or(0),
+                                    )
+                                },
+                            );
+                            RewindEntry {
+                                checkpoint_id: Some(cp.id.clone()),
+                                message: cp.message.clone(),
+                                files_changed: cp.snapshots.len(),
+                                additions,
+                                deletions,
+                            }
+                        })
+                        .collect();
+                    self.rewind_picker = Some(RewindPicker::new(entries));
+                }
+                self.force_redraw = true;
+            }
+            DaemonEvent::CompactComplete {
+                session_id,
+                messages: _,
+            } => {
+                self.session_id = Some(session_id);
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "Session compacted successfully.",
+                ));
+                self.force_redraw = true;
+            }
+            DaemonEvent::CheckpointRestored {
+                session_id,
+                messages: _,
+            } => {
+                self.session_id = Some(session_id);
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "Checkpoint restored.",
+                ));
+                self.force_redraw = true;
             }
             DaemonEvent::BgProcessList { processes } => {
                 if processes.is_empty() {

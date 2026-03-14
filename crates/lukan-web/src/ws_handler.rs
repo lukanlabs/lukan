@@ -861,6 +861,157 @@ async fn dispatch_message(
             send_json(ws_tx, &ServerMessage::BgProcessKilled { pid }).await;
         }
 
+        ClientMessage::Compact { session_id } => {
+            let tab_id = session_id.as_deref();
+            let (event_tx, _event_rx) = mpsc::channel::<StreamEvent>(256);
+
+            // Get agent from session or singleton
+            let mut agent_opt = if let Some(tid) = tab_id {
+                let mut sessions = state.sessions.lock().await;
+                sessions.get_mut(tid).and_then(|s| s.agent.take())
+            } else {
+                state.agent.lock().await.take()
+            };
+
+            if let Some(ref mut agent) = agent_opt {
+                match agent.compact(event_tx).await {
+                    Ok(_) => {
+                        let sid = agent.session_id().to_string();
+                        let messages = agent.messages_json();
+                        let checkpoints = agent.checkpoints().to_vec();
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::CompactComplete {
+                                session_id: sid,
+                                messages,
+                                checkpoints,
+                            },
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::Error {
+                                error: format!("Compact failed: {e}"),
+                            },
+                        )
+                        .await;
+                    }
+                }
+            } else {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: "No active session to compact.".to_string(),
+                    },
+                )
+                .await;
+            }
+
+            // Put agent back
+            if let Some(agent) = agent_opt {
+                if let Some(tid) = tab_id {
+                    let mut sessions = state.sessions.lock().await;
+                    if let Some(session) = sessions.get_mut(tid) {
+                        session.agent = Some(agent);
+                    }
+                } else {
+                    *state.agent.lock().await = Some(agent);
+                }
+            }
+        }
+
+        ClientMessage::ListCheckpoints { session_id } => {
+            let tab_id = session_id.as_deref();
+            let checkpoints = if let Some(tid) = tab_id {
+                let sessions = state.sessions.lock().await;
+                sessions
+                    .get(tid)
+                    .and_then(|s| s.agent.as_ref())
+                    .map(|a| a.checkpoints().to_vec())
+                    .unwrap_or_default()
+            } else {
+                let agent = state.agent.lock().await;
+                agent
+                    .as_ref()
+                    .map(|a| a.checkpoints().to_vec())
+                    .unwrap_or_default()
+            };
+            send_json(ws_tx, &ServerMessage::CheckpointList { checkpoints }).await;
+        }
+
+        ClientMessage::RestoreCheckpoint {
+            checkpoint_id,
+            restore_code,
+            session_id,
+        } => {
+            let tab_id = session_id.as_deref();
+            let mut agent_opt = if let Some(tid) = tab_id {
+                let mut sessions = state.sessions.lock().await;
+                sessions.get_mut(tid).and_then(|s| s.agent.take())
+            } else {
+                state.agent.lock().await.take()
+            };
+
+            if let Some(ref mut agent) = agent_opt {
+                match agent.restore_checkpoint(&checkpoint_id, restore_code).await {
+                    Ok(true) => {
+                        let sid = agent.session_id().to_string();
+                        let messages = agent.messages_json();
+                        let checkpoints = agent.checkpoints().to_vec();
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::CheckpointRestored {
+                                session_id: sid,
+                                messages,
+                                checkpoints,
+                            },
+                        )
+                        .await;
+                    }
+                    Ok(false) => {
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::Error {
+                                error: format!("Checkpoint not found: {checkpoint_id}"),
+                            },
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        send_json(
+                            ws_tx,
+                            &ServerMessage::Error {
+                                error: format!("Failed to restore checkpoint: {e}"),
+                            },
+                        )
+                        .await;
+                    }
+                }
+            } else {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: "No active session.".to_string(),
+                    },
+                )
+                .await;
+            }
+
+            // Put agent back
+            if let Some(agent) = agent_opt {
+                if let Some(tid) = tab_id {
+                    let mut sessions = state.sessions.lock().await;
+                    if let Some(session) = sessions.get_mut(tid) {
+                        session.agent = Some(agent);
+                    }
+                } else {
+                    *state.agent.lock().await = Some(agent);
+                }
+            }
+        }
+
         // Auth messages handled above
         ClientMessage::Auth { .. } | ClientMessage::AuthLogin { .. } => {}
     }

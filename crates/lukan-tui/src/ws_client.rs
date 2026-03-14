@@ -86,6 +86,20 @@ pub enum OutMessage {
     KillBgProcess {
         pid: u32,
     },
+    Compact {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
+    ListCheckpoints {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
+    RestoreCheckpoint {
+        checkpoint_id: String,
+        restore_code: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
     SetPermissionMode {
         mode: String,
     },
@@ -130,6 +144,20 @@ pub enum DaemonEvent {
     ModelChanged {
         provider_name: String,
         model_name: String,
+    },
+    /// Checkpoint list from daemon
+    CheckpointList {
+        checkpoints: Vec<lukan_core::models::checkpoints::Checkpoint>,
+    },
+    /// Compact completed
+    CompactComplete {
+        session_id: String,
+        messages: Vec<Message>,
+    },
+    /// Checkpoint restored
+    CheckpointRestored {
+        session_id: String,
+        messages: Vec<Message>,
     },
     /// Background process list
     BgProcessList {
@@ -387,6 +415,46 @@ fn dispatch_message(text: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) {
             let _ = tx.send(DaemonEvent::ModelChanged {
                 provider_name,
                 model_name,
+            });
+        }
+        "checkpoint_list" => {
+            let checkpoints = value
+                .get("checkpoints")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default();
+            let _ = tx.send(DaemonEvent::CheckpointList { checkpoints });
+        }
+        "compact_complete" => {
+            let session_id = value
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let messages = value
+                .get("messages")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default();
+            let _ = tx.send(DaemonEvent::CompactComplete {
+                session_id,
+                messages,
+            });
+        }
+        "checkpoint_restored" => {
+            let session_id = value
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let messages = value
+                .get("messages")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default();
+            let _ = tx.send(DaemonEvent::CheckpointRestored {
+                session_id,
+                messages,
             });
         }
         "bg_process_list" => {

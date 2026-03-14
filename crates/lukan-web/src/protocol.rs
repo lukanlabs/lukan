@@ -192,6 +192,22 @@ pub enum ClientMessage {
     KillBgProcess {
         pid: u32,
     },
+
+    // Agent operations
+    Compact {
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+    ListCheckpoints {
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+    RestoreCheckpoint {
+        checkpoint_id: String,
+        restore_code: bool,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 }
 
 /// Messages sent from the server to the client (browser)
@@ -332,6 +348,21 @@ pub enum ServerMessage {
     },
     BgProcessKilled {
         pid: u32,
+    },
+
+    // Agent operations
+    CheckpointList {
+        checkpoints: Vec<Checkpoint>,
+    },
+    CompactComplete {
+        session_id: String,
+        messages: Vec<Message>,
+        checkpoints: Vec<Checkpoint>,
+    },
+    CheckpointRestored {
+        session_id: String,
+        messages: Vec<Message>,
+        checkpoints: Vec<Checkpoint>,
     },
 }
 

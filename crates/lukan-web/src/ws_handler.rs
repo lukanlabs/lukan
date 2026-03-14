@@ -784,14 +784,9 @@ async fn dispatch_message(
         }
 
         ClientMessage::TerminalReconnect { session_id } => {
-            // Reset pipe-pane so the output stream starts clean.
-            // Fixes rendering corruption when re-attaching sessions
-            // that were running TUI apps (e.g. Claude Code with Ink/React).
-            state
-                .terminal_manager
-                .reset_output_reader(&session_id, state.terminal_tx.clone())
-                .await;
-
+            // Capture scrollback BEFORE resetting pipe-pane to avoid duplication.
+            // pipe-pane reset causes tmux to dump the current pane buffer, which
+            // would overlap with the scrollback capture if done first.
             match state.terminal_manager.capture_scrollback(&session_id).await {
                 Ok(scrollback) => {
                     let sessions = state.terminal_manager.list().await;
@@ -818,6 +813,13 @@ async fn dispatch_message(
                     .await;
                 }
             }
+
+            // Reset pipe-pane AFTER sending scrollback so the pipe dump
+            // (which re-emits the visible pane) doesn't duplicate content.
+            state
+                .terminal_manager
+                .reset_output_reader(&session_id, state.terminal_tx.clone())
+                .await;
         }
 
         ClientMessage::TerminalRename { session_id, name } => {

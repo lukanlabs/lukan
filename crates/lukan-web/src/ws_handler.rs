@@ -1415,34 +1415,32 @@ async fn handle_mid_turn_message(
             }
         }
 
-        ClientMessage::DeleteAllSessions => {
-            match lukan_agent::SessionManager::delete_all().await {
-                Ok(_) => {
-                    {
-                        let mut sessions = state.sessions.lock().await;
-                        for session in sessions.values_mut() {
-                            session.agent = None;
-                        }
-                    }
-                    {
-                        let mut agent = state.agent.lock().await;
-                        *agent = None;
-                    }
-                    if let Ok(sessions) = lukan_agent::SessionManager::list().await {
-                        send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
+        ClientMessage::DeleteAllSessions => match lukan_agent::SessionManager::delete_all().await {
+            Ok(_) => {
+                {
+                    let mut sessions = state.sessions.lock().await;
+                    for session in sessions.values_mut() {
+                        session.agent = None;
                     }
                 }
-                Err(e) => {
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::Error {
-                            error: format!("Failed to delete all sessions: {e}"),
-                        },
-                    )
-                    .await;
+                {
+                    let mut agent = state.agent.lock().await;
+                    *agent = None;
+                }
+                if let Ok(sessions) = lukan_agent::SessionManager::list().await {
+                    send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
                 }
             }
-        }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to delete all sessions: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
 
         ClientMessage::SetPermissionMode { mode } => {
             let parsed: PermissionMode =
@@ -1467,20 +1465,20 @@ async fn evict_session_from_memory(session_id: &str, state: &Arc<AppState>) {
     {
         let mut sessions = state.sessions.lock().await;
         for session in sessions.values_mut() {
-            if let Some(ref agent) = session.agent {
-                if agent.session_id() == session_id {
-                    session.agent = None;
-                }
+            if let Some(ref agent) = session.agent
+                && agent.session_id() == session_id
+            {
+                session.agent = None;
             }
         }
     }
     // Check legacy singleton agent
     {
         let mut agent_lock = state.agent.lock().await;
-        if let Some(ref agent) = *agent_lock {
-            if agent.session_id() == session_id {
-                *agent_lock = None;
-            }
+        if let Some(ref agent) = *agent_lock
+            && agent.session_id() == session_id
+        {
+            *agent_lock = None;
         }
     }
 }

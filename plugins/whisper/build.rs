@@ -65,17 +65,24 @@ fn main() {
         println!("cargo:rustc-link-lib=cublasLt");
     }
 
-    // System libraries
+    // System libraries — use rustc-link-arg to force correct link order
+    // (frameworks must come after static libs that reference them)
     if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-lib=stdc++");
-        println!("cargo:rustc-link-lib=gomp"); // OpenMP runtime (used by ggml-cpu)
+        println!("cargo:rustc-link-lib=gomp");
         println!("cargo:rustc-link-lib=pthread");
         println!("cargo:rustc-link-lib=m");
     } else if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-lib=c++");
-        println!("cargo:rustc-link-framework=Accelerate");
-        println!("cargo:rustc-link-framework=Metal");
-        println!("cargo:rustc-link-framework=MetalKit");
-        println!("cargo:rustc-link-framework=Foundation");
+        println!("cargo:rustc-link-arg=-framework");
+        println!("cargo:rustc-link-arg=Accelerate");
+        println!("cargo:rustc-link-arg=-framework");
+        println!("cargo:rustc-link-arg=Metal");
+        println!("cargo:rustc-link-arg=-framework");
+        println!("cargo:rustc-link-arg=MetalKit");
+        println!("cargo:rustc-link-arg=-framework");
+        println!("cargo:rustc-link-arg=Foundation");
+        println!("cargo:rustc-link-arg=-framework");
+        println!("cargo:rustc-link-arg=CoreFoundation");
     }
 }

@@ -4452,9 +4452,9 @@ impl App {
                     tools: tools.clone(),
                     session_id: tab,
                 },
-                ApprovalResponse::DeniedAll => crate::ws_client::OutMessage::DenyAll {
-                    session_id: tab,
-                },
+                ApprovalResponse::DeniedAll => {
+                    crate::ws_client::OutMessage::DenyAll { session_id: tab }
+                }
             };
             let _ = daemon.send(&msg);
         } else if let Some(ref tx) = self.approval_tx {
@@ -4601,10 +4601,8 @@ impl App {
                                 }
                             }
                             ContentBlock::ToolUse { name, .. } => {
-                                self.messages.push(ChatMessage::new(
-                                    "tool_call",
-                                    format!("● {name}(...)"),
-                                ));
+                                self.messages
+                                    .push(ChatMessage::new("tool_call", format!("● {name}(...)")));
                             }
                             ContentBlock::ToolResult { content, .. } => {
                                 let preview = if content.len() > 200 {
@@ -4612,8 +4610,7 @@ impl App {
                                 } else {
                                     content.clone()
                                 };
-                                self.messages
-                                    .push(ChatMessage::new("tool_result", preview));
+                                self.messages.push(ChatMessage::new("tool_result", preview));
                             }
                             _ => {}
                         }
@@ -4621,7 +4618,10 @@ impl App {
                 }
                 self.messages.push(ChatMessage::new(
                     "system",
-                    format!("Loaded session {session_id} ({} messages)", loaded_messages.len()),
+                    format!(
+                        "Loaded session {session_id} ({} messages)",
+                        loaded_messages.len()
+                    ),
                 ));
                 self.force_redraw = true;
             }

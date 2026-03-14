@@ -15,7 +15,11 @@ use lukan_core::models::messages::Message;
 
 /// Messages we send to the daemon (mirrors lukan-web's ClientMessage).
 #[derive(Serialize)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum OutMessage {
     SendMessage {
         content: String,
@@ -188,11 +192,14 @@ pub async fn connect(
         while tokio::time::Instant::now() < deadline {
             match tokio::time::timeout(std::time::Duration::from_secs(5), ws_rx.next()).await {
                 Ok(Some(Ok(tungstenite::Message::Text(text)))) => {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                        if v.get("type").and_then(|t| t.as_str()) == Some("agent_tab_created") {
-                            found = v.get("sessionId").and_then(|s| s.as_str()).map(String::from);
-                            break;
-                        }
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text)
+                        && v.get("type").and_then(|t| t.as_str()) == Some("agent_tab_created")
+                    {
+                        found = v
+                            .get("sessionId")
+                            .and_then(|s| s.as_str())
+                            .map(String::from);
+                        break;
                     }
                 }
                 _ => break,
@@ -364,11 +371,25 @@ fn dispatch_message(text: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) {
             let _ = tx.send(DaemonEvent::Error(error));
         }
         // ── Ignore server housekeeping ──
-        "auth_required" | "auth_ok" | "auth_error" | "config_values" | "config_saved"
-        | "workers_update" | "worker_detail" | "worker_run_detail" | "worker_notification"
-        | "sub_agents_update" | "model_list" | "agent_tabs_loaded" | "agent_tabs_saved"
-        | "terminal_created" | "terminal_sessions" | "terminal_output" | "terminal_exited"
-        | "screenshots_changed" | "mode_changed" => {}
+        "auth_required"
+        | "auth_ok"
+        | "auth_error"
+        | "config_values"
+        | "config_saved"
+        | "workers_update"
+        | "worker_detail"
+        | "worker_run_detail"
+        | "worker_notification"
+        | "sub_agents_update"
+        | "model_list"
+        | "agent_tabs_loaded"
+        | "agent_tabs_saved"
+        | "terminal_created"
+        | "terminal_sessions"
+        | "terminal_output"
+        | "terminal_exited"
+        | "screenshots_changed"
+        | "mode_changed" => {}
 
         // ── StreamEvent types — deserialize and forward ──
         _ => match serde_json::from_str::<StreamEvent>(text) {

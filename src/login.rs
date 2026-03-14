@@ -270,7 +270,11 @@ pub async fn run_logout() -> Result<()> {
 pub async fn show_relay_status() -> Result<()> {
     match RelayConfig::load().await {
         Some(config) => {
-            let status = if config.enabled { "enabled" } else { "disabled" };
+            let status = if config.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            };
             println!("  Relay: configured ({status})");
             println!("  URL: {}", config.relay_url);
             println!("  Email: {}", config.email);

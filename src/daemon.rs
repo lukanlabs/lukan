@@ -45,10 +45,7 @@ pub async fn handle_daemon_command(command: DaemonCommands) -> Result<()> {
         DaemonCommands::Status => {
             if let Some(lock) = read_lock_file() {
                 if is_process_alive(lock.pid) {
-                    println!(
-                        "  Daemon is running (PID {}, port {})",
-                        lock.pid, lock.port
-                    );
+                    println!("  Daemon is running (PID {}, port {})", lock.pid, lock.port);
                 } else {
                     cleanup_lock_files();
                     println!("  Daemon is not running (cleaned stale lock file)");
@@ -325,7 +322,8 @@ pub fn ensure_daemon_running() -> Result<u16> {
     }
 
     // Not running — spawn it
-    let self_exe = std::env::current_exe().context("Cannot auto-start daemon: failed to get executable path")?;
+    let self_exe = std::env::current_exe()
+        .context("Cannot auto-start daemon: failed to get executable path")?;
     let log_path = LukanPaths::daemon_log_file();
 
     let log_file = std::fs::OpenOptions::new()
@@ -358,11 +356,11 @@ pub fn ensure_daemon_running() -> Result<u16> {
             return Ok(3000);
         }
         std::thread::sleep(Duration::from_millis(100));
-        if let Some(lock) = read_lock_file() {
-            if is_process_alive(lock.pid) {
-                info!(pid = lock.pid, port = lock.port, "Daemon is ready");
-                return Ok(lock.port);
-            }
+        if let Some(lock) = read_lock_file()
+            && is_process_alive(lock.pid)
+        {
+            info!(pid = lock.pid, port = lock.port, "Daemon is ready");
+            return Ok(lock.port);
         }
     }
 }

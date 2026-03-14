@@ -103,9 +103,9 @@ impl RelayConfig {
 
     /// Set the enabled flag and save.
     pub async fn set_enabled(enabled: bool) -> anyhow::Result<()> {
-        let mut config = Self::load()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No relay credentials found. Run `lukan login` first."))?;
+        let mut config = Self::load().await.ok_or_else(|| {
+            anyhow::anyhow!("No relay credentials found. Run `lukan login` first.")
+        })?;
         config.enabled = enabled;
         config.save().await
     }

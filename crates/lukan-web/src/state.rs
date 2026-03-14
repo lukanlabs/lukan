@@ -10,12 +10,9 @@ use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use crate::protocol::ServerMessage;
 use crate::terminal::TerminalManager;
 
-/// A stream event broadcast entry.
-/// `tab_id` is the persisted session ID (not the tab/agent instance ID).
-/// This ensures all UIs watching the same saved session see each other's streaming.
+/// A stream event broadcast entry sent to all connected clients.
 #[derive(Clone, Debug)]
 pub struct StreamBroadcast {
-    pub tab_id: String,
     pub json: String,
     pub origin_conn_id: usize,
 }

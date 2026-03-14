@@ -247,11 +247,15 @@ async fn main() -> Result<()> {
             }
             RelayCommands::Enable => {
                 lukan_core::relay::RelayConfig::set_enabled(true).await?;
-                println!("  Relay enabled. Restart daemon to apply: lukan daemon stop && lukan daemon start -d");
+                println!(
+                    "  Relay enabled. Restart daemon to apply: lukan daemon stop && lukan daemon start -d"
+                );
             }
             RelayCommands::Disable => {
                 lukan_core::relay::RelayConfig::set_enabled(false).await?;
-                println!("  Relay disabled. Restart daemon to apply: lukan daemon stop && lukan daemon start -d");
+                println!(
+                    "  Relay disabled. Restart daemon to apply: lukan daemon stop && lukan daemon start -d"
+                );
             }
         },
         Some(Commands::External(args)) => {
@@ -277,7 +281,9 @@ async fn main() -> Result<()> {
                 let do_continue = continue_session || cli.r#continue;
                 if ui == "web" {
                     if provider_override.is_some() || model_override.is_some() {
-                        eprintln!("  \x1b[33mNote:\x1b[0m --provider/--model flags are ignored in web mode.");
+                        eprintln!(
+                            "  \x1b[33mNote:\x1b[0m --provider/--model flags are ignored in web mode."
+                        );
                         eprintln!("  Change provider/model from the web UI instead.\n");
                     }
                     run_web().await?;
@@ -545,8 +551,7 @@ fn parse_logs_flags(args: &[String]) -> (bool, String) {
 
 async fn run_web() -> Result<()> {
     // Ensure daemon (web + workers) is running — get the port it's listening on
-    let port = daemon::ensure_daemon_running()
-        .context("Failed to start daemon")?;
+    let port = daemon::ensure_daemon_running().context("Failed to start daemon")?;
 
     println!("\n  \x1b[1m\x1b[36mlukan web\x1b[0m");
     println!("  \x1b[2mOpening browser at\x1b[0m \x1b[4mhttp://localhost:{port}\x1b[0m\n");
@@ -564,8 +569,7 @@ async fn run_web() -> Result<()> {
 
 async fn run_desktop() -> Result<()> {
     // Ensure daemon is running and get the port
-    let daemon_port = daemon::ensure_daemon_running()
-        .context("Failed to start daemon")?;
+    let daemon_port = daemon::ensure_daemon_running().context("Failed to start daemon")?;
 
     // Desktop requires a graphical display (X11 or Wayland)
     let has_display = std::env::var("DISPLAY").is_ok_and(|v| !v.is_empty())
@@ -719,11 +723,10 @@ async fn run_chat(
     continue_session: bool,
 ) -> Result<()> {
     // Ensure daemon is running (workers + web server)
-    let daemon_port = daemon::ensure_daemon_running()
-        .unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "Failed to auto-start daemon, continuing without it");
-            0 // 0 = no daemon, use in-process agent
-        });
+    let daemon_port = daemon::ensure_daemon_running().unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "Failed to auto-start daemon, continuing without it");
+        0 // 0 = no daemon, use in-process agent
+    });
 
     // Load config
     let mut config = ConfigManager::load().await?;

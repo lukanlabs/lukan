@@ -195,8 +195,6 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
         }
     }
 
-
-
     // Save legacy singleton session
     {
         let mut agent_lock = state.agent.lock().await;
@@ -979,8 +977,6 @@ async fn handle_send_message(
     // the same saved session see each other's streaming, regardless of tab_id)
     let broadcast_session_id = agent.session_id().to_string();
 
-
-
     // Create cancellation token so abort can signal the agent to stop
     let cancel_token = CancellationToken::new();
     let cancel_for_agent = cancel_token.clone();
@@ -1001,7 +997,6 @@ async fn handle_send_message(
             "savedSessionId": &broadcast_session_id,
         });
         let _ = state.stream_tx.send(StreamBroadcast {
-            tab_id: broadcast_session_id.clone(),
             json: user_event.to_string(),
             origin_conn_id: conn_id,
         });
@@ -1028,7 +1023,6 @@ async fn handle_send_message(
                         // so the frontend can filter by active session
                         let broadcast_json = inject_field(&json, "savedSessionId", &broadcast_session_id);
                         let _ = state.stream_tx.send(StreamBroadcast {
-                            tab_id: broadcast_session_id.clone(),
                             json: broadcast_json,
                             origin_conn_id: conn_id,
                         });
@@ -1155,7 +1149,6 @@ async fn handle_send_message(
             if let Ok(json) = serde_json::to_string(&complete_msg) {
                 let broadcast_json = inject_field(&json, "savedSessionId", &broadcast_sid);
                 let _ = state.stream_tx.send(StreamBroadcast {
-                    tab_id: broadcast_sid,
                     json: broadcast_json,
                     origin_conn_id: conn_id,
                 });
@@ -1208,7 +1201,6 @@ async fn release_processing_lock(conn_id: usize, state: &Arc<AppState>) {
         *owner = None;
     }
 }
-
 
 /// Send an appropriate error when agent creation fails.
 async fn send_agent_creation_error(
@@ -1268,7 +1260,10 @@ fn inject_tab_id(ev: &StreamEvent, tab_id: &str) -> String {
 fn inject_field(json: &str, key: &str, value: &str) -> String {
     if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(json) {
         if let Some(obj) = parsed.as_object_mut() {
-            obj.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+            obj.insert(
+                key.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
         }
         serde_json::to_string(&parsed).unwrap_or_else(|_| json.to_string())
     } else {

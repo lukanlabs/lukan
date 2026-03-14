@@ -2715,7 +2715,13 @@ impl App {
                                 && self.is_streaming
                             {
                                 // Alt+B: send running Bash command to background
-                                let _ = self.bg_signal_tx.send(());
+                                if let Some(ref daemon) = self.daemon_tx {
+                                    let _ = daemon.send(&crate::ws_client::OutMessage::SendToBackground {
+                                        session_id: self.daemon_tab_id.clone(),
+                                    });
+                                } else {
+                                    let _ = self.bg_signal_tx.send(());
+                                }
                                 self.messages.push(ChatMessage::new(
                                     "system",
                                     "Sending current command to background...",

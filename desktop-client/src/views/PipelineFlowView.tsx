@@ -35,8 +35,10 @@ import {
   Trash2,
   Square,
   Settings,
+  Download,
+  Upload,
 } from "lucide-react";
-import type { PipelineDetail, PipelineRun, PipelineStep, PipelineTrigger, StepRun, StepConnection } from "../lib/types";
+import type { PipelineDetail, PipelineRun, PipelineStep, PipelineTrigger, PipelineCreateInput, StepRun, StepConnection } from "../lib/types";
 import {
   getPipelineDetail,
   getPipelineRun,
@@ -45,6 +47,8 @@ import {
   updatePipeline,
   onPipelineNotification,
   listTools,
+  listProviders,
+  getModels,
 } from "../lib/tauri";
 
 // ── Helpers ──
@@ -292,10 +296,23 @@ function EditStepSheet({
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set(step.tools ?? []));
   const [toolsEnabled, setToolsEnabled] = useState(!!step.tools);
   const [toolFilter, setToolFilter] = useState("");
+  const [providers, setProviders] = useState<{ name: string; currentModel?: string; defaultModel: string }[]>([]);
+  const [allModels, setAllModels] = useState<string[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState(step.provider ?? "");
+  const [selectedModel, setSelectedModel] = useState(step.model ?? "");
 
   useEffect(() => {
     listTools().then(setAvailableTools).catch(() => {});
+    Promise.all([listProviders(), getModels()]).then(([p, m]) => {
+      setProviders(p);
+      setAllModels(m);
+    }).catch(() => {});
   }, []);
+
+  // Models for the selected provider (format: "provider:model_id")
+  const providerModels = selectedProvider
+    ? allModels.filter((m) => m.startsWith(`${selectedProvider}:`)).map((m) => m.substring(selectedProvider.length + 1))
+    : [];
 
   const filteredTools = toolFilter
     ? availableTools.filter((t) => t.name.toLowerCase().includes(toolFilter.toLowerCase()))
@@ -323,6 +340,8 @@ function EditStepSheet({
       name: name.trim() || step.name,
       prompt: prompt.trim() || step.prompt,
       tools: toolsEnabled ? Array.from(selectedTools) : undefined,
+      provider: selectedProvider || undefined,
+      model: selectedModel || undefined,
     });
   };
 
@@ -363,6 +382,42 @@ function EditStepSheet({
             {"Use {{input}} to reference the previous step's output"}
           </div>
         </div>
+
+        {/* Provider / Model */}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Provider</label>
+          <select
+            value={selectedProvider}
+            onChange={(e) => { setSelectedProvider(e.target.value); setSelectedModel(""); }}
+            style={{ ...inputStyle, cursor: "pointer" }}
+          >
+            <option value="">Default (global config)</option>
+            {providers.map((p) => (
+              <option key={p.name} value={p.name}>{p.name}{p.currentModel ? ` (${p.currentModel})` : ""}</option>
+            ))}
+          </select>
+        </div>
+
+        {selectedProvider && (
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Model</label>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              style={{ ...inputStyle, cursor: "pointer" }}
+            >
+              <option value="">Default</option>
+              {providerModels.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+            {providerModels.length === 0 && (
+              <div style={{ fontSize: 9, color: "#444", marginTop: 3 }}>
+                No models configured for {selectedProvider}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Tools */}
         <div style={{ marginBottom: 12 }}>
@@ -1050,6 +1105,28 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
           title="Pipeline settings"
         >
           <Settings size={12} />
+        </button>
+        <button
+          onClick={() => {
+            const template = {
+              name: detail.name,
+              description: detail.description,
+              trigger: detail.trigger,
+              steps: detail.steps,
+              connections: detail.connections,
+            };
+            const blob = new Blob([JSON.stringify(template, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${detail.name.replace(/\s+/g, "-").toLowerCase()}.pipeline.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+          style={{ border: "none", background: "transparent", color: "#555", cursor: "pointer", padding: 2, display: "flex" }}
+          title="Export pipeline"
+        >
+          <Download size={12} />
         </button>
         <span style={{ fontSize: 10, color: "#555" }}>{detail.steps.length} steps</span>
         <div style={{ flex: 1 }} />

@@ -192,9 +192,19 @@ pub async fn cancel_pipeline(
         )
             .into_response()
     } else {
+        let active_ids: Vec<String> = tokens.keys().cloned().collect();
+        tracing::warn!(
+            pipeline_id = %id,
+            active_tokens = ?active_ids,
+            "Cancel requested but no cancel token found"
+        );
         (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "status": "not_running", "pipelineId": id })),
+            Json(serde_json::json!({
+                "status": "not_running",
+                "pipelineId": id,
+                "activeTokens": active_ids,
+            })),
         )
             .into_response()
     }

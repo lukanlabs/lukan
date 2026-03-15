@@ -5,13 +5,14 @@ import {
   Trash2,
   Clock,
   Power,
-  GitBranch,
+  Workflow,
   Coins,
   Play,
   Loader2,
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  Upload,
 } from "lucide-react";
 import type {
   PipelineSummary,
@@ -271,7 +272,7 @@ export function PipelinesPanel() {
               {error}
             </div>
           )}
-          <GitBranch size={20} style={{ color: "var(--text-muted)", marginBottom: 8 }} />
+          <Workflow size={20} style={{ color: "var(--text-muted)", marginBottom: 8 }} />
           <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 4 }}>
             No pipelines configured
           </div>
@@ -306,7 +307,48 @@ export function PipelinesPanel() {
             {error}
           </div>
         )}
-        <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 8px" }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 2, padding: "4px 8px" }}>
+          <button
+            onClick={() => {
+              const input = document.createElement("input");
+              input.type = "file";
+              input.accept = ".json,.pipeline.json";
+              input.onchange = async (e) => {
+                const file = (e.target as HTMLInputElement).files?.[0];
+                if (!file) return;
+                try {
+                  const text = await file.text();
+                  const template = JSON.parse(text);
+                  if (!template.name || !template.steps || !template.trigger) {
+                    setError("Invalid pipeline template: missing name, steps, or trigger");
+                    return;
+                  }
+                  await createPipeline({
+                    name: template.name,
+                    description: template.description,
+                    trigger: template.trigger,
+                    steps: template.steps,
+                    connections: template.connections ?? [],
+                    enabled: true,
+                  });
+                  await loadPipelines();
+                } catch (err) {
+                  setError(String(err));
+                }
+              };
+              input.click();
+            }}
+            title="Import pipeline from JSON"
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              padding: 4,
+            }}
+          >
+            <Upload size={12} />
+          </button>
           <button
             onClick={() => setView({ kind: "create" })}
             title="New pipeline"
@@ -525,7 +567,7 @@ export function PipelinesPanel() {
           >
             <ArrowLeft size={14} />
           </button>
-          <GitBranch size={14} style={{ color: "var(--accent, #fbbf24)" }} />
+          <Workflow size={14} style={{ color: "var(--accent, #fbbf24)" }} />
           <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{detail.name}</span>
           <span
             style={{

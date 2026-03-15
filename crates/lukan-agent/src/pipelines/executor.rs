@@ -571,12 +571,21 @@ async fn execute_step_live(
 ) -> Result<(String, PipelineTokenUsage, u32)> {
     // Build config with overrides
     let mut config = base_config.clone();
-    if let Some(ref p) = step.provider
-        && let Ok(pn) = serde_json::from_value(serde_json::Value::String(p.clone()))
-    {
-        config.config.provider = pn;
+    if let Some(ref p) = step.provider {
+        match serde_json::from_value::<lukan_core::config::types::ProviderName>(
+            serde_json::Value::String(p.clone()),
+        ) {
+            Ok(pn) => {
+                info!(step_id = %step.id, provider = %p, "Step using custom provider");
+                config.config.provider = pn;
+            }
+            Err(e) => {
+                error!(step_id = %step.id, provider = %p, error = %e, "Invalid provider name, using default");
+            }
+        }
     }
     if let Some(ref m) = step.model {
+        info!(step_id = %step.id, model = %m, "Step using custom model");
         config.config.model = Some(m.clone());
     }
 

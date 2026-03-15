@@ -107,6 +107,9 @@ pub enum OutMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
     },
+    AbortSubAgent {
+        id: String,
+    },
 }
 
 /// Events received from the daemon, converted to TUI-consumable form.

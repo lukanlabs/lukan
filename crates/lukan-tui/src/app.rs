@@ -2560,13 +2560,19 @@ impl App {
                                             && let Some(entry) = picker.selected_entry()
                                         {
                                             let entry_id = entry.id.clone();
-                                            let killed = lukan_agent::sub_agent::abort_sub_agent(&entry_id).await;
-                                            if killed {
-                                                self.messages.push(ChatMessage::new(
-                                                    "system",
-                                                    format!("SubAgent {entry_id} killed"),
-                                                ));
+                                            // In daemon mode, send abort via WS; otherwise local
+                                            if let Some(ref tx) = self.daemon_tx {
+                                                let msg = crate::ws_client::OutMessage::AbortSubAgent {
+                                                    id: entry_id.clone(),
+                                                };
+                                                let _ = tx.send(&msg);
+                                            } else {
+                                                lukan_agent::sub_agent::abort_sub_agent(&entry_id).await;
                                             }
+                                            self.messages.push(ChatMessage::new(
+                                                "system",
+                                                format!("SubAgent {entry_id} killed"),
+                                            ));
                                             // Refresh picker
                                             let agents = get_all_sub_agents().await;
                                             if agents.is_empty() {

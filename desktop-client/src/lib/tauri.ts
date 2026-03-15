@@ -32,6 +32,12 @@ import type {
   WorkerRun,
   WorkerCreateInput,
   WorkerUpdateInput,
+  PipelineSummary,
+  PipelineDetail,
+  PipelineDefinition,
+  PipelineRun,
+  PipelineCreateInput,
+  PipelineUpdateInput,
   TranscriptionStatus,
 } from "./types";
 
@@ -327,6 +333,26 @@ export const getWorkerDetail = (id: string) =>
   getTransport().call<WorkerDetail>("get_worker_detail", { id });
 export const getWorkerRun = (workerId: string, runId: string) =>
   getTransport().call<WorkerRun>("get_worker_run", { workerId, runId });
+
+// Pipelines
+export const listPipelines = () =>
+  getTransport().call<PipelineSummary[]>("list_pipelines");
+export const createPipeline = (input: PipelineCreateInput) =>
+  getTransport().call<PipelineDefinition>("create_pipeline", { pipeline: input });
+export const updatePipeline = (id: string, patch: PipelineUpdateInput) =>
+  getTransport().call<PipelineDefinition>("update_pipeline", { id, patch });
+export const deletePipeline = (id: string) =>
+  getTransport().call<boolean>("delete_pipeline", { id });
+export const togglePipeline = (id: string, enabled: boolean) =>
+  getTransport().call<PipelineDefinition>("toggle_pipeline", { id, enabled });
+export const getPipelineDetail = (id: string) =>
+  getTransport().call<PipelineDetail>("get_pipeline_detail", { id });
+export const triggerPipeline = (id: string, input?: string) =>
+  getTransport().call<void>("trigger_pipeline", { id, input: input ?? null });
+export const getPipelineRun = (pipelineId: string, runId: string) =>
+  getTransport().call<PipelineRun>("get_pipeline_run", { pipelineId, runId });
+export const onPipelineNotification = (cb: (data: unknown) => void) =>
+  getTransport().subscribe("pipeline-notification", cb);
 
 // Events
 export const consumePendingEvents = () =>

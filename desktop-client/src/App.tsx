@@ -68,6 +68,7 @@ export default function App() {
   const [unreadSources, setUnreadSources] = useState<Set<string>>(new Set());
   const [eventSourceFilter, setEventSourceFilter] = useState<string | null>(null);
   const [activePluginName, setActivePluginName] = useState<string | null>(null);
+  const [activePipelineId, setActivePipelineId] = useState<string | null>(null);
   const sidePanelRef = useRef<SidePanelId | null>(null);
   sidePanelRef.current = workspace.sidePanel;
 
@@ -182,10 +183,23 @@ export default function App() {
     return () => window.removeEventListener("terminal-attached-ids", onAttachedIds);
   }, []);
 
-  // Auto-close file preview when switching views (agent/terminal)
+  // Auto-close file preview when switching views
   useEffect(() => {
     setFilePreview(null);
   }, [workspace.mode]);
+
+  // Listen for pipeline open requests from PipelinesPanel
+  useEffect(() => {
+    const onOpenPipeline = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id) {
+        setActivePipelineId(id);
+        workspace.setMode("pipeline");
+      }
+    };
+    window.addEventListener("open-pipeline-flow", onOpenPipeline);
+    return () => window.removeEventListener("open-pipeline-flow", onOpenPipeline);
+  }, [workspace]);
 
   const handleSwitchToTerminal = useCallback(
     (sessionId: string) => {
@@ -265,6 +279,8 @@ export default function App() {
 
         <MainArea
           mode={workspace.mode}
+          pipelineId={activePipelineId}
+          onPipelineBack={() => { workspace.setMode("agent"); setActivePipelineId(null); }}
           processLog={processLog}
           processLogSessionId={currentSessionId}
           onCloseProcessLog={handleCloseProcessLog}

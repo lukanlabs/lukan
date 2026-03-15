@@ -14,6 +14,7 @@ use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
 use lukan_core::config::LukanPaths;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse, PlanTask, StreamEvent};
+use lukan_core::pipelines::PipelineManager;
 use lukan_core::workers::WorkerManager;
 use lukan_providers::{SystemPrompt, create_provider};
 use lukan_tools::create_configured_registry;
@@ -54,6 +55,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
     let mut notify_rx = state.notification_tx.subscribe();
     let mut terminal_rx = state.terminal_tx.subscribe();
     let mut stream_rx = state.stream_tx.subscribe();
+    let mut pipeline_notify_rx = state.pipeline_notification_tx.subscribe();
 
     // If auth required, send auth_required message
     if !authenticated {
@@ -80,6 +82,18 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
                     let msg = ServerMessage::WorkerNotification {
                         worker_id: notif.worker_id,
                         worker_name: notif.worker_name,
+                        status: notif.status,
+                        summary: notif.summary,
+                    };
+                    send_json(&mut ws_tx, &msg).await;
+                }
+                continue;
+            }
+            Ok(notif) = pipeline_notify_rx.recv() => {
+                if authenticated {
+                    let msg = ServerMessage::PipelineNotification {
+                        pipeline_id: notif.pipeline_id,
+                        pipeline_name: notif.pipeline_name,
                         status: notif.status,
                         summary: notif.summary,
                     };
@@ -663,6 +677,262 @@ async fn dispatch_message(
                 }
             }
         }
+
+        // ── Pipeline handlers ──
+
+        ClientMessage::ListPipelines => match PipelineManager::get_summaries().await {
+            Ok(pipelines) => {
+                send_json(ws_tx, &ServerMessage::PipelinesUpdate { pipelines }).await;
+            }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to list pipelines: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
+
+        ClientMessage::CreatePipeline { pipeline } => {
+            match PipelineManager::create(pipeline).await {
+                Ok(_) => {
+                    if let Ok(pipelines) = PipelineManager::get_summaries().await {
+                        send_json(ws_tx, &ServerMessage::PipelinesUpdate { pipelines }).await;
+                    }
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to create pipeline: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::UpdatePipeline { id, patch } => {
+            match PipelineManager::update(&id, patch).await {
+                Ok(Some(_)) => {
+                    if let Ok(pipelines) = PipelineManager::get_summaries().await {
+                        send_json(ws_tx, &ServerMessage::PipelinesUpdate { pipelines }).await;
+                    }
+                }
+                Ok(None) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Pipeline not found: {id}"),
+                        },
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to update pipeline: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::DeletePipeline { id } => match PipelineManager::delete(&id).await {
+            Ok(true) => {
+                if let Ok(pipelines) = PipelineManager::get_summaries().await {
+                    send_json(ws_tx, &ServerMessage::PipelinesUpdate { pipelines }).await;
+                }
+            }
+            Ok(false) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Pipeline not found: {id}"),
+                    },
+                )
+                .await;
+            }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to delete pipeline: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
+
+        ClientMessage::TogglePipeline { id, enabled } => {
+            let patch = lukan_core::pipelines::PipelineUpdateInput {
+                enabled: Some(enabled),
+                name: None,
+                description: None,
+                trigger: None,
+                steps: None,
+                connections: None,
+            };
+            match PipelineManager::update(&id, patch).await {
+                Ok(Some(_)) => {
+                    if let Ok(pipelines) = PipelineManager::get_summaries().await {
+                        send_json(ws_tx, &ServerMessage::PipelinesUpdate { pipelines }).await;
+                    }
+                }
+                Ok(None) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Pipeline not found: {id}"),
+                        },
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to toggle pipeline: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::GetPipelineDetail { id } => {
+            match PipelineManager::get_detail(&id).await {
+                Ok(Some(detail)) => {
+                    send_json(ws_tx, &ServerMessage::PipelineDetail { pipeline: detail })
+                        .await;
+                }
+                Ok(None) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Pipeline not found: {id}"),
+                        },
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to get pipeline detail: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::TriggerPipeline { id, input } => {
+            match PipelineManager::get(&id).await {
+                Ok(Some(pipeline)) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::PipelineNotification {
+                            pipeline_id: id.clone(),
+                            pipeline_name: pipeline.name.clone(),
+                            status: "triggered".to_string(),
+                            summary: "Pipeline triggered".to_string(),
+                        },
+                    )
+                    .await;
+
+                    // Spawn actual execution in background
+                    let config = state.config.lock().await.clone();
+                    let pipeline_notify_tx = state.pipeline_notification_tx.clone();
+                    tokio::spawn(async move {
+                        let run = lukan_agent::pipelines::executor::execute_pipeline(
+                            &pipeline, input, &config,
+                        )
+                        .await;
+
+                        let summary = if run.status == "success" {
+                            let count = run.step_runs.iter().filter(|s| s.status == "success").count();
+                            format!("{count} steps completed successfully")
+                        } else {
+                            run.step_runs.iter().find(|s| s.status == "error")
+                                .and_then(|s| s.error.clone())
+                                .unwrap_or_else(|| format!("Pipeline {}", run.status))
+                        };
+
+                        let notification = lukan_agent::PipelineNotification {
+                            pipeline_id: id,
+                            pipeline_name: pipeline.name,
+                            status: run.status,
+                            summary,
+                        };
+                        let _ = pipeline_notify_tx.send(notification.clone());
+
+                        // Write to JSONL for NotificationWatcher
+                        if let Ok(line) = serde_json::to_string(&notification) {
+                            let path = lukan_core::config::LukanPaths::pipeline_notifications_file();
+                            if let Ok(mut file) = tokio::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(&path)
+                                .await
+                            {
+                                use tokio::io::AsyncWriteExt;
+                                let _ = file.write_all(format!("{line}\n").as_bytes()).await;
+                            }
+                        }
+                    });
+                }
+                Ok(None) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Pipeline not found: {id}"),
+                        },
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to trigger pipeline: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+
+        ClientMessage::GetPipelineRunDetail {
+            pipeline_id,
+            run_id,
+        } => match PipelineManager::get_run(&pipeline_id, &run_id).await {
+            Ok(Some(run)) => {
+                send_json(ws_tx, &ServerMessage::PipelineRunDetail { run }).await;
+            }
+            Ok(None) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Pipeline run not found: {pipeline_id}/{run_id}"),
+                    },
+                )
+                .await;
+            }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to get pipeline run: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
 
         ClientMessage::PlanAccept { tasks, session_id } => {
             let modified_tasks: Option<Vec<PlanTask>> =

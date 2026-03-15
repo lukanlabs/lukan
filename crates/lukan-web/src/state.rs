@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use lukan_agent::{AgentLoop, WorkerNotification};
+use lukan_agent::{AgentLoop, PipelineNotification, WorkerNotification};
 use lukan_core::config::ResolvedConfig;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse};
@@ -78,6 +78,8 @@ pub struct AppState {
     pub bg_signal_tx: Mutex<Option<watch::Sender<()>>>,
     /// Broadcast channel for worker notifications from the daemon
     pub notification_tx: broadcast::Sender<WorkerNotification>,
+    /// Broadcast channel for pipeline notifications from the daemon
+    pub pipeline_notification_tx: broadcast::Sender<PipelineNotification>,
     /// Terminal PTY manager
     pub terminal_manager: TerminalManager,
     /// Broadcast channel for terminal output (sent to all WS clients)
@@ -101,6 +103,7 @@ impl AppState {
         let provider_name = resolved.config.provider.to_string();
         let model_name = resolved.effective_model().unwrap_or_default();
         let (notification_tx, _) = broadcast::channel(64);
+        let (pipeline_notification_tx, _) = broadcast::channel(64);
         let (terminal_tx, _) = broadcast::channel(256);
         let (stream_tx, _) = broadcast::channel(512);
 
@@ -121,6 +124,7 @@ impl AppState {
             planner_answer_tx: Mutex::new(None),
             bg_signal_tx: Mutex::new(None),
             notification_tx,
+            pipeline_notification_tx,
             terminal_manager: TerminalManager::default(),
             terminal_tx,
             stream_tx,

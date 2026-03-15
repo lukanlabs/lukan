@@ -6,7 +6,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::signal;
 use tracing::{error, info, warn};
 
-use lukan_agent::WorkerScheduler;
+use lukan_agent::{PipelineScheduler, WorkerScheduler};
 use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, ResolvedConfig};
 
 /// JSON structure written to daemon.lock
@@ -128,7 +128,7 @@ async fn run_daemon() -> Result<()> {
     .context("Failed to write daemon lock file")?;
 
     // ── Start worker scheduler ──
-    let scheduler = WorkerScheduler::new(resolved);
+    let scheduler = WorkerScheduler::new(resolved.clone());
     scheduler.start().await;
 
     // Spawn notification writer: subscribes to scheduler broadcast and appends to JSONL file
@@ -154,6 +154,33 @@ async fn run_daemon() -> Result<()> {
         }
     });
 
+    // ── Start pipeline scheduler ──
+    let pipeline_scheduler = PipelineScheduler::new(resolved);
+    pipeline_scheduler.start().await;
+
+    // Spawn pipeline notification writer
+    let mut pipeline_notify_rx = pipeline_scheduler.subscribe();
+    tokio::spawn(async move {
+        let path = LukanPaths::pipeline_notifications_file();
+        while let Ok(notification) = pipeline_notify_rx.recv().await {
+            if let Ok(line) = serde_json::to_string(&notification) {
+                match tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .await
+                {
+                    Ok(mut file) => {
+                        let _ = file.write_all(format!("{line}\n").as_bytes()).await;
+                    }
+                    Err(e) => {
+                        error!(error = %e, "Failed to write pipeline notification to file");
+                    }
+                }
+            }
+        }
+    });
+
     // ── Start relay bridge if relay credentials exist ──
     let mut relay_bridge = None;
     if let Some(relay_config) = lukan_core::relay::RelayConfig::load_if_enabled().await {
@@ -172,9 +199,11 @@ async fn run_daemon() -> Result<()> {
         "Daemon running (web + workers + relay)"
     );
 
-    // ── Poll workers.json for changes ──
+    // ── Poll workers.json and pipelines.json for changes ──
     let workers_file = LukanPaths::workers_file();
     let mut last_mtime = file_mtime(&workers_file);
+    let pipelines_file = LukanPaths::pipelines_file();
+    let mut last_pipelines_mtime = file_mtime(&pipelines_file);
 
     let mut poll_interval = tokio::time::interval(Duration::from_secs(3));
     poll_interval.tick().await; // skip first immediate tick
@@ -210,6 +239,12 @@ async fn run_daemon() -> Result<()> {
                     scheduler.reload().await;
                     last_mtime = current_mtime;
                 }
+                let current_pipelines_mtime = file_mtime(&pipelines_file);
+                if current_pipelines_mtime != last_pipelines_mtime {
+                    info!("pipelines.json changed, reloading");
+                    pipeline_scheduler.reload().await;
+                    last_pipelines_mtime = current_pipelines_mtime;
+                }
             }
         }
     }
@@ -219,6 +254,7 @@ async fn run_daemon() -> Result<()> {
         bridge.stop();
     }
     scheduler.stop();
+    pipeline_scheduler.stop();
     let _ = std::fs::remove_file(&pid_path);
     let _ = std::fs::remove_file(&lock_path);
     info!("Daemon stopped");

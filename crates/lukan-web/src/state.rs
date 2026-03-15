@@ -48,8 +48,6 @@ impl WebAgentSession {
 pub struct AppState {
     /// Agent sessions keyed by session/tab ID
     pub sessions: Mutex<HashMap<String, WebAgentSession>>,
-    /// Legacy singleton agent for backward-compat (used when no sessionId is provided)
-    pub agent: Mutex<Option<AgentLoop>>,
     /// Resolved configuration (provider + credentials)
     pub config: Mutex<ResolvedConfig>,
     /// Which connection ID currently holds the processing lock (0 = none)
@@ -68,14 +66,6 @@ pub struct AppState {
     connection_counter: AtomicUsize,
     /// Current permission mode (watch channel for live updates to agents)
     pub permission_mode: watch::Sender<PermissionMode>,
-    /// Sender half of the approval channel (sent to the agent) — legacy singleton
-    pub approval_tx: Mutex<Option<mpsc::Sender<ApprovalResponse>>>,
-    /// Sender half of the plan review channel — legacy singleton
-    pub plan_review_tx: Mutex<Option<mpsc::Sender<PlanReviewResponse>>>,
-    /// Sender half of the planner answer channel — legacy singleton
-    pub planner_answer_tx: Mutex<Option<mpsc::Sender<String>>>,
-    /// Sender for background signal — legacy singleton
-    pub bg_signal_tx: Mutex<Option<watch::Sender<()>>>,
     /// Broadcast channel for worker notifications from the daemon
     pub notification_tx: broadcast::Sender<WorkerNotification>,
     /// Broadcast channel for pipeline notifications from the daemon
@@ -109,7 +99,6 @@ impl AppState {
 
         Self {
             sessions: Mutex::new(HashMap::new()),
-            agent: Mutex::new(None),
             config: Mutex::new(resolved),
             processing_owner: Mutex::new(None),
             auth_secret,
@@ -119,10 +108,6 @@ impl AppState {
             model_name: Mutex::new(model_name),
             connection_counter: AtomicUsize::new(1),
             permission_mode: watch::Sender::new(PermissionMode::Auto),
-            approval_tx: Mutex::new(None),
-            plan_review_tx: Mutex::new(None),
-            planner_answer_tx: Mutex::new(None),
-            bg_signal_tx: Mutex::new(None),
             notification_tx,
             pipeline_notification_tx,
             terminal_manager: TerminalManager::default(),

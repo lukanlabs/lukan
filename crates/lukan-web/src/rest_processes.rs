@@ -132,7 +132,6 @@ pub async fn kill_bg_process(Path(pid): Path<u32>) -> Json<bool> {
 
 /// POST /api/processes/background
 pub async fn send_to_background(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // Try session-based bg_signal first, then legacy singleton
     let mut sent = false;
 
     // Check all sessions for an active bg_signal_tx
@@ -145,14 +144,6 @@ pub async fn send_to_background(State(state): State<Arc<AppState>>) -> impl Into
                 sent = true;
                 break;
             }
-        }
-    }
-
-    // Fallback to legacy singleton
-    if !sent {
-        let tx = state.bg_signal_tx.lock().await;
-        if let Some(ref tx) = *tx {
-            sent = tx.send(()).is_ok();
         }
     }
 

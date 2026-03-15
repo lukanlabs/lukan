@@ -120,32 +120,34 @@ pub async fn browser_launch(
             .into_response();
     }
 
-    // Hot-reload agent tools with browser tools
+    // Hot-reload browser tools on all session agents
     {
-        let mut agent_lock = state.agent.lock().await;
-        if let Some(agent) = agent_lock.as_mut() {
-            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
-                .await
-                .ok()
-                .flatten()
-                .map(|(_, cfg)| cfg);
-            let permissions = project_cfg
-                .as_ref()
-                .map(|c| c.permissions.clone())
-                .unwrap_or_default();
-            let allowed = project_cfg
-                .as_ref()
-                .map(|c| c.resolve_allowed_paths(&cwd))
-                .unwrap_or_else(|| vec![cwd.clone()]);
+        let mut sessions = state.sessions.lock().await;
+        for session in sessions.values_mut() {
+            if let Some(ref mut agent) = session.agent {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|(_, cfg)| cfg);
+                let permissions = project_cfg
+                    .as_ref()
+                    .map(|c| c.permissions.clone())
+                    .unwrap_or_default();
+                let allowed = project_cfg
+                    .as_ref()
+                    .map(|c| c.resolve_allowed_paths(&cwd))
+                    .unwrap_or_else(|| vec![cwd.clone()]);
 
-            let browser_registry =
-                lukan_tools::create_configured_browser_registry(&permissions, &allowed);
-            agent.reload_tools(browser_registry);
-            agent.enable_browser_tools();
+                let browser_registry =
+                    lukan_tools::create_configured_browser_registry(&permissions, &allowed);
+                agent.reload_tools(browser_registry);
+                agent.enable_browser_tools();
 
-            let prompt = crate::ws_handler::build_system_prompt(true).await;
-            agent.reload_system_prompt(prompt);
+                let prompt = crate::ws_handler::build_system_prompt(true).await;
+                agent.reload_system_prompt(prompt);
+            }
         }
     }
 

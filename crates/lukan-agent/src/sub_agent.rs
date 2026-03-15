@@ -14,7 +14,7 @@ use lukan_core::models::tools::ToolResult;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{Tool, ToolContext, create_default_registry};
 use serde_json::json;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::{error, info};
 
 use crate::message_history::MessageHistory;
@@ -50,6 +50,7 @@ pub async fn configure(
 #[derive(Debug, Clone)]
 pub struct SubAgentUpdate {
     pub id: String,
+    pub task: String,
     pub chat_messages: Vec<SubAgentChatMsg>,
     pub status: String,
     pub turns: usize,
@@ -61,6 +62,8 @@ pub struct SubAgentUpdate {
 
 struct SubAgentManager {
     entries: HashMap<String, SubAgentEntry>,
+    /// Cancel tokens for running subagents (keyed by subagent ID)
+    cancel_tokens: HashMap<String, tokio_util::sync::CancellationToken>,
     provider: Option<Arc<dyn Provider>>,
     system_prompt: Option<SystemPrompt>,
     cwd: Option<std::path::PathBuf>,
@@ -68,14 +71,20 @@ struct SubAgentManager {
     model_name: Option<String>,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
     allowed_paths: Option<Vec<std::path::PathBuf>>,
-    /// Channel to push real-time updates to the TUI
+    /// Channel to push real-time updates to the TUI (in-process mode)
     update_tx: Option<mpsc::Sender<SubAgentUpdate>>,
+    /// Persistent broadcast channel for subagent stream events (daemon mode).
+    /// Unlike per-turn event channels, this persists across turns so background
+    /// subagents can keep sending updates after the spawning turn completes.
+    stream_broadcast_tx: broadcast::Sender<StreamEvent>,
 }
 
 impl SubAgentManager {
     fn new() -> Self {
+        let (broadcast_tx, _) = broadcast::channel(256);
         Self {
             entries: HashMap::new(),
+            cancel_tokens: HashMap::new(),
             provider: None,
             system_prompt: None,
             cwd: None,
@@ -84,8 +93,16 @@ impl SubAgentManager {
             sandbox: None,
             allowed_paths: None,
             update_tx: None,
+            stream_broadcast_tx: broadcast_tx,
         }
     }
+}
+
+/// Subscribe to subagent stream events (for daemon → WS forwarding).
+/// Returns a broadcast receiver that lives independently of agent turns.
+pub async fn subscribe_stream_events() -> broadcast::Receiver<StreamEvent> {
+    let mgr = MANAGER.read().await;
+    mgr.stream_broadcast_tx.subscribe()
 }
 
 /// Subscribe to real-time sub-agent updates. Returns a receiver.
@@ -156,7 +173,16 @@ async fn spawn_sub_agent(
         hex::encode(&buf)
     };
 
-    let (provider, system_prompt, cwd, _provider_name, _model_name, sandbox, allowed_paths) = {
+    let (
+        provider,
+        system_prompt,
+        cwd,
+        _provider_name,
+        _model_name,
+        sandbox,
+        allowed_paths,
+        stream_broadcast_tx,
+    ) = {
         let mgr = MANAGER.read().await;
         let provider = mgr
             .provider
@@ -171,7 +197,8 @@ async fn spawn_sub_agent(
         let mn = mgr.model_name.clone().unwrap_or_default();
         let sandbox = mgr.sandbox.clone();
         let allowed_paths = mgr.allowed_paths.clone();
-        (provider, sp, cwd, pn, mn, sandbox, allowed_paths)
+        let stream_tx = mgr.stream_broadcast_tx.clone();
+        (provider, sp, cwd, pn, mn, sandbox, allowed_paths, stream_tx)
     };
 
     let entry = SubAgentEntry {
@@ -189,9 +216,22 @@ async fn spawn_sub_agent(
         chat_messages: Vec::new(),
     };
 
+    // Create a dedicated cancel token for this subagent
+    let sub_cancel = tokio_util::sync::CancellationToken::new();
+    // If parent has a cancel token, link it so aborting the parent also aborts subagents
+    if let Some(ref parent_cancel) = cancel {
+        let child = sub_cancel.clone();
+        let parent = parent_cancel.clone();
+        tokio::spawn(async move {
+            parent.cancelled().await;
+            child.cancel();
+        });
+    }
+
     {
         let mut mgr = MANAGER.write().await;
         mgr.entries.insert(id.clone(), entry);
+        mgr.cancel_tokens.insert(id.clone(), sub_cancel.clone());
     }
 
     let agent_id = id.clone();
@@ -206,7 +246,8 @@ async fn spawn_sub_agent(
             cwd,
             sandbox,
             allowed_paths,
-            cancel,
+            Some(sub_cancel),
+            stream_broadcast_tx,
         )
         .await;
     });
@@ -226,6 +267,7 @@ async fn run_sub_agent(
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
     allowed_paths: Option<Vec<std::path::PathBuf>>,
     cancel: Option<tokio_util::sync::CancellationToken>,
+    stream_broadcast_tx: broadcast::Sender<StreamEvent>,
 ) {
     let mut history = MessageHistory::new();
     history.add_user_message(&task);
@@ -396,10 +438,11 @@ async fn run_sub_agent(
             }
         }
 
-        // Push real-time update to TUI
+        // Push real-time update to TUI (in-process)
         if let Some(ref tx) = update_tx {
             let _ = tx.try_send(SubAgentUpdate {
                 id: id.clone(),
+                task: task.clone(),
                 chat_messages: chat_messages.clone(),
                 status: "running".to_string(),
                 turns,
@@ -408,6 +451,20 @@ async fn run_sub_agent(
                 output_tokens: total_output,
                 error: None,
             });
+        }
+        // Push via stream events (daemon mode → TUI over WebSocket)
+        {
+            let _ = stream_broadcast_tx.send(build_stream_event(
+                &id,
+                &task,
+                "running",
+                turns,
+                max_turns,
+                total_input,
+                total_output,
+                None,
+                &chat_messages,
+            ));
         }
 
         if stop_reason != StopReason::ToolUse || pending_tools.is_empty() {
@@ -488,10 +545,11 @@ async fn run_sub_agent(
             }
         }
 
-        // Push tool results update to TUI
+        // Push tool results update to TUI (in-process)
         if let Some(ref tx) = update_tx {
             let _ = tx.try_send(SubAgentUpdate {
                 id: id.clone(),
+                task: task.clone(),
                 chat_messages: chat_messages.clone(),
                 status: "running".to_string(),
                 turns,
@@ -500,6 +558,20 @@ async fn run_sub_agent(
                 output_tokens: total_output,
                 error: None,
             });
+        }
+        // Push via stream events (daemon mode)
+        {
+            let _ = stream_broadcast_tx.send(build_stream_event(
+                &id,
+                &task,
+                "running",
+                turns,
+                max_turns,
+                total_input,
+                total_output,
+                None,
+                &chat_messages,
+            ));
         }
 
         history.add(lukan_core::models::messages::Message {
@@ -510,34 +582,61 @@ async fn run_sub_agent(
         });
     }
 
-    // Finalize
+    // Finalize — store only metadata, clear heavy data to avoid memory leak
     let final_status_str = format!("{final_status}");
     {
         let mut mgr = MANAGER.write().await;
+        mgr.cancel_tokens.remove(&id);
         if let Some(entry) = mgr.entries.get_mut(&id) {
             entry.status = final_status;
             entry.completed_at = Some(Utc::now());
             entry.turns = turns;
-            entry.text_output = text_output;
-            entry.chat_messages = chat_messages.clone();
+            // Truncate text_output to a reasonable size for SubAgentResult
+            if text_output.len() > 50_000 {
+                let half = 25_000;
+                entry.text_output = format!(
+                    "{}\n\n... (truncated) ...\n\n{}",
+                    &text_output[..half],
+                    &text_output[text_output.len() - half..]
+                );
+            } else {
+                entry.text_output = text_output;
+            }
+            // Clear chat_messages — they were already sent to TUI via updates
+            entry.chat_messages = Vec::new();
             entry.input_tokens = total_input;
             entry.output_tokens = total_output;
             entry.error = final_error.clone();
         }
     }
 
-    // Push final update to TUI
+    // Push final update to TUI (in-process) — includes full chat for last render
     if let Some(ref tx) = update_tx {
         let _ = tx.try_send(SubAgentUpdate {
             id: id.clone(),
-            chat_messages,
-            status: final_status_str,
+            task: task.clone(),
+            chat_messages: chat_messages.clone(),
+            status: final_status_str.clone(),
             turns,
             max_turns,
             input_tokens: total_input,
             output_tokens: total_output,
-            error: final_error,
+            error: final_error.clone(),
         });
+    }
+    // Push via stream events (daemon mode)
+    {
+        let _ = stream_broadcast_tx.send(build_stream_event(
+            &id,
+            &task,
+            &final_status_str,
+            turns,
+            max_turns,
+            total_input,
+            total_output,
+            final_error,
+            &chat_messages,
+        ));
     }
 
     info!(id, turns, "Sub-agent completed");
@@ -546,6 +645,58 @@ async fn run_sub_agent(
 async fn get_sub_agent(id: &str) -> Option<SubAgentEntry> {
     let mgr = MANAGER.read().await;
     mgr.entries.get(id).cloned()
+}
+
+/// Upsert a sub-agent entry from an external update (e.g. daemon stream event).
+/// This allows the TUI to track sub-agents running in the daemon process.
+pub async fn upsert_from_update(update: &SubAgentUpdate) {
+    let mut mgr = MANAGER.write().await;
+    let entry = mgr
+        .entries
+        .entry(update.id.clone())
+        .or_insert_with(|| SubAgentEntry {
+            id: update.id.clone(),
+            task: String::new(),
+            status: SubAgentStatus::Running,
+            started_at: Utc::now(),
+            completed_at: None,
+            turns: 0,
+            max_turns: update.max_turns,
+            text_output: String::new(),
+            input_tokens: 0,
+            output_tokens: 0,
+            error: None,
+            chat_messages: Vec::new(),
+        });
+    if !update.task.is_empty() {
+        entry.task = update.task.clone();
+    }
+    entry.turns = update.turns;
+    entry.max_turns = update.max_turns;
+    entry.input_tokens = update.input_tokens;
+    entry.output_tokens = update.output_tokens;
+    entry.error = update.error.clone();
+    entry.chat_messages = update.chat_messages.clone();
+    entry.status = match update.status.as_str() {
+        "completed" => SubAgentStatus::Completed,
+        "error" => SubAgentStatus::Error,
+        "aborted" => SubAgentStatus::Aborted,
+        _ => SubAgentStatus::Running,
+    };
+    if entry.status != SubAgentStatus::Running && entry.completed_at.is_none() {
+        entry.completed_at = Some(Utc::now());
+    }
+}
+
+/// Abort a running sub-agent by ID.
+pub async fn abort_sub_agent(id: &str) -> bool {
+    let mut mgr = MANAGER.write().await;
+    if let Some(token) = mgr.cancel_tokens.remove(id) {
+        token.cancel();
+        true
+    } else {
+        false
+    }
 }
 
 /// Get all sub-agent entries (for UI display)
@@ -1243,6 +1394,39 @@ impl Tool for ExploreTool {
             Ok(output) => Ok(ToolResult::success(output)),
             Err(e) => Ok(ToolResult::error(format!("Explore error: {e}"))),
         }
+    }
+}
+
+/// Build a StreamEvent::SubAgentUpdate for daemon→TUI forwarding.
+#[allow(clippy::too_many_arguments)]
+fn build_stream_event(
+    id: &str,
+    task: &str,
+    status: &str,
+    turns: usize,
+    max_turns: usize,
+    input_tokens: u64,
+    output_tokens: u64,
+    error: Option<String>,
+    chat_messages: &[SubAgentChatMsg],
+) -> StreamEvent {
+    use lukan_core::models::events::SubAgentChatMessage;
+    StreamEvent::SubAgentUpdate {
+        id: id.to_string(),
+        task: task.to_string(),
+        status: status.to_string(),
+        turns: turns as u32,
+        max_turns: max_turns as u32,
+        input_tokens,
+        output_tokens,
+        error,
+        chat_messages: chat_messages
+            .iter()
+            .map(|m| SubAgentChatMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+            })
+            .collect(),
     }
 }
 

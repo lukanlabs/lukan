@@ -328,17 +328,7 @@ pub async fn set_active_provider(
         config.config.model = model_str.clone();
 
         match create_provider(&config) {
-            Ok(new_provider) => {
-                let new_provider: Arc<dyn lukan_providers::Provider> = Arc::from(new_provider);
-
-                // Swap on legacy agent
-                {
-                    let mut agent_lock = state.agent.lock().await;
-                    if let Some(ref mut agent) = *agent_lock {
-                        agent.swap_provider(Arc::clone(&new_provider));
-                    }
-                }
-
+            Ok(_new_provider) => {
                 // Swap on all session agents
                 {
                     let mut sessions = state.sessions.lock().await;

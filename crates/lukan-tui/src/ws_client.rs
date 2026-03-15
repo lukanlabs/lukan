@@ -113,7 +113,13 @@ pub enum OutMessage {
 #[derive(Debug)]
 pub enum DaemonEvent {
     /// A stream event from the agent (text delta, tool use, approval, etc.)
-    Stream(StreamEvent),
+    /// The optional `saved_session_id` allows filtering by active session.
+    Stream(StreamEvent, Option<String>),
+    /// A user message broadcast from another client
+    UserMessage {
+        content: String,
+        saved_session_id: Option<String>,
+    },
     /// Initialization data from the daemon (session state, provider info)
     Init {
         session_id: String,
@@ -497,6 +503,23 @@ fn dispatch_message(text: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) {
                 .to_string();
             let _ = tx.send(DaemonEvent::Error(error));
         }
+        // ── User message broadcast from another client ──
+        "user_message" => {
+            let content = value
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let saved_session_id = value
+                .get("savedSessionId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let _ = tx.send(DaemonEvent::UserMessage {
+                content,
+                saved_session_id,
+            });
+        }
+
         // ── Ignore server housekeeping ──
         "auth_required"
         | "auth_ok"
@@ -519,13 +542,19 @@ fn dispatch_message(text: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) {
         | "mode_changed" => {}
 
         // ── StreamEvent types — deserialize and forward ──
-        _ => match serde_json::from_str::<StreamEvent>(text) {
-            Ok(ev) => {
-                let _ = tx.send(DaemonEvent::Stream(ev));
+        _ => {
+            let saved_session_id = value
+                .get("savedSessionId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            match serde_json::from_str::<StreamEvent>(text) {
+                Ok(ev) => {
+                    let _ = tx.send(DaemonEvent::Stream(ev, saved_session_id));
+                }
+                Err(_) => {
+                    // Unknown message type — ignore silently
+                }
             }
-            Err(_) => {
-                // Unknown message type — ignore silently
-            }
-        },
+        }
     }
 }

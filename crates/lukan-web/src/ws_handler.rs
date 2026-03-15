@@ -199,18 +199,19 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
     {
         let mut agent_lock = state.agent.lock().await;
         if let Some(ref mut agent) = *agent_lock
-            && let Err(e) = agent.save_session_public().await
+            && let Err(e) = agent.save_session_if_not_stale().await
         {
             error!(conn_id, error = %e, "Failed to save session on disconnect");
         }
     }
 
-    // Save all multi-tab sessions
+    // Save all multi-tab sessions (only if not stale, to avoid overwriting
+    // newer data written by another client like the web UI)
     {
         let mut sessions = state.sessions.lock().await;
         for (tab_id, session) in sessions.iter_mut() {
             if let Some(ref mut agent) = session.agent
-                && let Err(e) = agent.save_session_public().await
+                && let Err(e) = agent.save_session_if_not_stale().await
             {
                 error!(conn_id, tab_id, error = %e, "Failed to save tab session on disconnect");
             }
@@ -1723,18 +1724,19 @@ async fn handle_load_session(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
-    // Save current session first (session or legacy)
+    // Save current session first (only if not stale, to avoid overwriting
+    // newer data written by another client)
     if let Some(tid) = tab_id {
         let mut sessions = state.sessions.lock().await;
         if let Some(session) = sessions.get_mut(tid)
             && let Some(ref mut agent) = session.agent
         {
-            let _ = agent.save_session_public().await;
+            let _ = agent.save_session_if_not_stale().await;
         }
     } else {
         let mut agent_lock = state.agent.lock().await;
         if let Some(ref mut agent) = *agent_lock {
-            let _ = agent.save_session_public().await;
+            let _ = agent.save_session_if_not_stale().await;
         }
     }
 
@@ -1794,18 +1796,19 @@ async fn handle_new_session(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
-    // Save current session (session or legacy)
+    // Save current session (only if not stale, to avoid overwriting
+    // newer data written by another client)
     if let Some(tid) = tab_id {
         let mut sessions = state.sessions.lock().await;
         if let Some(session) = sessions.get_mut(tid)
             && let Some(ref mut agent) = session.agent
         {
-            let _ = agent.save_session_public().await;
+            let _ = agent.save_session_if_not_stale().await;
         }
     } else {
         let mut agent_lock = state.agent.lock().await;
         if let Some(ref mut agent) = *agent_lock {
-            let _ = agent.save_session_public().await;
+            let _ = agent.save_session_if_not_stale().await;
         }
     }
 
@@ -1866,9 +1869,9 @@ async fn handle_destroy_agent_tab(
 ) {
     let mut sessions = state.sessions.lock().await;
     if let Some(mut session) = sessions.remove(tab_id) {
-        // Save session before destroying
+        // Save session before destroying (only if not stale)
         if let Some(ref mut agent) = session.agent {
-            let _ = agent.save_session_public().await;
+            let _ = agent.save_session_if_not_stale().await;
         }
     }
 }

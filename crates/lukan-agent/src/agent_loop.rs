@@ -408,6 +408,38 @@ impl AgentLoop {
         self.save_session().await
     }
 
+    /// Save session to disk only if our in-memory copy is not stale.
+    /// If another client has written a newer version to disk, reload from
+    /// disk instead of overwriting with our (potentially outdated) data.
+    pub async fn save_session_if_not_stale(&mut self) -> Result<()> {
+        let disk_session = match SessionManager::load(&self.session.id).await {
+            Ok(Some(s)) => s,
+            Ok(None) => return self.save_session().await, // file gone, safe to write
+            Err(_) => return self.save_session().await,   // can't read, try saving anyway
+        };
+
+        if disk_session.updated_at > self.session.updated_at {
+            // Disk is newer — another client updated this session.
+            // Reload instead of overwriting.
+            info!(
+                session_id = %self.session.id,
+                in_memory = %self.session.updated_at,
+                on_disk = %disk_session.updated_at,
+                "Skipping save: disk session is newer (updated by another client)"
+            );
+            self.history = MessageHistory::new();
+            self.history.load_from_json(disk_session.messages.clone());
+            self.input_tokens = disk_session.total_input_tokens;
+            self.output_tokens = disk_session.total_output_tokens;
+            self.last_context_size = disk_session.last_context_size;
+            self.last_memory_update_tokens = disk_session.last_memory_update_tokens;
+            self.session = disk_session;
+            Ok(())
+        } else {
+            self.save_session().await
+        }
+    }
+
     /// Reload session from disk if another process has updated it.
     /// Compares the on-disk `updated_at` with our in-memory copy;
     /// if the disk version is newer, replaces our history and metadata.

@@ -96,11 +96,11 @@ pub async fn destroy_agent_tab(
         // Cancel any running turn
         session.generation.fetch_add(1, Ordering::SeqCst);
         if let Some(mut recovered) = session.cancel_running_turn().await {
-            let _ = recovered.save_session_public().await;
+            let _ = recovered.save_session_if_not_stale().await;
         }
-        // Save current agent session
+        // Save current agent session (only if not stale)
         if let Some(ref mut agent) = session.agent {
-            let _ = agent.save_session_public().await;
+            let _ = agent.save_session_if_not_stale().await;
         }
     }
     Ok(())
@@ -676,12 +676,12 @@ pub async fn load_session(
         // Cancel any running turn and recover the agent
         session.generation.fetch_add(1, Ordering::SeqCst);
         if let Some(mut recovered) = session.cancel_running_turn().await {
-            let _ = recovered.save_session_public().await;
+            let _ = recovered.save_session_if_not_stale().await;
         }
 
-        // Save current session if agent exists
+        // Save current session if agent exists (only if not stale)
         if let Some(ref mut agent) = session.agent {
-            let _ = agent.save_session_public().await;
+            let _ = agent.save_session_if_not_stale().await;
         }
         session.agent = None;
     }
@@ -742,12 +742,12 @@ pub async fn new_session(
         // Cancel any running turn
         session.generation.fetch_add(1, Ordering::SeqCst);
         if let Some(mut recovered) = session.cancel_running_turn().await {
-            let _ = recovered.save_session_public().await;
+            let _ = recovered.save_session_if_not_stale().await;
         }
 
-        // Save current session
+        // Save current session (only if not stale)
         if let Some(ref mut agent) = session.agent {
-            let _ = agent.save_session_public().await;
+            let _ = agent.save_session_if_not_stale().await;
         }
         session.agent = None;
     }

@@ -3359,9 +3359,10 @@ impl App {
             }
         }
 
-        // Save session before exiting so no conversation is lost
+        // Save session before exiting (only if not stale, to avoid
+        // overwriting newer data written by another client)
         if let Some(ref mut agent) = self.agent
-            && let Err(e) = agent.save_session_public().await
+            && let Err(e) = agent.save_session_if_not_stale().await
         {
             tracing::warn!(error = %e, "Failed to save session on exit");
         }
@@ -4576,8 +4577,35 @@ impl App {
     fn handle_daemon_event(&mut self, event: crate::ws_client::DaemonEvent) {
         use crate::ws_client::DaemonEvent;
         match event {
-            DaemonEvent::Stream(stream_event) => {
+            DaemonEvent::Stream(stream_event, saved_session_id) => {
+                // Only process stream events for our current session
+                if let Some(ref broadcast_sid) = saved_session_id {
+                    if let Some(ref our_sid) = self.session_id {
+                        if broadcast_sid != our_sid {
+                            return; // Not our session, ignore
+                        }
+                    } else {
+                        return; // No session selected, ignore broadcasts
+                    }
+                }
                 self.handle_stream_event(stream_event);
+            }
+            DaemonEvent::UserMessage {
+                content,
+                saved_session_id,
+            } => {
+                // Only show user messages for our current session
+                if let Some(ref broadcast_sid) = saved_session_id {
+                    if let Some(ref our_sid) = self.session_id {
+                        if broadcast_sid != our_sid {
+                            return; // Not our session, ignore
+                        }
+                    } else {
+                        return; // No session selected, ignore
+                    }
+                }
+                self.messages.push(ChatMessage::new("user", &content));
+                self.force_redraw = true;
             }
             DaemonEvent::Init {
                 session_id,

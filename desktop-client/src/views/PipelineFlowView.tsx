@@ -75,6 +75,8 @@ interface StepNodeData {
   label: string;
   prompt: string;
   stepId: string;
+  model?: string;
+  provider?: string;
   stepRun?: StepRun;
   stepIndex: number;
   totalSteps: number;
@@ -100,7 +102,7 @@ const menuItemStyle: React.CSSProperties = {
 };
 
 function StepNode({ data }: { data: StepNodeData }) {
-  const { label, stepRun, stepId, stepIndex, totalSteps, onViewOutput, onEditStep, onDeleteStep } = data;
+  const { label, stepRun, stepId, stepIndex, totalSteps, model, provider, onViewOutput, onEditStep, onDeleteStep } = data;
   const [menuOpen, setMenuOpen] = useState(false);
   const status = stepRun?.status;
   const c = (status && STATUS_COLOR[status]) || "#3c3c3c";
@@ -203,6 +205,13 @@ function StepNode({ data }: { data: StepNodeData }) {
           )}
         </div>
       </div>
+
+      {/* Model badge */}
+      {(model || provider) && (
+        <div style={{ padding: "2px 8px", fontSize: 8, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {model || provider}
+        </div>
+      )}
 
       {/* Stats */}
       {stepRun && status !== "pending" && (
@@ -1023,6 +1032,8 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
           label: step.name,
           prompt: step.prompt,
           stepId: step.id,
+          model: step.model,
+          provider: step.provider,
           stepRun: srMap.get(step.id),
           stepIndex: idx,
           totalSteps: detail.steps.length,

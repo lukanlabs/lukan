@@ -56,7 +56,11 @@ function triggerLabel(trigger: PipelineTrigger): string {
   if (trigger.type === "schedule" && trigger.schedule) return trigger.schedule;
   if (trigger.type === "webhook") return "webhook";
   if (trigger.type === "event") return `event:${trigger.source ?? ""}`;
-  if (trigger.type === "fileWatch") return `watch:${trigger.path ?? ""}`;
+  if (trigger.type === "fileWatch") {
+    const p = trigger.path ?? "";
+    const name = p.split("/").pop() || p;
+    return `watch:${name}`;
+  }
   return "manual";
 }
 
@@ -381,11 +385,9 @@ export function PipelinesPanel() {
                   {p.name}
                 </span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--text-muted)" }}>
-                <span>{p.steps.length} steps</span>
-                <span style={{ color: "var(--text-faint)" }}>|</span>
-                <Clock size={10} />
-                <span>{triggerLabel(p.trigger)}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--text-muted)", minWidth: 0 }} title={triggerLabel(p.trigger)}>
+                <Clock size={10} style={{ flexShrink: 0 }} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{triggerLabel(p.trigger)}</span>
               </div>
             </div>
             <button

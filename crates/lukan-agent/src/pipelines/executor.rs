@@ -279,9 +279,9 @@ pub async fn execute_pipeline_full(
                 };
 
                 match sr.result {
-                    Ok((output, token_usage, turns)) => {
+                    Ok((clean_output, display_output, token_usage, turns)) => {
                         run.step_runs[sr.step_run_idx].status = "success".to_string();
-                        run.step_runs[sr.step_run_idx].output = output.clone();
+                        run.step_runs[sr.step_run_idx].output = display_output; // UI sees tool log
                         run.step_runs[sr.step_run_idx].token_usage = token_usage.clone();
                         run.step_runs[sr.step_run_idx].turns = turns;
                         run.step_runs[sr.step_run_idx].completed_at =
@@ -293,10 +293,11 @@ pub async fn execute_pipeline_full(
                         run.token_usage.cache_creation += token_usage.cache_creation;
                         run.token_usage.cache_read += token_usage.cache_read;
 
+                        // Clean output (without tool log) goes to next step
                         step_outputs
                             .lock()
                             .await
-                            .insert(sr.step_id.clone(), output);
+                            .insert(sr.step_id.clone(), clean_output);
                     }
                     Err(e) => {
                         let error_msg = format!("{e}");
@@ -366,7 +367,7 @@ pub async fn execute_pipeline_full(
 struct StepResult {
     step_id: String,
     step_run_idx: usize,
-    result: Result<(String, PipelineTokenUsage, u32)>,
+    result: Result<(String, String, PipelineTokenUsage, u32)>,
     on_error: Option<String>,
 }
 
@@ -449,9 +450,9 @@ async fn execute_single_step(
     progress_saver.await.ok();
 
     match step_result {
-        Ok((output, token_usage, turns)) => {
+        Ok((clean_output, display_output, token_usage, turns)) => {
             run.step_runs[step_run_idx].status = "success".to_string();
-            run.step_runs[step_run_idx].output = output.clone();
+            run.step_runs[step_run_idx].output = display_output; // UI sees tool log
             run.step_runs[step_run_idx].token_usage = token_usage.clone();
             run.step_runs[step_run_idx].turns = turns;
             run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
@@ -462,10 +463,11 @@ async fn execute_single_step(
             run.token_usage.cache_creation += token_usage.cache_creation;
             run.token_usage.cache_read += token_usage.cache_read;
 
+            // Clean output (without tool log) goes to next step
             step_outputs
                 .lock()
                 .await
-                .insert(step_id.to_string(), output);
+                .insert(step_id.to_string(), clean_output);
             false
         }
         Err(e) => {
@@ -502,7 +504,7 @@ async fn execute_step_with_retry_live(
     config: &ResolvedConfig,
     cancel_token: Option<&CancellationToken>,
     progress: Option<Arc<Mutex<StepProgress>>>,
-) -> Result<(String, PipelineTokenUsage, u32)> {
+) -> Result<(String, String, PipelineTokenUsage, u32)> {
     match execute_step_live(step, prompt, config, cancel_token, progress.clone()).await {
         Ok(result) => Ok(result),
         Err(e) => {
@@ -568,7 +570,7 @@ async fn execute_step_live(
     base_config: &ResolvedConfig,
     cancel_token: Option<&CancellationToken>,
     progress: Option<Arc<Mutex<StepProgress>>>,
-) -> Result<(String, PipelineTokenUsage, u32)> {
+) -> Result<(String, String, PipelineTokenUsage, u32)> {
     // Build config with overrides
     let mut config = base_config.clone();
     if let Some(ref p) = step.provider {
@@ -762,9 +764,9 @@ async fn execute_step_live(
     // Always abort the agent task first
     agent_handle.abort();
 
-    // Prepend tool activity log to output for visibility
-    let final_output = if tool_log.is_empty() {
-        output
+    // Build display output (with tool log for UI) separate from clean output (for next step)
+    let display_output = if tool_log.is_empty() {
+        output.clone()
     } else {
         format!("[tools used]\n{tool_log}\n[output]\n{output}")
     };
@@ -772,28 +774,28 @@ async fn execute_step_live(
     match result {
         Err(_) => {
             // Timed out
-            if final_output.is_empty() {
+            if output.is_empty() {
                 return Err(anyhow::anyhow!(
                     "Step timed out after {timeout_secs}s without producing output.\nTool activity:\n{tool_log}"
                 ));
             }
-            Ok((final_output, token_usage, turns))
+            // output = clean (for next step), display_output = with tool log (for UI)
+            Ok((output, display_output, token_usage, turns))
         }
         Ok(Err("cancelled")) => {
-            if final_output.is_empty() {
+            if output.is_empty() {
                 Err(anyhow::anyhow!("Step cancelled.\nTool activity:\n{tool_log}"))
             } else {
-                // Return partial output on cancel
-                Ok((final_output, token_usage, turns))
+                Ok((output, display_output, token_usage, turns))
             }
         }
         Ok(_) => {
-            if final_output.is_empty() {
+            if output.is_empty() {
                 return Err(anyhow::anyhow!(
                     "Step completed {turns} turns without producing text output.\nTool activity:\n{tool_log}"
                 ));
             }
-            Ok((final_output, token_usage, turns))
+            Ok((output, display_output, token_usage, turns))
         }
     }
 }

@@ -603,17 +603,6 @@ impl App {
         }
     }
 
-    /// Create or get the agent loop, initializing it on first use (async)
-    async fn ensure_agent(&mut self) -> &mut AgentLoop {
-        if self.agent.is_none() {
-            let agent = self.create_agent().await;
-            self.session_id = Some(agent.session_id().to_string());
-            self.agent = Some(agent);
-        }
-
-        self.agent.as_mut().unwrap()
-    }
-
     /// Create a new AgentLoop with a fresh session
     async fn create_agent(&mut self) -> AgentLoop {
         let system_prompt = build_system_prompt_with_opts(self.browser_tools).await;
@@ -1661,7 +1650,7 @@ impl App {
                 } else if self.subagent_picker.is_some() {
                     let hint = match self.subagent_picker.as_ref().map(|p| p.view) {
                         Some(SubAgentPickerView::List) => {
-                            "↑↓ navigate · Enter view · ESC close"
+                            "↑↓ navigate · Enter view · k kill · ESC close"
                         }
                         Some(SubAgentPickerView::ChatDetail) => "↑↓ scroll · ESC back",
                         None => "",
@@ -2561,6 +2550,60 @@ impl App {
                                                     self.subagent_picker = None;
                                                     self.force_redraw = true;
                                                 }
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Char('k') => {
+                                        // Kill selected subagent
+                                        if let Some(ref picker) = self.subagent_picker
+                                            && picker.view == SubAgentPickerView::List
+                                            && let Some(entry) = picker.selected_entry()
+                                        {
+                                            let entry_id = entry.id.clone();
+                                            let killed = lukan_agent::sub_agent::abort_sub_agent(&entry_id).await;
+                                            if killed {
+                                                self.messages.push(ChatMessage::new(
+                                                    "system",
+                                                    format!("SubAgent {entry_id} killed"),
+                                                ));
+                                            }
+                                            // Refresh picker
+                                            let agents = get_all_sub_agents().await;
+                                            if agents.is_empty() {
+                                                self.subagent_picker = None;
+                                            } else {
+                                                let entries: Vec<SubAgentDisplayEntry> = agents
+                                                    .iter()
+                                                    .map(|a| {
+                                                        let elapsed = if a.status == lukan_agent::sub_agent::SubAgentStatus::Running {
+                                                            let secs = chrono::Utc::now()
+                                                                .signed_duration_since(a.started_at)
+                                                                .num_seconds();
+                                                            format!("{secs}s running")
+                                                        } else {
+                                                            a.completed_at
+                                                                .map(|c| {
+                                                                    let secs = c.signed_duration_since(a.started_at).num_seconds();
+                                                                    format!("{secs}s")
+                                                                })
+                                                                .unwrap_or_else(|| "?".to_string())
+                                                        };
+                                                        let task_preview = if a.task.len() > 60 {
+                                                            let end = a.task.floor_char_boundary(57);
+                                                            format!("{}...", &a.task[..end])
+                                                        } else {
+                                                            a.task.clone()
+                                                        };
+                                                        SubAgentDisplayEntry {
+                                                            id: a.id.clone(),
+                                                            task: task_preview,
+                                                            status: format!("{}", a.status),
+                                                            turns: format!("{}/{}", a.turns, a.max_turns),
+                                                            elapsed,
+                                                        }
+                                                    })
+                                                    .collect();
+                                                self.subagent_picker = Some(SubAgentPicker::new(entries));
                                             }
                                         }
                                     }
@@ -4478,22 +4521,41 @@ impl App {
     }
 
     fn handle_subagent_update(&mut self, update: SubAgentUpdate) {
-        if let Some(ref mut picker) = self.subagent_picker
-            && picker.view == SubAgentPickerView::ChatDetail
-            && picker.detail_id == update.id
-        {
-            picker.detail_status = update.status;
-            picker.detail_turns = format!("{}/{}", update.turns, update.max_turns);
-            picker.detail_tokens = format!(
-                "{}in/{}out tokens",
-                update.input_tokens, update.output_tokens
-            );
-            picker.detail_error = update.error;
-            picker.detail_messages = update
-                .chat_messages
-                .iter()
-                .map(|m| ChatMessage::new(&m.role, &m.content))
-                .collect();
+        // Upsert into global manager so Alt+S can find daemon subagents
+        let update_for_upsert = update.clone();
+        tokio::spawn(async move {
+            lukan_agent::sub_agent::upsert_from_update(&update_for_upsert).await;
+        });
+
+        // Show message when subagent completes or errors
+        if update.status == "completed" || update.status == "error" || update.status == "aborted" {
+            let task_preview = if update.task.len() > 50 {
+                format!("{}...", &update.task[..update.task.floor_char_boundary(47)])
+            } else {
+                update.task.clone()
+            };
+            self.messages.push(ChatMessage::new(
+                "system",
+                format!("SubAgent {} {}: {}", update.id, update.status, task_preview),
+            ));
+        }
+
+        if let Some(ref mut picker) = self.subagent_picker {
+            // Update detail view if viewing this specific agent
+            if picker.view == SubAgentPickerView::ChatDetail && picker.detail_id == update.id {
+                picker.detail_status = update.status;
+                picker.detail_turns = format!("{}/{}", update.turns, update.max_turns);
+                picker.detail_tokens = format!(
+                    "{}in/{}out tokens",
+                    update.input_tokens, update.output_tokens
+                );
+                picker.detail_error = update.error;
+                picker.detail_messages = update
+                    .chat_messages
+                    .iter()
+                    .map(|m| ChatMessage::new(&m.role, &m.content))
+                    .collect();
+            }
         }
     }
 
@@ -5075,6 +5137,37 @@ impl App {
                     self.messages.push(ChatMessage::new("assistant", content));
                 }
                 self.messages.push(ChatMessage::new("user", &text));
+            }
+            StreamEvent::SubAgentUpdate {
+                id,
+                task,
+                status,
+                turns,
+                max_turns,
+                input_tokens,
+                output_tokens,
+                error,
+                chat_messages,
+            } => {
+                // Convert daemon stream event into the in-process SubAgentUpdate format
+                let update = SubAgentUpdate {
+                    id,
+                    task,
+                    status,
+                    turns: turns as usize,
+                    max_turns: max_turns as usize,
+                    input_tokens,
+                    output_tokens,
+                    error,
+                    chat_messages: chat_messages
+                        .into_iter()
+                        .map(|m| lukan_agent::sub_agent::SubAgentChatMsg {
+                            role: m.role,
+                            content: m.content,
+                        })
+                        .collect(),
+                };
+                self.handle_subagent_update(update);
             }
             _ => {}
         }

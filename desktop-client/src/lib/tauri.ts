@@ -349,6 +349,8 @@ export const getPipelineDetail = (id: string) =>
   getTransport().call<PipelineDetail>("get_pipeline_detail", { id });
 export const triggerPipeline = (id: string, input?: string) =>
   getTransport().call<void>("trigger_pipeline", { id, input: input ?? null });
+export const cancelPipeline = (id: string) =>
+  getTransport().call<void>("cancel_pipeline", { id });
 export const getPipelineRun = (pipelineId: string, runId: string) =>
   getTransport().call<PipelineRun>("get_pipeline_run", { pipelineId, runId });
 export const onPipelineNotification = (cb: (data: unknown) => void) =>

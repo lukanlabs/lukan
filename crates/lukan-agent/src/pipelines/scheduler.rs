@@ -16,7 +16,7 @@ use lukan_core::pipelines::{
     PipelineSummary, PipelineTrigger, PipelineUpdateInput,
 };
 
-use super::executor::execute_pipeline;
+use super::executor::execute_pipeline_full;
 
 /// Notification emitted when a pipeline run completes
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +51,8 @@ pub struct PipelineScheduler {
     config: Mutex<ResolvedConfig>,
     timers: Mutex<HashMap<String, JoinHandle<()>>>,
     running_pipelines: Arc<Mutex<HashSet<String>>>,
+    /// Per-run cancellation tokens: keyed by pipeline_id
+    run_cancel_tokens: Arc<Mutex<HashMap<String, CancellationToken>>>,
     cancel_token: CancellationToken,
     notify_tx: broadcast::Sender<PipelineNotification>,
     started: AtomicBool,
@@ -64,6 +66,7 @@ impl PipelineScheduler {
             config: Mutex::new(config),
             timers: Mutex::new(HashMap::new()),
             running_pipelines: Arc::new(Mutex::new(HashSet::new())),
+            run_cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
             cancel_token: CancellationToken::new(),
             notify_tx,
             started: AtomicBool::new(false),
@@ -271,6 +274,22 @@ impl PipelineScheduler {
         PipelineManager::get_run(pipeline_id, run_id).await
     }
 
+    /// Cancel a running pipeline
+    pub async fn cancel_pipeline(&self, id: &str) -> Result<bool> {
+        let tokens = self.run_cancel_tokens.lock().await;
+        if let Some(token) = tokens.get(id) {
+            token.cancel();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Check if a pipeline is currently running
+    pub async fn is_pipeline_running(&self, id: &str) -> bool {
+        self.running_pipelines.lock().await.contains(id)
+    }
+
     /// Trigger a pipeline run manually
     pub async fn trigger_pipeline(&self, id: &str, input: Option<String>) -> Result<()> {
         let pipeline = PipelineManager::get(id)
@@ -279,9 +298,17 @@ impl PipelineScheduler {
 
         let config = self.config.lock().await.clone();
         let running_pipelines = Arc::clone(&self.running_pipelines);
+        let run_cancel_tokens = Arc::clone(&self.run_cancel_tokens);
         let notify_tx = self.notify_tx.clone();
         let pipeline_id = pipeline.id.clone();
         let pipeline_name = pipeline.name.clone();
+
+        // Create a cancellation token for this run
+        let run_token = CancellationToken::new();
+        run_cancel_tokens
+            .lock()
+            .await
+            .insert(pipeline_id.clone(), run_token.clone());
 
         tokio::spawn(async move {
             // Guard: skip if already running
@@ -294,9 +321,12 @@ impl PipelineScheduler {
                 running.insert(pipeline_id.clone());
             }
 
-            let run = execute_pipeline(&pipeline, input, &config).await;
+            let run = execute_pipeline_full(
+                &pipeline, input, &config, run_token, Some(notify_tx.clone()),
+            )
+            .await;
 
-            // Emit notification
+            // Emit completion notification
             let summary = if run.status == "success" {
                 let step_count = run.step_runs.iter().filter(|s| s.status == "success").count();
                 format!("{step_count} steps completed successfully")
@@ -316,6 +346,7 @@ impl PipelineScheduler {
             let _ = notify_tx.send(notification);
 
             running_pipelines.lock().await.remove(&pipeline_id);
+            run_cancel_tokens.lock().await.remove(&pipeline_id);
         });
 
         Ok(())
@@ -372,7 +403,11 @@ impl PipelineScheduler {
                             running.insert(pipeline_id.clone());
                         }
 
-                        let run = execute_pipeline(&pipeline_clone, None, &config).await;
+                        let run = execute_pipeline_full(
+                            &pipeline_clone, None, &config,
+                            tokio_util::sync::CancellationToken::new(),
+                            Some(notify_tx.clone()),
+                        ).await;
 
                         let summary = if run.status == "success" {
                             let step_count = run.step_runs.iter().filter(|s| s.status == "success").count();
@@ -508,10 +543,12 @@ impl PipelineScheduler {
                             running.insert(pipeline_id.clone());
                         }
 
-                        let run = execute_pipeline(
+                        let run = execute_pipeline_full(
                             &pipeline_clone,
                             Some(event_json),
                             &config,
+                            tokio_util::sync::CancellationToken::new(),
+                            Some(notify_tx.clone()),
                         )
                         .await;
 
@@ -601,10 +638,12 @@ impl PipelineScheduler {
                         }
 
                         let input = format!("File changed: {watch_path}");
-                        let run = execute_pipeline(
+                        let run = execute_pipeline_full(
                             &pipeline_clone,
                             Some(input),
                             &config,
+                            tokio_util::sync::CancellationToken::new(),
+                            Some(notify_tx.clone()),
                         )
                         .await;
 

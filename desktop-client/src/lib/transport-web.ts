@@ -1114,6 +1114,11 @@ export class WebTransport implements Transport {
           url: `/api/pipelines/${encodeURIComponent(args?.id as string)}/trigger`,
           body: { input: args?.input },
         };
+      case "cancel_pipeline":
+        return {
+          method: "POST",
+          url: `/api/pipelines/${encodeURIComponent(args?.id as string)}/cancel`,
+        };
       case "get_pipeline_run":
         return {
           method: "GET",

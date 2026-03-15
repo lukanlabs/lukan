@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::{Json, extract::Path, extract::Query, extract::State, http::StatusCode, response::IntoResponse};
 use lukan_core::pipelines::{PipelineCreateInput, PipelineManager, PipelineTrigger, PipelineUpdateInput};
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
 use crate::state::AppState;
 
@@ -114,12 +115,23 @@ pub async fn trigger_pipeline(
     // Get config and spawn execution in background
     let config = state.config.lock().await.clone();
     let pipeline_notify_tx = state.pipeline_notification_tx.clone();
+    let cancel_tokens = Arc::clone(&state.pipeline_cancel_tokens);
+    let cancel_token = CancellationToken::new();
+    cancel_tokens
+        .lock()
+        .await
+        .insert(id.clone(), cancel_token.clone());
+    let pipeline_id_for_cleanup = id.clone();
+
+    let run_notify_tx = pipeline_notify_tx.clone();
 
     tokio::spawn(async move {
-        let run =
-            lukan_agent::pipelines::executor::execute_pipeline(&pipeline, input, &config).await;
+        let run = lukan_agent::pipelines::executor::execute_pipeline_full(
+            &pipeline, input, &config, cancel_token, Some(run_notify_tx),
+        )
+        .await;
 
-        // Emit notification
+        // Emit completion notification
         let summary = if run.status == "success" {
             let step_count = run.step_runs.iter().filter(|s| s.status == "success").count();
             format!("{step_count} steps completed successfully")
@@ -151,6 +163,9 @@ pub async fn trigger_pipeline(
                 let _ = file.write_all(format!("{line}\n").as_bytes()).await;
             }
         }
+
+        // Cleanup cancel token
+        cancel_tokens.lock().await.remove(&pipeline_id_for_cleanup);
     });
 
     (
@@ -161,6 +176,28 @@ pub async fn trigger_pipeline(
         })),
     )
         .into_response()
+}
+
+/// POST /api/pipelines/:id/cancel — cancel a running pipeline
+pub async fn cancel_pipeline(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let tokens = state.pipeline_cancel_tokens.lock().await;
+    if let Some(token) = tokens.get(&id) {
+        token.cancel();
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "cancelled", "pipelineId": id })),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "status": "not_running", "pipelineId": id })),
+        )
+            .into_response()
+    }
 }
 
 #[derive(Deserialize)]

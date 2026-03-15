@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use lukan_agent::{AgentLoop, PipelineNotification, WorkerNotification};
 use lukan_core::config::ResolvedConfig;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse};
 use tokio::sync::{Mutex, broadcast, mpsc, watch};
+use tokio_util::sync::CancellationToken;
 
 use crate::protocol::ServerMessage;
 use crate::terminal::TerminalManager;
@@ -76,6 +78,8 @@ pub struct AppState {
     pub terminal_tx: broadcast::Sender<ServerMessage>,
     /// Broadcast channel for agent stream events (sent to all connected clients)
     pub stream_tx: broadcast::Sender<StreamBroadcast>,
+    /// Cancellation tokens for running pipeline executions (keyed by pipeline_id)
+    pub pipeline_cancel_tokens: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 impl AppState {
@@ -113,6 +117,7 @@ impl AppState {
             terminal_manager: TerminalManager::default(),
             terminal_tx,
             stream_tx,
+            pipeline_cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

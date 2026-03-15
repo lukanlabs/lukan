@@ -18,8 +18,6 @@ import type {
   PipelineDetail,
   PipelineRun,
   PipelineCreateInput,
-  PipelineStep,
-  StepConnection,
   PipelineTrigger,
 } from "../../../lib/types";
 import {
@@ -717,26 +715,6 @@ function CreateForm({
   const [watchPath, setWatchPath] = useState("");
   const [debounceSecs, setDebounceSecs] = useState("5");
 
-  // Steps
-  const [steps, setSteps] = useState<PipelineStep[]>([
-    { id: "step-1", name: "Step 1", prompt: "" },
-    { id: "step-2", name: "Step 2", prompt: "" },
-  ]);
-
-  const addStep = () => {
-    const n = steps.length + 1;
-    setSteps([...steps, { id: `step-${n}`, name: `Step ${n}`, prompt: "" }]);
-  };
-
-  const removeStep = (idx: number) => {
-    if (steps.length <= 1) return;
-    setSteps(steps.filter((_, i) => i !== idx));
-  };
-
-  const updateStep = (idx: number, field: "name" | "prompt", value: string) => {
-    setSteps(steps.map((s, i) => (i === idx ? { ...s, [field]: value } : s)));
-  };
-
   const validateSchedule = (s: string): boolean => {
     const everyMatch = s.match(/^every:(\d+)([smh])$/);
     if (everyMatch) {
@@ -765,21 +743,9 @@ function CreateForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    if (steps.some((s) => !s.prompt.trim())) return;
     if (triggerType === "schedule" && !validateSchedule(schedule)) return;
     if (triggerType === "event" && !eventSource.trim()) return;
     if (triggerType === "fileWatch" && !watchPath.trim()) return;
-
-    // Build linear connections: step-1 → step-2 → step-3 ...
-    const connections: StepConnection[] = [];
-    for (let i = 0; i < steps.length; i++) {
-      if (i === 0) {
-        connections.push({ fromStep: "__trigger__", toStep: steps[i].id });
-      }
-      if (i < steps.length - 1) {
-        connections.push({ fromStep: steps[i].id, toStep: steps[i + 1].id });
-      }
-    }
 
     const trigger: PipelineTrigger =
       triggerType === "schedule"
@@ -796,12 +762,8 @@ function CreateForm({
       name: name.trim(),
       description: description.trim() || undefined,
       trigger,
-      steps: steps.map((s) => ({
-        id: s.id,
-        name: s.name.trim(),
-        prompt: s.prompt.trim(),
-      })),
-      connections,
+      steps: [],
+      connections: [],
       enabled: true,
     });
   };
@@ -818,7 +780,6 @@ function CreateForm({
     boxSizing: "border-box",
   };
 
-  const allStepsValid = steps.every((s) => s.prompt.trim());
   const triggerValid =
     triggerType === "manual" || triggerType === "webhook" ||
     (triggerType === "schedule" && schedule.trim()) ||
@@ -977,76 +938,8 @@ function CreateForm({
         )}
       </div>
 
-      {/* Steps */}
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-          <label style={{ fontSize: 11, color: "var(--text-muted)" }}>
-            Steps ({steps.length})
-          </label>
-          <button
-            type="button"
-            onClick={addStep}
-            style={{
-              border: "none",
-              background: "transparent",
-              color: "var(--accent, #a78bfa)",
-              cursor: "pointer",
-              fontSize: 10,
-              display: "flex",
-              alignItems: "center",
-              gap: 2,
-            }}
-          >
-            <Plus size={10} /> Add step
-          </button>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {steps.map((step, idx) => (
-            <div key={step.id} style={{ border: "1px solid var(--border)", borderRadius: 4, padding: "6px 8px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
-                <span style={{ fontSize: 10, color: "var(--text-faint)", fontWeight: 500 }}>
-                  {idx + 1}.
-                </span>
-                <input
-                  type="text"
-                  value={step.name}
-                  onChange={(e) => updateStep(idx, "name", e.target.value)}
-                  placeholder={`Step ${idx + 1}`}
-                  style={{ ...inputStyle, flex: 1 }}
-                />
-                {steps.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeStep(idx)}
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      color: "var(--danger, #ef4444)",
-                      cursor: "pointer",
-                      padding: 2,
-                      display: "flex",
-                      alignItems: "center",
-                    }}
-                  >
-                    <Trash2 size={10} />
-                  </button>
-                )}
-              </div>
-              <textarea
-                value={step.prompt}
-                onChange={(e) => updateStep(idx, "prompt", e.target.value)}
-                rows={2}
-                placeholder={idx === 0 ? "Summarize the following text..." : "Translate the text to Spanish: {{input}}"}
-                style={{ ...inputStyle, resize: "vertical", minHeight: 40 }}
-              />
-              {idx > 0 && (
-                <div style={{ fontSize: 9, color: "var(--text-faint)", marginTop: 2 }}>
-                  Use {"{{input}}"} to reference the previous step's output
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+      <div style={{ fontSize: 10, color: "var(--text-faint)", marginBottom: 10, padding: "6px 8px", border: "1px solid var(--border)", borderRadius: 4 }}>
+        Steps are added in the visual flow editor after creation
       </div>
 
       {/* Buttons */}
@@ -1068,16 +961,16 @@ function CreateForm({
         </button>
         <button
           type="submit"
-          disabled={!name.trim() || !allStepsValid || !triggerValid}
+          disabled={!name.trim() || !triggerValid}
           style={{
             border: "1px solid var(--accent, #a78bfa)",
             background: "var(--accent, #a78bfa)",
             color: "#fff",
-            cursor: !name.trim() || !allStepsValid || !triggerValid ? "not-allowed" : "pointer",
+            cursor: !name.trim() || !triggerValid ? "not-allowed" : "pointer",
             padding: "4px 10px",
             borderRadius: 4,
             fontSize: 11,
-            opacity: !name.trim() || !allStepsValid || !triggerValid ? 0.5 : 1,
+            opacity: !name.trim() || !triggerValid ? 0.5 : 1,
           }}
         >
           Create

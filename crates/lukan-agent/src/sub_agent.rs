@@ -44,6 +44,12 @@ pub async fn configure(
     mgr.allowed_paths = allowed_paths;
 }
 
+/// Set tool restrictions for sub-agents (inherited from parent)
+pub async fn set_tool_filter(filter: Option<Vec<String>>) {
+    let mut mgr = MANAGER.write().await;
+    mgr.tool_filter = filter;
+}
+
 // ── Manager ───────────────────────────────────────────────────────────────
 
 /// Real-time update pushed from a running sub-agent to the TUI
@@ -71,6 +77,8 @@ struct SubAgentManager {
     model_name: Option<String>,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
     allowed_paths: Option<Vec<std::path::PathBuf>>,
+    /// Tool restrictions inherited from the parent agent (None = all tools allowed)
+    tool_filter: Option<Vec<String>>,
     /// Channel to push real-time updates to the TUI (in-process mode)
     update_tx: Option<mpsc::Sender<SubAgentUpdate>>,
     /// Persistent broadcast channel for subagent stream events (daemon mode).
@@ -92,6 +100,7 @@ impl SubAgentManager {
             model_name: None,
             sandbox: None,
             allowed_paths: None,
+            tool_filter: None,
             update_tx: None,
             stream_broadcast_tx: broadcast_tx,
         }
@@ -278,12 +287,18 @@ async fn run_sub_agent(
         mgr.update_tx.clone()
     };
 
-    // Create tools but remove SubAgent/SubAgentResult to prevent recursion
-    let tools = create_default_registry();
-    // Tools we want to remove (they call themselves)
-    // ToolRegistry doesn't have unregister, so we recreate without them
-    // Actually, since SubAgent tools are registered by AgentLoop, not create_default_registry,
-    // the sub-agent's registry from create_default_registry won't have them. This is fine.
+    // Create tools — inherit tool restrictions from parent agent
+    let mut tools = create_default_registry();
+
+    // Apply tool filter from parent (prevents sub-agents from bypassing restrictions)
+    let tool_filter = {
+        let mgr = MANAGER.read().await;
+        mgr.tool_filter.clone()
+    };
+    if let Some(ref filter) = tool_filter {
+        let refs: Vec<&str> = filter.iter().map(|s| s.as_str()).collect();
+        tools.retain(&refs);
+    }
 
     let tools = Arc::new(tools);
     let read_files = Arc::new(Mutex::new(std::collections::HashSet::new()));
@@ -1008,6 +1023,15 @@ pub async fn run_explore(
 
     // Create a filtered tool registry with only read-only tools
     let mut tools = lukan_tools::create_default_registry();
+    // Apply parent's tool filter first, then restrict to explore-safe tools
+    let tool_filter = {
+        let mgr = MANAGER.read().await;
+        mgr.tool_filter.clone()
+    };
+    if let Some(ref filter) = tool_filter {
+        let refs: Vec<&str> = filter.iter().map(|s| s.as_str()).collect();
+        tools.retain(&refs);
+    }
     tools.retain(EXPLORE_TOOLS);
     let tools = Arc::new(tools);
 

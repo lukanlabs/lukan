@@ -6,6 +6,7 @@ use anyhow::Result;
 use rand::Rng;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use lukan_core::config::ResolvedConfig;
@@ -25,6 +26,27 @@ pub async fn execute_pipeline(
     pipeline: &PipelineDefinition,
     trigger_input: Option<String>,
     config: &ResolvedConfig,
+) -> PipelineRun {
+    execute_pipeline_full(pipeline, trigger_input, config, CancellationToken::new(), None).await
+}
+
+/// Execute a pipeline run with cancellation support
+pub async fn execute_pipeline_cancellable(
+    pipeline: &PipelineDefinition,
+    trigger_input: Option<String>,
+    config: &ResolvedConfig,
+    cancel_token: CancellationToken,
+) -> PipelineRun {
+    execute_pipeline_full(pipeline, trigger_input, config, cancel_token, None).await
+}
+
+/// Execute a pipeline run with cancellation and optional notification channel
+pub async fn execute_pipeline_full(
+    pipeline: &PipelineDefinition,
+    trigger_input: Option<String>,
+    config: &ResolvedConfig,
+    cancel_token: CancellationToken,
+    notify_tx: Option<tokio::sync::broadcast::Sender<crate::PipelineNotification>>,
 ) -> PipelineRun {
     let run_id = generate_run_id();
     info!(
@@ -65,6 +87,16 @@ pub async fn execute_pipeline(
         error!(error = %e, "Failed to save initial pipeline run");
     }
 
+    // Emit "started" notification (after save, so the run is on disk when frontend polls)
+    if let Some(ref tx) = notify_tx {
+        let _ = tx.send(crate::PipelineNotification {
+            pipeline_id: pipeline.id.clone(),
+            pipeline_name: pipeline.name.clone(),
+            status: "running".to_string(),
+            summary: "Pipeline started".to_string(),
+        });
+    }
+
     // Topological sort into levels (steps in the same level run in parallel)
     let levels = match topological_levels(pipeline) {
         Ok(lvls) => lvls,
@@ -99,8 +131,26 @@ pub async fn execute_pipeline(
     // Track which steps failed (for downstream skipping)
     let mut failed_steps: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // Shared run state for parallel progress saving
+    let shared_run_state: Arc<Mutex<PipelineRun>> = Arc::new(Mutex::new(run.clone()));
+
     // Execute level by level
     for level in &levels {
+        // Sync shared state with local run
+        *shared_run_state.lock().await = run.clone();
+
+        // Check for cancellation before each level
+        if cancel_token.is_cancelled() {
+            // Mark remaining pending steps as skipped
+            for sr in &mut run.step_runs {
+                if sr.status == "pending" || sr.status == "running" {
+                    sr.status = "skipped".to_string();
+                    sr.error = Some("Pipeline cancelled".to_string());
+                }
+            }
+            has_error = true;
+            break;
+        }
         if level.len() == 1 {
             // Single step in level — run sequentially (no JoinSet overhead)
             let step_id = &level[0];
@@ -111,6 +161,7 @@ pub async fn execute_pipeline(
                 &mut run,
                 &step_outputs,
                 &mut failed_steps,
+                &cancel_token,
             )
             .await;
         } else {
@@ -160,9 +211,49 @@ pub async fn execute_pipeline(
 
                 let config_clone = config.clone();
                 let sid = step_id.clone();
+                let ct = cancel_token.clone();
+                let shared_run = Arc::clone(&shared_run_state);
 
                 join_set.spawn(async move {
-                    let result = execute_step_with_retry(&step, &rendered_prompt, &config_clone).await;
+                    // Live progress for this parallel step
+                    let progress = Arc::new(Mutex::new(StepProgress::default()));
+                    let progress_clone = Arc::clone(&progress);
+                    let step_id_for_saver = sid.clone();
+                    let shared_run_for_saver = Arc::clone(&shared_run);
+                    let saver_cancel = CancellationToken::new();
+                    let saver_cancel_clone = saver_cancel.clone();
+
+                    // Background saver for this step
+                    let saver = tokio::spawn(async move {
+                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+                        interval.tick().await;
+                        loop {
+                            tokio::select! {
+                                _ = saver_cancel_clone.cancelled() => break,
+                                _ = interval.tick() => {
+                                    let p = progress_clone.lock().await;
+                                    let mut r = shared_run_for_saver.lock().await;
+                                    if let Some(sr) = r.step_runs.iter_mut().find(|s| s.step_id == step_id_for_saver) {
+                                        sr.output = p.output.clone();
+                                        sr.token_usage = p.token_usage.clone();
+                                        sr.turns = p.turns;
+                                        if !p.activity.is_empty() {
+                                            sr.error = Some(format!("[activity] {}", p.activity));
+                                        }
+                                    }
+                                    PipelineManager::save_run(&r).await.ok();
+                                }
+                            }
+                        }
+                    });
+
+                    let result = execute_step_with_retry_live(
+                        &step, &rendered_prompt, &config_clone, Some(&ct), Some(progress),
+                    ).await;
+
+                    saver_cancel.cancel();
+                    saver.await.ok();
+
                     StepResult {
                         step_id: sid,
                         step_run_idx,
@@ -172,8 +263,9 @@ pub async fn execute_pipeline(
                 });
             }
 
-            // Save progress (all steps in level are now "running")
+            // Save progress and sync shared state (all steps in level are now "running")
             PipelineManager::save_run(&run).await.ok();
+            *shared_run_state.lock().await = run.clone();
 
             // Collect results from all parallel steps
             while let Some(join_result) = join_set.join_next().await {
@@ -194,6 +286,7 @@ pub async fn execute_pipeline(
                         run.step_runs[sr.step_run_idx].turns = turns;
                         run.step_runs[sr.step_run_idx].completed_at =
                             Some(chrono::Utc::now().to_rfc3339());
+                        run.step_runs[sr.step_run_idx].error = None; // clear activity
 
                         run.token_usage.input += token_usage.input;
                         run.token_usage.output += token_usage.output;
@@ -225,6 +318,9 @@ pub async fn execute_pipeline(
                         }
                     }
                 }
+
+                // Save immediately after each step completes (don't wait for entire level)
+                PipelineManager::save_run(&run).await.ok();
             }
         }
 
@@ -282,6 +378,7 @@ async fn execute_single_step(
     run: &mut PipelineRun,
     step_outputs: &Arc<Mutex<HashMap<String, String>>>,
     failed_steps: &mut std::collections::HashSet<String>,
+    cancel_token: &CancellationToken,
 ) -> bool {
     let step = pipeline.steps.iter().find(|s| s.id == step_id).unwrap();
     let step_run_idx = run
@@ -314,7 +411,42 @@ async fn execute_single_step(
     run.step_runs[step_run_idx].started_at = Some(chrono::Utc::now().to_rfc3339());
     PipelineManager::save_run(run).await.ok();
 
-    let step_result = execute_step_with_retry(step, &rendered_prompt, config).await;
+    // Live progress: shared state updated by execute_step, saved periodically
+    let progress = Arc::new(Mutex::new(StepProgress::default()));
+    let progress_clone = Arc::clone(&progress);
+    let step_id_owned = step_id.to_string();
+    let save_cancel = CancellationToken::new();
+    let save_cancel_clone = save_cancel.clone();
+
+    // Background task: save partial progress every 2s
+    let mut run_snapshot = run.clone();
+    let progress_saver = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+        interval.tick().await; // skip first
+        loop {
+            tokio::select! {
+                _ = save_cancel_clone.cancelled() => break,
+                _ = interval.tick() => {
+                    let p = progress_clone.lock().await;
+                    if let Some(sr) = run_snapshot.step_runs.iter_mut().find(|s| s.step_id == step_id_owned) {
+                        sr.output = p.output.clone();
+                        sr.token_usage = p.token_usage.clone();
+                        sr.turns = p.turns;
+                        if !p.activity.is_empty() {
+                            sr.error = Some(format!("[activity] {}", p.activity));
+                        }
+                    }
+                    PipelineManager::save_run(&run_snapshot).await.ok();
+                }
+            }
+        }
+    });
+
+    let step_result = execute_step_with_retry_live(step, &rendered_prompt, config, Some(cancel_token), Some(Arc::clone(&progress))).await;
+
+    // Stop the progress saver
+    save_cancel.cancel();
+    progress_saver.await.ok();
 
     match step_result {
         Ok((output, token_usage, turns)) => {
@@ -323,6 +455,7 @@ async fn execute_single_step(
             run.step_runs[step_run_idx].token_usage = token_usage.clone();
             run.step_runs[step_run_idx].turns = turns;
             run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
+            run.step_runs[step_run_idx].error = None; // clear activity
 
             run.token_usage.input += token_usage.input;
             run.token_usage.output += token_usage.output;
@@ -340,6 +473,11 @@ async fn execute_single_step(
             run.step_runs[step_run_idx].status = "error".to_string();
             run.step_runs[step_run_idx].error = Some(error_msg.clone());
             run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
+            // Include partial output if any
+            let p = progress.lock().await;
+            if !p.output.is_empty() {
+                run.step_runs[step_run_idx].output = p.output.clone();
+            }
 
             let on_error = step.on_error.as_deref().unwrap_or("stop");
             if on_error == "skip" {
@@ -357,15 +495,20 @@ async fn execute_single_step(
     }
 }
 
-/// Execute a step with retry logic
-async fn execute_step_with_retry(
+/// Execute a step with retry logic and live progress
+async fn execute_step_with_retry_live(
     step: &lukan_core::pipelines::PipelineStep,
     prompt: &str,
     config: &ResolvedConfig,
+    cancel_token: Option<&CancellationToken>,
+    progress: Option<Arc<Mutex<StepProgress>>>,
 ) -> Result<(String, PipelineTokenUsage, u32)> {
-    match execute_step(step, prompt, config).await {
+    match execute_step_live(step, prompt, config, cancel_token, progress.clone()).await {
         Ok(result) => Ok(result),
         Err(e) => {
+            if cancel_token.map(|t| t.is_cancelled()).unwrap_or(false) {
+                return Err(e);
+            }
             let on_error = step.on_error.as_deref().unwrap_or("stop");
             if on_error.starts_with("retry:") {
                 let max_retries: u32 = on_error
@@ -374,8 +517,11 @@ async fn execute_step_with_retry(
                     .unwrap_or(1);
 
                 for attempt in 1..=max_retries {
+                    if cancel_token.map(|t| t.is_cancelled()).unwrap_or(false) {
+                        return Err(anyhow::anyhow!("Step cancelled"));
+                    }
                     debug!(step_id = step.id.as_str(), attempt, max_retries, "Retrying step");
-                    match execute_step(step, prompt, config).await {
+                    match execute_step_live(step, prompt, config, cancel_token, progress.clone()).await {
                         Ok(result) => return Ok(result),
                         Err(retry_err) => {
                             debug!(
@@ -406,11 +552,22 @@ fn has_failed_upstream(
         .any(|c| failed_steps.contains(&c.from_step))
 }
 
-/// Execute a single step using AgentLoop
-async fn execute_step(
+/// Live progress for a running step
+#[derive(Clone, Default)]
+pub struct StepProgress {
+    pub output: String,
+    pub activity: String, // current tool/action description
+    pub token_usage: PipelineTokenUsage,
+    pub turns: u32,
+}
+
+/// Execute a single step using AgentLoop, with optional live progress reporting
+async fn execute_step_live(
     step: &lukan_core::pipelines::PipelineStep,
     prompt: &str,
     base_config: &ResolvedConfig,
+    cancel_token: Option<&CancellationToken>,
+    progress: Option<Arc<Mutex<StepProgress>>>,
 ) -> Result<(String, PipelineTokenUsage, u32)> {
     // Build config with overrides
     let mut config = base_config.clone();
@@ -450,12 +607,16 @@ async fn execute_step(
         registry.retain(&refs);
     }
 
+    // Propagate tool restrictions to sub-agents so they can't bypass them
+    crate::sub_agent::set_tool_filter(step.tools.clone()).await;
+
     let provider_name = config.config.provider.to_string();
     let model_name = config.effective_model().unwrap_or_default();
 
     let system_prompt = SystemPrompt::Text(
-        "You are a pipeline step agent. Execute the task described in the user message. \
-         Be concise and focused. Complete the task and report results."
+        "You are a pipeline step agent. Execute the task directly using the simplest approach. \
+         Do NOT use sub-agents or explore agents. Use tools directly. \
+         Be concise — complete the task and report the result in minimal text."
             .to_string(),
     );
 
@@ -485,6 +646,7 @@ async fn execute_step(
 
     let prompt_owned = prompt.to_string();
     let max_turns = step.max_turns.unwrap_or(10);
+    let timeout_secs = step.timeout_secs.unwrap_or(120); // default 2 min
 
     let agent_handle = tokio::spawn(async move {
         let result = agent.run_turn(&prompt_owned, event_tx, None, None).await;
@@ -495,48 +657,136 @@ async fn execute_step(
     let mut token_usage = PipelineTokenUsage::default();
     let mut turns: u32 = 0;
 
-    while let Some(event) = event_rx.recv().await {
-        match &event {
-            StreamEvent::TextDelta { text } => {
-                output.push_str(text);
-            }
-            StreamEvent::Usage {
-                input_tokens,
-                output_tokens,
-                cache_creation_tokens,
-                cache_read_tokens,
-            } => {
-                token_usage.input += input_tokens;
-                token_usage.output += output_tokens;
-                if let Some(cc) = cache_creation_tokens {
-                    token_usage.cache_creation += cc;
+    let timeout_duration = std::time::Duration::from_secs(timeout_secs);
+    let cancel = cancel_token.cloned();
+
+    // Track tool calls for the activity log
+    let mut tool_log = String::new();
+
+    let event_loop = async {
+        let mut last_progress_update = std::time::Instant::now();
+        let progress_interval = std::time::Duration::from_secs(1);
+
+        loop {
+            let event = if let Some(ref ct) = cancel {
+                tokio::select! {
+                    _ = ct.cancelled() => return Err("cancelled"),
+                    ev = event_rx.recv() => ev,
                 }
-                if let Some(cr) = cache_read_tokens {
-                    token_usage.cache_read += cr;
+            } else {
+                event_rx.recv().await
+            };
+
+            let Some(event) = event else { break };
+
+            match &event {
+                StreamEvent::TextDelta { text } => {
+                    output.push_str(text);
+                }
+                StreamEvent::ToolUseStart { name, .. } => {
+                    tool_log.push_str(&format!("→ {name}\n"));
+                }
+                StreamEvent::ToolResult { name, is_error, .. } => {
+                    if *is_error == Some(true) {
+                        tool_log.push_str(&format!("  ✗ {name} failed\n"));
+                    }
+                }
+                StreamEvent::Usage {
+                    input_tokens,
+                    output_tokens,
+                    cache_creation_tokens,
+                    cache_read_tokens,
+                } => {
+                    token_usage.input += input_tokens;
+                    token_usage.output += output_tokens;
+                    if let Some(cc) = cache_creation_tokens {
+                        token_usage.cache_creation += cc;
+                    }
+                    if let Some(cr) = cache_read_tokens {
+                        token_usage.cache_read += cr;
+                    }
+                }
+                StreamEvent::MessageEnd { .. } => {
+                    turns += 1;
+                    if turns >= max_turns {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+
+            // Update live progress
+            if let Some(ref prog) = progress {
+                // Always update activity on tool events
+                let activity = match &event {
+                    StreamEvent::ToolUseStart { name, .. } => Some(format!("calling {name}...")),
+                    StreamEvent::ToolResult { name, is_error, .. } => {
+                        if *is_error == Some(true) {
+                            Some(format!("{name} failed"))
+                        } else {
+                            Some(format!("{name} done"))
+                        }
+                    }
+                    _ => None,
+                };
+
+                let should_update = activity.is_some()
+                    || last_progress_update.elapsed() >= progress_interval;
+
+                if should_update {
+                    let mut p = prog.lock().await;
+                    p.output = output.clone();
+                    p.token_usage = token_usage.clone();
+                    p.turns = turns;
+                    if let Some(act) = activity {
+                        p.activity = act;
+                    }
+                    last_progress_update = std::time::Instant::now();
                 }
             }
-            StreamEvent::MessageEnd { .. } => {
-                turns += 1;
-                if turns >= max_turns {
-                    break;
-                }
+        }
+        Ok(())
+    };
+
+    let result = tokio::time::timeout(timeout_duration, event_loop).await;
+
+    // Always abort the agent task first
+    agent_handle.abort();
+
+    // Prepend tool activity log to output for visibility
+    let final_output = if tool_log.is_empty() {
+        output
+    } else {
+        format!("[tools used]\n{tool_log}\n[output]\n{output}")
+    };
+
+    match result {
+        Err(_) => {
+            // Timed out
+            if final_output.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Step timed out after {timeout_secs}s without producing output.\nTool activity:\n{tool_log}"
+                ));
             }
-            _ => {}
+            Ok((final_output, token_usage, turns))
+        }
+        Ok(Err("cancelled")) => {
+            if final_output.is_empty() {
+                Err(anyhow::anyhow!("Step cancelled.\nTool activity:\n{tool_log}"))
+            } else {
+                // Return partial output on cancel
+                Ok((final_output, token_usage, turns))
+            }
+        }
+        Ok(_) => {
+            if final_output.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Step completed {turns} turns without producing text output.\nTool activity:\n{tool_log}"
+                ));
+            }
+            Ok((final_output, token_usage, turns))
         }
     }
-
-    match agent_handle.await {
-        Ok((_agent, result)) => {
-            if let Err(e) = result {
-                return Err(anyhow::anyhow!("{e}"));
-            }
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!("Agent task panicked: {e}"));
-        }
-    }
-
-    Ok((output, token_usage, turns))
 }
 
 /// Topological sort into levels — steps in the same level can run in parallel

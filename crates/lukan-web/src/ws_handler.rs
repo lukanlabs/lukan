@@ -469,8 +469,12 @@ async fn dispatch_message(
             let _ = enabled;
         }
 
-        ClientMessage::GetSubAgentDetail { .. } | ClientMessage::AbortSubAgent { .. } => {
+        ClientMessage::GetSubAgentDetail { .. } => {
             send_json(ws_tx, &ServerMessage::SubAgentsUpdate { agents: vec![] }).await;
+        }
+
+        ClientMessage::AbortSubAgent { id } => {
+            lukan_agent::sub_agent::abort_sub_agent(&id).await;
         }
 
         ClientMessage::ListWorkers => match WorkerManager::get_summaries().await {

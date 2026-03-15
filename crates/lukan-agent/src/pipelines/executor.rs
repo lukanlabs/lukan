@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use rand::Rng;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info};
 
 use lukan_core::config::ResolvedConfig;
@@ -19,7 +20,7 @@ use crate::{AgentConfig, AgentLoop};
 
 const MAX_RUNS_KEPT: usize = 20;
 
-/// Execute a pipeline run
+/// Execute a pipeline run with parallel execution within each topological level
 pub async fn execute_pipeline(
     pipeline: &PipelineDefinition,
     trigger_input: Option<String>,
@@ -64,13 +65,12 @@ pub async fn execute_pipeline(
         error!(error = %e, "Failed to save initial pipeline run");
     }
 
-    // Topological sort of steps
-    let execution_order = match topological_sort(pipeline) {
-        Ok(order) => order,
+    // Topological sort into levels (steps in the same level run in parallel)
+    let levels = match topological_levels(pipeline) {
+        Ok(lvls) => lvls,
         Err(e) => {
             run.status = "error".to_string();
             run.completed_at = Some(chrono::Utc::now().to_rfc3339());
-            // Mark all steps as error
             for sr in &mut run.step_runs {
                 sr.status = "error".to_string();
                 sr.error = Some(format!("Pipeline topology error: {e}"));
@@ -83,129 +83,152 @@ pub async fn execute_pipeline(
         }
     };
 
-    // Build a map of step outputs for template rendering
-    let mut step_outputs: HashMap<String, String> = HashMap::new();
+    // Shared step outputs for template rendering (written by parallel tasks)
+    let step_outputs: Arc<Mutex<HashMap<String, String>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     // If there's trigger input, store it under "__trigger__"
     if let Some(ref input) = trigger_input {
-        step_outputs.insert("__trigger__".to_string(), input.clone());
+        step_outputs
+            .lock()
+            .await
+            .insert("__trigger__".to_string(), input.clone());
     }
 
     let mut has_error = false;
+    // Track which steps failed (for downstream skipping)
+    let mut failed_steps: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // Execute steps in topological order
-    for step_id in &execution_order {
-        let step = pipeline.steps.iter().find(|s| s.id == *step_id).unwrap();
-        let step_run_idx = run
-            .step_runs
-            .iter()
-            .position(|sr| sr.step_id == *step_id)
-            .unwrap();
+    // Execute level by level
+    for level in &levels {
+        if level.len() == 1 {
+            // Single step in level — run sequentially (no JoinSet overhead)
+            let step_id = &level[0];
+            has_error |= execute_single_step(
+                pipeline,
+                step_id,
+                config,
+                &mut run,
+                &step_outputs,
+                &mut failed_steps,
+            )
+            .await;
+        } else {
+            // Multiple steps — run in parallel with JoinSet
+            let mut join_set: JoinSet<StepResult> = JoinSet::new();
 
-        // Check if upstream connections' conditions are met
-        if !should_execute_step(pipeline, step_id, &step_outputs, &run.step_runs) {
-            run.step_runs[step_run_idx].status = "skipped".to_string();
-            debug!(step_id, "Step skipped (conditions not met)");
-            continue;
-        }
+            for step_id in level {
+                let step = pipeline
+                    .steps
+                    .iter()
+                    .find(|s| s.id == *step_id)
+                    .unwrap()
+                    .clone();
+                let step_run_idx = run
+                    .step_runs
+                    .iter()
+                    .position(|sr| sr.step_id == *step_id)
+                    .unwrap();
 
-        // Gather input from upstream steps
-        let input = gather_step_input(pipeline, step_id, &step_outputs);
+                // Snapshot outputs so far (read-only for this level)
+                let outputs_snapshot = step_outputs.lock().await.clone();
 
-        // Render prompt
-        let rendered_prompt = render_prompt(step, &input, &step_outputs);
+                // Check if upstream conditions are met
+                if !should_execute_step(pipeline, step_id, &outputs_snapshot, &run.step_runs) {
+                    run.step_runs[step_run_idx].status = "skipped".to_string();
+                    debug!(step_id = step_id.as_str(), "Step skipped (conditions not met)");
+                    continue;
+                }
 
-        run.step_runs[step_run_idx].status = "running".to_string();
-        run.step_runs[step_run_idx].input = input.clone();
-        run.step_runs[step_run_idx].started_at = Some(chrono::Utc::now().to_rfc3339());
+                // Check if any upstream step failed with on_error=stop
+                let upstream_failed = has_failed_upstream(pipeline, step_id, &failed_steps);
+                if upstream_failed {
+                    run.step_runs[step_run_idx].status = "skipped".to_string();
+                    debug!(
+                        step_id = step_id.as_str(),
+                        "Step skipped (upstream failure)"
+                    );
+                    continue;
+                }
 
-        // Save progress
-        PipelineManager::save_run(&run).await.ok();
+                let input = gather_step_input(pipeline, step_id, &outputs_snapshot);
+                let rendered_prompt = render_prompt(&step, &input, &outputs_snapshot);
 
-        // Execute the step
-        let step_result = execute_step(step, &rendered_prompt, config).await;
+                run.step_runs[step_run_idx].status = "running".to_string();
+                run.step_runs[step_run_idx].input = input.clone();
+                run.step_runs[step_run_idx].started_at = Some(chrono::Utc::now().to_rfc3339());
 
-        match step_result {
-            Ok((output, token_usage, turns)) => {
-                run.step_runs[step_run_idx].status = "success".to_string();
-                run.step_runs[step_run_idx].output = output.clone();
-                run.step_runs[step_run_idx].token_usage = token_usage.clone();
-                run.step_runs[step_run_idx].turns = turns;
-                run.step_runs[step_run_idx].completed_at =
-                    Some(chrono::Utc::now().to_rfc3339());
+                let config_clone = config.clone();
+                let sid = step_id.clone();
 
-                // Accumulate total token usage
-                run.token_usage.input += token_usage.input;
-                run.token_usage.output += token_usage.output;
-                run.token_usage.cache_creation += token_usage.cache_creation;
-                run.token_usage.cache_read += token_usage.cache_read;
-
-                step_outputs.insert(step_id.clone(), output);
+                join_set.spawn(async move {
+                    let result = execute_step_with_retry(&step, &rendered_prompt, &config_clone).await;
+                    StepResult {
+                        step_id: sid,
+                        step_run_idx,
+                        result,
+                        on_error: step.on_error.clone(),
+                    }
+                });
             }
-            Err(e) => {
-                let error_msg = format!("{e}");
-                run.step_runs[step_run_idx].status = "error".to_string();
-                run.step_runs[step_run_idx].error = Some(error_msg.clone());
-                run.step_runs[step_run_idx].completed_at =
-                    Some(chrono::Utc::now().to_rfc3339());
 
-                let on_error = step.on_error.as_deref().unwrap_or("stop");
+            // Save progress (all steps in level are now "running")
+            PipelineManager::save_run(&run).await.ok();
 
-                if on_error == "skip" {
-                    debug!(step_id, "Step error (skip): {}", error_msg);
-                    step_outputs.insert(step_id.clone(), String::new());
-                } else if on_error.starts_with("retry:") {
-                    // Retry logic
-                    let max_retries: u32 = on_error
-                        .strip_prefix("retry:")
-                        .and_then(|n| n.parse().ok())
-                        .unwrap_or(1);
+            // Collect results from all parallel steps
+            while let Some(join_result) = join_set.join_next().await {
+                let sr = match join_result {
+                    Ok(sr) => sr,
+                    Err(e) => {
+                        error!(error = %e, "Step task panicked");
+                        has_error = true;
+                        continue;
+                    }
+                };
 
-                    let mut retried = false;
-                    for attempt in 1..=max_retries {
-                        debug!(step_id, attempt, max_retries, "Retrying step");
-                        match execute_step(step, &rendered_prompt, config).await {
-                            Ok((output, token_usage, turns)) => {
-                                run.step_runs[step_run_idx].status = "success".to_string();
-                                run.step_runs[step_run_idx].output = output.clone();
-                                run.step_runs[step_run_idx].error = None;
-                                run.step_runs[step_run_idx].token_usage = token_usage.clone();
-                                run.step_runs[step_run_idx].turns = turns;
-                                run.step_runs[step_run_idx].completed_at =
-                                    Some(chrono::Utc::now().to_rfc3339());
+                match sr.result {
+                    Ok((output, token_usage, turns)) => {
+                        run.step_runs[sr.step_run_idx].status = "success".to_string();
+                        run.step_runs[sr.step_run_idx].output = output.clone();
+                        run.step_runs[sr.step_run_idx].token_usage = token_usage.clone();
+                        run.step_runs[sr.step_run_idx].turns = turns;
+                        run.step_runs[sr.step_run_idx].completed_at =
+                            Some(chrono::Utc::now().to_rfc3339());
 
-                                run.token_usage.input += token_usage.input;
-                                run.token_usage.output += token_usage.output;
-                                run.token_usage.cache_creation += token_usage.cache_creation;
-                                run.token_usage.cache_read += token_usage.cache_read;
+                        run.token_usage.input += token_usage.input;
+                        run.token_usage.output += token_usage.output;
+                        run.token_usage.cache_creation += token_usage.cache_creation;
+                        run.token_usage.cache_read += token_usage.cache_read;
 
-                                step_outputs.insert(step_id.clone(), output);
-                                retried = true;
-                                break;
-                            }
-                            Err(retry_err) => {
-                                debug!(
-                                    step_id,
-                                    attempt,
-                                    error = %retry_err,
-                                    "Retry failed"
-                                );
-                            }
+                        step_outputs
+                            .lock()
+                            .await
+                            .insert(sr.step_id.clone(), output);
+                    }
+                    Err(e) => {
+                        let error_msg = format!("{e}");
+                        run.step_runs[sr.step_run_idx].status = "error".to_string();
+                        run.step_runs[sr.step_run_idx].error = Some(error_msg.clone());
+                        run.step_runs[sr.step_run_idx].completed_at =
+                            Some(chrono::Utc::now().to_rfc3339());
+
+                        let on_error = sr.on_error.as_deref().unwrap_or("stop");
+                        if on_error == "skip" {
+                            debug!(step_id = sr.step_id.as_str(), "Step error (skip): {}", error_msg);
+                            step_outputs
+                                .lock()
+                                .await
+                                .insert(sr.step_id.clone(), String::new());
+                        } else {
+                            has_error = true;
+                            failed_steps.insert(sr.step_id.clone());
                         }
                     }
-                    if !retried {
-                        has_error = true;
-                        break; // All retries failed — stop pipeline
-                    }
-                } else {
-                    // "stop" — halt the pipeline
-                    has_error = true;
-                    break;
                 }
             }
         }
 
-        // Save progress after each step
+        // Save progress after each level
         PipelineManager::save_run(&run).await.ok();
     }
 
@@ -241,6 +264,146 @@ pub async fn execute_pipeline(
     );
 
     run
+}
+
+/// Result from a parallel step execution
+struct StepResult {
+    step_id: String,
+    step_run_idx: usize,
+    result: Result<(String, PipelineTokenUsage, u32)>,
+    on_error: Option<String>,
+}
+
+/// Execute a single step in-line (used for levels with only one step)
+async fn execute_single_step(
+    pipeline: &PipelineDefinition,
+    step_id: &str,
+    config: &ResolvedConfig,
+    run: &mut PipelineRun,
+    step_outputs: &Arc<Mutex<HashMap<String, String>>>,
+    failed_steps: &mut std::collections::HashSet<String>,
+) -> bool {
+    let step = pipeline.steps.iter().find(|s| s.id == step_id).unwrap();
+    let step_run_idx = run
+        .step_runs
+        .iter()
+        .position(|sr| sr.step_id == step_id)
+        .unwrap();
+
+    let outputs_snapshot = step_outputs.lock().await.clone();
+
+    // Check conditions
+    if !should_execute_step(pipeline, step_id, &outputs_snapshot, &run.step_runs) {
+        run.step_runs[step_run_idx].status = "skipped".to_string();
+        debug!(step_id, "Step skipped (conditions not met)");
+        return false;
+    }
+
+    // Check upstream failures
+    if has_failed_upstream(pipeline, step_id, failed_steps) {
+        run.step_runs[step_run_idx].status = "skipped".to_string();
+        debug!(step_id, "Step skipped (upstream failure)");
+        return false;
+    }
+
+    let input = gather_step_input(pipeline, step_id, &outputs_snapshot);
+    let rendered_prompt = render_prompt(step, &input, &outputs_snapshot);
+
+    run.step_runs[step_run_idx].status = "running".to_string();
+    run.step_runs[step_run_idx].input = input.clone();
+    run.step_runs[step_run_idx].started_at = Some(chrono::Utc::now().to_rfc3339());
+    PipelineManager::save_run(run).await.ok();
+
+    let step_result = execute_step_with_retry(step, &rendered_prompt, config).await;
+
+    match step_result {
+        Ok((output, token_usage, turns)) => {
+            run.step_runs[step_run_idx].status = "success".to_string();
+            run.step_runs[step_run_idx].output = output.clone();
+            run.step_runs[step_run_idx].token_usage = token_usage.clone();
+            run.step_runs[step_run_idx].turns = turns;
+            run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
+
+            run.token_usage.input += token_usage.input;
+            run.token_usage.output += token_usage.output;
+            run.token_usage.cache_creation += token_usage.cache_creation;
+            run.token_usage.cache_read += token_usage.cache_read;
+
+            step_outputs
+                .lock()
+                .await
+                .insert(step_id.to_string(), output);
+            false
+        }
+        Err(e) => {
+            let error_msg = format!("{e}");
+            run.step_runs[step_run_idx].status = "error".to_string();
+            run.step_runs[step_run_idx].error = Some(error_msg.clone());
+            run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
+
+            let on_error = step.on_error.as_deref().unwrap_or("stop");
+            if on_error == "skip" {
+                debug!(step_id, "Step error (skip): {}", error_msg);
+                step_outputs
+                    .lock()
+                    .await
+                    .insert(step_id.to_string(), String::new());
+                false
+            } else {
+                failed_steps.insert(step_id.to_string());
+                true
+            }
+        }
+    }
+}
+
+/// Execute a step with retry logic
+async fn execute_step_with_retry(
+    step: &lukan_core::pipelines::PipelineStep,
+    prompt: &str,
+    config: &ResolvedConfig,
+) -> Result<(String, PipelineTokenUsage, u32)> {
+    match execute_step(step, prompt, config).await {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            let on_error = step.on_error.as_deref().unwrap_or("stop");
+            if on_error.starts_with("retry:") {
+                let max_retries: u32 = on_error
+                    .strip_prefix("retry:")
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(1);
+
+                for attempt in 1..=max_retries {
+                    debug!(step_id = step.id.as_str(), attempt, max_retries, "Retrying step");
+                    match execute_step(step, prompt, config).await {
+                        Ok(result) => return Ok(result),
+                        Err(retry_err) => {
+                            debug!(
+                                step_id = step.id.as_str(),
+                                attempt,
+                                error = %retry_err,
+                                "Retry failed"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Check if a step has any failed upstream dependency
+fn has_failed_upstream(
+    pipeline: &PipelineDefinition,
+    step_id: &str,
+    failed_steps: &std::collections::HashSet<String>,
+) -> bool {
+    pipeline
+        .connections
+        .iter()
+        .filter(|c| c.to_step == step_id && c.from_step != "__trigger__")
+        .any(|c| failed_steps.contains(&c.from_step))
 }
 
 /// Execute a single step using AgentLoop
@@ -376,8 +539,8 @@ async fn execute_step(
     Ok((output, token_usage, turns))
 }
 
-/// Topological sort of pipeline steps based on connections
-fn topological_sort(pipeline: &PipelineDefinition) -> Result<Vec<String>> {
+/// Topological sort into levels — steps in the same level can run in parallel
+fn topological_levels(pipeline: &PipelineDefinition) -> Result<Vec<Vec<String>>> {
     let step_ids: Vec<String> = pipeline.steps.iter().map(|s| s.id.clone()).collect();
     let mut in_degree: HashMap<String, usize> = HashMap::new();
     let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
@@ -389,7 +552,7 @@ fn topological_sort(pipeline: &PipelineDefinition) -> Result<Vec<String>> {
 
     for conn in &pipeline.connections {
         if conn.from_step == "__trigger__" {
-            continue; // trigger connections don't count for topology
+            continue;
         }
         if let Some(deg) = in_degree.get_mut(&conn.to_step) {
             *deg += 1;
@@ -399,33 +562,41 @@ fn topological_sort(pipeline: &PipelineDefinition) -> Result<Vec<String>> {
         }
     }
 
-    let mut queue: Vec<String> = step_ids
+    let mut levels: Vec<Vec<String>> = Vec::new();
+    let mut current_level: Vec<String> = step_ids
         .iter()
         .filter(|id| in_degree.get(*id).copied().unwrap_or(0) == 0)
         .cloned()
         .collect();
 
-    let mut result = Vec::new();
+    let mut visited = 0;
 
-    while let Some(id) = queue.pop() {
-        result.push(id.clone());
-        if let Some(neighbors) = adjacency.get(&id) {
-            for neighbor in neighbors {
-                if let Some(deg) = in_degree.get_mut(neighbor) {
-                    *deg -= 1;
-                    if *deg == 0 {
-                        queue.push(neighbor.clone());
+    while !current_level.is_empty() {
+        visited += current_level.len();
+        let mut next_level = Vec::new();
+
+        for id in &current_level {
+            if let Some(neighbors) = adjacency.get(id) {
+                for neighbor in neighbors {
+                    if let Some(deg) = in_degree.get_mut(neighbor) {
+                        *deg -= 1;
+                        if *deg == 0 {
+                            next_level.push(neighbor.clone());
+                        }
                     }
                 }
             }
         }
+
+        levels.push(std::mem::take(&mut current_level));
+        current_level = next_level;
     }
 
-    if result.len() != step_ids.len() {
+    if visited != step_ids.len() {
         return Err(anyhow::anyhow!("Pipeline has circular dependencies"));
     }
 
-    Ok(result)
+    Ok(levels)
 }
 
 /// Determine if a step should execute based on its incoming connections' conditions

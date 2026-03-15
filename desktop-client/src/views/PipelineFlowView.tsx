@@ -4,12 +4,18 @@ import {
   Background,
   type Node,
   type Edge,
+  type EdgeProps,
   type NodeTypes,
+  type EdgeTypes,
   type OnNodesChange,
+  type OnConnect,
+  type Connection,
   Position,
   Handle,
   BackgroundVariant,
   applyNodeChanges,
+  getBezierPath,
+  BaseEdge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -25,8 +31,10 @@ import {
   X,
   Terminal,
   Pencil,
+  Plus,
+  Trash2,
 } from "lucide-react";
-import type { PipelineDetail, PipelineRun, PipelineStep, StepRun } from "../lib/types";
+import type { PipelineDetail, PipelineRun, PipelineStep, StepRun, StepConnection } from "../lib/types";
 import {
   getPipelineDetail,
   getPipelineRun,
@@ -64,6 +72,7 @@ interface StepNodeData {
   totalSteps: number;
   onViewOutput?: (stepRun: StepRun) => void;
   onEditStep?: (stepId: string) => void;
+  onDeleteStep?: (stepId: string) => void;
   [key: string]: unknown;
 }
 
@@ -83,7 +92,7 @@ const menuItemStyle: React.CSSProperties = {
 };
 
 function StepNode({ data }: { data: StepNodeData }) {
-  const { label, stepRun, stepId, stepIndex, totalSteps, onViewOutput, onEditStep } = data;
+  const { label, stepRun, stepId, stepIndex, totalSteps, onViewOutput, onEditStep, onDeleteStep } = data;
   const [menuOpen, setMenuOpen] = useState(false);
   const status = stepRun?.status;
   const c = (status && STATUS_COLOR[status]) || "#3c3c3c";
@@ -111,9 +120,7 @@ function StepNode({ data }: { data: StepNodeData }) {
         transition: "border-color 0.3s, box-shadow 0.3s",
       }}
     >
-      {stepIndex > 0 && (
-        <Handle type="target" position={Position.Top} style={{ background: c, border: "2px solid #0a0a0a", width: 8, height: 8 }} />
-      )}
+      <Handle type="target" position={Position.Top} style={{ background: c, border: "2px solid #0a0a0a", width: 8, height: 8 }} />
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderBottom: `1px solid ${c}20` }}>
@@ -174,6 +181,16 @@ function StepNode({ data }: { data: StepNodeData }) {
                   <Terminal size={10} /> View output
                 </button>
               )}
+              {totalSteps > 1 && (
+                <button
+                  onClick={() => { setMenuOpen(false); onDeleteStep?.(stepId); }}
+                  style={{ ...menuItemStyle, color: "#ef4444" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "#2a2a2a"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                >
+                  <Trash2 size={10} /> Delete step
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -207,14 +224,50 @@ function StepNode({ data }: { data: StepNodeData }) {
         </div>
       )}
 
-      {stepIndex < totalSteps - 1 && (
-        <Handle type="source" position={Position.Bottom} style={{ background: c, border: "2px solid #0a0a0a", width: 8, height: 8 }} />
-      )}
+      <Handle type="source" position={Position.Bottom} style={{ background: c, border: "2px solid #0a0a0a", width: 8, height: 8 }} />
     </div>
   );
 }
 
 const nodeTypes: NodeTypes = { step: StepNode };
+
+// ── Deletable Edge ──
+
+function DeletableEdge({
+  id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, data,
+}: EdgeProps) {
+  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  const [hovered, setHovered] = useState(false);
+  const onDelete = (data as Record<string, unknown>)?.onDelete as ((id: string) => void) | undefined;
+
+  return (
+    <g
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Invisible fat path for easier hover */}
+      <path d={edgePath} fill="none" stroke="transparent" strokeWidth={14} />
+      <BaseEdge id={id} path={edgePath} style={style} />
+      {hovered && onDelete && (
+        <foreignObject x={labelX - 8} y={labelY - 8} width={16} height={16} style={{ overflow: "visible" }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(id); }}
+            style={{
+              width: 16, height: 16, borderRadius: "50%", border: "1px solid #555",
+              background: "#1a1a1a", color: "#ef4444", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 10, fontWeight: 700, padding: 0, lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </foreignObject>
+      )}
+    </g>
+  );
+}
+
+const edgeTypes: EdgeTypes = { deletable: DeletableEdge };
 
 // ── Edit Step Sheet ──
 
@@ -354,6 +407,61 @@ function OutputPanel({ stepRun, onClose }: { stepRun: StepRun; onClose: () => vo
   );
 }
 
+// ── Layout Helpers ──
+
+interface LevelInfo {
+  level: number;
+  indexInLevel: number;
+  levelSize: number;
+}
+
+function computeTopologicalLevels(
+  steps: PipelineStep[],
+  connections: StepConnection[],
+): Map<string, LevelInfo> {
+  const result = new Map<string, LevelInfo>();
+  const stepIds = new Set(steps.map((s) => s.id));
+  const inDegree = new Map<string, number>();
+  const adjacency = new Map<string, string[]>();
+
+  for (const s of steps) {
+    inDegree.set(s.id, 0);
+    adjacency.set(s.id, []);
+  }
+
+  for (const c of connections) {
+    if (c.fromStep === "__trigger__" || !stepIds.has(c.fromStep) || !stepIds.has(c.toStep)) continue;
+    inDegree.set(c.toStep, (inDegree.get(c.toStep) ?? 0) + 1);
+    adjacency.get(c.fromStep)?.push(c.toStep);
+  }
+
+  let currentLevel = steps.filter((s) => (inDegree.get(s.id) ?? 0) === 0).map((s) => s.id);
+  let level = 0;
+
+  while (currentLevel.length > 0) {
+    const nextLevel: string[] = [];
+    for (let i = 0; i < currentLevel.length; i++) {
+      result.set(currentLevel[i], { level, indexInLevel: i, levelSize: currentLevel.length });
+      for (const neighbor of adjacency.get(currentLevel[i]) ?? []) {
+        const deg = (inDegree.get(neighbor) ?? 1) - 1;
+        inDegree.set(neighbor, deg);
+        if (deg === 0) nextLevel.push(neighbor);
+      }
+    }
+    currentLevel = nextLevel;
+    level++;
+  }
+
+  // Any remaining steps (orphans or cycles) get placed at the end
+  for (const s of steps) {
+    if (!result.has(s.id)) {
+      result.set(s.id, { level, indexInLevel: 0, levelSize: 1 });
+    }
+  }
+
+  return result;
+}
+
 // ── Main View ──
 
 interface PipelineFlowViewProps {
@@ -387,7 +495,97 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
     try {
       await updatePipeline(pipelineId, { steps: newSteps });
       setEditingStep(null);
-      // Reload
+      const d = await getPipelineDetail(pipelineId);
+      setDetail(d);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [detail, pipelineId]);
+
+  const handleAddStep = useCallback(async () => {
+    if (!detail || !pipelineId) return;
+    const n = detail.steps.length + 1;
+    const newStepId = `step-${Date.now()}`;
+    const newStep: PipelineStep = {
+      id: newStepId,
+      name: `Step ${n}`,
+      prompt: "Describe the task for this step...",
+    };
+    const newSteps = [...detail.steps, newStep];
+    // No auto-connections — user drags handles to connect
+    try {
+      await updatePipeline(pipelineId, { steps: newSteps });
+      const d = await getPipelineDetail(pipelineId);
+      setDetail(d);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [detail, pipelineId]);
+
+  const handleDeleteStep = useCallback(async (stepId: string) => {
+    if (!detail || !pipelineId) return;
+    const newSteps = detail.steps.filter((s) => s.id !== stepId);
+    if (newSteps.length === 0) return;
+
+    // Remove connections involving this step
+    // Reconnect: if A→deleted→B, create A→B
+    const incoming = detail.connections.filter((c) => c.toStep === stepId).map((c) => c.fromStep);
+    const outgoing = detail.connections.filter((c) => c.fromStep === stepId).map((c) => c.toStep);
+    let newConnections = detail.connections.filter(
+      (c) => c.fromStep !== stepId && c.toStep !== stepId
+    );
+    // Bridge: connect each incoming to each outgoing
+    for (const from of incoming) {
+      for (const to of outgoing) {
+        if (!newConnections.some((c) => c.fromStep === from && c.toStep === to)) {
+          newConnections.push({ fromStep: from, toStep: to });
+        }
+      }
+    }
+
+    try {
+      await updatePipeline(pipelineId, { steps: newSteps, connections: newConnections });
+      const d = await getPipelineDetail(pipelineId);
+      setDetail(d);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [detail, pipelineId]);
+
+  const handleDeleteEdge = useCallback(async (edgeId: string) => {
+    if (!detail || !pipelineId) return;
+    // edgeId format: "fromStep->toStep"
+    const [fromStep, toStep] = edgeId.split("->");
+    if (!fromStep || !toStep) return;
+    const newConnections = detail.connections.filter(
+      (c) => !(c.fromStep === fromStep && c.toStep === toStep)
+    );
+    try {
+      await updatePipeline(pipelineId, { connections: newConnections });
+      const d = await getPipelineDetail(pipelineId);
+      setDetail(d);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [detail, pipelineId]);
+
+  const handleConnect: OnConnect = useCallback(async (connection: Connection) => {
+    if (!detail || !pipelineId || !connection.source || !connection.target) return;
+    // Prevent duplicate connections
+    if (detail.connections.some(
+      (c) => c.fromStep === connection.source && c.toStep === connection.target
+    )) return;
+    // Prevent self-connection
+    if (connection.source === connection.target) return;
+
+    const newConnection: StepConnection = {
+      fromStep: connection.source,
+      toStep: connection.target,
+    };
+    const newConnections = [...detail.connections, newConnection];
+
+    try {
+      await updatePipeline(pipelineId, { connections: newConnections });
       const d = await getPipelineDetail(pipelineId);
       setDetail(d);
     } catch (e) {
@@ -474,18 +672,25 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
     } catch { /* ignore */ }
   };
 
-  // Build nodes
+  // Build nodes with automatic layout by topological levels
   useEffect(() => {
     if (!detail) { setFlowNodes([]); return; }
     const srMap = new Map<string, StepRun>();
     if (activeRun) for (const sr of activeRun.stepRuns) srMap.set(sr.stepId, sr);
 
-    setFlowNodes((prev) => {
-      const posMap = new Map(prev.map((n) => [n.id, n.position]));
-      return detail.steps.map((step, idx) => ({
+    // Compute topological levels for layout
+    const levels = computeTopologicalLevels(detail.steps, detail.connections);
+
+    // Auto-layout: always recompute positions from topology
+    // (user can still drag nodes, but they snap back on connection changes)
+    const nodes = detail.steps.map((step, idx) => {
+      const levelInfo = levels.get(step.id) ?? { level: idx, indexInLevel: 0, levelSize: 1 };
+      const autoX = (levelInfo.indexInLevel - (levelInfo.levelSize - 1) / 2) * 240;
+      const autoY = levelInfo.level * 120;
+      return {
         id: step.id,
-        type: "step",
-        position: posMap.get(step.id) ?? { x: 0, y: idx * 100 },
+        type: "step" as const,
+        position: { x: autoX, y: autoY },
         data: {
           label: step.name,
           prompt: step.prompt,
@@ -495,10 +700,12 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
           totalSteps: detail.steps.length,
           onViewOutput: handleViewOutput,
           onEditStep: handleEditStep,
+          onDeleteStep: handleDeleteStep,
         } satisfies StepNodeData,
-      }));
+      };
     });
-  }, [detail, activeRun, handleViewOutput, handleEditStep]);
+    setFlowNodes(nodes);
+  }, [detail, activeRun, handleViewOutput, handleEditStep, handleDeleteStep]);
 
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     setFlowNodes((nds) => applyNodeChanges(changes, nds));
@@ -509,26 +716,29 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
     const srMap = new Map<string, StepRun>();
     if (activeRun) for (const sr of activeRun.stepRuns) srMap.set(sr.stepId, sr);
 
-    const result: Edge[] = [];
-    for (let i = 0; i < detail.steps.length - 1; i++) {
-      const fromId = detail.steps[i].id;
-      const toId = detail.steps[i + 1].id;
-      const fs = srMap.get(fromId)?.status;
-      const ts = srMap.get(toId)?.status;
+    return detail.connections
+      .filter((c) => c.fromStep !== "__trigger__")
+      .map((conn) => {
+        const fs = srMap.get(conn.fromStep)?.status;
+        const ts = srMap.get(conn.toStep)?.status;
 
-      let stroke = "#2a2a2a";
-      let animated = false;
-      if (fs === "success" && ts === "running") { stroke = "#f59e0b"; animated = true; }
-      else if (fs === "success") stroke = "#22c55e";
-      else if (fs === "error") stroke = "#ef4444";
+        let stroke = "#2a2a2a";
+        let animated = false;
+        if (fs === "success" && ts === "running") { stroke = "#f59e0b"; animated = true; }
+        else if (fs === "success") stroke = "#22c55e";
+        else if (fs === "error") stroke = "#ef4444";
 
-      result.push({
-        id: `${fromId}->${toId}`, source: fromId, target: toId,
-        type: "smoothstep", animated, style: { stroke, strokeWidth: 1.5 },
+        return {
+          id: `${conn.fromStep}->${conn.toStep}`,
+          source: conn.fromStep,
+          target: conn.toStep,
+          type: "deletable",
+          animated,
+          style: { stroke, strokeWidth: 1.5 },
+          data: { onDelete: handleDeleteEdge },
+        };
       });
-    }
-    return result;
-  }, [detail, activeRun]);
+  }, [detail, activeRun, handleDeleteEdge]);
 
   if (!pipelineId) {
     return (
@@ -587,6 +797,18 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
         )}
 
         <button
+          onClick={handleAddStep}
+          style={{
+            border: "1px solid #333", background: "transparent",
+            color: "#888", cursor: "pointer",
+            padding: "3px 10px", borderRadius: 3, fontSize: 10, fontFamily: "monospace",
+            display: "flex", alignItems: "center", gap: 4,
+          }}
+          title="Add step"
+        >
+          <Plus size={10} /> step
+        </button>
+        <button
           onClick={handleTrigger}
           disabled={triggering}
           style={{
@@ -610,10 +832,12 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
           edges={edges}
           onNodesChange={onNodesChange}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView
           fitViewOptions={{ padding: 0.5 }}
           proOptions={{ hideAttribution: true }}
-          nodesConnectable={false}
+          onConnect={handleConnect}
+          nodesConnectable
           panOnDrag
           zoomOnScroll
           minZoom={0.3}

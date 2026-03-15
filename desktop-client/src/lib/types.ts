@@ -300,8 +300,13 @@ export interface WorkerUpdateInput {
 // ── Pipeline types ────────────────────────────────────────────────────
 
 export interface PipelineTrigger {
-  type: "manual" | "schedule";
+  type: "manual" | "schedule" | "webhook" | "event" | "fileWatch";
   schedule?: string;
+  secret?: string;
+  source?: string;
+  level?: string;
+  path?: string;
+  debounceSecs?: number;
 }
 
 export interface StepCondition {

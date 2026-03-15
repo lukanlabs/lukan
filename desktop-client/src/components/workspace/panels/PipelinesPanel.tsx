@@ -55,6 +55,9 @@ function formatElapsed(startedAt: string, completedAt?: string): string {
 
 function triggerLabel(trigger: PipelineTrigger): string {
   if (trigger.type === "schedule" && trigger.schedule) return trigger.schedule;
+  if (trigger.type === "webhook") return "webhook";
+  if (trigger.type === "event") return `event:${trigger.source ?? ""}`;
+  if (trigger.type === "fileWatch") return `watch:${trigger.path ?? ""}`;
   return "manual";
 }
 
@@ -705,9 +708,14 @@ function CreateForm({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [triggerType, setTriggerType] = useState<"manual" | "schedule">("manual");
+  const [triggerType, setTriggerType] = useState<"manual" | "schedule" | "webhook" | "event" | "fileWatch">("manual");
   const [schedule, setSchedule] = useState("every:5m");
   const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [eventSource, setEventSource] = useState("");
+  const [eventLevel, setEventLevel] = useState("");
+  const [watchPath, setWatchPath] = useState("");
+  const [debounceSecs, setDebounceSecs] = useState("5");
 
   // Steps
   const [steps, setSteps] = useState<PipelineStep[]>([
@@ -759,6 +767,8 @@ function CreateForm({
     if (!name.trim()) return;
     if (steps.some((s) => !s.prompt.trim())) return;
     if (triggerType === "schedule" && !validateSchedule(schedule)) return;
+    if (triggerType === "event" && !eventSource.trim()) return;
+    if (triggerType === "fileWatch" && !watchPath.trim()) return;
 
     // Build linear connections: step-1 → step-2 → step-3 ...
     const connections: StepConnection[] = [];
@@ -774,7 +784,13 @@ function CreateForm({
     const trigger: PipelineTrigger =
       triggerType === "schedule"
         ? { type: "schedule", schedule }
-        : { type: "manual" };
+        : triggerType === "webhook"
+          ? { type: "webhook", secret: webhookSecret.trim() || undefined }
+          : triggerType === "event"
+            ? { type: "event", source: eventSource.trim(), level: eventLevel.trim() || undefined }
+            : triggerType === "fileWatch"
+              ? { type: "fileWatch", path: watchPath.trim(), debounceSecs: parseInt(debounceSecs) || 5 }
+              : { type: "manual" };
 
     onSubmit({
       name: name.trim(),
@@ -803,6 +819,11 @@ function CreateForm({
   };
 
   const allStepsValid = steps.every((s) => s.prompt.trim());
+  const triggerValid =
+    triggerType === "manual" || triggerType === "webhook" ||
+    (triggerType === "schedule" && schedule.trim()) ||
+    (triggerType === "event" && eventSource.trim()) ||
+    (triggerType === "fileWatch" && watchPath.trim());
 
   return (
     <form onSubmit={handleSubmit} style={{ padding: "0 8px" }}>
@@ -860,23 +881,17 @@ function CreateForm({
         <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>
           Trigger
         </label>
-        <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)", cursor: "pointer" }}>
-            <input
-              type="radio"
-              checked={triggerType === "manual"}
-              onChange={() => setTriggerType("manual")}
-            />
-            Manual
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)", cursor: "pointer" }}>
-            <input
-              type="radio"
-              checked={triggerType === "schedule"}
-              onChange={() => setTriggerType("schedule")}
-            />
-            Schedule
-          </label>
+        <div style={{ display: "flex", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+          {(["manual", "schedule", "webhook", "event", "fileWatch"] as const).map((t) => (
+            <label key={t} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)", cursor: "pointer" }}>
+              <input
+                type="radio"
+                checked={triggerType === t}
+                onChange={() => setTriggerType(t)}
+              />
+              {t === "fileWatch" ? "File Watch" : t.charAt(0).toUpperCase() + t.slice(1)}
+            </label>
+          ))}
         </div>
         {triggerType === "schedule" && (
           <>
@@ -902,6 +917,62 @@ function CreateForm({
                 every:5m, every:1h, every:30s, */10 * * * *
               </div>
             )}
+          </>
+        )}
+        {triggerType === "webhook" && (
+          <>
+            <input
+              type="text"
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+              placeholder="Secret token (optional)"
+              style={inputStyle}
+            />
+            <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}>
+              POST /api/pipelines/ID/webhook?secret=TOKEN
+            </div>
+          </>
+        )}
+        {triggerType === "event" && (
+          <>
+            <input
+              type="text"
+              value={eventSource}
+              onChange={(e) => setEventSource(e.target.value)}
+              placeholder="Event source (e.g. worker:monitor)"
+              style={{ ...inputStyle, marginBottom: 4 }}
+            />
+            <input
+              type="text"
+              value={eventLevel}
+              onChange={(e) => setEventLevel(e.target.value)}
+              placeholder="Level filter (optional: info, warn, error)"
+              style={inputStyle}
+            />
+            <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}>
+              Triggers when a matching event appears
+            </div>
+          </>
+        )}
+        {triggerType === "fileWatch" && (
+          <>
+            <input
+              type="text"
+              value={watchPath}
+              onChange={(e) => setWatchPath(e.target.value)}
+              placeholder="/path/to/file/or/directory"
+              style={{ ...inputStyle, marginBottom: 4 }}
+            />
+            <input
+              type="text"
+              value={debounceSecs}
+              onChange={(e) => setDebounceSecs(e.target.value)}
+              placeholder="Debounce seconds (default: 5)"
+              style={inputStyle}
+            />
+            <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}>
+              Triggers when the file/directory is modified
+            </div>
           </>
         )}
       </div>
@@ -997,16 +1068,16 @@ function CreateForm({
         </button>
         <button
           type="submit"
-          disabled={!name.trim() || !allStepsValid}
+          disabled={!name.trim() || !allStepsValid || !triggerValid}
           style={{
             border: "1px solid var(--accent, #a78bfa)",
             background: "var(--accent, #a78bfa)",
             color: "#fff",
-            cursor: !name.trim() || !allStepsValid ? "not-allowed" : "pointer",
+            cursor: !name.trim() || !allStepsValid || !triggerValid ? "not-allowed" : "pointer",
             padding: "4px 10px",
             borderRadius: 4,
             fontSize: 11,
-            opacity: !name.trim() || !allStepsValid ? 0.5 : 1,
+            opacity: !name.trim() || !allStepsValid || !triggerValid ? 0.5 : 1,
           }}
         >
           Create

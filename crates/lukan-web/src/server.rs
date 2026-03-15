@@ -185,6 +185,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/pipelines/{id}/runs/{run_id}",
             get(rest_pipelines::get_pipeline_run),
         )
+        .route(
+            "/pipelines/{id}/webhook",
+            post(rest_pipelines::webhook_pipeline),
+        )
         // Audio transcription
         .route(
             "/transcription/status",

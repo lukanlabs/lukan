@@ -76,7 +76,7 @@ impl PipelineScheduler {
         self.notify_tx.subscribe()
     }
 
-    /// Start the scheduler: load all enabled scheduled pipelines
+    /// Start the scheduler: load all enabled scheduled/event/filewatch pipelines
     pub async fn start(&self) {
         if self.started.swap(true, Ordering::SeqCst) {
             return;
@@ -92,8 +92,17 @@ impl PipelineScheduler {
                 for pipeline in &pipelines {
                     known.insert(pipeline.id.clone(), PipelineSnapshot::from(pipeline));
                     if pipeline.enabled {
-                        if let PipelineTrigger::Schedule { .. } = &pipeline.trigger {
-                            self.schedule_pipeline(pipeline).await;
+                        match &pipeline.trigger {
+                            PipelineTrigger::Schedule { .. } => {
+                                self.schedule_pipeline(pipeline).await;
+                            }
+                            PipelineTrigger::Event { .. } => {
+                                self.start_event_watcher(pipeline).await;
+                            }
+                            PipelineTrigger::FileWatch { .. } => {
+                                self.start_file_watcher(pipeline).await;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -128,7 +137,12 @@ impl PipelineScheduler {
             let should_cancel = match new_map.get(id) {
                 None => true,
                 Some(p) if !p.enabled => true,
-                Some(p) => !matches!(p.trigger, PipelineTrigger::Schedule { .. }),
+                Some(p) => !matches!(
+                    p.trigger,
+                    PipelineTrigger::Schedule { .. }
+                        | PipelineTrigger::Event { .. }
+                        | PipelineTrigger::FileWatch { .. }
+                ),
             };
             if should_cancel && let Some(handle) = timers.remove(id) {
                 handle.abort();
@@ -140,9 +154,15 @@ impl PipelineScheduler {
         let mut to_schedule: Vec<PipelineDefinition> = Vec::new();
         for p in &pipelines {
             let snap = PipelineSnapshot::from(p);
-            let is_scheduled = p.enabled && matches!(p.trigger, PipelineTrigger::Schedule { .. });
+            let has_auto_trigger = p.enabled
+                && matches!(
+                    p.trigger,
+                    PipelineTrigger::Schedule { .. }
+                        | PipelineTrigger::Event { .. }
+                        | PipelineTrigger::FileWatch { .. }
+                );
 
-            if !is_scheduled {
+            if !has_auto_trigger {
                 known.insert(p.id.clone(), snap);
                 continue;
             }
@@ -167,7 +187,12 @@ impl PipelineScheduler {
         drop(known);
 
         for p in &to_schedule {
-            self.schedule_pipeline(p).await;
+            match &p.trigger {
+                PipelineTrigger::Schedule { .. } => self.schedule_pipeline(p).await,
+                PipelineTrigger::Event { .. } => self.start_event_watcher(p).await,
+                PipelineTrigger::FileWatch { .. } => self.start_file_watcher(p).await,
+                _ => {}
+            }
             debug!(pipeline_id = %p.id, "Rescheduled pipeline (reload)");
         }
     }
@@ -387,8 +412,11 @@ impl PipelineScheduler {
     async fn reschedule_pipeline(&self, pipeline: &PipelineDefinition) {
         self.cancel_timer(&pipeline.id).await;
         if pipeline.enabled {
-            if let PipelineTrigger::Schedule { .. } = &pipeline.trigger {
-                self.schedule_pipeline(pipeline).await;
+            match &pipeline.trigger {
+                PipelineTrigger::Schedule { .. } => self.schedule_pipeline(pipeline).await,
+                PipelineTrigger::Event { .. } => self.start_event_watcher(pipeline).await,
+                PipelineTrigger::FileWatch { .. } => self.start_file_watcher(pipeline).await,
+                _ => {}
             }
         }
     }
@@ -399,5 +427,218 @@ impl PipelineScheduler {
             handle.abort();
             debug!(pipeline_id = %id, "Cancelled pipeline timer");
         }
+    }
+
+    /// Start an event watcher that polls pending.jsonl for matching events
+    async fn start_event_watcher(&self, pipeline: &PipelineDefinition) {
+        let (source_filter, level_filter) = match &pipeline.trigger {
+            PipelineTrigger::Event { source, level } => (source.clone(), level.clone()),
+            _ => return,
+        };
+
+        let pipeline_clone = pipeline.clone();
+        let config = self.config.lock().await.clone();
+        let running_pipelines = Arc::clone(&self.running_pipelines);
+        let notify_tx = self.notify_tx.clone();
+        let cancel_token = self.cancel_token.clone();
+        let source_for_log = source_filter.clone();
+
+        let handle = tokio::spawn(async move {
+            let pending_path = lukan_core::config::LukanPaths::pending_events_file();
+            let mut last_size: u64 = tokio::fs::metadata(&pending_path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
+
+            let mut interval = tokio::time::interval(Duration::from_secs(2));
+            interval.tick().await; // Skip first
+
+            loop {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => break,
+                    _ = interval.tick() => {
+                        let current_size = tokio::fs::metadata(&pending_path)
+                            .await
+                            .map(|m| m.len())
+                            .unwrap_or(0);
+
+                        if current_size <= last_size {
+                            last_size = current_size;
+                            continue;
+                        }
+
+                        // Read new lines
+                        let content = match tokio::fs::read_to_string(&pending_path).await {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
+
+                        let mut matched_event = None;
+                        for line in content.lines().rev().take(50) {
+                            if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+                                let ev_source = event["source"].as_str().unwrap_or("");
+                                let ev_level = event["level"].as_str().unwrap_or("");
+
+                                if ev_source == source_filter {
+                                    if let Some(ref lf) = level_filter {
+                                        if ev_level != lf {
+                                            continue;
+                                        }
+                                    }
+                                    matched_event = Some(line.to_string());
+                                    break;
+                                }
+                            }
+                        }
+
+                        last_size = current_size;
+
+                        let Some(event_json) = matched_event else {
+                            continue;
+                        };
+
+                        let pipeline_id = pipeline_clone.id.clone();
+                        let pipeline_name = pipeline_clone.name.clone();
+
+                        {
+                            let mut running = running_pipelines.lock().await;
+                            if running.contains(&pipeline_id) {
+                                continue;
+                            }
+                            running.insert(pipeline_id.clone());
+                        }
+
+                        let run = execute_pipeline(
+                            &pipeline_clone,
+                            Some(event_json),
+                            &config,
+                        )
+                        .await;
+
+                        let summary = if run.status == "success" {
+                            let c = run.step_runs.iter().filter(|s| s.status == "success").count();
+                            format!("{c} steps completed successfully")
+                        } else {
+                            run.step_runs.iter().find(|s| s.status == "error")
+                                .and_then(|s| s.error.clone())
+                                .unwrap_or_else(|| format!("Pipeline {}", run.status))
+                        };
+
+                        let _ = notify_tx.send(PipelineNotification {
+                            pipeline_id: pipeline_id.clone(),
+                            pipeline_name,
+                            status: run.status,
+                            summary,
+                        });
+
+                        running_pipelines.lock().await.remove(&pipeline_id);
+                    }
+                }
+            }
+        });
+
+        let mut timers = self.timers.lock().await;
+        if let Some(old) = timers.insert(pipeline.id.clone(), handle) {
+            old.abort();
+        }
+        debug!(
+            pipeline_id = %pipeline.id,
+            source = %source_for_log,
+            "Started event watcher for pipeline"
+        );
+    }
+
+    /// Start a file watcher that polls for file modifications
+    async fn start_file_watcher(&self, pipeline: &PipelineDefinition) {
+        let (watch_path, debounce_secs) = match &pipeline.trigger {
+            PipelineTrigger::FileWatch {
+                path,
+                debounce_secs,
+            } => (path.clone(), debounce_secs.unwrap_or(5)),
+            _ => return,
+        };
+
+        let pipeline_clone = pipeline.clone();
+        let config = self.config.lock().await.clone();
+        let running_pipelines = Arc::clone(&self.running_pipelines);
+        let notify_tx = self.notify_tx.clone();
+        let cancel_token = self.cancel_token.clone();
+        let watch_path_for_log = watch_path.clone();
+
+        let handle = tokio::spawn(async move {
+            let path = std::path::PathBuf::from(&watch_path);
+
+            // Get initial mtime
+            let get_mtime = |p: &std::path::Path| -> Option<std::time::SystemTime> {
+                std::fs::metadata(p).ok().and_then(|m| m.modified().ok())
+            };
+
+            let mut last_mtime = get_mtime(&path);
+            let poll_interval = Duration::from_secs(debounce_secs.max(1));
+            let mut interval = tokio::time::interval(poll_interval);
+            interval.tick().await; // Skip first
+
+            loop {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => break,
+                    _ = interval.tick() => {
+                        let current_mtime = get_mtime(&path);
+
+                        if current_mtime == last_mtime {
+                            continue;
+                        }
+                        last_mtime = current_mtime;
+
+                        let pipeline_id = pipeline_clone.id.clone();
+                        let pipeline_name = pipeline_clone.name.clone();
+
+                        {
+                            let mut running = running_pipelines.lock().await;
+                            if running.contains(&pipeline_id) {
+                                continue;
+                            }
+                            running.insert(pipeline_id.clone());
+                        }
+
+                        let input = format!("File changed: {watch_path}");
+                        let run = execute_pipeline(
+                            &pipeline_clone,
+                            Some(input),
+                            &config,
+                        )
+                        .await;
+
+                        let summary = if run.status == "success" {
+                            let c = run.step_runs.iter().filter(|s| s.status == "success").count();
+                            format!("{c} steps completed successfully")
+                        } else {
+                            run.step_runs.iter().find(|s| s.status == "error")
+                                .and_then(|s| s.error.clone())
+                                .unwrap_or_else(|| format!("Pipeline {}", run.status))
+                        };
+
+                        let _ = notify_tx.send(PipelineNotification {
+                            pipeline_id: pipeline_id.clone(),
+                            pipeline_name,
+                            status: run.status,
+                            summary,
+                        });
+
+                        running_pipelines.lock().await.remove(&pipeline_id);
+                    }
+                }
+            }
+        });
+
+        let mut timers = self.timers.lock().await;
+        if let Some(old) = timers.insert(pipeline.id.clone(), handle) {
+            old.abort();
+        }
+        debug!(
+            pipeline_id = %pipeline.id,
+            path = %watch_path_for_log,
+            debounce_secs,
+            "Started file watcher for pipeline"
+        );
     }
 }

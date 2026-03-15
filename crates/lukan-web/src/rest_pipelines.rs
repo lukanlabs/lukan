@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::Path, extract::State, http::StatusCode, response::IntoResponse};
-use lukan_core::pipelines::{PipelineCreateInput, PipelineManager, PipelineUpdateInput};
+use axum::{Json, extract::Path, extract::Query, extract::State, http::StatusCode, response::IntoResponse};
+use lukan_core::pipelines::{PipelineCreateInput, PipelineManager, PipelineTrigger, PipelineUpdateInput};
+use serde::Deserialize;
 
 use crate::state::AppState;
 
@@ -157,6 +158,101 @@ pub async fn trigger_pipeline(
         Json(serde_json::json!({
             "status": "triggered",
             "pipelineId": id,
+        })),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+pub struct WebhookQuery {
+    secret: Option<String>,
+}
+
+/// POST /api/pipelines/:id/webhook — public webhook endpoint
+pub async fn webhook_pipeline(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<WebhookQuery>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let pipeline = match PipelineManager::get(&id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, format!("Pipeline '{id}' not found")).into_response();
+        }
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+    };
+
+    // Verify this pipeline has a webhook trigger
+    let expected_secret = match &pipeline.trigger {
+        PipelineTrigger::Webhook { secret } => secret.clone(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "Pipeline is not configured with a webhook trigger",
+            )
+                .into_response();
+        }
+    };
+
+    // Validate secret if configured
+    if let Some(ref expected) = expected_secret {
+        let provided = query.secret.as_deref().unwrap_or("");
+        if provided != expected {
+            return (StatusCode::UNAUTHORIZED, "Invalid webhook secret").into_response();
+        }
+    }
+
+    // Use the request body as the trigger input
+    let input = Some(serde_json::to_string_pretty(&body).unwrap_or_default());
+
+    let config = state.config.lock().await.clone();
+    let pipeline_notify_tx = state.pipeline_notification_tx.clone();
+
+    tokio::spawn(async move {
+        let run =
+            lukan_agent::pipelines::executor::execute_pipeline(&pipeline, input, &config).await;
+
+        let summary = if run.status == "success" {
+            let step_count = run.step_runs.iter().filter(|s| s.status == "success").count();
+            format!("{step_count} steps completed successfully")
+        } else {
+            let error_step = run.step_runs.iter().find(|s| s.status == "error");
+            error_step
+                .and_then(|s| s.error.clone())
+                .unwrap_or_else(|| format!("Pipeline {}", run.status))
+        };
+
+        let notification = lukan_agent::PipelineNotification {
+            pipeline_id: pipeline.id,
+            pipeline_name: pipeline.name,
+            status: run.status,
+            summary,
+        };
+        let _ = pipeline_notify_tx.send(notification.clone());
+
+        if let Ok(line) = serde_json::to_string(&notification) {
+            let path = lukan_core::config::LukanPaths::pipeline_notifications_file();
+            if let Ok(mut file) = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .await
+            {
+                use tokio::io::AsyncWriteExt;
+                let _ = file.write_all(format!("{line}\n").as_bytes()).await;
+            }
+        }
+    });
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "status": "triggered",
+            "pipelineId": id,
+            "source": "webhook",
         })),
     )
         .into_response()

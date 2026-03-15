@@ -8,6 +8,18 @@ pub enum PipelineTrigger {
     Manual,
     /// Triggered on a schedule (same format as workers: "every:5m", "*/10 * * * *")
     Schedule { schedule: String },
+    /// Triggered via HTTP webhook (POST /api/pipelines/{id}/webhook)
+    Webhook { secret: Option<String> },
+    /// Triggered when a matching event arrives in pending.jsonl
+    Event {
+        source: String,
+        level: Option<String>,
+    },
+    /// Triggered when a file/directory changes
+    FileWatch {
+        path: String,
+        debounce_secs: Option<u64>,
+    },
 }
 
 /// Condition for a step connection

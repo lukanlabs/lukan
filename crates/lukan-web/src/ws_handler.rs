@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -22,13 +23,11 @@ use lukan_tools::create_configured_registry;
 use crate::protocol::{ClientMessage, ServerMessage, TokenUsage};
 use crate::state::{AppState, StreamBroadcast, WebAgentSession};
 
-/// Bundles the mutable stream handles passed into `handle_send_message`
-/// so we stay under clippy's argument limit.
-struct WsStreams<'a> {
-    ws_tx: &'a mut futures::stream::SplitSink<WebSocket, Message>,
-    ws_rx: &'a mut futures::stream::SplitStream<WebSocket>,
-    terminal_rx: &'a mut tokio::sync::broadcast::Receiver<ServerMessage>,
-    notify_rx: &'a mut tokio::sync::broadcast::Receiver<lukan_agent::WorkerNotification>,
+/// Send a ServerMessage as JSON through an mpsc channel (for spawned agent tasks).
+async fn send_json_channel(tx: &mpsc::Sender<String>, msg: &ServerMessage) {
+    if let Ok(json) = serde_json::to_string(msg) {
+        let _ = tx.send(json).await;
+    }
 }
 
 /// WebSocket upgrade handler
@@ -58,6 +57,11 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
     let mut stream_rx = state.stream_tx.subscribe();
     let mut pipeline_notify_rx = state.pipeline_notification_tx.subscribe();
     let mut subagent_rx = lukan_agent::sub_agent::subscribe_stream_events().await;
+
+    // Channels for spawned agent tasks to send outbound messages
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<String>(512);
+    let (done_tx, mut done_rx) = mpsc::channel::<String>(16);
+    let mut cancel_tokens: HashMap<String, CancellationToken> = HashMap::new();
 
     // If auth required, send auth_required message
     if !authenticated {
@@ -121,6 +125,16 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
                 if authenticated && let Ok(json) = serde_json::to_string(&subagent_ev) {
                     let _ = ws_tx.send(Message::Text(json.into())).await;
                 }
+                continue;
+            }
+            Some(json) = outbound_rx.recv() => {
+                if authenticated {
+                    let _ = ws_tx.send(Message::Text(json.into())).await;
+                }
+                continue;
+            }
+            Some(finished_tab) = done_rx.recv() => {
+                cancel_tokens.remove(&finished_tab);
                 continue;
             }
         };
@@ -199,11 +213,16 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
             conn_id,
             &state,
             &mut ws_tx,
-            &mut ws_rx,
-            &mut terminal_rx,
-            &mut notify_rx,
+            &outbound_tx,
+            &mut cancel_tokens,
+            &done_tx,
         )
         .await;
+    }
+
+    // Cancel any in-flight agent turns for this connection
+    for (_, token) in cancel_tokens.drain() {
+        token.cancel();
     }
 
     // On disconnect: release any processing locks owned by this connection
@@ -244,38 +263,80 @@ async fn dispatch_message(
     conn_id: usize,
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
-    ws_rx: &mut futures::stream::SplitStream<WebSocket>,
-    terminal_rx: &mut tokio::sync::broadcast::Receiver<ServerMessage>,
-    notify_rx: &mut tokio::sync::broadcast::Receiver<lukan_agent::WorkerNotification>,
+    outbound_tx: &mpsc::Sender<String>,
+    cancel_tokens: &mut HashMap<String, CancellationToken>,
+    done_tx: &mpsc::Sender<String>,
 ) {
     match msg {
         ClientMessage::SendMessage {
             content,
             session_id,
         } => {
-            handle_send_message(
-                conn_id,
-                &content,
-                session_id.as_deref(),
-                state,
-                &mut WsStreams {
-                    ws_tx,
-                    ws_rx,
-                    terminal_rx,
-                    notify_rx,
-                },
-            )
-            .await;
+            let tab = match session_id {
+                Some(t) => t,
+                None => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: "session_id is required".to_string(),
+                        },
+                    )
+                    .await;
+                    return;
+                }
+            };
+
+            // Acquire per-session processing lock
+            {
+                let mut processing = state.processing_sessions.lock().await;
+                if processing.contains_key(&tab) {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: "This session is already processing. Please wait.".to_string(),
+                        },
+                    )
+                    .await;
+                    return;
+                }
+                processing.insert(tab.clone(), conn_id);
+            }
+
+            let cancel_token = CancellationToken::new();
+            cancel_tokens.insert(tab.clone(), cancel_token.clone());
+
+            let state = Arc::clone(state);
+            let outbound_tx = outbound_tx.clone();
+            let done_tx = done_tx.clone();
+
+            tokio::spawn(async move {
+                handle_send_message(
+                    conn_id,
+                    content,
+                    tab,
+                    state,
+                    outbound_tx,
+                    cancel_token,
+                    done_tx,
+                )
+                .await;
+            });
         }
 
         ClientMessage::Abort { session_id } => {
-            // Release processing lock (outside a turn — mid-turn abort is handled
-            // directly in handle_send_message's select loop with CancellationToken).
             if let Some(sid) = &session_id {
-                let mut processing = state.processing_sessions.lock().await;
-                if processing.get(sid) == Some(&conn_id) {
-                    processing.remove(sid);
-                    info!(conn_id, session_id = %sid, "Aborted processing");
+                if let Some(token) = cancel_tokens.get(sid) {
+                    // Mid-turn abort: cancel the agent task
+                    info!(conn_id, session_id = %sid, "Abort received, cancelling agent");
+                    token.cancel();
+                    // Token + lock cleanup happens when the task signals done_tx
+                } else {
+                    // Not in a turn — just release processing lock
+                    let mut processing = state.processing_sessions.lock().await;
+                    if processing.get(sid) == Some(&conn_id) {
+                        processing.remove(sid);
+                        info!(conn_id, session_id = %sid, "Aborted processing (no active turn)");
+                    }
                 }
             }
         }
@@ -1285,75 +1346,30 @@ async fn dispatch_message(
     }
 }
 
-/// Handle send_message: acquire lock, run agent turn, stream events.
+/// Handle send_message: run agent turn, stream events via outbound channel.
 ///
-/// Takes both `ws_tx` AND `ws_rx` so that during the agent turn we can
-/// forward stream events to the client while *also* reading incoming messages
-/// (approve / deny / abort / plan accept/reject / terminal input / etc.)
-/// that the client sends while the agent is running.
-///
-/// Without this, there is a deadlock: the agent blocks waiting for an approval
-/// response, the event-forwarding loop blocks waiting for events, and the main
-/// connection loop blocks waiting for this function to return — so the approval
-/// message from the client never gets read.
+/// Spawned as an independent task so the main WS loop stays free for other
+/// tabs and mid-turn messages (approvals, abort, terminal, etc.).
 async fn handle_send_message(
     conn_id: usize,
-    content: &str,
-    tab_id: Option<&str>,
-    state: &Arc<AppState>,
-    streams: &mut WsStreams<'_>,
+    content: String,
+    tab: String,
+    state: Arc<AppState>,
+    outbound_tx: mpsc::Sender<String>,
+    cancel_token: CancellationToken,
+    done_tx: mpsc::Sender<String>,
 ) {
-    use futures::{SinkExt, StreamExt};
-
-    let WsStreams {
-        ws_tx,
-        ws_rx,
-        terminal_rx,
-        notify_rx,
-    } = streams;
-
-    // All clients must provide a tab_id (session_id)
-    let tab = match tab_id {
-        Some(t) => t,
-        None => {
-            send_json(
-                streams.ws_tx,
-                &ServerMessage::Error {
-                    error: "session_id is required".to_string(),
-                },
-            )
-            .await;
-            return;
-        }
-    };
-
-    // Try to acquire per-session processing lock
-    {
-        let mut processing = state.processing_sessions.lock().await;
-        if processing.contains_key(tab) {
-            send_json(
-                streams.ws_tx,
-                &ServerMessage::Error {
-                    error: "This session is already processing. Please wait.".to_string(),
-                },
-            )
-            .await;
-            return;
-        }
-        processing.insert(tab.to_string(), conn_id);
-    }
-
     // Ensure agent exists — reload from last_session_id if available
     {
         let mut sessions = state.sessions.lock().await;
         let session = sessions
-            .entry(tab.to_string())
+            .entry(tab.clone())
             .or_insert_with(WebAgentSession::new);
         if session.agent.is_none() {
             let result = if let Some(ref last_id) = session.last_session_id {
-                create_agent_with_session(state, last_id).await
+                create_agent_with_session(&state, last_id).await
             } else {
-                create_agent(state).await
+                create_agent(&state).await
             };
             match result {
                 Ok(agent) => {
@@ -1361,8 +1377,9 @@ async fn handle_send_message(
                 }
                 Err(e) => {
                     drop(sessions);
-                    release_processing_lock(conn_id, tab, state).await;
-                    send_agent_creation_error(e, state, ws_tx).await;
+                    release_processing_lock(conn_id, &tab, &state).await;
+                    send_agent_creation_error(e, &state, &outbound_tx).await;
+                    let _ = done_tx.send(tab).await;
                     return;
                 }
             }
@@ -1372,7 +1389,7 @@ async fn handle_send_message(
     // Take the agent out for the duration of the turn and set up channels
     let mut agent = {
         let mut sessions = state.sessions.lock().await;
-        let session = sessions.get_mut(tab).unwrap();
+        let session = sessions.get_mut(&tab).unwrap();
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalResponse>(1);
         let (plan_review_tx, plan_review_rx) = mpsc::channel::<PlanReviewResponse>(1);
         let (planner_answer_tx, planner_answer_rx) = mpsc::channel::<String>(1);
@@ -1389,36 +1406,22 @@ async fn handle_send_message(
             Some(bg_signal_rx),
         );
         agent.label = Some(session.label.clone());
-        agent.tab_id = Some(tab.to_string());
+        agent.tab_id = Some(tab.clone());
         agent
     };
 
     // Create channel for streaming events
     let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
 
-    let content_owned = content.to_string();
-    let tab_id_owned = tab_id.map(String::from);
     // Capture the persisted session ID for broadcasting (so all UIs watching
     // the same saved session see each other's streaming, regardless of tab_id)
     let broadcast_session_id = agent.session_id().to_string();
-
-    // Create cancellation token so abort can signal the agent to stop
-    let cancel_token = CancellationToken::new();
-    let cancel_for_agent = cancel_token.clone();
-
-    // Spawn the agent turn
-    let agent_handle = tokio::spawn(async move {
-        let result = agent
-            .run_turn(&content_owned, event_tx, Some(cancel_for_agent), None)
-            .await;
-        (agent, result)
-    });
 
     // Broadcast the user message to other clients so they can display it
     {
         let user_event = serde_json::json!({
             "type": "user_message",
-            "content": content,
+            "content": &content,
             "savedSessionId": &broadcast_session_id,
         });
         let _ = state.stream_tx.send(StreamBroadcast {
@@ -1427,32 +1430,34 @@ async fn handle_send_message(
         });
     }
 
-    // Forward stream events to WebSocket, while also reading incoming
-    // client messages so that approval / abort / plan / terminal messages
-    // are processed without deadlocking.
+    let cancel_for_agent = cancel_token.clone();
+
+    // Spawn the agent turn
+    let agent_handle = tokio::spawn(async move {
+        let result = agent
+            .run_turn(&content, event_tx, Some(cancel_for_agent), None)
+            .await;
+        (agent, result)
+    });
+
+    // Forward stream events to outbound channel. The main WS loop reads
+    // from outbound_rx and writes to ws_tx — no direct WS access here.
     let mut client_disconnected = false;
     let mut aborted = false;
     loop {
         tokio::select! {
-            // Agent produced a stream event → forward to client + broadcast
             event = event_rx.recv() => {
                 match event {
                     Some(ev) => {
-                        // Inject tabId for session-scoped routing
-                        let json = if let Some(ref tid) = tab_id_owned {
-                            inject_tab_id(&ev, tid)
-                        } else {
-                            serde_json::to_string(&ev).unwrap_or_default()
-                        };
-                        // Broadcast to other clients — inject savedSessionId
-                        // so the frontend can filter by active session
+                        let json = inject_tab_id(&ev, &tab);
+                        // Broadcast to other clients
                         let broadcast_json = inject_field(&json, "savedSessionId", &broadcast_session_id);
                         let _ = state.stream_tx.send(StreamBroadcast {
                             json: broadcast_json,
                             origin_conn_id: conn_id,
                         });
-                        if ws_tx.send(Message::Text(json.into())).await.is_err() {
-                            warn!(conn_id, "WebSocket send failed, client likely disconnected");
+                        if outbound_tx.send(json).await.is_err() {
+                            warn!(conn_id, "Outbound channel closed, client disconnected");
                             client_disconnected = true;
                             cancel_token.cancel();
                             break;
@@ -1461,69 +1466,23 @@ async fn handle_send_message(
                     None => break, // event channel closed, agent turn finished
                 }
             }
-            // Client sent a message while agent is running
-            ws_msg = ws_rx.next() => {
-                match ws_msg {
-                    Some(Ok(Message::Text(text))) => {
-                        let text = text.to_string();
-                        match serde_json::from_str::<ClientMessage>(&text) {
-                            Ok(ClientMessage::Abort { .. }) => {
-                                info!(conn_id, "Abort received mid-turn, cancelling agent");
-                                cancel_token.cancel();
-                                aborted = true;
-                                break;
-                            }
-                            Ok(client_msg) => {
-                                handle_mid_turn_message(client_msg, conn_id, state, ws_tx).await;
-                            }
-                            Err(e) => {
-                                warn!(conn_id, error = %e, "Invalid mid-turn message");
-                            }
-                        }
-                    }
-                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
-                        client_disconnected = true;
-                        cancel_token.cancel();
-                        break;
-                    }
-                    _ => {} // ping/pong/binary — ignore
-                }
-            }
-            // Terminal output must keep flowing during agent turns
-            Ok(term_msg) = terminal_rx.recv() => {
-                send_json(ws_tx, &term_msg).await;
-            }
-            // Worker notifications must keep flowing during agent turns
-            Ok(notif) = notify_rx.recv() => {
-                let msg = ServerMessage::WorkerNotification {
-                    worker_id: notif.worker_id,
-                    worker_name: notif.worker_name,
-                    status: notif.status,
-                    summary: notif.summary,
-                };
-                send_json(ws_tx, &msg).await;
+            _ = cancel_token.cancelled() => {
+                aborted = true;
+                break;
             }
         }
     }
 
-    // Drain any remaining buffered events before dropping the receiver.
-    // This ensures tool results (e.g. "Tool denied by user.") that were
-    // queued while the abort was processed still get forwarded to the client.
+    // Drain remaining buffered events before dropping the receiver.
     if !client_disconnected {
         while let Ok(ev) = event_rx.try_recv() {
-            let json = if let Some(ref tid) = tab_id_owned {
-                inject_tab_id(&ev, tid)
-            } else {
-                serde_json::to_string(&ev).unwrap_or_default()
-            };
-            let _ = ws_tx.send(Message::Text(json.into())).await;
+            let json = inject_tab_id(&ev, &tab);
+            let _ = outbound_tx.send(json).await;
         }
     }
 
     // Drop the event receiver so the agent's event_tx.send() fails immediately
     // instead of blocking on a full channel buffer when nobody is reading.
-    // Without this, the agent can hang indefinitely and the timeout below
-    // would fire, losing the agent (and its unsaved session) entirely.
     drop(event_rx);
 
     // Wait for agent turn to complete (with timeout for abort/disconnect cases)
@@ -1544,8 +1503,8 @@ async fn handle_send_message(
             if let Err(e) = result {
                 error!(conn_id, error = %e, "Agent turn error");
                 if !client_disconnected {
-                    send_json(
-                        ws_tx,
+                    send_json_channel(
+                        &outbound_tx,
                         &ServerMessage::Error {
                             error: format!("Agent error: {e}"),
                         },
@@ -1565,11 +1524,11 @@ async fn handle_send_message(
                 messages,
                 checkpoints,
                 context_size: Some(context_size),
-                tab_id: tab_id_owned.clone(),
+                tab_id: Some(tab.clone()),
                 aborted: if aborted { Some(true) } else { None },
             };
 
-            // Broadcast to other clients — inject savedSessionId for filtering
+            // Broadcast to other clients
             let broadcast_sid = returned_agent.session_id().to_string();
             if let Ok(json) = serde_json::to_string(&complete_msg) {
                 let broadcast_json = inject_field(&json, "savedSessionId", &broadcast_sid);
@@ -1580,13 +1539,13 @@ async fn handle_send_message(
             }
 
             if !client_disconnected {
-                send_json(ws_tx, &complete_msg).await;
+                send_json_channel(&outbound_tx, &complete_msg).await;
             }
 
             // Put agent back
-            if let Some(ref tid) = tab_id_owned {
+            {
                 let mut sessions = state.sessions.lock().await;
-                if let Some(session) = sessions.get_mut(tid) {
+                if let Some(session) = sessions.get_mut(&tab) {
                     session.last_session_id = Some(returned_agent.session_id().to_string());
                     session.set_agent(returned_agent);
                 }
@@ -1596,8 +1555,8 @@ async fn handle_send_message(
         Some(Err(e)) => {
             error!(conn_id, error = %e, "Agent task panicked");
             if !client_disconnected {
-                send_json(
-                    ws_tx,
+                send_json_channel(
+                    &outbound_tx,
                     &ServerMessage::Error {
                         error: format!("Agent task failed: {e}"),
                     },
@@ -1613,7 +1572,10 @@ async fn handle_send_message(
     }
 
     // Release processing lock
-    release_processing_lock(conn_id, tab, state).await;
+    release_processing_lock(conn_id, &tab, &state).await;
+
+    // Signal that this tab's turn is complete
+    let _ = done_tx.send(tab).await;
 }
 
 /// Release the per-session processing lock if owned by this connection.
@@ -1624,37 +1586,28 @@ async fn release_processing_lock(conn_id: usize, session_id: &str, state: &Arc<A
     }
 }
 
-/// Send an appropriate error when agent creation fails.
+/// Send an appropriate error when agent creation fails (via outbound channel).
 async fn send_agent_creation_error(
     e: anyhow::Error,
     state: &Arc<AppState>,
-    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+    outbound_tx: &mpsc::Sender<String>,
 ) {
-    use futures::SinkExt;
     let config = state.config.lock().await;
     if config.effective_model().is_none() {
         let hint = "No model selected. Open **Providers** in the sidebar and choose a model to get started.";
-        let _ = ws_tx
-            .send(Message::Text(
-                serde_json::to_string(&StreamEvent::TextDelta {
-                    text: hint.to_string(),
-                })
-                .unwrap()
-                .into(),
-            ))
-            .await;
-        let _ = ws_tx
-            .send(Message::Text(
-                serde_json::to_string(&StreamEvent::MessageEnd {
-                    stop_reason: lukan_core::models::events::StopReason::EndTurn,
-                })
-                .unwrap()
-                .into(),
-            ))
-            .await;
+        if let Ok(json) = serde_json::to_string(&StreamEvent::TextDelta {
+            text: hint.to_string(),
+        }) {
+            let _ = outbound_tx.send(json).await;
+        }
+        if let Ok(json) = serde_json::to_string(&StreamEvent::MessageEnd {
+            stop_reason: lukan_core::models::events::StopReason::EndTurn,
+        }) {
+            let _ = outbound_tx.send(json).await;
+        }
     } else {
-        send_json(
-            ws_tx,
+        send_json_channel(
+            outbound_tx,
             &ServerMessage::Error {
                 error: format!("Failed to create agent: {e}"),
             },
@@ -1690,252 +1643,6 @@ fn inject_field(json: &str, key: &str, value: &str) -> String {
         serde_json::to_string(&parsed).unwrap_or_else(|_| json.to_string())
     } else {
         json.to_string()
-    }
-}
-
-/// Handle messages that arrive from the client *during* an agent turn.
-///
-/// Only a subset of messages make sense mid-turn (approve, deny, abort,
-/// plan accept/reject, terminal input, etc.). Everything else is ignored.
-async fn handle_mid_turn_message(
-    msg: ClientMessage,
-    conn_id: usize,
-    state: &Arc<AppState>,
-    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
-) {
-    match msg {
-        ClientMessage::Approve {
-            approved_ids,
-            session_id,
-        } => {
-            send_approval(
-                state,
-                session_id.as_deref(),
-                ApprovalResponse::Approved { approved_ids },
-            )
-            .await;
-        }
-
-        ClientMessage::AlwaysAllow {
-            approved_ids,
-            tools,
-            session_id,
-        } => {
-            send_approval(
-                state,
-                session_id.as_deref(),
-                ApprovalResponse::AlwaysAllow {
-                    approved_ids,
-                    tools,
-                },
-            )
-            .await;
-        }
-
-        ClientMessage::DenyAll { session_id } => {
-            send_approval(state, session_id.as_deref(), ApprovalResponse::DeniedAll).await;
-        }
-
-        ClientMessage::PlanAccept { tasks, session_id } => {
-            let parsed_tasks: Option<Vec<PlanTask>> =
-                tasks.and_then(|v| serde_json::from_value(v).ok());
-            send_plan_review(
-                state,
-                session_id.as_deref(),
-                PlanReviewResponse::Accepted {
-                    modified_tasks: parsed_tasks,
-                },
-            )
-            .await;
-        }
-
-        ClientMessage::PlanReject {
-            feedback,
-            session_id,
-        } => {
-            send_plan_review(
-                state,
-                session_id.as_deref(),
-                PlanReviewResponse::Rejected { feedback },
-            )
-            .await;
-        }
-
-        ClientMessage::AnswerQuestion { answer, session_id } => {
-            send_planner_answer(state, session_id.as_deref(), answer).await;
-        }
-
-        ClientMessage::Abort { .. } => {
-            // Abort is now handled directly in the select loop of handle_send_message
-            // (cancels the CancellationToken and breaks the loop). This arm should
-            // not be reached, but is kept for safety.
-            warn!(conn_id, "Unexpected Abort in handle_mid_turn_message");
-        }
-
-        // Terminal messages are valid mid-turn
-        ClientMessage::TerminalInput { session_id, data } => {
-            let _ = state.terminal_manager.write_input(&session_id, &data).await;
-        }
-
-        ClientMessage::TerminalResize {
-            session_id,
-            cols,
-            rows,
-        } => {
-            let _ = state.terminal_manager.resize(&session_id, cols, rows).await;
-        }
-
-        ClientMessage::TerminalDestroy { session_id } => {
-            let _ = state.terminal_manager.destroy(&session_id).await;
-        }
-
-        ClientMessage::SendToBackground { session_id } => {
-            if let Some(ref sid) = session_id {
-                let sessions = state.sessions.lock().await;
-                if let Some(session) = sessions.get(sid)
-                    && let Some(ref tx) = session.bg_signal_tx
-                {
-                    let _ = tx.send(());
-                }
-            }
-        }
-
-        // Terminal management is valid mid-turn
-        ClientMessage::TerminalList => {
-            let _ = state
-                .terminal_manager
-                .recover_sessions(state.terminal_tx.clone())
-                .await;
-            let sessions = state.terminal_manager.list().await;
-            send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
-        }
-
-        ClientMessage::TerminalCreate { cwd, cols, rows } => {
-            if let Ok(info) = state
-                .terminal_manager
-                .create_session(state.terminal_tx.clone(), cwd, cols, rows)
-                .await
-            {
-                send_json(
-                    ws_tx,
-                    &ServerMessage::TerminalCreated {
-                        id: info.id,
-                        cols: info.cols,
-                        rows: info.rows,
-                        scrollback: None,
-                    },
-                )
-                .await;
-            }
-        }
-
-        ClientMessage::TerminalReconnect { session_id } => {
-            state
-                .terminal_manager
-                .reset_output_reader(&session_id, state.terminal_tx.clone())
-                .await;
-            if let Ok(scrollback) = state.terminal_manager.capture_scrollback(&session_id).await {
-                let sessions = state.terminal_manager.list().await;
-                if let Some(info) = sessions.iter().find(|s| s.id == session_id) {
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::TerminalCreated {
-                            id: info.id.clone(),
-                            cols: info.cols,
-                            rows: info.rows,
-                            scrollback: Some(scrollback),
-                        },
-                    )
-                    .await;
-                }
-            }
-        }
-
-        ClientMessage::TerminalRename { session_id, name } => {
-            state
-                .terminal_manager
-                .rename_session(&session_id, name)
-                .await;
-            let sessions = state.terminal_manager.list().await;
-            send_json(ws_tx, &ServerMessage::TerminalSessions { sessions }).await;
-        }
-
-        // Session management is valid mid-turn
-        ClientMessage::ListSessions => {
-            if let Ok(sessions) = lukan_agent::SessionManager::list().await {
-                send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
-            }
-        }
-
-        ClientMessage::DeleteSession { session_id } => {
-            match lukan_agent::SessionManager::delete(&session_id).await {
-                Ok(_) => {
-                    evict_session_from_memory(&session_id, state).await;
-                    if let Ok(sessions) = lukan_agent::SessionManager::list().await {
-                        send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
-                    }
-                }
-                Err(e) => {
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::Error {
-                            error: format!("Failed to delete session: {e}"),
-                        },
-                    )
-                    .await;
-                }
-            }
-        }
-
-        ClientMessage::DeleteAllSessions => match lukan_agent::SessionManager::delete_all().await {
-            Ok(_) => {
-                {
-                    let mut sessions = state.sessions.lock().await;
-                    for session in sessions.values_mut() {
-                        session.agent = None;
-                    }
-                }
-                if let Ok(sessions) = lukan_agent::SessionManager::list().await {
-                    send_json(ws_tx, &ServerMessage::SessionList { sessions }).await;
-                }
-            }
-            Err(e) => {
-                send_json(
-                    ws_tx,
-                    &ServerMessage::Error {
-                        error: format!("Failed to delete all sessions: {e}"),
-                    },
-                )
-                .await;
-            }
-        },
-
-        ClientMessage::SetPermissionMode { mode } => {
-            let parsed: PermissionMode =
-                serde_json::from_value(serde_json::Value::String(mode.clone()))
-                    .unwrap_or(PermissionMode::Auto);
-            info!(conn_id, %mode, "Permission mode changed mid-turn");
-            let _ = state.permission_mode.send(parsed);
-            send_json(ws_tx, &ServerMessage::ModeChanged { mode }).await;
-        }
-
-        ClientMessage::SetDisabledTools { tools, session_id } => {
-            if let Some(sid) = session_id {
-                let disabled: std::collections::HashSet<String> = tools.into_iter().collect();
-                let mut sessions = state.sessions.lock().await;
-                if let Some(session) = sessions.get_mut(&sid)
-                    && let Some(ref mut agent) = session.agent
-                {
-                    agent.set_disabled_tools(disabled);
-                    info!(conn_id, "Disabled tools updated mid-turn");
-                }
-            }
-        }
-
-        // Ignore all other messages during a turn
-        other => {
-            warn!(conn_id, msg = ?other, "Ignoring message received mid-turn");
-        }
     }
 }
 

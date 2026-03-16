@@ -112,6 +112,12 @@ impl AppState {
         let (terminal_tx, _) = broadcast::channel(256);
         let (stream_tx, _) = broadcast::channel(512);
 
+        // Load permission mode from project config (if available)
+        let initial_mode = {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            load_permission_mode_sync(&cwd)
+        };
+
         Self {
             sessions: Mutex::new(HashMap::new()),
             config: Mutex::new(resolved),
@@ -122,7 +128,7 @@ impl AppState {
             provider_name: Mutex::new(provider_name),
             model_name: Mutex::new(model_name),
             connection_counter: AtomicUsize::new(1),
-            permission_mode: watch::Sender::new(PermissionMode::Auto),
+            permission_mode: watch::Sender::new(initial_mode),
             notification_tx,
             pipeline_notification_tx,
             terminal_manager: TerminalManager::default(),
@@ -166,6 +172,23 @@ impl AppState {
     pub fn verify_token(&self, token: &str) -> bool {
         crate::auth::verify_auth_token(token, &self.auth_secret)
     }
+}
+
+/// Load permission mode from .lukan/config.json (sync, for startup)
+fn load_permission_mode_sync(start_dir: &std::path::Path) -> PermissionMode {
+    let mut dir = start_dir.to_path_buf();
+    loop {
+        let config_path = dir.join(".lukan").join("config.json");
+        if let Ok(content) = std::fs::read_to_string(&config_path)
+            && let Ok(cfg) = serde_json::from_str::<lukan_core::config::ProjectConfig>(&content)
+        {
+            return cfg.permission_mode;
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    PermissionMode::Auto
 }
 
 // Need Arc wrapper for axum state

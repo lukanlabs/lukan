@@ -104,6 +104,8 @@ pub struct App {
     reasoning_picker: Option<ReasoningPicker>,
     /// Force full terminal redraw on next frame (e.g. after closing overlay)
     force_redraw: bool,
+    /// Queued messages ready to submit (set by handle_stream_event, consumed by main loop)
+    pending_queue_submit: bool,
     /// First ESC was pressed — show hint and clear on second ESC
     esc_pending: bool,
     /// When set: (start_byte, end_byte, preview_label). Paste block inside self.input.
@@ -354,6 +356,7 @@ impl App {
             cmd_palette_idx: 0,
             reasoning_picker: None,
             force_redraw: false,
+            pending_queue_submit: false,
             esc_pending: false,
             paste_info: None,
             bg_picker: None,
@@ -3344,6 +3347,12 @@ impl App {
                 }
             }
 
+            // Auto-submit queued messages after daemon turn completes
+            if self.pending_queue_submit {
+                self.pending_queue_submit = false;
+                self.submit_message(agent_tx.clone()).await;
+            }
+
             // Auto-refresh task panel after task tool events
             if self.task_panel_needs_refresh {
                 self.task_panel_needs_refresh = false;
@@ -5052,6 +5061,15 @@ impl App {
                 // keep is_streaming=true so Alt+B works and the UI shows
                 // "streaming" status. ToolResult events will follow, and
                 // the final MessageEnd (with EndTurn) will set it to false.
+                // Drain queued messages — inject mid-turn or at end of turn
+                if self.is_daemon_mode() && !self.queued_messages.lock().unwrap().is_empty() {
+                    let remaining: Vec<String> =
+                        self.queued_messages.lock().unwrap().drain(..).collect();
+                    self.input = remaining.join("\n");
+                    self.cursor_pos = self.input.len();
+                    self.pending_queue_submit = true;
+                }
+
                 if stop_reason != StopReason::ToolUse {
                     self.is_streaming = false;
                     self.active_tool = None;

@@ -225,11 +225,21 @@ pub async fn execute_pipeline_full(
                     let ct = cancel_token.clone();
                     let shared_run = Arc::clone(&shared_run_state);
                     let outputs_snap = outputs_snapshot.clone();
+                    let p_name = pipeline.name.clone();
+                    let next_names: Vec<String> = pipeline
+                        .connections
+                        .iter()
+                        .filter(|c| c.from_step == *step_id)
+                        .filter_map(|c| pipeline.steps.iter().find(|s| s.id == c.to_step))
+                        .map(|s| s.name.clone())
+                        .collect();
 
                     run.step_runs[step_run_idx].input = input.clone();
 
                     join_set.spawn(async move {
                         let result = execute_approval_step_parallel(
+                            &p_name,
+                            &next_names,
                             &step_clone,
                             &input,
                             &outputs_snap,
@@ -457,6 +467,7 @@ async fn execute_single_step(
     // ── Approval gate step ──
     if step.step_type == "approval" {
         return execute_approval_step(
+            pipeline,
             step,
             step_run_idx,
             &input,
@@ -568,7 +579,10 @@ async fn execute_single_step(
 }
 
 /// Execute an approval step within a parallel JoinSet (returns Result like agent steps)
+#[allow(clippy::too_many_arguments)]
 async fn execute_approval_step_parallel(
+    pipeline_name: &str,
+    next_step_names: &[String],
     step: &lukan_core::pipelines::PipelineStep,
     input: &Option<String>,
     outputs_snapshot: &HashMap<String, String>,
@@ -590,6 +604,13 @@ async fn execute_approval_step_parallel(
         let placeholder = format!("{{{{prev.{id}.output}}}}");
         message = message.replace(&placeholder, output);
     }
+
+    // Enrich message with pipeline context
+    let mut context_header = format!("Pipeline: {pipeline_name}");
+    if !next_step_names.is_empty() {
+        context_header.push_str(&format!("\nNext step: {}", next_step_names.join(", ")));
+    }
+    let message = format!("{context_header}\n\n{message}");
 
     let approval_id = generate_run_id();
     let now = chrono::Utc::now();
@@ -648,8 +669,10 @@ async fn execute_approval_step_parallel(
                 }
                 match ApprovalManager::get(&approval_id).await {
                     Ok(Some(approval)) if approval.status == "approved" => {
-                        let output = approval.comment.unwrap_or_else(|| "Approved".to_string());
-                        return Ok((output.clone(), output, PipelineTokenUsage::default(), 0));
+                        // Pass through the original input so the next step gets the full context
+                        let passthrough = input.clone().unwrap_or_default();
+                        let display = format!("[approved] {}", approval.comment.as_deref().unwrap_or("Approved"));
+                        return Ok((passthrough, display, PipelineTokenUsage::default(), 0));
                     }
                     Ok(Some(approval)) if approval.status == "rejected" => {
                         let reason = approval.comment.unwrap_or_else(|| "Rejected".to_string());
@@ -666,7 +689,9 @@ async fn execute_approval_step_parallel(
 }
 
 /// Execute an approval gate step: create request, poll for resolution
+#[allow(clippy::too_many_arguments)]
 async fn execute_approval_step(
+    pipeline: &PipelineDefinition,
     step: &lukan_core::pipelines::PipelineStep,
     step_run_idx: usize,
     input: &Option<String>,
@@ -690,6 +715,20 @@ async fn execute_approval_step(
         let placeholder = format!("{{{{prev.{id}.output}}}}");
         message = message.replace(&placeholder, output);
     }
+
+    // Enrich message with pipeline context (pipeline name + next step)
+    let next_step_names: Vec<String> = pipeline
+        .connections
+        .iter()
+        .filter(|c| c.from_step == step.id)
+        .filter_map(|c| pipeline.steps.iter().find(|s| s.id == c.to_step))
+        .map(|s| s.name.clone())
+        .collect();
+    let mut context_header = format!("Pipeline: {}", pipeline.name);
+    if !next_step_names.is_empty() {
+        context_header.push_str(&format!("\nNext step: {}", next_step_names.join(", ")));
+    }
+    let message = format!("{context_header}\n\n{message}");
 
     // Create approval request
     let approval_id = generate_run_id();
@@ -773,13 +812,15 @@ async fn execute_approval_step(
                     Ok(Some(approval)) => {
                         match approval.status.as_str() {
                             "approved" => {
-                                let output = approval.comment.unwrap_or_else(|| "Approved".to_string());
+                                // Pass through the original input so the next step gets the full context
+                                let passthrough = input.clone().unwrap_or_default();
+                                let display = format!("[approved] {}", approval.comment.as_deref().unwrap_or("Approved"));
                                 run.step_runs[step_run_idx].status = "success".to_string();
-                                run.step_runs[step_run_idx].output = output.clone();
+                                run.step_runs[step_run_idx].output = display;
                                 run.step_runs[step_run_idx].error = None;
                                 run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
                                 PipelineManager::save_run(run).await.ok();
-                                step_outputs.lock().await.insert(step.id.clone(), output);
+                                step_outputs.lock().await.insert(step.id.clone(), passthrough);
                                 info!(step_id = %step.id, "Approval granted, continuing pipeline");
                                 return false;
                             }
@@ -1299,25 +1340,18 @@ fn render_prompt(
 }
 
 /// Send a notification message to a plugin's channel.
-/// For WhatsApp/Telegram/etc: reads the plugin's config.json to find the connector URL,
-/// then sends a message directly via WebSocket.
+/// Detects the plugin type and uses the appropriate method:
+/// - WhatsApp/Discord/Slack: WebSocket to connector
+/// - Telegram: direct Bot API call
 async fn send_plugin_notification(plugin: &str, channel_id: &str, text: &str) {
-    // Read plugin config to get the connector URL
     let config_path = lukan_core::config::LukanPaths::plugin_config(plugin);
-    let bridge_url = if let Ok(data) = tokio::fs::read_to_string(&config_path).await {
-        serde_json::from_str::<serde_json::Value>(&data)
-            .ok()
-            .and_then(|v| {
-                v.get("bridgeUrl")
-                    .and_then(|u| u.as_str())
-                    .map(String::from)
-            })
-            .unwrap_or_else(|| "ws://localhost:3001".to_string())
-    } else {
-        "ws://localhost:3001".to_string()
-    };
+    let config: serde_json::Value = tokio::fs::read_to_string(&config_path)
+        .await
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+        .unwrap_or_default();
 
-    // Truncate text for notification (WhatsApp messages can be long)
+    // Truncate text for notification
     let notify_text = if text.len() > 2000 {
         format!(
             "{}...\n\n[Respond 'yes' to approve or 'no' to reject]",
@@ -1327,10 +1361,69 @@ async fn send_plugin_notification(plugin: &str, channel_id: &str, text: &str) {
         format!("{}\n\n[Respond 'yes' to approve or 'no' to reject]", text)
     };
 
-    info!(plugin, channel_id, bridge_url = %bridge_url, "Sending approval notification");
+    // Telegram: use Bot API directly
+    if plugin == "telegram" {
+        let bot_token = config
+            .get("botToken")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if bot_token.is_empty() {
+            error!(
+                plugin,
+                "Cannot send Telegram notification: no botToken configured"
+            );
+            return;
+        }
+        send_telegram_notification(bot_token, channel_id, &notify_text).await;
+        return;
+    }
 
-    // Connect to the connector WebSocket and send the message
-    match tokio_tungstenite::connect_async(&bridge_url).await {
+    // Discord: use REST API directly
+    if plugin == "discord" {
+        let bot_token = config
+            .get("botToken")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if bot_token.is_empty() {
+            error!(
+                plugin,
+                "Cannot send Discord notification: no botToken configured"
+            );
+            return;
+        }
+        send_discord_notification(bot_token, channel_id, &notify_text).await;
+        return;
+    }
+
+    // Slack: use Web API directly
+    if plugin == "slack" {
+        let bot_token = config
+            .get("botToken")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if bot_token.is_empty() {
+            error!(
+                plugin,
+                "Cannot send Slack notification: no botToken configured"
+            );
+            return;
+        }
+        send_slack_notification(bot_token, channel_id, &notify_text).await;
+        return;
+    }
+
+    // WhatsApp/Discord/Slack: WebSocket to connector
+    let bridge_url = config
+        .get("bridgeUrl")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ws://localhost:3001");
+
+    info!(
+        plugin,
+        channel_id, bridge_url, "Sending approval notification via WebSocket"
+    );
+
+    match tokio_tungstenite::connect_async(bridge_url).await {
         Ok((mut ws, _)) => {
             let msg = serde_json::json!({
                 "type": "send",
@@ -1350,18 +1443,169 @@ async fn send_plugin_notification(plugin: &str, channel_id: &str, text: &str) {
                     plugin,
                     channel_id, "Approval notification sent successfully"
                 );
-                // Wait for the connector to process the message before closing
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
             ws.close(None).await.ok();
         }
         Err(e) => {
-            error!(
-                plugin,
-                bridge_url = %bridge_url,
-                error = %e,
-                "Failed to connect to plugin connector for notification"
+            error!(plugin, bridge_url, error = %e, "Failed to connect to plugin connector");
+        }
+    }
+}
+
+/// Send a message via Discord REST API.
+/// Tries as channel ID first; if 404, tries creating a DM with it as user ID.
+async fn send_discord_notification(bot_token: &str, channel_id: &str, text: &str) {
+    let client = reqwest::Client::new();
+    let auth = format!("Bot {bot_token}");
+
+    // Discord has a 2000 char limit per message
+    let truncated = if text.len() > 1900 {
+        format!("{}...", &text[..1900])
+    } else {
+        text.to_string()
+    };
+
+    // Try sending to channel directly
+    let url = format!("https://discord.com/api/v10/channels/{channel_id}/messages");
+    match client
+        .post(&url)
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({ "content": truncated }))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            info!(
+                channel_id,
+                "Discord approval notification sent successfully"
             );
+            return;
+        }
+        Ok(r) if r.status().as_u16() == 404 => {
+            // Not a channel — try as user ID (create DM first)
+        }
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_default();
+            error!(channel_id, %status, body, "Discord API error");
+            return;
+        }
+        Err(e) => {
+            error!(channel_id, error = %e, "Failed to send Discord notification");
+            return;
+        }
+    }
+
+    // Create DM channel with user, then send
+    let Ok(dm_resp) = client
+        .post("https://discord.com/api/v10/users/@me/channels")
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({ "recipient_id": channel_id }))
+        .send()
+        .await
+    else {
+        error!(channel_id, "Failed to create Discord DM channel");
+        return;
+    };
+
+    if !dm_resp.status().is_success() {
+        let status = dm_resp.status();
+        let body = dm_resp.text().await.unwrap_or_default();
+        error!(channel_id, %status, body, "Failed to create Discord DM");
+        return;
+    }
+
+    let Ok(body) = dm_resp.json::<serde_json::Value>().await else {
+        error!(channel_id, "Failed to parse Discord DM response");
+        return;
+    };
+
+    let Some(dm_id) = body.get("id").and_then(|v| v.as_str()) else {
+        error!(channel_id, "Discord DM response missing channel ID");
+        return;
+    };
+
+    let dm_url = format!("https://discord.com/api/v10/channels/{dm_id}/messages");
+    match client
+        .post(&dm_url)
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({ "content": truncated }))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            info!(channel_id, "Discord DM notification sent successfully");
+        }
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_default();
+            error!(channel_id, %status, body, "Discord DM send error");
+        }
+        Err(e) => {
+            error!(channel_id, error = %e, "Failed to send Discord DM");
+        }
+    }
+}
+
+/// Send a message via Slack Web API
+async fn send_slack_notification(bot_token: &str, channel: &str, text: &str) {
+    let client = reqwest::Client::new();
+
+    match client
+        .post("https://slack.com/api/chat.postMessage")
+        .header("Authorization", format!("Bearer {bot_token}"))
+        .json(&serde_json::json!({
+            "channel": channel,
+            "text": text,
+        }))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                if body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    info!(channel, "Slack approval notification sent successfully");
+                } else {
+                    let err = body
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    error!(channel, error = err, "Slack API error");
+                }
+            }
+        }
+        Err(e) => {
+            error!(channel, error = %e, "Failed to send Slack notification");
+        }
+    }
+}
+
+/// Send a message via Telegram Bot API
+async fn send_telegram_notification(bot_token: &str, chat_id: &str, text: &str) {
+    let url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
+    let client = reqwest::Client::new();
+
+    match client
+        .post(&url)
+        .json(&serde_json::json!({
+            "chat_id": chat_id,
+            "text": text,
+        }))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                info!(chat_id, "Telegram approval notification sent successfully");
+            } else {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                error!(chat_id, %status, body, "Telegram API error");
+            }
+        }
+        Err(e) => {
+            error!(chat_id, error = %e, "Failed to send Telegram notification");
         }
     }
 }

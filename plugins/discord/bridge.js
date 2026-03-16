@@ -187,20 +187,19 @@ function handleDiscordMessage(message) {
   const requestId = `dc-${++requestCounter}`;
   pendingRequests.set(requestId, { channel: message.channel, message });
 
-  const sender = `${message.author.username} (${userId})`;
   log(
     "info",
-    `Message from ${sender} in ${channelId}: ${content.slice(0, 80)}`,
+    `Message from ${message.author.username} (${userId}) in ${channelId}: ${content.slice(0, 80)}`,
   );
 
   // Send typing indicator
   message.channel.sendTyping().catch(() => {});
 
-  // Send to host
+  // Send to host — sender is the raw user ID for approval matching
   send({
     type: "channelMessage",
     requestId,
-    sender,
+    sender: userId,
     channelId,
     content,
   });

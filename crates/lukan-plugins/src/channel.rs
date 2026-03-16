@@ -125,11 +125,19 @@ impl PluginChannel {
             return None;
         }
 
-        // Find pending approvals for this plugin+channel
-        let pending =
+        // Find pending approvals for this plugin+channel or plugin+sender
+        // (Slack DMs: notify_channel is user ID like U..., but messages arrive with channel D...)
+        let mut pending =
             lukan_core::approvals::ApprovalManager::find_pending_for_plugin(&self.name, channel_id)
                 .await
                 .ok()?;
+
+        if pending.is_empty() && sender != channel_id {
+            pending =
+                lukan_core::approvals::ApprovalManager::find_pending_for_plugin(&self.name, sender)
+                    .await
+                    .ok()?;
+        }
 
         if pending.is_empty() {
             return None;

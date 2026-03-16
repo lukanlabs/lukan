@@ -51,6 +51,7 @@ import {
   onPipelineNotification,
   listTools,
   listProviders,
+  listPlugins,
   getModels,
   approveApproval,
   rejectApproval,
@@ -83,6 +84,8 @@ interface StepNodeData {
   model?: string;
   provider?: string;
   stepType?: string;
+  notifyPlugin?: string;
+  notifyChannel?: string;
   stepRun?: StepRun;
   stepIndex: number;
   totalSteps: number;
@@ -111,12 +114,14 @@ const menuItemStyle: React.CSSProperties = {
 };
 
 function StepNode({ data }: { data: StepNodeData }) {
-  const { label, stepRun, stepId, stepIndex, totalSteps, model, provider, stepType, onViewOutput, onEditStep, onDeleteStep, onApprove, onReject } = data;
-  const isApprovalStep = stepType === "approval";
+  const { label, stepRun, stepId, stepIndex, totalSteps, model, provider, stepType, notifyPlugin, notifyChannel, onViewOutput, onEditStep, onDeleteStep, onApprove, onReject } = data;
+  const isApproval = stepType === "approval";
   const [menuOpen, setMenuOpen] = useState(false);
   const status = stepRun?.status;
-  const c = (status && STATUS_COLOR[status]) || "#3c3c3c";
+  const defaultColor = isApproval ? "#8b5cf6" : "#3c3c3c";
+  const c = (status && STATUS_COLOR[status]) || defaultColor;
   const isRunning = status === "running";
+  const isWaiting = status === "waiting_approval";
   const tokens = stepRun ? stepRun.tokenUsage.input + stepRun.tokenUsage.output : 0;
   const hasOutput = stepRun && (stepRun.output || stepRun.error) && status !== "pending";
 
@@ -130,13 +135,13 @@ function StepNode({ data }: { data: StepNodeData }) {
   return (
     <div
       style={{
-        background: "#111",
+        background: isApproval ? "#13111a" : "#111",
         border: `1px solid ${c}`,
-        borderLeft: `3px solid ${c}`,
-        borderRadius: 4,
+        borderLeft: isApproval ? `3px solid #8b5cf6` : `3px solid ${c}`,
+        borderRadius: isApproval ? 8 : 4,
         width: 200,
         fontFamily: "monospace",
-        boxShadow: isRunning ? `0 0 12px ${c}30` : "none",
+        boxShadow: isWaiting ? `0 0 16px #8b5cf630` : isRunning ? `0 0 12px ${c}30` : "none",
         transition: "border-color 0.3s, box-shadow 0.3s",
       }}
     >
@@ -144,18 +149,18 @@ function StepNode({ data }: { data: StepNodeData }) {
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderBottom: `1px solid ${c}20` }}>
-        <span style={{ fontSize: 9, color: c, fontWeight: 700, opacity: 0.7 }}>
-          {String(stepIndex + 1).padStart(2, "0")}
-        </span>
+        {isApproval
+          ? <ShieldCheck size={11} style={{ color: "#8b5cf6", flexShrink: 0 }} />
+          : <span style={{ fontSize: 9, color: c, fontWeight: 700, opacity: 0.7 }}>{String(stepIndex + 1).padStart(2, "0")}</span>
+        }
         <span style={{ fontSize: 11, fontWeight: 600, color: "#e0e0e0", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {label}
         </span>
-        {isApprovalStep && !status && <ShieldCheck size={11} style={{ color: "#8b5cf6", opacity: 0.5 }} />}
         {status === "running" && <Loader2 size={11} style={{ color: c, animation: "spin 1s linear infinite" }} />}
         {status === "success" && <CheckCircle2 size={11} style={{ color: c }} />}
         {status === "error" && <XCircle size={11} style={{ color: c }} />}
         {status === "partial" && <AlertTriangle size={11} style={{ color: c }} />}
-        {status === "waiting_approval" && <ShieldCheck size={11} style={{ color: c, animation: "pulse 2s ease-in-out infinite" }} />}
+        {isWaiting && <Loader2 size={11} style={{ color: "#8b5cf6", animation: "spin 2s linear infinite" }} />}
 
         {/* 3-dot menu */}
         <div
@@ -218,15 +223,25 @@ function StepNode({ data }: { data: StepNodeData }) {
         </div>
       </div>
 
-      {/* Model badge */}
-      {(model || provider) && (
+      {/* Model badge (agent steps) */}
+      {!isApproval && (model || provider) && (
         <div style={{ padding: "2px 8px", fontSize: 8, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {model || provider}
         </div>
       )}
 
+      {/* Approval channel badge */}
+      {isApproval && (
+        <div style={{ padding: "3px 8px", fontSize: 8, color: "#7c3aed", display: "flex", alignItems: "center", gap: 3, overflow: "hidden" }}>
+          {notifyPlugin
+            ? <><span style={{ textTransform: "capitalize" }}>{notifyPlugin}</span> <span style={{ color: "#555" }}>{notifyChannel ? `(${notifyChannel.slice(0, 16)}${(notifyChannel?.length ?? 0) > 16 ? "..." : ""})` : "(UI only)"}</span></>
+            : <span style={{ color: "#555" }}>Manual approval (UI only)</span>
+          }
+        </div>
+      )}
+
       {/* Stats */}
-      {stepRun && status !== "pending" && (
+      {stepRun && status !== "pending" && !isWaiting && (
         <div style={{ display: "flex", gap: 8, padding: "3px 8px 4px", fontSize: 9, color: "#666" }}>
           {isRunning && (
             <span style={{ color: c, display: "flex", alignItems: "center", gap: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
@@ -248,6 +263,13 @@ function StepNode({ data }: { data: StepNodeData }) {
         </div>
       )}
 
+      {/* Waiting approval status */}
+      {isWaiting && (
+        <div style={{ padding: "3px 8px 2px", fontSize: 9, color: "#8b5cf6", display: "flex", alignItems: "center", gap: 3 }}>
+          <Clock size={8} /> Waiting for approval...
+        </div>
+      )}
+
       {stepRun?.error && !stepRun.error.startsWith("[activity]") && status !== "running" && (
         <div style={{ fontSize: 9, color: "#ef4444", padding: "2px 8px 4px", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
           {stepRun.error.slice(0, 50)}
@@ -255,7 +277,7 @@ function StepNode({ data }: { data: StepNodeData }) {
       )}
 
       {/* Approve / Reject buttons for waiting_approval */}
-      {status === "waiting_approval" && stepRun?.approvalId && (
+      {isWaiting && stepRun?.approvalId && (
         <div
           className="nopan nodrag nowheel"
           onPointerDown={(e) => e.stopPropagation()}
@@ -264,10 +286,10 @@ function StepNode({ data }: { data: StepNodeData }) {
           <button
             onClick={() => onApprove?.(stepRun.approvalId!)}
             style={{
-              border: "1px solid #22c55e", background: "rgba(34,197,94,0.1)",
-              color: "#22c55e", cursor: "pointer", padding: "3px 10px",
+              border: "1px solid #22c55e", background: "rgba(34,197,94,0.08)",
+              color: "#22c55e", cursor: "pointer", padding: "3px 12px",
               borderRadius: 3, fontSize: 9, fontFamily: "monospace", fontWeight: 600,
-              display: "flex", alignItems: "center", gap: 3,
+              display: "flex", alignItems: "center", gap: 4,
             }}
           >
             <ThumbsUp size={9} /> Approve
@@ -275,10 +297,10 @@ function StepNode({ data }: { data: StepNodeData }) {
           <button
             onClick={() => onReject?.(stepRun.approvalId!)}
             style={{
-              border: "1px solid #ef4444", background: "rgba(239,68,68,0.1)",
-              color: "#ef4444", cursor: "pointer", padding: "3px 10px",
+              border: "1px solid #ef4444", background: "rgba(239,68,68,0.08)",
+              color: "#ef4444", cursor: "pointer", padding: "3px 12px",
               borderRadius: 3, fontSize: 9, fontFamily: "monospace", fontWeight: 600,
-              display: "flex", alignItems: "center", gap: 3,
+              display: "flex", alignItems: "center", gap: 4,
             }}
           >
             <ThumbsDown size={9} /> Reject
@@ -359,12 +381,21 @@ function EditStepSheet({
   const [notifyChannel, setNotifyChannel] = useState(step.approval?.notifyChannel ?? "");
   const [approvalMessage, setApprovalMessage] = useState(step.approval?.message ?? "");
   const [approvalTimeout, setApprovalTimeout] = useState(String(step.approval?.timeoutSecs ?? 3600));
+  const [channelPlugins, setChannelPlugins] = useState<string[]>([]);
 
   useEffect(() => {
     listTools().then(setAvailableTools).catch(() => {});
     Promise.all([listProviders(), getModels()]).then(([p, m]) => {
       setProviders(p);
       setAllModels(m);
+    }).catch(() => {});
+    listPlugins().then((plugins) => {
+      // Only show messaging plugins that can send notifications to users
+      const messagingPlugins = new Set(["whatsapp", "telegram", "slack", "discord", "email"]);
+      const channels = plugins
+        .filter((p) => messagingPlugins.has(p.name))
+        .map((p) => p.name);
+      setChannelPlugins(channels);
     }).catch(() => {});
   }, []);
 
@@ -479,28 +510,48 @@ function EditStepSheet({
         {stepType === "approval" && (
           <>
             <div style={{ marginBottom: 12 }}>
-              <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Notify Plugin</label>
-              <input
-                type="text"
+              <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Notification Channel</label>
+              <select
                 value={notifyPlugin}
-                onChange={(e) => setNotifyPlugin(e.target.value)}
-                placeholder="whatsapp, slack, discord..."
-                style={inputStyle}
-              />
+                onChange={(e) => { setNotifyPlugin(e.target.value); setNotifyChannel(""); }}
+                style={{ ...inputStyle, cursor: "pointer" }}
+              >
+                <option value="">None (UI approval only)</option>
+                {channelPlugins.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
               <div style={{ fontSize: 9, color: "#444", marginTop: 3 }}>
-                Plugin to send the approval notification to (optional)
+                {notifyPlugin ? `Send notification via ${notifyPlugin}` : "Approve/reject only from the UI"}
               </div>
             </div>
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Notify Channel</label>
-              <input
-                type="text"
-                value={notifyChannel}
-                onChange={(e) => setNotifyChannel(e.target.value)}
-                placeholder="Channel or chat ID"
-                style={inputStyle}
-              />
-            </div>
+            {notifyPlugin && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>
+                  {notifyPlugin === "slack" ? "Channel or User ID" : notifyPlugin === "discord" ? "Channel or User ID" : notifyPlugin === "telegram" ? "Chat ID" : "Chat / Group ID"}
+                </label>
+                <input
+                  type="text"
+                  value={notifyChannel}
+                  onChange={(e) => setNotifyChannel(e.target.value)}
+                  placeholder={
+                    notifyPlugin === "slack" ? "C01ABC123 or U01XYZ789"
+                    : notifyPlugin === "discord" ? "1234567890123456"
+                    : notifyPlugin === "telegram" ? "-1001234567890"
+                    : notifyPlugin === "whatsapp" ? "5491155551234@s.whatsapp.net"
+                    : "Channel or chat ID"
+                  }
+                  style={inputStyle}
+                />
+                <div style={{ fontSize: 9, color: "#444", marginTop: 3 }}>
+                  {notifyPlugin === "slack" && "Channel ID (C...) for group, User ID (U...) for DM"}
+                  {notifyPlugin === "discord" && "Right-click channel/user → Copy ID"}
+                  {notifyPlugin === "telegram" && "Numeric chat ID (negative for groups)"}
+                  {notifyPlugin === "whatsapp" && "Phone@s.whatsapp.net or group JID"}
+                  {!["slack", "discord", "telegram", "whatsapp"].includes(notifyPlugin) && "Channel or chat identifier"}
+                </div>
+              </div>
+            )}
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Timeout (seconds)</label>
               <input
@@ -1180,6 +1231,8 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
           model: step.model,
           provider: step.provider,
           stepType: step.stepType,
+          notifyPlugin: step.approval?.notifyPlugin,
+          notifyChannel: step.approval?.notifyChannel,
           stepRun: srMap.get(step.id),
           stepIndex: idx,
           totalSteps: detail.steps.length,
@@ -1211,7 +1264,8 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
 
         let stroke = "#2a2a2a";
         let animated = false;
-        if (fs === "success" && ts === "running") { stroke = "#f59e0b"; animated = true; }
+        if (fs === "success" && ts === "waiting_approval") { stroke = "#8b5cf6"; animated = true; }
+        else if (fs === "success" && ts === "running") { stroke = "#f59e0b"; animated = true; }
         else if (fs === "success") stroke = "#22c55e";
         else if (fs === "error") stroke = "#ef4444";
 

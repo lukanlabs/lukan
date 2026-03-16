@@ -1738,7 +1738,41 @@ impl AgentLoop {
             .await;
 
         let msg_count_before = messages.len();
-        let split = messages.len() - COMPACTION_KEEP_MESSAGES;
+        let mut split = messages.len() - COMPACTION_KEEP_MESSAGES;
+
+        // Adjust split point: don't cut between a tool_use and its tool_result.
+        // If the first "recent" message contains a ToolResult whose ToolUse is in "old",
+        // move the split earlier to include the ToolUse message.
+        while split > 0 {
+            let has_orphan_tool_result = messages[split..]
+                .iter()
+                .filter(|m| m.role == Role::User)
+                .flat_map(|m| match &m.content {
+                    MessageContent::Blocks(blocks) => blocks.clone(),
+                    _ => vec![],
+                })
+                .any(|block| {
+                    if let ContentBlock::ToolResult { tool_use_id, .. } = &block {
+                        // Check if the corresponding ToolUse is NOT in the recent messages
+                        !messages[split..].iter().any(|m| {
+                            match &m.content {
+                            MessageContent::Blocks(blocks) => blocks.iter().any(|b| {
+                                matches!(b, ContentBlock::ToolUse { id, .. } if id == tool_use_id)
+                            }),
+                            _ => false,
+                        }
+                        })
+                    } else {
+                        false
+                    }
+                });
+
+            if !has_orphan_tool_result {
+                break;
+            }
+            split -= 1;
+        }
+
         let old_messages = &messages[..split];
         let recent_messages = &messages[split..];
 

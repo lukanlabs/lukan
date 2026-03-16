@@ -54,6 +54,10 @@ Built in Rust. Single binary. No runtime dependencies.
 |:---:|:---:|
 | <img src="examples/img/settings.png" width="300"> | <img src="examples/img/workers.png" width="250"> |
 
+| Pipelines & Approval Gates |
+|:---:|
+| <img src="examples/img/pipelines.png" width="500"> |
+
 | Remote Access (Relay) | Terminal TUI |
 |:---:|:---:|
 | <img src="examples/img/remote-lukan.png" width="450"> | <img src="examples/img/teminal-tui-lukan.png" width="450"> |
@@ -71,6 +75,7 @@ Built in Rust. Single binary. No runtime dependencies.
 | **Messaging Channels** | WhatsApp, Telegram, Slack, Discord, Email, Gmail via plugin system |
 | **Google Workspace** | Sheets, Docs, Calendar, Slides, Drive via plugins & skills |
 | **Plugin System** | Built-in registry, hot-reload, IPC protocol |
+| **Pipelines** | DAG-based multi-agent workflows with visual editor, parallel execution, and human-in-the-loop approval gates |
 | **Background Workers** | Cron scheduler + daemon for autonomous scheduled tasks |
 | **Sub-agents** | Parallel sub-agent execution for complex multi-step tasks |
 | **Skills** | Markdown-based instruction system for project-specific workflows |

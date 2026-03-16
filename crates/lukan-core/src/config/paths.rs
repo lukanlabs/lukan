@@ -180,6 +180,41 @@ impl LukanPaths {
         Self::config_dir().join("workers.json")
     }
 
+    /// Approvals directory: ~/.config/lukan/approvals/
+    pub fn approvals_dir() -> PathBuf {
+        Self::config_dir().join("approvals")
+    }
+
+    /// Approval file for a specific approval: ~/.config/lukan/approvals/{id}.json
+    pub fn approval_file(id: &str) -> PathBuf {
+        Self::approvals_dir().join(format!("{id}.json"))
+    }
+
+    /// Pipelines definition file: ~/.config/lukan/pipelines.json
+    pub fn pipelines_file() -> PathBuf {
+        Self::config_dir().join("pipelines.json")
+    }
+
+    /// Pipeline notification file: ~/.config/lukan/pipeline_notifications.jsonl
+    pub fn pipeline_notifications_file() -> PathBuf {
+        Self::config_dir().join("pipeline_notifications.jsonl")
+    }
+
+    /// Pipelines runs directory: ~/.config/lukan/pipelines/
+    pub fn pipelines_runs_dir() -> PathBuf {
+        Self::config_dir().join("pipelines")
+    }
+
+    /// Runs directory for a specific pipeline: ~/.config/lukan/pipelines/{id}/
+    pub fn pipeline_runs_dir(id: &str) -> PathBuf {
+        Self::pipelines_runs_dir().join(id)
+    }
+
+    /// Run file for a specific pipeline run: ~/.config/lukan/pipelines/{id}/{run_id}.json
+    pub fn pipeline_run_file(id: &str, run_id: &str) -> PathBuf {
+        Self::pipeline_runs_dir(id).join(format!("{run_id}.json"))
+    }
+
     /// Workers runs directory: ~/.config/lukan/workers/
     pub fn workers_runs_dir() -> PathBuf {
         Self::config_dir().join("workers")
@@ -202,6 +237,8 @@ impl LukanPaths {
         tokio::fs::create_dir_all(Self::plugins_dir()).await?;
         tokio::fs::create_dir_all(Self::events_dir()).await?;
         tokio::fs::create_dir_all(Self::workers_runs_dir()).await?;
+        tokio::fs::create_dir_all(Self::pipelines_runs_dir()).await?;
+        tokio::fs::create_dir_all(Self::approvals_dir()).await?;
         Ok(())
     }
 }

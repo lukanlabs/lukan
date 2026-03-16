@@ -1,10 +1,11 @@
 import type { LucideIcon } from "lucide-react";
-import { FolderOpen, Puzzle, MessageSquare, Globe, Terminal, SquareTerminal } from "lucide-react";
+import { FolderOpen, Puzzle, Workflow, MessageSquare, Globe, Terminal, SquareTerminal } from "lucide-react";
 import type { SidePanelId } from "../../lib/types";
 
 const ITEMS: { id: SidePanelId; icon: LucideIcon; label: string }[] = [
   { id: "files", icon: FolderOpen, label: "Files" },
   { id: "workers", icon: Puzzle, label: "Workers" },
+  { id: "pipelines", icon: Workflow, label: "Pipelines" },
   { id: "processes", icon: Terminal, label: "Processes" },
   { id: "sessions", icon: MessageSquare, label: "Sessions" },
   { id: "browser", icon: Globe, label: "Browser" },

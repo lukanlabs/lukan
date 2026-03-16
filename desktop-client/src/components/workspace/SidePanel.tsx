@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import type { SidePanelId, BgProcessInfo, ViewDeclaration } from "../../lib/types";
 import { FilesPanel } from "./panels/FilesPanel";
 import { WorkersPanel } from "./panels/WorkersPanel";
+import { PipelinesPanel } from "./panels/PipelinesPanel";
 import { SessionsPanel } from "./panels/SessionsPanel";
 import { BrowserPanel } from "./panels/BrowserPanel";
 import { ProcessesPanel } from "./panels/ProcessesPanel";
@@ -31,6 +32,7 @@ interface SidePanelProps {
 const PANEL_TITLES: Record<SidePanelId, string> = {
   files: "Explorer",
   workers: "Workers",
+  pipelines: "Pipelines",
   processes: "Processes",
   sessions: "Sessions",
   browser: "Browser",
@@ -77,6 +79,7 @@ export function SidePanel({
       <div className="side-panel-content">
         {activePanel === "files" && <FilesPanel onPreviewFile={onPreviewFile} />}
         {activePanel === "workers" && <WorkersPanel />}
+        {activePanel === "pipelines" && <PipelinesPanel />}
         {activePanel === "sessions" && (
           <SessionsPanel
             currentSessionId={currentSessionId}

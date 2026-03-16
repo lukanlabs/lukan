@@ -4,6 +4,9 @@ use lukan_core::models::checkpoints::Checkpoint;
 use lukan_core::models::events::{PlanTask, PlannerQuestionItem};
 use lukan_core::models::messages::Message;
 use lukan_core::models::sessions::SessionSummary;
+use lukan_core::pipelines::{
+    PipelineCreateInput, PipelineDetail, PipelineRun, PipelineSummary, PipelineUpdateInput,
+};
 use lukan_core::workers::{
     WorkerCreateInput, WorkerDetail, WorkerRun, WorkerSummary, WorkerUpdateInput,
 };
@@ -99,6 +102,11 @@ pub enum ClientMessage {
     SetPermissionMode {
         mode: String,
     },
+    SetDisabledTools {
+        tools: Vec<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 
     // Auth
     Auth {
@@ -140,6 +148,35 @@ pub enum ClientMessage {
         worker_id: String,
         run_id: String,
     },
+
+    // Pipelines
+    ListPipelines,
+    CreatePipeline {
+        pipeline: PipelineCreateInput,
+    },
+    UpdatePipeline {
+        id: String,
+        patch: PipelineUpdateInput,
+    },
+    DeletePipeline {
+        id: String,
+    },
+    TogglePipeline {
+        id: String,
+        enabled: bool,
+    },
+    GetPipelineDetail {
+        id: String,
+    },
+    TriggerPipeline {
+        id: String,
+        input: Option<String>,
+    },
+    GetPipelineRunDetail {
+        pipeline_id: String,
+        run_id: String,
+    },
+
     PlanAccept {
         tasks: Option<serde_json::Value>,
         #[serde(default)]
@@ -289,6 +326,21 @@ pub enum ServerMessage {
     WorkerNotification {
         worker_id: String,
         worker_name: String,
+        status: String,
+        summary: String,
+    },
+    PipelinesUpdate {
+        pipelines: Vec<PipelineSummary>,
+    },
+    PipelineDetail {
+        pipeline: PipelineDetail,
+    },
+    PipelineRunDetail {
+        run: PipelineRun,
+    },
+    PipelineNotification {
+        pipeline_id: String,
+        pipeline_name: String,
         status: String,
         summary: String,
     },

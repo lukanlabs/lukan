@@ -142,7 +142,8 @@ fn render_list(picker: &RewindPicker, area: Rect, buf: &mut Buffer) {
         } else {
             let msg = entry.message.lines().next().unwrap_or(&entry.message);
             if msg.len() > max_msg_width {
-                format!("{}…", &msg[..max_msg_width.saturating_sub(1)])
+                let end = msg.floor_char_boundary(max_msg_width.saturating_sub(1));
+                format!("{}…", &msg[..end])
             } else {
                 msg.to_string()
             }

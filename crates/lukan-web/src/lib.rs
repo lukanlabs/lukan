@@ -7,6 +7,7 @@ mod rest_credentials;
 mod rest_events;
 mod rest_files;
 mod rest_memory;
+mod rest_pipelines;
 mod rest_plugins;
 mod rest_processes;
 mod rest_providers;
@@ -21,7 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use lukan_agent::NotificationWatcher;
+use lukan_agent::{NotificationWatcher, PipelineNotificationWatcher};
 use lukan_core::config::ResolvedConfig;
 
 use crate::state::AppState;
@@ -110,6 +111,19 @@ pub async fn start_daemon_server(
             interval.tick().await;
             for notif in watcher.poll().await {
                 let _ = notify_tx.send(notif);
+            }
+        }
+    });
+
+    // Spawn background task to poll pipeline notification file
+    let pipeline_notify_tx = state.pipeline_notification_tx.clone();
+    tokio::spawn(async move {
+        let mut watcher = PipelineNotificationWatcher::new();
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
+        loop {
+            interval.tick().await;
+            for notif in watcher.poll().await {
+                let _ = pipeline_notify_tx.send(notif);
             }
         }
     });

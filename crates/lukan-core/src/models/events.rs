@@ -165,6 +165,28 @@ pub enum StreamEvent {
 
     /// Updated task list (emitted after plan acceptance or task tool calls)
     TasksUpdate { tasks: Vec<TaskInfo> },
+
+    /// Sub-agent status update (forwarded from daemon to TUI)
+    SubAgentUpdate {
+        id: String,
+        task: String,
+        status: String,
+        turns: u32,
+        max_turns: u32,
+        input_tokens: u64,
+        output_tokens: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        /// Chat messages for the spectator view
+        chat_messages: Vec<SubAgentChatMessage>,
+    },
+}
+
+/// A chat message from a sub-agent conversation (for spectator view)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubAgentChatMessage {
+    pub role: String,
+    pub content: String,
 }
 
 /// A tool call that needs user approval

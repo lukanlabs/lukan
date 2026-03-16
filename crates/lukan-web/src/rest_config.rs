@@ -35,16 +35,18 @@ pub async fn save_config(
         resolved.config = config.clone();
     }
 
-    // Apply disabled tools to live agent
+    // Apply disabled tools to all session agents
     {
-        let mut agent_lock = state.agent.lock().await;
-        if let Some(agent) = agent_lock.as_mut() {
-            let disabled: HashSet<String> = config
-                .disabled_tools
-                .unwrap_or_default()
-                .into_iter()
-                .collect();
-            agent.set_disabled_tools(disabled);
+        let disabled: HashSet<String> = config
+            .disabled_tools
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let mut sessions = state.sessions.lock().await;
+        for session in sessions.values_mut() {
+            if let Some(ref mut agent) = session.agent {
+                agent.set_disabled_tools(disabled.clone());
+            }
         }
     }
 

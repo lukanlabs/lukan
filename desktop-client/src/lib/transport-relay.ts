@@ -460,6 +460,12 @@ export class RelayTransport implements Transport {
       return;
     }
 
+    // Pipeline notification
+    if (type === "pipeline_notification") {
+      this.dispatch("pipeline-notification", JSON.stringify(msg));
+      return;
+    }
+
     // Terminal
     if (type === "terminal_created") {
       const info = {
@@ -974,6 +980,62 @@ export class RelayTransport implements Transport {
         return {
           method: "GET",
           url: `/api/workers/${encodeURIComponent(args?.workerId as string)}/runs/${encodeURIComponent(args?.runId as string)}`,
+        };
+      case "list_pipelines":
+        return { method: "GET", url: "/api/pipelines" };
+      case "create_pipeline":
+        return { method: "POST", url: "/api/pipelines", body: args?.pipeline };
+      case "update_pipeline":
+        return {
+          method: "PUT",
+          url: `/api/pipelines/${encodeURIComponent(args?.id as string)}`,
+          body: args?.patch,
+        };
+      case "delete_pipeline":
+        return {
+          method: "DELETE",
+          url: `/api/pipelines/${encodeURIComponent(args?.id as string)}`,
+        };
+      case "toggle_pipeline":
+        return {
+          method: "PUT",
+          url: `/api/pipelines/${encodeURIComponent(args?.id as string)}/toggle`,
+          body: { enabled: args?.enabled },
+        };
+      case "get_pipeline_detail":
+        return {
+          method: "GET",
+          url: `/api/pipelines/${encodeURIComponent(args?.id as string)}`,
+        };
+      case "trigger_pipeline":
+        return {
+          method: "POST",
+          url: `/api/pipelines/${encodeURIComponent(args?.id as string)}/trigger`,
+          body: { input: args?.input },
+        };
+      case "cancel_pipeline":
+        return {
+          method: "POST",
+          url: `/api/pipelines/${encodeURIComponent(args?.id as string)}/cancel`,
+        };
+      case "get_pipeline_run":
+        return {
+          method: "GET",
+          url: `/api/pipelines/${encodeURIComponent(args?.pipelineId as string)}/runs/${encodeURIComponent(args?.runId as string)}`,
+        };
+      case "list_pending_approvals":
+        return { method: "GET", url: "/api/pipelines/approvals/pending" };
+      case "approve_approval":
+        return {
+          method: "POST",
+          url: `/api/pipelines/approvals/${encodeURIComponent(args?.id as string)}/approve`,
+          body: { comment: args?.comment ?? null },
+        };
+      case "reject_approval":
+        return {
+          method: "POST",
+          url: `/api/pipelines/approvals/${encodeURIComponent(args?.id as string)}/reject`,
+          body: { comment: args?.comment ?? null },
         };
       case "check_transcription_status":
         return { method: "GET", url: "/api/transcription/status" };

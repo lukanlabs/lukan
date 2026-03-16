@@ -174,9 +174,9 @@ export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" |
 
 // ── Workspace types ──────────────────────────────────────────────────
 
-export type WorkspaceMode = "agent" | "terminal";
+export type WorkspaceMode = "agent" | "terminal" | "pipeline";
 
-export type SidePanelId = "files" | "workers" | "sessions" | "browser" | "processes" | "events" | "plugin" | "terminals";
+export type SidePanelId = "files" | "workers" | "pipelines" | "sessions" | "browser" | "processes" | "events" | "plugin" | "terminals";
 
 export interface SystemEvent {
   ts: string;
@@ -295,6 +295,141 @@ export interface WorkerUpdateInput {
   model?: string;
   enabled?: boolean;
   notify?: string[];
+}
+
+// ── Pipeline types ────────────────────────────────────────────────────
+
+export interface PipelineTrigger {
+  type: "manual" | "schedule" | "webhook" | "event" | "fileWatch";
+  schedule?: string;
+  secret?: string;
+  source?: string;
+  level?: string;
+  path?: string;
+  debounceSecs?: number;
+}
+
+export interface StepCondition {
+  type: "always" | "contains" | "matches" | "status";
+  value?: string;
+  pattern?: string;
+  status?: string;
+}
+
+export interface ApprovalConfig {
+  notifyPlugin?: string;
+  notifyChannel?: string;
+  message?: string;
+  timeoutSecs?: number;
+}
+
+export interface PipelineStep {
+  id: string;
+  name: string;
+  prompt: string;
+  promptTemplate?: string;
+  tools?: string[];
+  provider?: string;
+  model?: string;
+  timeoutSecs?: number;
+  maxTurns?: number;
+  onError?: string;
+  stepType?: string; // "agent" | "approval"
+  approval?: ApprovalConfig;
+}
+
+export interface StepConnection {
+  fromStep: string;
+  toStep: string;
+  condition?: StepCondition;
+}
+
+export interface PipelineDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  trigger: PipelineTrigger;
+  steps: PipelineStep[];
+  connections: StepConnection[];
+  createdAt: string;
+  updatedAt?: string;
+  lastRunAt?: string;
+  lastRunStatus?: string;
+}
+
+export interface PipelineRun {
+  id: string;
+  pipelineId: string;
+  startedAt: string;
+  completedAt?: string;
+  status: string;
+  stepRuns: StepRun[];
+  triggerInput?: string;
+  tokenUsage: PipelineTokenUsage;
+}
+
+export interface StepRun {
+  stepId: string;
+  stepName: string;
+  status: string;
+  input?: string;
+  output: string;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+  tokenUsage: PipelineTokenUsage;
+  turns: number;
+  approvalId?: string;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  pipelineId: string;
+  runId: string;
+  stepId: string;
+  context: string;
+  status: string;
+  resolvedBy?: string;
+  comment?: string;
+  createdAt: string;
+  timeoutAt: string;
+  resolvedAt?: string;
+  notifyPlugin?: string;
+  notifyChannel?: string;
+}
+
+export interface PipelineTokenUsage {
+  input: number;
+  output: number;
+  cacheCreation: number;
+  cacheRead: number;
+}
+
+export interface PipelineSummary extends PipelineDefinition {
+  recentRunStatus?: string;
+}
+
+export interface PipelineDetail extends PipelineSummary {
+  recentRuns: PipelineRun[];
+}
+
+export interface PipelineCreateInput {
+  name: string;
+  description?: string;
+  trigger: PipelineTrigger;
+  steps: PipelineStep[];
+  connections: StepConnection[];
+  enabled?: boolean;
+}
+
+export interface PipelineUpdateInput {
+  name?: string;
+  description?: string;
+  trigger?: PipelineTrigger;
+  steps?: PipelineStep[];
+  connections?: StepConnection[];
+  enabled?: boolean;
 }
 
 // ── Terminal types ────────────────────────────────────────────────────

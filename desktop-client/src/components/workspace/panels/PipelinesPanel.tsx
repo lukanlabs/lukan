@@ -360,14 +360,19 @@ export function PipelinesPanel() {
             onClick={() => setView({ kind: "create" })}
             title="New pipeline"
             style={{
-              border: "none",
+              border: "1px solid var(--accent, #a78bfa)",
               background: "transparent",
-              color: "var(--text-muted)",
+              color: "var(--accent, #a78bfa)",
               cursor: "pointer",
-              padding: 4,
+              padding: "3px 8px",
+              borderRadius: 4,
+              fontSize: 11,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
             }}
           >
-            <Plus size={12} />
+            <Plus size={11} /> New
           </button>
         </div>
 
@@ -1011,13 +1016,12 @@ function CreateForm({
           disabled={!name.trim() || !triggerValid}
           style={{
             border: "1px solid var(--accent, #a78bfa)",
-            background: "var(--accent, #a78bfa)",
-            color: "#fff",
+            background: !name.trim() || !triggerValid ? "transparent" : "var(--accent, #a78bfa)",
+            color: !name.trim() || !triggerValid ? "var(--text-muted)" : "#fff",
             cursor: !name.trim() || !triggerValid ? "not-allowed" : "pointer",
             padding: "4px 10px",
             borderRadius: 4,
             fontSize: 11,
-            opacity: !name.trim() || !triggerValid ? 0.5 : 1,
           }}
         >
           Create

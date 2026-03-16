@@ -44,6 +44,12 @@ pub async fn configure(
     mgr.allowed_paths = allowed_paths;
 }
 
+/// Update the disabled tools for sub-agents (called when parent toggles tools)
+pub async fn set_disabled_tools(disabled: std::collections::HashSet<String>) {
+    let mut mgr = MANAGER.write().await;
+    mgr.disabled_tools = disabled;
+}
+
 /// Set tool restrictions for sub-agents (inherited from parent)
 pub async fn set_tool_filter(filter: Option<Vec<String>>) {
     let mut mgr = MANAGER.write().await;
@@ -79,6 +85,8 @@ struct SubAgentManager {
     allowed_paths: Option<Vec<std::path::PathBuf>>,
     /// Tool restrictions inherited from the parent agent (None = all tools allowed)
     tool_filter: Option<Vec<String>>,
+    /// Disabled tools inherited from the parent agent (Alt+P toggles)
+    disabled_tools: std::collections::HashSet<String>,
     /// Channel to push real-time updates to the TUI (in-process mode)
     update_tx: Option<mpsc::Sender<SubAgentUpdate>>,
     /// Persistent broadcast channel for subagent stream events (daemon mode).
@@ -101,6 +109,7 @@ impl SubAgentManager {
             sandbox: None,
             allowed_paths: None,
             tool_filter: None,
+            disabled_tools: std::collections::HashSet::new(),
             update_tx: None,
             stream_broadcast_tx: broadcast_tx,
         }
@@ -290,13 +299,23 @@ async fn run_sub_agent(
     // Create tools — inherit tool restrictions from parent agent
     let mut tools = create_default_registry();
 
-    // Apply tool filter from parent (prevents sub-agents from bypassing restrictions)
-    let tool_filter = {
+    // Apply tool filter and disabled tools from parent
+    let (tool_filter, disabled_tools) = {
         let mgr = MANAGER.read().await;
-        mgr.tool_filter.clone()
+        (mgr.tool_filter.clone(), mgr.disabled_tools.clone())
     };
     if let Some(ref filter) = tool_filter {
         let refs: Vec<&str> = filter.iter().map(|s| s.as_str()).collect();
+        tools.retain(&refs);
+    }
+    if !disabled_tools.is_empty() {
+        let allowed: Vec<String> = tools
+            .definitions()
+            .iter()
+            .map(|d| d.name.clone())
+            .filter(|n| !disabled_tools.contains(n))
+            .collect();
+        let refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
         tools.retain(&refs);
     }
 
@@ -1023,13 +1042,23 @@ pub async fn run_explore(
 
     // Create a filtered tool registry with only read-only tools
     let mut tools = lukan_tools::create_default_registry();
-    // Apply parent's tool filter first, then restrict to explore-safe tools
-    let tool_filter = {
+    // Apply parent's tool filter and disabled tools, then restrict to explore-safe tools
+    let (tool_filter, disabled_tools) = {
         let mgr = MANAGER.read().await;
-        mgr.tool_filter.clone()
+        (mgr.tool_filter.clone(), mgr.disabled_tools.clone())
     };
     if let Some(ref filter) = tool_filter {
         let refs: Vec<&str> = filter.iter().map(|s| s.as_str()).collect();
+        tools.retain(&refs);
+    }
+    if !disabled_tools.is_empty() {
+        let allowed: Vec<String> = tools
+            .definitions()
+            .iter()
+            .map(|d| d.name.clone())
+            .filter(|n| !disabled_tools.contains(n))
+            .collect();
+        let refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
         tools.retain(&refs);
     }
     tools.retain(EXPLORE_TOOLS);

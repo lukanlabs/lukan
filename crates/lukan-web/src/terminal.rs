@@ -394,6 +394,7 @@ impl TerminalManager {
     }
 
     /// Reset the pipe-pane output reader (tmux backend only).
+    #[allow(dead_code)]
     pub async fn reset_output_reader(
         &self,
         session_id: &str,

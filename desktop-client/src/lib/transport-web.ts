@@ -125,13 +125,20 @@ export class WebTransport implements Transport {
   }
 
   private get wsUrl(): string {
-    if (this._wsUrl) return this._wsUrl;
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${window.location.host}/ws`;
+    let base: string;
+    if (this._wsUrl) {
+      base = this._wsUrl;
+    } else {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      base = `${proto}//${window.location.host}/ws`;
+    }
+    return this.skipAuth ? `${base}?internal=1` : base;
   }
 
   async connect(): Promise<void> {
-    this.token = localStorage.getItem("lukan_auth_token");
+    if (!this.skipAuth) {
+      try { this.token = localStorage.getItem("lukan_auth_token"); } catch { /* Tauri/secure context */ }
+    }
 
     // Always validate/refresh token (server generates new secret on restart)
     await this.ensureAuthToken();
@@ -199,7 +206,7 @@ export class WebTransport implements Transport {
         if (configCheck.ok) return; // Token is valid
         // Token expired/invalid — clear and re-auth
         this.token = null;
-        localStorage.removeItem("lukan_auth_token");
+        try { localStorage.removeItem("lukan_auth_token"); } catch { /* secure context */ }
       }
 
       const resp = await fetch(`${this.baseUrl}/api/auth/status`);
@@ -215,7 +222,7 @@ export class WebTransport implements Transport {
         if (authResp.ok) {
           const data = await authResp.json();
           this.token = data.token;
-          localStorage.setItem("lukan_auth_token", this.token!);
+          try { localStorage.setItem("lukan_auth_token", this.token!); } catch { /* secure context */ }
         }
         return;
       }
@@ -403,7 +410,7 @@ export class WebTransport implements Transport {
           if (authResp.ok) {
             const data = await authResp.json();
             this.token = data.token;
-            localStorage.setItem("lukan_auth_token", this.token!);
+            try { localStorage.setItem("lukan_auth_token", this.token!); } catch { /* secure context */ }
             overlay.remove();
             resolve();
             return;
@@ -430,7 +437,7 @@ export class WebTransport implements Transport {
     this.ws = ws;
 
     ws.onopen = () => {
-      this.token = localStorage.getItem("lukan_auth_token");
+      try { this.token = localStorage.getItem("lukan_auth_token"); } catch { /* secure context */ }
       if (this.token) {
         ws.send(JSON.stringify({ type: "auth", token: this.token }));
       }
@@ -498,7 +505,7 @@ export class WebTransport implements Transport {
     }
     if (type === "auth_ok") {
       this.token = msg.token as string;
-      localStorage.setItem("lukan_auth_token", this.token);
+      try { localStorage.setItem("lukan_auth_token", this.token); } catch { /* secure context */ }
       return;
     }
     if (type === "auth_error") {
@@ -768,7 +775,8 @@ export class WebTransport implements Transport {
 
     const headers: Record<string, string> = {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    if (this.skipAuth) headers["X-Relay-Internal"] = "1";
+    else if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
 
     const resp = await fetch(`${this.baseUrl}${url}`, {
       method,
@@ -779,7 +787,7 @@ export class WebTransport implements Transport {
     // On 401, clear stale token, re-auth, and retry once
     if (resp.status === 401 && !isRetry) {
       this.token = null;
-      localStorage.removeItem("lukan_auth_token");
+      try { localStorage.removeItem("lukan_auth_token"); } catch { /* secure context */ }
       await this.ensureAuthToken();
       return this.callRest<T>(command, args, true);
     }
@@ -1178,8 +1186,10 @@ export class WebTransport implements Transport {
     args?: Record<string, unknown>,
   ): Promise<T> {
     switch (command) {
-      case "get_web_ui_status":
-        return { running: false, port: 0 } as T;
+      case "get_web_ui_status": {
+        const port = Number(window.location.port) || (window.location.protocol === "https:" ? 443 : 80);
+        return { running: true, port } as T;
+      }
       case "start_web_ui":
       case "stop_web_ui":
         return undefined as T;

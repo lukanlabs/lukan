@@ -44,8 +44,9 @@ build:
 	@if [ -d desktop-client ]; then \
 		echo "Building desktop frontend..."; \
 		(cd desktop-client && bun install --frozen-lockfile 2>/dev/null || bun install && bun run build); \
-		echo "Forcing desktop crate rebuild (frontend changed)..."; \
+		echo "Forcing desktop + relay crate rebuild (frontend changed)..."; \
 		touch crates/lukan-desktop/build.rs; \
+		touch crates/lukan-relay/src/static_files.rs; \
 		rm -f target/release/lukan-desktop target/release/deps/lukan_desktop-* 2>/dev/null || true; \
 		rm -rf target/release/build/lukan-desktop-* 2>/dev/null || true; \
 	fi

@@ -672,7 +672,11 @@ impl AgentLoop {
 
     /// Set tools that should be excluded from tool definitions.
     pub fn set_disabled_tools(&mut self, disabled: HashSet<String>) {
-        self.disabled_tools = disabled;
+        self.disabled_tools = disabled.clone();
+        // Propagate to sub-agent manager so spawned sub-agents inherit the restriction
+        tokio::spawn(async move {
+            crate::sub_agent::set_disabled_tools(disabled).await;
+        });
     }
 
     /// Rebuild the system prompt based on current mode and plan state.

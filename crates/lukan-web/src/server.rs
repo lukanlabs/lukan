@@ -16,7 +16,7 @@ use crate::static_files;
 use crate::ws_handler::ws_upgrade_handler;
 use crate::{
     rest_browser, rest_config, rest_credentials, rest_events, rest_files, rest_memory,
-    rest_plugins, rest_processes, rest_providers, rest_workers,
+    rest_pipelines, rest_plugins, rest_processes, rest_providers, rest_workers,
 };
 
 /// Build the Axum router with all routes
@@ -167,6 +167,45 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/workers/{id}/runs/{run_id}",
             get(rest_workers::get_worker_run),
         )
+        // Pipeline approvals (registered before /pipelines/{id} to avoid "approvals" matching as ID)
+        .route(
+            "/pipelines/approvals/pending",
+            get(rest_pipelines::list_pending_approvals),
+        )
+        .route(
+            "/pipelines/approvals/{id}/approve",
+            post(rest_pipelines::approve_approval),
+        )
+        .route(
+            "/pipelines/approvals/{id}/reject",
+            post(rest_pipelines::reject_approval),
+        )
+        // Pipelines
+        .route("/pipelines", get(rest_pipelines::list_pipelines))
+        .route("/pipelines", post(rest_pipelines::create_pipeline))
+        .route("/pipelines/{id}", get(rest_pipelines::get_pipeline_detail))
+        .route("/pipelines/{id}", put(rest_pipelines::update_pipeline))
+        .route("/pipelines/{id}", delete(rest_pipelines::delete_pipeline))
+        .route(
+            "/pipelines/{id}/toggle",
+            put(rest_pipelines::toggle_pipeline),
+        )
+        .route(
+            "/pipelines/{id}/trigger",
+            post(rest_pipelines::trigger_pipeline),
+        )
+        .route(
+            "/pipelines/{id}/runs/{run_id}",
+            get(rest_pipelines::get_pipeline_run),
+        )
+        .route(
+            "/pipelines/{id}/webhook",
+            post(rest_pipelines::webhook_pipeline),
+        )
+        .route(
+            "/pipelines/{id}/cancel",
+            post(rest_pipelines::cancel_pipeline),
+        )
         // Audio transcription
         .route(
             "/transcription/status",
@@ -183,6 +222,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/auth", post(auth_handler))
         .route("/api/auth/status", get(auth_status_handler))
         .route("/health", get(health_handler))
+        .route("/approve/{id}", get(rest_pipelines::approval_page))
         .nest("/api", api_routes)
         .fallback(get(static_files::serve_static))
         .layer(cors)

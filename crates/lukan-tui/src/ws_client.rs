@@ -103,6 +103,11 @@ pub enum OutMessage {
     SetPermissionMode {
         mode: String,
     },
+    SetDisabledTools {
+        tools: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
     SendToBackground {
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,

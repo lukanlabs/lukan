@@ -568,6 +568,14 @@ impl App {
             if let Some(ref mut event_agent) = self.event_agent {
                 event_agent.set_disabled_tools(self.disabled_tools.clone());
             }
+            // In daemon mode, send disabled tools to server
+            if let Some(ref daemon) = self.daemon_tx {
+                let tools: Vec<String> = self.disabled_tools.iter().cloned().collect();
+                let _ = daemon.send(&crate::ws_client::OutMessage::SetDisabledTools {
+                    tools,
+                    session_id: self.daemon_tab_id.clone(),
+                });
+            }
         }
         self.force_redraw = true;
     }

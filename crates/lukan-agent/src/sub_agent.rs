@@ -44,6 +44,18 @@ pub async fn configure(
     mgr.allowed_paths = allowed_paths;
 }
 
+/// Update the disabled tools for sub-agents (called when parent toggles tools)
+pub async fn set_disabled_tools(disabled: std::collections::HashSet<String>) {
+    let mut mgr = MANAGER.write().await;
+    mgr.disabled_tools = disabled;
+}
+
+/// Set tool restrictions for sub-agents (inherited from parent)
+pub async fn set_tool_filter(filter: Option<Vec<String>>) {
+    let mut mgr = MANAGER.write().await;
+    mgr.tool_filter = filter;
+}
+
 // ── Manager ───────────────────────────────────────────────────────────────
 
 /// Real-time update pushed from a running sub-agent to the TUI
@@ -71,6 +83,10 @@ struct SubAgentManager {
     model_name: Option<String>,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
     allowed_paths: Option<Vec<std::path::PathBuf>>,
+    /// Tool restrictions inherited from the parent agent (None = all tools allowed)
+    tool_filter: Option<Vec<String>>,
+    /// Disabled tools inherited from the parent agent (Alt+P toggles)
+    disabled_tools: std::collections::HashSet<String>,
     /// Channel to push real-time updates to the TUI (in-process mode)
     update_tx: Option<mpsc::Sender<SubAgentUpdate>>,
     /// Persistent broadcast channel for subagent stream events (daemon mode).
@@ -92,6 +108,8 @@ impl SubAgentManager {
             model_name: None,
             sandbox: None,
             allowed_paths: None,
+            tool_filter: None,
+            disabled_tools: std::collections::HashSet::new(),
             update_tx: None,
             stream_broadcast_tx: broadcast_tx,
         }
@@ -278,12 +296,28 @@ async fn run_sub_agent(
         mgr.update_tx.clone()
     };
 
-    // Create tools but remove SubAgent/SubAgentResult to prevent recursion
-    let tools = create_default_registry();
-    // Tools we want to remove (they call themselves)
-    // ToolRegistry doesn't have unregister, so we recreate without them
-    // Actually, since SubAgent tools are registered by AgentLoop, not create_default_registry,
-    // the sub-agent's registry from create_default_registry won't have them. This is fine.
+    // Create tools — inherit tool restrictions from parent agent
+    let mut tools = create_default_registry();
+
+    // Apply tool filter and disabled tools from parent
+    let (tool_filter, disabled_tools) = {
+        let mgr = MANAGER.read().await;
+        (mgr.tool_filter.clone(), mgr.disabled_tools.clone())
+    };
+    if let Some(ref filter) = tool_filter {
+        let refs: Vec<&str> = filter.iter().map(|s| s.as_str()).collect();
+        tools.retain(&refs);
+    }
+    if !disabled_tools.is_empty() {
+        let allowed: Vec<String> = tools
+            .definitions()
+            .iter()
+            .map(|d| d.name.clone())
+            .filter(|n| !disabled_tools.contains(n))
+            .collect();
+        let refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
+        tools.retain(&refs);
+    }
 
     let tools = Arc::new(tools);
     let read_files = Arc::new(Mutex::new(std::collections::HashSet::new()));
@@ -1008,6 +1042,25 @@ pub async fn run_explore(
 
     // Create a filtered tool registry with only read-only tools
     let mut tools = lukan_tools::create_default_registry();
+    // Apply parent's tool filter and disabled tools, then restrict to explore-safe tools
+    let (tool_filter, disabled_tools) = {
+        let mgr = MANAGER.read().await;
+        (mgr.tool_filter.clone(), mgr.disabled_tools.clone())
+    };
+    if let Some(ref filter) = tool_filter {
+        let refs: Vec<&str> = filter.iter().map(|s| s.as_str()).collect();
+        tools.retain(&refs);
+    }
+    if !disabled_tools.is_empty() {
+        let allowed: Vec<String> = tools
+            .definitions()
+            .iter()
+            .map(|d| d.name.clone())
+            .filter(|n| !disabled_tools.contains(n))
+            .collect();
+        let refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
+        tools.retain(&refs);
+    }
     tools.retain(EXPLORE_TOOLS);
     let tools = Arc::new(tools);
 

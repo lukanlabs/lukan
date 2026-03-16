@@ -121,6 +121,12 @@ pub enum HostMessage {
         #[serde(rename = "isError")]
         is_error: bool,
     },
+    /// Send an outbound message to a channel (e.g. notify a user via WhatsApp)
+    SendMessage {
+        #[serde(rename = "channelId")]
+        channel_id: String,
+        text: String,
+    },
     /// Graceful shutdown request
     Shutdown,
 }

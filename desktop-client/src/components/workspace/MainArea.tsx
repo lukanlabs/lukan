@@ -1,11 +1,14 @@
 import type { WorkspaceMode, BgProcessInfo } from "../../lib/types";
 import ChatView from "../../views/ChatView";
 import TerminalView from "../../views/TerminalView";
+import PipelineFlowView from "../../views/PipelineFlowView";
 import { ProcessLogOverlay } from "./ProcessLogOverlay";
 import { FileViewer } from "./FileViewer";
 
 interface MainAreaProps {
   mode: WorkspaceMode;
+  pipelineId?: string | null;
+  onPipelineBack?: () => void;
   processLog?: BgProcessInfo | null;
   processLogSessionId?: string;
   onCloseProcessLog?: () => void;
@@ -14,10 +17,10 @@ interface MainAreaProps {
   onCloseFilePreview?: () => void;
 }
 
-export function MainArea({ mode, processLog, processLogSessionId, onCloseProcessLog, filePreview, filePreviewSize, onCloseFilePreview }: MainAreaProps) {
+export function MainArea({ mode, pipelineId, onPipelineBack, processLog, processLogSessionId, onCloseProcessLog, filePreview, filePreviewSize, onCloseFilePreview }: MainAreaProps) {
   return (
     <div className="main-area" style={{ position: "relative" }}>
-      {/* Both always mounted — display toggle preserves state */}
+      {/* Always mounted — display toggle preserves state */}
       <div
         className="flex flex-col h-full min-h-0 min-w-0 overflow-hidden"
         style={{ display: mode === "agent" ? "flex" : "none" }}
@@ -29,6 +32,12 @@ export function MainArea({ mode, processLog, processLogSessionId, onCloseProcess
         style={{ display: mode === "terminal" ? "flex" : "none" }}
       >
         <TerminalView />
+      </div>
+      <div
+        className="flex flex-col h-full min-h-0 min-w-0 overflow-hidden"
+        style={{ display: mode === "pipeline" ? "flex" : "none" }}
+      >
+        <PipelineFlowView pipelineId={pipelineId ?? null} onBack={onPipelineBack ?? (() => {})} />
       </div>
 
       {/* Process log overlay — renders on top, chat stays mounted underneath */}

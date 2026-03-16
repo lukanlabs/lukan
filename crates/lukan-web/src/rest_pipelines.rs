@@ -1,7 +1,12 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::Path, extract::Query, extract::State, http::StatusCode, response::IntoResponse};
-use lukan_core::pipelines::{PipelineCreateInput, PipelineManager, PipelineTrigger, PipelineUpdateInput};
+use axum::{
+    Json, extract::Path, extract::Query, extract::State, http::StatusCode, response::IntoResponse,
+};
+use lukan_core::approvals::ApprovalManager;
+use lukan_core::pipelines::{
+    PipelineCreateInput, PipelineManager, PipelineTrigger, PipelineUpdateInput,
+};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
@@ -30,9 +35,7 @@ pub async fn update_pipeline(
 ) -> impl IntoResponse {
     match PipelineManager::update(&id, patch).await {
         Ok(Some(pipeline)) => Json(pipeline).into_response(),
-        Ok(None) => {
-            (StatusCode::NOT_FOUND, format!("Pipeline '{id}' not found")).into_response()
-        }
+        Ok(None) => (StatusCode::NOT_FOUND, format!("Pipeline '{id}' not found")).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -61,9 +64,7 @@ pub async fn toggle_pipeline(
     };
     match PipelineManager::update(&id, patch).await {
         Ok(Some(pipeline)) => Json(pipeline).into_response(),
-        Ok(None) => {
-            (StatusCode::NOT_FOUND, format!("Pipeline '{id}' not found")).into_response()
-        }
+        Ok(None) => (StatusCode::NOT_FOUND, format!("Pipeline '{id}' not found")).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -72,9 +73,7 @@ pub async fn toggle_pipeline(
 pub async fn get_pipeline_detail(Path(id): Path<String>) -> impl IntoResponse {
     match PipelineManager::get_detail(&id).await {
         Ok(Some(detail)) => Json(detail).into_response(),
-        Ok(None) => {
-            (StatusCode::NOT_FOUND, format!("Pipeline '{id}' not found")).into_response()
-        }
+        Ok(None) => (StatusCode::NOT_FOUND, format!("Pipeline '{id}' not found")).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -127,13 +126,21 @@ pub async fn trigger_pipeline(
 
     tokio::spawn(async move {
         let run = lukan_agent::pipelines::executor::execute_pipeline_full(
-            &pipeline, input, &config, cancel_token, Some(run_notify_tx),
+            &pipeline,
+            input,
+            &config,
+            cancel_token,
+            Some(run_notify_tx),
         )
         .await;
 
         // Emit completion notification
         let summary = if run.status == "success" {
-            let step_count = run.step_runs.iter().filter(|s| s.status == "success").count();
+            let step_count = run
+                .step_runs
+                .iter()
+                .filter(|s| s.status == "success")
+                .count();
             format!("{step_count} steps completed successfully")
         } else {
             let error_step = run.step_runs.iter().find(|s| s.status == "error");
@@ -263,7 +270,11 @@ pub async fn webhook_pipeline(
             lukan_agent::pipelines::executor::execute_pipeline(&pipeline, input, &config).await;
 
         let summary = if run.status == "success" {
-            let step_count = run.step_runs.iter().filter(|s| s.status == "success").count();
+            let step_count = run
+                .step_runs
+                .iter()
+                .filter(|s| s.status == "success")
+                .count();
             format!("{step_count} steps completed successfully")
         } else {
             let error_step = run.step_runs.iter().find(|s| s.status == "error");
@@ -303,4 +314,43 @@ pub async fn webhook_pipeline(
         })),
     )
         .into_response()
+}
+
+// ── Approval endpoints ──────────────────────────────────────────────
+
+/// GET /api/pipelines/approvals/pending — list pending approvals
+pub async fn list_pending_approvals() -> impl IntoResponse {
+    match ApprovalManager::list_pending().await {
+        Ok(approvals) => Json(approvals).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ApprovalAction {
+    pub comment: Option<String>,
+}
+
+/// POST /api/pipelines/approvals/:id/approve
+pub async fn approve_approval(
+    Path(id): Path<String>,
+    Json(body): Json<ApprovalAction>,
+) -> impl IntoResponse {
+    match ApprovalManager::resolve(&id, true, "ui", body.comment).await {
+        Ok(Some(req)) => Json(req).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, format!("Approval '{id}' not found")).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// POST /api/pipelines/approvals/:id/reject
+pub async fn reject_approval(
+    Path(id): Path<String>,
+    Json(body): Json<ApprovalAction>,
+) -> impl IntoResponse {
+    match ApprovalManager::resolve(&id, false, "ui", body.comment).await {
+        Ok(Some(req)) => Json(req).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, format!("Approval '{id}' not found")).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }

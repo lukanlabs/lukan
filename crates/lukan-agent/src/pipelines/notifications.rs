@@ -8,6 +8,12 @@ pub struct PipelineNotificationWatcher {
     offset: u64,
 }
 
+impl Default for PipelineNotificationWatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PipelineNotificationWatcher {
     pub fn new() -> Self {
         // Start at the current end of the file so we only see new entries

@@ -217,10 +217,10 @@ impl PipelineScheduler {
 
     pub async fn create_pipeline(&self, input: PipelineCreateInput) -> Result<PipelineDefinition> {
         let pipeline = PipelineManager::create(input).await?;
-        if pipeline.enabled {
-            if let PipelineTrigger::Schedule { .. } = &pipeline.trigger {
-                self.schedule_pipeline(&pipeline).await;
-            }
+        if pipeline.enabled
+            && let PipelineTrigger::Schedule { .. } = &pipeline.trigger
+        {
+            self.schedule_pipeline(&pipeline).await;
         }
         Ok(pipeline)
     }
@@ -322,13 +322,21 @@ impl PipelineScheduler {
             }
 
             let run = execute_pipeline_full(
-                &pipeline, input, &config, run_token, Some(notify_tx.clone()),
+                &pipeline,
+                input,
+                &config,
+                run_token,
+                Some(notify_tx.clone()),
             )
             .await;
 
             // Emit completion notification
             let summary = if run.status == "success" {
-                let step_count = run.step_runs.iter().filter(|s| s.status == "success").count();
+                let step_count = run
+                    .step_runs
+                    .iter()
+                    .filter(|s| s.status == "success")
+                    .count();
                 format!("{step_count} steps completed successfully")
             } else {
                 let error_step = run.step_runs.iter().find(|s| s.status == "error");
@@ -515,10 +523,10 @@ impl PipelineScheduler {
                                 let ev_level = event["level"].as_str().unwrap_or("");
 
                                 if ev_source == source_filter {
-                                    if let Some(ref lf) = level_filter {
-                                        if ev_level != lf {
-                                            continue;
-                                        }
+                                    if let Some(ref lf) = level_filter
+                                        && ev_level != lf
+                                    {
+                                        continue;
                                     }
                                     matched_event = Some(line.to_string());
                                     break;

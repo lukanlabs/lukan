@@ -666,7 +666,6 @@ async fn dispatch_message(
         }
 
         // ── Pipeline handlers ──
-
         ClientMessage::ListPipelines => match PipelineManager::get_summaries().await {
             Ok(pipelines) => {
                 send_json(ws_tx, &ServerMessage::PipelinesUpdate { pipelines }).await;
@@ -791,32 +790,29 @@ async fn dispatch_message(
             }
         }
 
-        ClientMessage::GetPipelineDetail { id } => {
-            match PipelineManager::get_detail(&id).await {
-                Ok(Some(detail)) => {
-                    send_json(ws_tx, &ServerMessage::PipelineDetail { pipeline: detail })
-                        .await;
-                }
-                Ok(None) => {
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::Error {
-                            error: format!("Pipeline not found: {id}"),
-                        },
-                    )
-                    .await;
-                }
-                Err(e) => {
-                    send_json(
-                        ws_tx,
-                        &ServerMessage::Error {
-                            error: format!("Failed to get pipeline detail: {e}"),
-                        },
-                    )
-                    .await;
-                }
+        ClientMessage::GetPipelineDetail { id } => match PipelineManager::get_detail(&id).await {
+            Ok(Some(detail)) => {
+                send_json(ws_tx, &ServerMessage::PipelineDetail { pipeline: detail }).await;
             }
-        }
+            Ok(None) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Pipeline not found: {id}"),
+                    },
+                )
+                .await;
+            }
+            Err(e) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to get pipeline detail: {e}"),
+                    },
+                )
+                .await;
+            }
+        },
 
         ClientMessage::TriggerPipeline { id, input } => {
             match PipelineManager::get(&id).await {
@@ -842,10 +838,16 @@ async fn dispatch_message(
                         .await;
 
                         let summary = if run.status == "success" {
-                            let count = run.step_runs.iter().filter(|s| s.status == "success").count();
+                            let count = run
+                                .step_runs
+                                .iter()
+                                .filter(|s| s.status == "success")
+                                .count();
                             format!("{count} steps completed successfully")
                         } else {
-                            run.step_runs.iter().find(|s| s.status == "error")
+                            run.step_runs
+                                .iter()
+                                .find(|s| s.status == "error")
                                 .and_then(|s| s.error.clone())
                                 .unwrap_or_else(|| format!("Pipeline {}", run.status))
                         };
@@ -860,7 +862,8 @@ async fn dispatch_message(
 
                         // Write to JSONL for NotificationWatcher
                         if let Ok(line) = serde_json::to_string(&notification) {
-                            let path = lukan_core::config::LukanPaths::pipeline_notifications_file();
+                            let path =
+                                lukan_core::config::LukanPaths::pipeline_notifications_file();
                             if let Ok(mut file) = tokio::fs::OpenOptions::new()
                                 .create(true)
                                 .append(true)

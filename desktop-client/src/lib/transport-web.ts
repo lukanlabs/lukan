@@ -1125,6 +1125,22 @@ export class WebTransport implements Transport {
           url: `/api/pipelines/${encodeURIComponent(args?.pipelineId as string)}/runs/${encodeURIComponent(args?.runId as string)}`,
         };
 
+      // ── Pipeline Approvals ──
+      case "list_pending_approvals":
+        return { method: "GET", url: "/api/pipelines/approvals/pending" };
+      case "approve_approval":
+        return {
+          method: "POST",
+          url: `/api/pipelines/approvals/${encodeURIComponent(args?.id as string)}/approve`,
+          body: { comment: args?.comment ?? null },
+        };
+      case "reject_approval":
+        return {
+          method: "POST",
+          url: `/api/pipelines/approvals/${encodeURIComponent(args?.id as string)}/reject`,
+          body: { comment: args?.comment ?? null },
+        };
+
       // ── Events ──
       case "consume_pending_events":
         return { method: "POST", url: "/api/events/consume" };

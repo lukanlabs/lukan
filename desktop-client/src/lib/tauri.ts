@@ -38,6 +38,7 @@ import type {
   PipelineRun,
   PipelineCreateInput,
   PipelineUpdateInput,
+  ApprovalRequest,
   TranscriptionStatus,
 } from "./types";
 
@@ -355,6 +356,14 @@ export const getPipelineRun = (pipelineId: string, runId: string) =>
   getTransport().call<PipelineRun>("get_pipeline_run", { pipelineId, runId });
 export const onPipelineNotification = (cb: (data: unknown) => void) =>
   getTransport().subscribe("pipeline-notification", cb);
+
+// Pipeline approvals
+export const listPendingApprovals = () =>
+  getTransport().call<ApprovalRequest[]>("list_pending_approvals");
+export const approveApproval = (id: string, comment?: string) =>
+  getTransport().call<ApprovalRequest>("approve_approval", { id, comment });
+export const rejectApproval = (id: string, comment?: string) =>
+  getTransport().call<ApprovalRequest>("reject_approval", { id, comment });
 
 // Events
 export const consumePendingEvents = () =>

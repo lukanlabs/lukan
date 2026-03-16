@@ -37,8 +37,11 @@ import {
   Settings,
   Download,
   Upload,
+  ShieldCheck,
+  ThumbsUp,
+  ThumbsDown,
 } from "lucide-react";
-import type { PipelineDetail, PipelineRun, PipelineStep, PipelineTrigger, PipelineCreateInput, StepRun, StepConnection } from "../lib/types";
+import type { PipelineDetail, PipelineRun, PipelineStep, PipelineTrigger, PipelineCreateInput, StepRun, StepConnection, ApprovalConfig } from "../lib/types";
 import {
   getPipelineDetail,
   getPipelineRun,
@@ -49,6 +52,8 @@ import {
   listTools,
   listProviders,
   getModels,
+  approveApproval,
+  rejectApproval,
 } from "../lib/tauri";
 
 // ── Helpers ──
@@ -77,12 +82,15 @@ interface StepNodeData {
   stepId: string;
   model?: string;
   provider?: string;
+  stepType?: string;
   stepRun?: StepRun;
   stepIndex: number;
   totalSteps: number;
   onViewOutput?: (stepRun: StepRun) => void;
   onEditStep?: (stepId: string) => void;
   onDeleteStep?: (stepId: string) => void;
+  onApprove?: (approvalId: string) => void;
+  onReject?: (approvalId: string) => void;
   [key: string]: unknown;
 }
 
@@ -92,6 +100,7 @@ const STATUS_COLOR: Record<string, string> = {
   error: "#ef4444",
   partial: "#f59e0b",
   skipped: "#52525b",
+  waiting_approval: "#8b5cf6",
 };
 
 const menuItemStyle: React.CSSProperties = {
@@ -102,7 +111,8 @@ const menuItemStyle: React.CSSProperties = {
 };
 
 function StepNode({ data }: { data: StepNodeData }) {
-  const { label, stepRun, stepId, stepIndex, totalSteps, model, provider, onViewOutput, onEditStep, onDeleteStep } = data;
+  const { label, stepRun, stepId, stepIndex, totalSteps, model, provider, stepType, onViewOutput, onEditStep, onDeleteStep, onApprove, onReject } = data;
+  const isApprovalStep = stepType === "approval";
   const [menuOpen, setMenuOpen] = useState(false);
   const status = stepRun?.status;
   const c = (status && STATUS_COLOR[status]) || "#3c3c3c";
@@ -140,10 +150,12 @@ function StepNode({ data }: { data: StepNodeData }) {
         <span style={{ fontSize: 11, fontWeight: 600, color: "#e0e0e0", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {label}
         </span>
+        {isApprovalStep && !status && <ShieldCheck size={11} style={{ color: "#8b5cf6", opacity: 0.5 }} />}
         {status === "running" && <Loader2 size={11} style={{ color: c, animation: "spin 1s linear infinite" }} />}
         {status === "success" && <CheckCircle2 size={11} style={{ color: c }} />}
         {status === "error" && <XCircle size={11} style={{ color: c }} />}
         {status === "partial" && <AlertTriangle size={11} style={{ color: c }} />}
+        {status === "waiting_approval" && <ShieldCheck size={11} style={{ color: c, animation: "pulse 2s ease-in-out infinite" }} />}
 
         {/* 3-dot menu */}
         <div
@@ -242,6 +254,38 @@ function StepNode({ data }: { data: StepNodeData }) {
         </div>
       )}
 
+      {/* Approve / Reject buttons for waiting_approval */}
+      {status === "waiting_approval" && stepRun?.approvalId && (
+        <div
+          className="nopan nodrag nowheel"
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{ display: "flex", gap: 4, padding: "4px 8px 6px", justifyContent: "center" }}
+        >
+          <button
+            onClick={() => onApprove?.(stepRun.approvalId!)}
+            style={{
+              border: "1px solid #22c55e", background: "rgba(34,197,94,0.1)",
+              color: "#22c55e", cursor: "pointer", padding: "3px 10px",
+              borderRadius: 3, fontSize: 9, fontFamily: "monospace", fontWeight: 600,
+              display: "flex", alignItems: "center", gap: 3,
+            }}
+          >
+            <ThumbsUp size={9} /> Approve
+          </button>
+          <button
+            onClick={() => onReject?.(stepRun.approvalId!)}
+            style={{
+              border: "1px solid #ef4444", background: "rgba(239,68,68,0.1)",
+              color: "#ef4444", cursor: "pointer", padding: "3px 10px",
+              borderRadius: 3, fontSize: 9, fontFamily: "monospace", fontWeight: 600,
+              display: "flex", alignItems: "center", gap: 3,
+            }}
+          >
+            <ThumbsDown size={9} /> Reject
+          </button>
+        </div>
+      )}
+
       <Handle type="source" position={Position.Bottom} style={{ background: c, border: "2px solid #0a0a0a", width: 8, height: 8 }} />
     </div>
   );
@@ -301,6 +345,7 @@ function EditStepSheet({
   const [name, setName] = useState(step.name);
   const [prompt, setPrompt] = useState(step.prompt);
   const [saving, setSaving] = useState(false);
+  const [stepType, setStepType] = useState(step.stepType ?? "agent");
   const [availableTools, setAvailableTools] = useState<{ name: string; source: string | null }[]>([]);
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set(step.tools ?? []));
   const [toolsEnabled, setToolsEnabled] = useState(!!step.tools);
@@ -309,6 +354,11 @@ function EditStepSheet({
   const [allModels, setAllModels] = useState<string[]>([]);
   const [selectedProvider, setSelectedProvider] = useState(step.provider ?? "");
   const [selectedModel, setSelectedModel] = useState(step.model ?? "");
+  // Approval config
+  const [notifyPlugin, setNotifyPlugin] = useState(step.approval?.notifyPlugin ?? "");
+  const [notifyChannel, setNotifyChannel] = useState(step.approval?.notifyChannel ?? "");
+  const [approvalMessage, setApprovalMessage] = useState(step.approval?.message ?? "");
+  const [approvalTimeout, setApprovalTimeout] = useState(String(step.approval?.timeoutSecs ?? 3600));
 
   useEffect(() => {
     listTools().then(setAvailableTools).catch(() => {});
@@ -344,14 +394,31 @@ function EditStepSheet({
 
   const handleSave = () => {
     setSaving(true);
-    onSave({
+    const updated: PipelineStep = {
       ...step,
       name: name.trim() || step.name,
       prompt: prompt.trim() || step.prompt,
-      tools: toolsEnabled ? Array.from(selectedTools) : undefined,
-      provider: selectedProvider || undefined,
-      model: selectedModel || undefined,
-    });
+      stepType,
+    };
+    if (stepType === "agent") {
+      updated.tools = toolsEnabled ? Array.from(selectedTools) : undefined;
+      updated.provider = selectedProvider || undefined;
+      updated.model = selectedModel || undefined;
+      updated.approval = undefined;
+    } else {
+      // approval step
+      updated.tools = undefined;
+      updated.provider = undefined;
+      updated.model = undefined;
+      const approval: ApprovalConfig = {};
+      if (notifyPlugin.trim()) approval.notifyPlugin = notifyPlugin.trim();
+      if (notifyChannel.trim()) approval.notifyChannel = notifyChannel.trim();
+      if (approvalMessage.trim()) approval.message = approvalMessage.trim();
+      const timeout = parseInt(approvalTimeout);
+      if (timeout > 0) approval.timeoutSecs = timeout;
+      updated.approval = Object.keys(approval).length > 0 ? approval : undefined;
+    }
+    onSave(updated);
   };
 
   return (
@@ -374,25 +441,83 @@ function EditStepSheet({
 
       {/* Form */}
       <div style={{ flex: 1, overflow: "auto", padding: "12px" }}>
+        {/* Step Type */}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Step Type</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {(["agent", "approval"] as const).map((t) => (
+              <label key={t} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: stepType === t ? "#e0e0e0" : "#666", cursor: "pointer" }}>
+                <input type="radio" checked={stepType === t} onChange={() => setStepType(t)} style={{ accentColor: t === "approval" ? "#8b5cf6" : "#a78bfa" }} />
+                {t === "approval" ? "Approval Gate" : "Agent"}
+              </label>
+            ))}
+          </div>
+        </div>
+
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Name</label>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
         </div>
 
         <div style={{ marginBottom: 12 }}>
-          <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Prompt</label>
+          <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>
+            {stepType === "approval" ? "Approval Message" : "Prompt"}
+          </label>
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            rows={8}
-            style={{ ...inputStyle, resize: "vertical", minHeight: 100 }}
+            rows={stepType === "approval" ? 4 : 8}
+            placeholder={stepType === "approval" ? "Pipeline needs your approval to continue.\n\nContext: {{input}}" : undefined}
+            style={{ ...inputStyle, resize: "vertical", minHeight: stepType === "approval" ? 60 : 100 }}
           />
           <div style={{ fontSize: 9, color: "#444", marginTop: 3 }}>
             {"Use {{input}} to reference the previous step's output"}
           </div>
         </div>
 
-        {/* Provider / Model */}
+        {/* Approval-specific fields */}
+        {stepType === "approval" && (
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Notify Plugin</label>
+              <input
+                type="text"
+                value={notifyPlugin}
+                onChange={(e) => setNotifyPlugin(e.target.value)}
+                placeholder="whatsapp, slack, discord..."
+                style={inputStyle}
+              />
+              <div style={{ fontSize: 9, color: "#444", marginTop: 3 }}>
+                Plugin to send the approval notification to (optional)
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Notify Channel</label>
+              <input
+                type="text"
+                value={notifyChannel}
+                onChange={(e) => setNotifyChannel(e.target.value)}
+                placeholder="Channel or chat ID"
+                style={inputStyle}
+              />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Timeout (seconds)</label>
+              <input
+                type="number"
+                value={approvalTimeout}
+                onChange={(e) => setApprovalTimeout(e.target.value)}
+                style={inputStyle}
+              />
+              <div style={{ fontSize: 9, color: "#444", marginTop: 3 }}>
+                Pipeline will fail if not approved within this time (default: 1 hour)
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Provider / Model / Tools (agent only) */}
+        {stepType === "agent" && <>
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>Provider</label>
           <select
@@ -507,6 +632,7 @@ function EditStepSheet({
             <div style={{ fontSize: 9, color: "#444" }}>All tools available (no restrictions)</div>
           )}
         </div>
+        </>}
       </div>
 
       {/* Footer */}
@@ -876,6 +1002,25 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
     }
   }, [detail, pipelineId]);
 
+  const handleApprove = useCallback(async (approvalId: string) => {
+    try {
+      await approveApproval(approvalId);
+      // Refresh after a short delay to let the executor pick it up
+      setTimeout(() => loadDetail(), 1000);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  const handleReject = useCallback(async (approvalId: string) => {
+    try {
+      await rejectApproval(approvalId);
+      setTimeout(() => loadDetail(), 1000);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   const handleDeleteEdge = useCallback(async (edgeId: string) => {
     if (!detail || !pipelineId) return;
     // edgeId format: "fromStep->toStep"
@@ -1034,17 +1179,20 @@ export default function PipelineFlowView({ pipelineId, onBack }: PipelineFlowVie
           stepId: step.id,
           model: step.model,
           provider: step.provider,
+          stepType: step.stepType,
           stepRun: srMap.get(step.id),
           stepIndex: idx,
           totalSteps: detail.steps.length,
           onViewOutput: handleViewOutput,
           onEditStep: handleEditStep,
           onDeleteStep: handleDeleteStep,
+          onApprove: handleApprove,
+          onReject: handleReject,
         } satisfies StepNodeData,
       };
     });
     setFlowNodes(nodes);
-  }, [detail, activeRun, handleViewOutput, handleEditStep, handleDeleteStep]);
+  }, [detail, activeRun, handleViewOutput, handleEditStep, handleDeleteStep, handleApprove, handleReject]);
 
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     setFlowNodes((nds) => applyNodeChanges(changes, nds));

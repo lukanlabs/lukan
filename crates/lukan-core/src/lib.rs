@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod approvals;
 pub mod config;
 pub mod crypto;
 pub mod errors;

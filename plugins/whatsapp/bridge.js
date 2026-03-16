@@ -609,6 +609,18 @@ function handleHostMessage(msg) {
       break;
     }
 
+    case "sendMessage": {
+      // Outbound message from the host (e.g. pipeline approval notification)
+      const { channelId, text } = msg;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "send", to: channelId, text }));
+        log("info", `Sent outbound message to ${channelId} (${text.length} chars)`);
+      } else {
+        log("error", `Cannot send outbound message — not connected to connector`);
+      }
+      break;
+    }
+
     case "shutdown":
       log("info", "Received Shutdown");
       shutdown();

@@ -180,6 +180,16 @@ impl LukanPaths {
         Self::config_dir().join("workers.json")
     }
 
+    /// Approvals directory: ~/.config/lukan/approvals/
+    pub fn approvals_dir() -> PathBuf {
+        Self::config_dir().join("approvals")
+    }
+
+    /// Approval file for a specific approval: ~/.config/lukan/approvals/{id}.json
+    pub fn approval_file(id: &str) -> PathBuf {
+        Self::approvals_dir().join(format!("{id}.json"))
+    }
+
     /// Pipelines definition file: ~/.config/lukan/pipelines.json
     pub fn pipelines_file() -> PathBuf {
         Self::config_dir().join("pipelines.json")
@@ -228,6 +238,7 @@ impl LukanPaths {
         tokio::fs::create_dir_all(Self::events_dir()).await?;
         tokio::fs::create_dir_all(Self::workers_runs_dir()).await?;
         tokio::fs::create_dir_all(Self::pipelines_runs_dir()).await?;
+        tokio::fs::create_dir_all(Self::approvals_dir()).await?;
         Ok(())
     }
 }

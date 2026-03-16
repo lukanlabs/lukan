@@ -102,6 +102,70 @@ impl PluginChannel {
         info!(plugin = %self.name, "Tools hot-reloaded: {}", tools_list.join(", "));
     }
 
+    /// Check if a message is an approval response (yes/no/approve/reject).
+    /// If there are pending approvals for this plugin+channel, resolve the most recent one.
+    /// Returns Some(confirmation_message) if resolved, None if not an approval response.
+    async fn try_resolve_approval(
+        &self,
+        content: &str,
+        channel_id: &str,
+        sender: &str,
+    ) -> Option<String> {
+        let normalized = content.trim().to_lowercase();
+        let is_approve = matches!(
+            normalized.as_str(),
+            "yes" | "y" | "approve" | "approved" | "ok" | "si" | "sí"
+        );
+        let is_reject = matches!(
+            normalized.as_str(),
+            "no" | "n" | "reject" | "rejected" | "deny" | "denied"
+        );
+
+        if !is_approve && !is_reject {
+            return None;
+        }
+
+        // Find pending approvals for this plugin+channel
+        let pending =
+            lukan_core::approvals::ApprovalManager::find_pending_for_plugin(&self.name, channel_id)
+                .await
+                .ok()?;
+
+        if pending.is_empty() {
+            return None;
+        }
+
+        // Resolve the most recent (first) pending approval
+        let approval = &pending[0];
+        let resolved_by = format!("{}:{}:{}", self.name, channel_id, sender);
+
+        match lukan_core::approvals::ApprovalManager::resolve(
+            &approval.id,
+            is_approve,
+            &resolved_by,
+            None,
+        )
+        .await
+        {
+            Ok(Some(req)) => {
+                let action = if is_approve { "approved" } else { "rejected" };
+                let msg = format!(
+                    "Pipeline approval {} — step \"{}\" has been {}.",
+                    req.id, req.step_id, action
+                );
+                self.log_to_file("APPROVAL", &msg);
+                info!(
+                    plugin = %self.name,
+                    approval_id = %req.id,
+                    action,
+                    "Approval resolved via plugin message"
+                );
+                Some(msg)
+            }
+            _ => None,
+        }
+    }
+
     /// Main loop: reads PluginMessages, processes them, sends HostMessages back.
     pub async fn run(
         &mut self,
@@ -134,27 +198,43 @@ impl PluginChannel {
                         "Processing message"
                     );
 
-                    let response =
-                        collect_agent_response(agent, &content, self.max_response_len).await;
-                    let is_error = response.starts_with("Error:");
-
-                    let resp_preview = if response.len() > 120 {
-                        let end = response.floor_char_boundary(120);
-                        format!("{}...", &response[..end])
+                    // Check if message is an approval response
+                    if let Some(response) = self
+                        .try_resolve_approval(&content, &channel_id, &sender)
+                        .await
+                    {
+                        let reply = HostMessage::AgentResponse {
+                            request_id,
+                            text: response,
+                            is_error: false,
+                        };
+                        if let Err(e) = host_tx.send(reply).await {
+                            self.log_to_file("ERROR", &format!("Failed to send response: {e}"));
+                            error!(plugin = %self.name, "Failed to send agent response: {e}");
+                        }
                     } else {
-                        response.clone()
-                    };
-                    self.log_to_file("REPLY", &format!("→ {channel_id}: {resp_preview}"));
+                        let response =
+                            collect_agent_response(agent, &content, self.max_response_len).await;
+                        let is_error = response.starts_with("Error:");
 
-                    let reply = HostMessage::AgentResponse {
-                        request_id,
-                        text: response,
-                        is_error,
-                    };
+                        let resp_preview = if response.len() > 120 {
+                            let end = response.floor_char_boundary(120);
+                            format!("{}...", &response[..end])
+                        } else {
+                            response.clone()
+                        };
+                        self.log_to_file("REPLY", &format!("→ {channel_id}: {resp_preview}"));
 
-                    if let Err(e) = host_tx.send(reply).await {
-                        self.log_to_file("ERROR", &format!("Failed to send response: {e}"));
-                        error!(plugin = %self.name, "Failed to send agent response: {e}");
+                        let reply = HostMessage::AgentResponse {
+                            request_id,
+                            text: response,
+                            is_error,
+                        };
+
+                        if let Err(e) = host_tx.send(reply).await {
+                            self.log_to_file("ERROR", &format!("Failed to send response: {e}"));
+                            error!(plugin = %self.name, "Failed to send agent response: {e}");
+                        }
                     }
                 }
                 PluginMessage::Status { status } => {

@@ -167,6 +167,19 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/workers/{id}/runs/{run_id}",
             get(rest_workers::get_worker_run),
         )
+        // Pipeline approvals (registered before /pipelines/{id} to avoid "approvals" matching as ID)
+        .route(
+            "/pipelines/approvals/pending",
+            get(rest_pipelines::list_pending_approvals),
+        )
+        .route(
+            "/pipelines/approvals/{id}/approve",
+            post(rest_pipelines::approve_approval),
+        )
+        .route(
+            "/pipelines/approvals/{id}/reject",
+            post(rest_pipelines::reject_approval),
+        )
         // Pipelines
         .route("/pipelines", get(rest_pipelines::list_pipelines))
         .route("/pipelines", post(rest_pipelines::create_pipeline))

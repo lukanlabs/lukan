@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lukan_agent::{AgentLoop, PipelineNotification, WorkerNotification};
 use lukan_core::config::ResolvedConfig;

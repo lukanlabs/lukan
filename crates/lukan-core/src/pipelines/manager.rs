@@ -68,7 +68,10 @@ impl PipelineManager {
     }
 
     /// Update a pipeline. Returns None if not found.
-    pub async fn update(id: &str, patch: PipelineUpdateInput) -> Result<Option<PipelineDefinition>> {
+    pub async fn update(
+        id: &str,
+        patch: PipelineUpdateInput,
+    ) -> Result<Option<PipelineDefinition>> {
         let _lock = WRITE_LOCK.lock().await;
 
         let mut pipelines = Self::list().await?;
@@ -196,29 +199,74 @@ impl PipelineManager {
     }
 
     /// Mark any runs stuck in "running" status as "error" (interrupted).
+    /// Runs with "waiting_approval" steps are preserved if the approval hasn't timed out.
     pub async fn cleanup_stale_runs() -> Result<()> {
         let pipelines = Self::list().await?;
+        let now = chrono::Utc::now();
+
         for p in &pipelines {
             let runs = Self::get_runs(&p.id, usize::MAX).await?;
             for mut run in runs {
                 if run.status == "running" {
-                    run.status = "error".to_string();
-                    run.completed_at = Some(chrono::Utc::now().to_rfc3339());
-                    // Mark any running step_runs as error too
-                    for step_run in &mut run.step_runs {
-                        if step_run.status == "running" || step_run.status == "pending" {
-                            step_run.status = "error".to_string();
-                            step_run.error =
-                                Some("Interrupted (process restarted)".to_string());
-                            step_run.completed_at = Some(chrono::Utc::now().to_rfc3339());
+                    // Check if any step is waiting_approval with a valid (non-expired) approval
+                    let has_live_approval = run.step_runs.iter().any(|sr| {
+                        if sr.status != "waiting_approval" {
+                            return false;
                         }
+                        if let Some(ref aid) = sr.approval_id
+                            && let Ok(data) = std::fs::read_to_string(
+                                crate::config::LukanPaths::approval_file(aid),
+                            )
+                            && let Ok(req) =
+                                serde_json::from_str::<crate::approvals::ApprovalRequest>(&data)
+                            && req.status == "pending"
+                            && let Ok(timeout) =
+                                chrono::DateTime::parse_from_rfc3339(&req.timeout_at)
+                        {
+                            return timeout > now;
+                        }
+                        false
+                    });
+
+                    if has_live_approval {
+                        // Don't mark the run as error — it's still waiting for approval
+                        // Just mark any interrupted "running" steps as error
+                        for step_run in &mut run.step_runs {
+                            if step_run.status == "running" {
+                                step_run.status = "error".to_string();
+                                step_run.error =
+                                    Some("Interrupted (process restarted)".to_string());
+                                step_run.completed_at = Some(chrono::Utc::now().to_rfc3339());
+                            }
+                        }
+                        Self::save_run(&run).await.ok();
+                        debug!(
+                            pipeline_id = %p.id,
+                            run_id = %run.id,
+                            "Preserved pipeline run with active approval gate"
+                        );
+                    } else {
+                        // No live approvals — mark everything as error
+                        run.status = "error".to_string();
+                        run.completed_at = Some(chrono::Utc::now().to_rfc3339());
+                        for step_run in &mut run.step_runs {
+                            if step_run.status == "running"
+                                || step_run.status == "pending"
+                                || step_run.status == "waiting_approval"
+                            {
+                                step_run.status = "error".to_string();
+                                step_run.error =
+                                    Some("Interrupted (process restarted)".to_string());
+                                step_run.completed_at = Some(chrono::Utc::now().to_rfc3339());
+                            }
+                        }
+                        Self::save_run(&run).await.ok();
+                        debug!(
+                            pipeline_id = %p.id,
+                            run_id = %run.id,
+                            "Marked stale running pipeline run as error"
+                        );
                     }
-                    Self::save_run(&run).await.ok();
-                    debug!(
-                        pipeline_id = %p.id,
-                        run_id = %run.id,
-                        "Marked stale running pipeline run as error"
-                    );
                 }
             }
         }

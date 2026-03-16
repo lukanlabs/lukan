@@ -316,6 +316,13 @@ export interface StepCondition {
   status?: string;
 }
 
+export interface ApprovalConfig {
+  notifyPlugin?: string;
+  notifyChannel?: string;
+  message?: string;
+  timeoutSecs?: number;
+}
+
 export interface PipelineStep {
   id: string;
   name: string;
@@ -327,6 +334,8 @@ export interface PipelineStep {
   timeoutSecs?: number;
   maxTurns?: number;
   onError?: string;
+  stepType?: string; // "agent" | "approval"
+  approval?: ApprovalConfig;
 }
 
 export interface StepConnection {
@@ -371,6 +380,23 @@ export interface StepRun {
   completedAt?: string;
   tokenUsage: PipelineTokenUsage;
   turns: number;
+  approvalId?: string;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  pipelineId: string;
+  runId: string;
+  stepId: string;
+  context: string;
+  status: string;
+  resolvedBy?: string;
+  comment?: string;
+  createdAt: string;
+  timeoutAt: string;
+  resolvedAt?: string;
+  notifyPlugin?: string;
+  notifyChannel?: string;
 }
 
 export interface PipelineTokenUsage {

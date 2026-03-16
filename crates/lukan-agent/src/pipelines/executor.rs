@@ -9,6 +9,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
+use lukan_core::approvals::{ApprovalManager, ApprovalRequest};
 use lukan_core::config::ResolvedConfig;
 use lukan_core::models::events::StreamEvent;
 use lukan_core::pipelines::{
@@ -27,7 +28,14 @@ pub async fn execute_pipeline(
     trigger_input: Option<String>,
     config: &ResolvedConfig,
 ) -> PipelineRun {
-    execute_pipeline_full(pipeline, trigger_input, config, CancellationToken::new(), None).await
+    execute_pipeline_full(
+        pipeline,
+        trigger_input,
+        config,
+        CancellationToken::new(),
+        None,
+    )
+    .await
 }
 
 /// Execute a pipeline run with cancellation support
@@ -76,6 +84,7 @@ pub async fn execute_pipeline_full(
                 completed_at: None,
                 token_usage: PipelineTokenUsage::default(),
                 turns: 0,
+                approval_id: None,
             })
             .collect(),
         trigger_input: trigger_input.clone(),
@@ -116,8 +125,7 @@ pub async fn execute_pipeline_full(
     };
 
     // Shared step outputs for template rendering (written by parallel tasks)
-    let step_outputs: Arc<Mutex<HashMap<String, String>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let step_outputs: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
 
     // If there's trigger input, store it under "__trigger__"
     if let Some(ref input) = trigger_input {
@@ -141,9 +149,12 @@ pub async fn execute_pipeline_full(
 
         // Check for cancellation before each level
         if cancel_token.is_cancelled() {
-            // Mark remaining pending steps as skipped
+            // Mark remaining pending/running/waiting steps as skipped
             for sr in &mut run.step_runs {
-                if sr.status == "pending" || sr.status == "running" {
+                if sr.status == "pending"
+                    || sr.status == "running"
+                    || sr.status == "waiting_approval"
+                {
                     sr.status = "skipped".to_string();
                     sr.error = Some("Pipeline cancelled".to_string());
                 }
@@ -187,7 +198,10 @@ pub async fn execute_pipeline_full(
                 // Check if upstream conditions are met
                 if !should_execute_step(pipeline, step_id, &outputs_snapshot, &run.step_runs) {
                     run.step_runs[step_run_idx].status = "skipped".to_string();
-                    debug!(step_id = step_id.as_str(), "Step skipped (conditions not met)");
+                    debug!(
+                        step_id = step_id.as_str(),
+                        "Step skipped (conditions not met)"
+                    );
                     continue;
                 }
 
@@ -203,6 +217,37 @@ pub async fn execute_pipeline_full(
                 }
 
                 let input = gather_step_input(pipeline, step_id, &outputs_snapshot);
+
+                // Approval steps in parallel: spawn a polling future
+                if step.step_type == "approval" {
+                    let step_clone = step.clone();
+                    let sid = step_id.clone();
+                    let ct = cancel_token.clone();
+                    let shared_run = Arc::clone(&shared_run_state);
+                    let outputs_snap = outputs_snapshot.clone();
+
+                    run.step_runs[step_run_idx].input = input.clone();
+
+                    join_set.spawn(async move {
+                        let result = execute_approval_step_parallel(
+                            &step_clone,
+                            &input,
+                            &outputs_snap,
+                            &sid,
+                            &shared_run,
+                            &ct,
+                        )
+                        .await;
+                        StepResult {
+                            step_id: sid,
+                            step_run_idx,
+                            result,
+                            on_error: step_clone.on_error.clone(),
+                        }
+                    });
+                    continue;
+                }
+
                 let rendered_prompt = render_prompt(&step, &input, &outputs_snapshot);
 
                 run.step_runs[step_run_idx].status = "running".to_string();
@@ -308,7 +353,10 @@ pub async fn execute_pipeline_full(
 
                         let on_error = sr.on_error.as_deref().unwrap_or("stop");
                         if on_error == "skip" {
-                            debug!(step_id = sr.step_id.as_str(), "Step error (skip): {}", error_msg);
+                            debug!(
+                                step_id = sr.step_id.as_str(),
+                                "Step error (skip): {}", error_msg
+                            );
                             step_outputs
                                 .lock()
                                 .await
@@ -405,6 +453,21 @@ async fn execute_single_step(
     }
 
     let input = gather_step_input(pipeline, step_id, &outputs_snapshot);
+
+    // ── Approval gate step ──
+    if step.step_type == "approval" {
+        return execute_approval_step(
+            step,
+            step_run_idx,
+            &input,
+            &outputs_snapshot,
+            run,
+            step_outputs,
+            cancel_token,
+        )
+        .await;
+    }
+
     let rendered_prompt = render_prompt(step, &input, &outputs_snapshot);
 
     run.step_runs[step_run_idx].status = "running".to_string();
@@ -443,7 +506,14 @@ async fn execute_single_step(
         }
     });
 
-    let step_result = execute_step_with_retry_live(step, &rendered_prompt, config, Some(cancel_token), Some(Arc::clone(&progress))).await;
+    let step_result = execute_step_with_retry_live(
+        step,
+        &rendered_prompt,
+        config,
+        Some(cancel_token),
+        Some(Arc::clone(&progress)),
+    )
+    .await;
 
     // Stop the progress saver
     save_cancel.cancel();
@@ -497,6 +567,253 @@ async fn execute_single_step(
     }
 }
 
+/// Execute an approval step within a parallel JoinSet (returns Result like agent steps)
+async fn execute_approval_step_parallel(
+    step: &lukan_core::pipelines::PipelineStep,
+    input: &Option<String>,
+    outputs_snapshot: &HashMap<String, String>,
+    step_id: &str,
+    shared_run: &Arc<Mutex<PipelineRun>>,
+    cancel_token: &CancellationToken,
+) -> Result<(String, String, PipelineTokenUsage, u32)> {
+    let approval_config = step.approval.as_ref();
+    let timeout_secs = approval_config.and_then(|c| c.timeout_secs).unwrap_or(3600);
+
+    let message_template = approval_config
+        .and_then(|c| c.message.as_deref())
+        .unwrap_or(&step.prompt);
+    let mut message = message_template.to_string();
+    if let Some(inp) = input {
+        message = message.replace("{{input}}", inp);
+    }
+    for (id, output) in outputs_snapshot {
+        let placeholder = format!("{{{{prev.{id}.output}}}}");
+        message = message.replace(&placeholder, output);
+    }
+
+    let approval_id = generate_run_id();
+    let now = chrono::Utc::now();
+    let timeout_at = now + chrono::Duration::seconds(timeout_secs as i64);
+
+    let req = ApprovalRequest {
+        id: approval_id.clone(),
+        pipeline_id: shared_run.lock().await.pipeline_id.clone(),
+        run_id: shared_run.lock().await.id.clone(),
+        step_id: step_id.to_string(),
+        context: message.clone(),
+        status: "pending".to_string(),
+        resolved_by: None,
+        comment: None,
+        created_at: now.to_rfc3339(),
+        timeout_at: timeout_at.to_rfc3339(),
+        resolved_at: None,
+        notify_plugin: approval_config.and_then(|c| c.notify_plugin.clone()),
+        notify_channel: approval_config.and_then(|c| c.notify_channel.clone()),
+    };
+
+    ApprovalManager::create(req).await?;
+
+    // Update shared run state
+    {
+        let mut r = shared_run.lock().await;
+        if let Some(sr) = r.step_runs.iter_mut().find(|s| s.step_id == step_id) {
+            sr.status = "waiting_approval".to_string();
+            sr.output = message.clone();
+            sr.started_at = Some(now.to_rfc3339());
+            sr.approval_id = Some(approval_id.clone());
+        }
+        PipelineManager::save_run(&r).await.ok();
+    }
+
+    // Send notification to plugin if configured
+    if let Some(ref cfg) = step.approval
+        && let (Some(plugin), Some(channel)) = (&cfg.notify_plugin, &cfg.notify_channel)
+    {
+        send_plugin_notification(plugin, channel, &message).await;
+    }
+
+    let poll_interval = std::time::Duration::from_secs(2);
+    let timeout_deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+
+    loop {
+        tokio::select! {
+            _ = cancel_token.cancelled() => {
+                return Err(anyhow::anyhow!("Pipeline cancelled"));
+            }
+            _ = tokio::time::sleep(poll_interval) => {
+                if tokio::time::Instant::now() >= timeout_deadline {
+                    ApprovalManager::resolve(&approval_id, false, "timeout", Some("Approval timed out".to_string())).await.ok();
+                    return Err(anyhow::anyhow!("Approval timed out after {timeout_secs}s"));
+                }
+                match ApprovalManager::get(&approval_id).await {
+                    Ok(Some(approval)) if approval.status == "approved" => {
+                        let output = approval.comment.unwrap_or_else(|| "Approved".to_string());
+                        return Ok((output.clone(), output, PipelineTokenUsage::default(), 0));
+                    }
+                    Ok(Some(approval)) if approval.status == "rejected" => {
+                        let reason = approval.comment.unwrap_or_else(|| "Rejected".to_string());
+                        return Err(anyhow::anyhow!("Approval rejected: {reason}"));
+                    }
+                    Ok(None) => {
+                        return Err(anyhow::anyhow!("Approval request file missing"));
+                    }
+                    _ => {} // still pending or read error, continue polling
+                }
+            }
+        }
+    }
+}
+
+/// Execute an approval gate step: create request, poll for resolution
+async fn execute_approval_step(
+    step: &lukan_core::pipelines::PipelineStep,
+    step_run_idx: usize,
+    input: &Option<String>,
+    outputs_snapshot: &HashMap<String, String>,
+    run: &mut PipelineRun,
+    step_outputs: &Arc<Mutex<HashMap<String, String>>>,
+    cancel_token: &CancellationToken,
+) -> bool {
+    let approval_config = step.approval.as_ref();
+    let timeout_secs = approval_config.and_then(|c| c.timeout_secs).unwrap_or(3600); // default 1 hour
+
+    // Render the approval message
+    let message_template = approval_config
+        .and_then(|c| c.message.as_deref())
+        .unwrap_or(&step.prompt);
+    let mut message = message_template.to_string();
+    if let Some(inp) = input {
+        message = message.replace("{{input}}", inp);
+    }
+    for (id, output) in outputs_snapshot {
+        let placeholder = format!("{{{{prev.{id}.output}}}}");
+        message = message.replace(&placeholder, output);
+    }
+
+    // Create approval request
+    let approval_id = generate_run_id();
+    let now = chrono::Utc::now();
+    let timeout_at = now + chrono::Duration::seconds(timeout_secs as i64);
+
+    let req = ApprovalRequest {
+        id: approval_id.clone(),
+        pipeline_id: run.pipeline_id.clone(),
+        run_id: run.id.clone(),
+        step_id: step.id.clone(),
+        context: message.clone(),
+        status: "pending".to_string(),
+        resolved_by: None,
+        comment: None,
+        created_at: now.to_rfc3339(),
+        timeout_at: timeout_at.to_rfc3339(),
+        resolved_at: None,
+        notify_plugin: approval_config.and_then(|c| c.notify_plugin.clone()),
+        notify_channel: approval_config.and_then(|c| c.notify_channel.clone()),
+    };
+
+    if let Err(e) = ApprovalManager::create(req).await {
+        error!(step_id = %step.id, error = %e, "Failed to create approval request");
+        run.step_runs[step_run_idx].status = "error".to_string();
+        run.step_runs[step_run_idx].error = Some(format!("Failed to create approval: {e}"));
+        run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
+        return true;
+    }
+
+    // Update step run status
+    run.step_runs[step_run_idx].status = "waiting_approval".to_string();
+    run.step_runs[step_run_idx].input = input.clone();
+    run.step_runs[step_run_idx].output = message.clone();
+    run.step_runs[step_run_idx].started_at = Some(now.to_rfc3339());
+    run.step_runs[step_run_idx].approval_id = Some(approval_id.clone());
+    PipelineManager::save_run(run).await.ok();
+
+    info!(
+        step_id = %step.id,
+        approval_id = %approval_id,
+        timeout_secs,
+        "Approval gate waiting for human response"
+    );
+
+    // Send notification to plugin if configured
+    if let Some(ref cfg) = step.approval
+        && let (Some(plugin), Some(channel)) = (&cfg.notify_plugin, &cfg.notify_channel)
+    {
+        send_plugin_notification(plugin, channel, &message).await;
+    }
+
+    // Polling loop: check approval status every 2s
+    let poll_interval = std::time::Duration::from_secs(2);
+    let timeout_deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+
+    loop {
+        tokio::select! {
+            _ = cancel_token.cancelled() => {
+                run.step_runs[step_run_idx].status = "error".to_string();
+                run.step_runs[step_run_idx].error = Some("Pipeline cancelled".to_string());
+                run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
+                PipelineManager::save_run(run).await.ok();
+                return true;
+            }
+            _ = tokio::time::sleep(poll_interval) => {
+                // Check timeout
+                if tokio::time::Instant::now() >= timeout_deadline {
+                    // Mark as timed out
+                    ApprovalManager::resolve(&approval_id, false, "timeout", Some("Approval timed out".to_string())).await.ok();
+                    run.step_runs[step_run_idx].status = "error".to_string();
+                    run.step_runs[step_run_idx].error = Some(format!("Approval timed out after {timeout_secs}s"));
+                    run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
+                    PipelineManager::save_run(run).await.ok();
+                    return true;
+                }
+
+                // Poll approval file
+                match ApprovalManager::get(&approval_id).await {
+                    Ok(Some(approval)) => {
+                        match approval.status.as_str() {
+                            "approved" => {
+                                let output = approval.comment.unwrap_or_else(|| "Approved".to_string());
+                                run.step_runs[step_run_idx].status = "success".to_string();
+                                run.step_runs[step_run_idx].output = output.clone();
+                                run.step_runs[step_run_idx].error = None;
+                                run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
+                                PipelineManager::save_run(run).await.ok();
+                                step_outputs.lock().await.insert(step.id.clone(), output);
+                                info!(step_id = %step.id, "Approval granted, continuing pipeline");
+                                return false;
+                            }
+                            "rejected" => {
+                                let reason = approval.comment.unwrap_or_else(|| "Rejected".to_string());
+                                run.step_runs[step_run_idx].status = "error".to_string();
+                                run.step_runs[step_run_idx].error = Some(format!("Approval rejected: {reason}"));
+                                run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
+                                PipelineManager::save_run(run).await.ok();
+                                info!(step_id = %step.id, "Approval rejected, stopping pipeline");
+                                return true;
+                            }
+                            _ => {
+                                // Still pending, continue polling
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        // File disappeared — treat as error
+                        run.step_runs[step_run_idx].status = "error".to_string();
+                        run.step_runs[step_run_idx].error = Some("Approval request file missing".to_string());
+                        run.step_runs[step_run_idx].completed_at = Some(chrono::Utc::now().to_rfc3339());
+                        PipelineManager::save_run(run).await.ok();
+                        return true;
+                    }
+                    Err(e) => {
+                        debug!(error = %e, "Error reading approval file, will retry");
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Execute a step with retry logic and live progress
 async fn execute_step_with_retry_live(
     step: &lukan_core::pipelines::PipelineStep,
@@ -522,8 +839,13 @@ async fn execute_step_with_retry_live(
                     if cancel_token.map(|t| t.is_cancelled()).unwrap_or(false) {
                         return Err(anyhow::anyhow!("Step cancelled"));
                     }
-                    debug!(step_id = step.id.as_str(), attempt, max_retries, "Retrying step");
-                    match execute_step_live(step, prompt, config, cancel_token, progress.clone()).await {
+                    debug!(
+                        step_id = step.id.as_str(),
+                        attempt, max_retries, "Retrying step"
+                    );
+                    match execute_step_live(step, prompt, config, cancel_token, progress.clone())
+                        .await
+                    {
                         Ok(result) => return Ok(result),
                         Err(retry_err) => {
                             debug!(
@@ -741,8 +1063,8 @@ async fn execute_step_live(
                     _ => None,
                 };
 
-                let should_update = activity.is_some()
-                    || last_progress_update.elapsed() >= progress_interval;
+                let should_update =
+                    activity.is_some() || last_progress_update.elapsed() >= progress_interval;
 
                 if should_update {
                     let mut p = prog.lock().await;
@@ -784,7 +1106,9 @@ async fn execute_step_live(
         }
         Ok(Err("cancelled")) => {
             if output.is_empty() {
-                Err(anyhow::anyhow!("Step cancelled.\nTool activity:\n{tool_log}"))
+                Err(anyhow::anyhow!(
+                    "Step cancelled.\nTool activity:\n{tool_log}"
+                ))
             } else {
                 Ok((output, display_output, token_usage, turns))
             }
@@ -895,7 +1219,11 @@ fn should_execute_step(
                 .map(|o| o.contains(value.as_str()))
                 .unwrap_or(false),
             Some(StepCondition::Matches { pattern }) => from_output
-                .map(|o| regex::Regex::new(pattern).map(|re| re.is_match(o)).unwrap_or(false))
+                .map(|o| {
+                    regex::Regex::new(pattern)
+                        .map(|re| re.is_match(o))
+                        .unwrap_or(false)
+                })
                 .unwrap_or(false),
             Some(StepCondition::Status { status }) => {
                 from_status.map(|s| s == status.as_str()).unwrap_or(false)
@@ -942,10 +1270,7 @@ fn render_prompt(
     input: &Option<String>,
     step_outputs: &HashMap<String, String>,
 ) -> String {
-    let template = step
-        .prompt_template
-        .as_deref()
-        .unwrap_or(&step.prompt);
+    let template = step.prompt_template.as_deref().unwrap_or(&step.prompt);
 
     let mut result = template.to_string();
 
@@ -963,15 +1288,82 @@ fn render_prompt(
     }
 
     // If the template is just the prompt and there's input, append it
-    if step.prompt_template.is_none() {
-        if let Some(inp) = input {
-            if !inp.is_empty() {
-                result = format!("{result}\n\nInput:\n{inp}");
-            }
-        }
+    if step.prompt_template.is_none()
+        && let Some(inp) = input
+        && !inp.is_empty()
+    {
+        result = format!("{result}\n\nInput:\n{inp}");
     }
 
     result
+}
+
+/// Send a notification message to a plugin's channel.
+/// For WhatsApp/Telegram/etc: reads the plugin's config.json to find the connector URL,
+/// then sends a message directly via WebSocket.
+async fn send_plugin_notification(plugin: &str, channel_id: &str, text: &str) {
+    // Read plugin config to get the connector URL
+    let config_path = lukan_core::config::LukanPaths::plugin_config(plugin);
+    let bridge_url = if let Ok(data) = tokio::fs::read_to_string(&config_path).await {
+        serde_json::from_str::<serde_json::Value>(&data)
+            .ok()
+            .and_then(|v| {
+                v.get("bridgeUrl")
+                    .and_then(|u| u.as_str())
+                    .map(String::from)
+            })
+            .unwrap_or_else(|| "ws://localhost:3001".to_string())
+    } else {
+        "ws://localhost:3001".to_string()
+    };
+
+    // Truncate text for notification (WhatsApp messages can be long)
+    let notify_text = if text.len() > 2000 {
+        format!(
+            "{}...\n\n[Respond 'yes' to approve or 'no' to reject]",
+            &text[..2000]
+        )
+    } else {
+        format!("{}\n\n[Respond 'yes' to approve or 'no' to reject]", text)
+    };
+
+    info!(plugin, channel_id, bridge_url = %bridge_url, "Sending approval notification");
+
+    // Connect to the connector WebSocket and send the message
+    match tokio_tungstenite::connect_async(&bridge_url).await {
+        Ok((mut ws, _)) => {
+            let msg = serde_json::json!({
+                "type": "send",
+                "to": channel_id,
+                "text": notify_text,
+            });
+            use futures::SinkExt;
+            if let Err(e) = ws
+                .send(tokio_tungstenite::tungstenite::Message::Text(
+                    msg.to_string().into(),
+                ))
+                .await
+            {
+                error!(plugin, error = %e, "Failed to send notification via WebSocket");
+            } else {
+                info!(
+                    plugin,
+                    channel_id, "Approval notification sent successfully"
+                );
+                // Wait for the connector to process the message before closing
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            ws.close(None).await.ok();
+        }
+        Err(e) => {
+            error!(
+                plugin,
+                bridge_url = %bridge_url,
+                error = %e,
+                "Failed to connect to plugin connector for notification"
+            );
+        }
+    }
 }
 
 fn generate_run_id() -> String {

@@ -54,6 +54,20 @@ pub struct PipelineDefinition {
     pub last_run_status: Option<String>,
 }
 
+/// Configuration for an approval gate step
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalConfig {
+    /// Plugin to notify (e.g. "whatsapp", "slack", "discord")
+    pub notify_plugin: Option<String>,
+    /// Channel/chat ID to send the notification to
+    pub notify_channel: Option<String>,
+    /// Message template (supports {{input}})
+    pub message: Option<String>,
+    /// Timeout in seconds (default: 3600 = 1 hour)
+    pub timeout_secs: Option<u64>,
+}
+
 /// A single step in a pipeline
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -71,6 +85,15 @@ pub struct PipelineStep {
     pub max_turns: Option<u32>,
     /// "stop" | "skip" | "retry:N"
     pub on_error: Option<String>,
+    /// "agent" (default) or "approval"
+    #[serde(default = "default_step_type")]
+    pub step_type: String,
+    /// Config for approval gate steps (only when step_type == "approval")
+    pub approval: Option<ApprovalConfig>,
+}
+
+fn default_step_type() -> String {
+    "agent".to_string()
 }
 
 /// A connection between two steps in the pipeline DAG
@@ -106,7 +129,7 @@ pub struct PipelineRun {
 pub struct StepRun {
     pub step_id: String,
     pub step_name: String,
-    /// "pending" | "running" | "success" | "error" | "skipped"
+    /// "pending" | "running" | "success" | "error" | "skipped" | "waiting_approval"
     pub status: String,
     /// Input fed to this step (output from upstream steps)
     pub input: Option<String>,
@@ -116,6 +139,8 @@ pub struct StepRun {
     pub completed_at: Option<String>,
     pub token_usage: PipelineTokenUsage,
     pub turns: u32,
+    /// Approval request ID (set when step_type == "approval")
+    pub approval_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

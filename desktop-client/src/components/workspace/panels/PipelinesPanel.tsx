@@ -73,7 +73,9 @@ function StatusDot({ status }: { status?: string }) {
         ? "var(--success, #22c55e)"
         : status === "partial"
           ? "var(--warning, #f59e0b)"
-          : "var(--danger, #ef4444)";
+          : status === "waiting_approval"
+            ? "#8b5cf6"
+            : "var(--danger, #ef4444)";
   return (
     <span
       style={{
@@ -101,6 +103,7 @@ function StatusBadge({ status }: { status?: string }) {
     partial: { color: "var(--warning, #f59e0b)", icon: <AlertTriangle size={10} /> },
     pending: { color: "var(--text-muted)", icon: <Clock size={10} /> },
     skipped: { color: "var(--text-muted)", icon: null },
+    waiting_approval: { color: "#8b5cf6", icon: <Clock size={10} /> },
   };
   const c = cfg[status] ?? cfg.error!;
   return (

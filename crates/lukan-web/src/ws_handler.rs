@@ -206,13 +206,20 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
         .await;
     }
 
-    // On disconnect: release processing lock if owned, save sessions
+    // On disconnect: release any processing locks owned by this connection
     {
-        let mut owner = state.processing_owner.lock().await;
-        if *owner == Some(conn_id) {
-            *owner = None;
-            info!(conn_id, "Released processing lock on disconnect");
-        }
+        let mut processing = state.processing_sessions.lock().await;
+        processing.retain(|session_id, &mut owner| {
+            if owner == conn_id {
+                info!(
+                    conn_id,
+                    session_id, "Released session processing lock on disconnect"
+                );
+                false
+            } else {
+                true
+            }
+        });
     }
 
     // Save all sessions (only if not stale, to avoid overwriting
@@ -261,13 +268,15 @@ async fn dispatch_message(
             .await;
         }
 
-        ClientMessage::Abort { session_id: _ } => {
+        ClientMessage::Abort { session_id } => {
             // Release processing lock (outside a turn — mid-turn abort is handled
             // directly in handle_send_message's select loop with CancellationToken).
-            let mut owner = state.processing_owner.lock().await;
-            if *owner == Some(conn_id) {
-                *owner = None;
-                info!(conn_id, "Aborted processing");
+            if let Some(sid) = &session_id {
+                let mut processing = state.processing_sessions.lock().await;
+                if processing.get(sid) == Some(&conn_id) {
+                    processing.remove(sid);
+                    info!(conn_id, session_id = %sid, "Aborted processing");
+                }
             }
         }
 
@@ -1303,27 +1312,10 @@ async fn handle_send_message(
         notify_rx,
     } = streams;
 
-    // Try to acquire processing lock
-    {
-        let mut owner = state.processing_owner.lock().await;
-        if owner.is_some() {
-            send_json(
-                ws_tx,
-                &ServerMessage::Error {
-                    error: "Another client is currently processing. Please wait.".to_string(),
-                },
-            )
-            .await;
-            return;
-        }
-        *owner = Some(conn_id);
-    }
-
     // All clients must provide a tab_id (session_id)
     let tab = match tab_id {
         Some(t) => t,
         None => {
-            release_processing_lock(conn_id, state).await;
             send_json(
                 streams.ws_tx,
                 &ServerMessage::Error {
@@ -1334,6 +1326,22 @@ async fn handle_send_message(
             return;
         }
     };
+
+    // Try to acquire per-session processing lock
+    {
+        let mut processing = state.processing_sessions.lock().await;
+        if processing.contains_key(tab) {
+            send_json(
+                streams.ws_tx,
+                &ServerMessage::Error {
+                    error: "This session is already processing. Please wait.".to_string(),
+                },
+            )
+            .await;
+            return;
+        }
+        processing.insert(tab.to_string(), conn_id);
+    }
 
     // Ensure agent exists — reload from last_session_id if available
     {
@@ -1353,7 +1361,7 @@ async fn handle_send_message(
                 }
                 Err(e) => {
                     drop(sessions);
-                    release_processing_lock(conn_id, state).await;
+                    release_processing_lock(conn_id, tab, state).await;
                     send_agent_creation_error(e, state, ws_tx).await;
                     return;
                 }
@@ -1605,14 +1613,14 @@ async fn handle_send_message(
     }
 
     // Release processing lock
-    release_processing_lock(conn_id, state).await;
+    release_processing_lock(conn_id, tab, state).await;
 }
 
-/// Release the processing lock if owned by this connection.
-async fn release_processing_lock(conn_id: usize, state: &Arc<AppState>) {
-    let mut owner = state.processing_owner.lock().await;
-    if *owner == Some(conn_id) {
-        *owner = None;
+/// Release the per-session processing lock if owned by this connection.
+async fn release_processing_lock(conn_id: usize, session_id: &str, state: &Arc<AppState>) {
+    let mut processing = state.processing_sessions.lock().await;
+    if processing.get(session_id) == Some(&conn_id) {
+        processing.remove(session_id);
     }
 }
 

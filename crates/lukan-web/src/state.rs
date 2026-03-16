@@ -63,8 +63,8 @@ pub struct AppState {
     pub sessions: Mutex<HashMap<String, WebAgentSession>>,
     /// Resolved configuration (provider + credentials)
     pub config: Mutex<ResolvedConfig>,
-    /// Which connection ID currently holds the processing lock (0 = none)
-    pub processing_owner: Mutex<Option<usize>>,
+    /// Session IDs currently processing (one agent turn per session at a time)
+    pub processing_sessions: Mutex<HashMap<String, usize>>,
     /// HMAC secret for token signing (random, generated at startup)
     pub auth_secret: String,
     /// Optional web password (None = no auth required)
@@ -121,7 +121,7 @@ impl AppState {
         Self {
             sessions: Mutex::new(HashMap::new()),
             config: Mutex::new(resolved),
-            processing_owner: Mutex::new(None),
+            processing_sessions: Mutex::new(HashMap::new()),
             auth_secret,
             web_password,
             token_ttl_ms,

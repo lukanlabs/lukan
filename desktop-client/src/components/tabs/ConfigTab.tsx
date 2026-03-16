@@ -6,17 +6,14 @@ import {
   getModels,
   listProviders,
   getWebUiStatus,
-  startWebUi,
-  stopWebUi,
 } from "../../lib/tauri";
+import { isRelayMode } from "../../lib/transport";
 import { useToast } from "../ui/Toast";
 import {
   Cpu,
   Globe,
   Clock,
   Loader2,
-  Play,
-  Square,
   ExternalLink,
   Save,
   ChevronDown,
@@ -199,9 +196,7 @@ export default function ConfigTab() {
   const [saving, setSaving] = useState(false);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [allModels, setAllModels] = useState<string[]>([]);
-  const [webUiRunning, setWebUiRunning] = useState(false);
   const [webUiPort, setWebUiPort] = useState(3000);
-  const [webUiLoading, setWebUiLoading] = useState<"start" | "stop" | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -215,7 +210,6 @@ export default function ConfigTab() {
         setConfig(cfg);
         setProviders(provs);
         setAllModels(models);
-        setWebUiRunning(webStatus.running);
         setWebUiPort(webStatus.port);
       } catch (e) {
         toast("error", `Failed to load config: ${e}`);
@@ -347,29 +341,25 @@ export default function ConfigTab() {
           </Field>
         </Section>
 
-        {/* Web UI Section */}
+        {/* Server Section */}
         <Section
           icon={<Globe size={15} />}
-          title="Web UI"
-          description="Browser-based chat interface"
+          title="Server"
+          description="Web interface and API"
           actions={
             <div className="flex items-center gap-2">
-              {/* Status pill */}
               <span
                 className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold"
                 style={{
-                  background: webUiRunning ? "rgba(74,222,128,0.1)" : "rgba(255,255,255,0.04)",
-                  color: webUiRunning ? "#4ade80" : "#52525b",
-                  border: webUiRunning ? "1px solid rgba(74,222,128,0.2)" : "1px solid rgba(63,63,70,0.3)",
+                  background: "rgba(74,222,128,0.1)",
+                  color: "#4ade80",
+                  border: "1px solid rgba(74,222,128,0.2)",
                 }}
               >
-                <span
-                  className="w-1.5 h-1.5 rounded-full"
-                  style={{ background: webUiRunning ? "#4ade80" : "#3f3f46" }}
-                />
-                {webUiRunning ? "Running" : "Stopped"}
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#4ade80" }} />
+                Running
               </span>
-              {webUiRunning && (
+              {!isRelayMode() && (
                 <a
                   href={`http://localhost:${webUiPort}`}
                   target="_blank"
@@ -383,78 +373,32 @@ export default function ConfigTab() {
             </div>
           }
         >
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Port" hint="Default: 3000" icon={<Link size={10} />}>
+          {isRelayMode() ? (
+            <Field label="URL" icon={<Globe size={10} />}>
               <StyledInput
-                type="number"
-                value={webUiPort}
-                onChange={(e) => setWebUiPort(parseInt(e.target.value) || 3000)}
-                disabled={webUiRunning}
+                value={window.location.origin}
+                disabled
               />
             </Field>
-            <Field label="Password" icon={<Lock size={10} />}>
-              <StyledInput
-                type="password"
-                value={config?.webPassword ?? ""}
-                placeholder="No authentication"
-                onChange={(e) => update({ webPassword: e.target.value || undefined })}
-              />
-            </Field>
-          </div>
-          <div>
-            {webUiRunning ? (
-              <button
-                onClick={async () => {
-                  setWebUiLoading("stop");
-                  try {
-                    await stopWebUi();
-                    setWebUiRunning(false);
-                    toast("success", "Web UI stopped");
-                  } catch (e) {
-                    toast("error", `${e}`);
-                  } finally {
-                    setWebUiLoading(null);
-                  }
-                }}
-                disabled={webUiLoading !== null}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none transition-all"
-                style={{
-                  background: "rgba(251,113,133,0.1)",
-                  color: "#fb7185",
-                  border: "1px solid rgba(251,113,133,0.15)",
-                }}
-              >
-                {webUiLoading === "stop" ? <Loader2 size={12} className="animate-spin" /> : <Square size={12} />}
-                {webUiLoading === "stop" ? "Stopping..." : "Stop Server"}
-              </button>
-            ) : (
-              <button
-                onClick={async () => {
-                  if (config) try { await saveConfig(config); } catch {}
-                  setWebUiLoading("start");
-                  try {
-                    await startWebUi(webUiPort);
-                    setWebUiRunning(true);
-                    toast("success", `Web UI running on port ${webUiPort}`);
-                  } catch (e) {
-                    toast("error", `${e}`);
-                  } finally {
-                    setWebUiLoading(null);
-                  }
-                }}
-                disabled={webUiLoading !== null}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none transition-all"
-                style={{
-                  background: "rgba(74,222,128,0.1)",
-                  color: "#4ade80",
-                  border: "1px solid rgba(74,222,128,0.15)",
-                }}
-              >
-                {webUiLoading === "start" ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
-                {webUiLoading === "start" ? "Starting..." : "Launch Server"}
-              </button>
-            )}
-          </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Port" hint="Default: 3000. Requires restart to apply." icon={<Link size={10} />}>
+                <StyledInput
+                  type="number"
+                  value={webUiPort}
+                  onChange={(e) => setWebUiPort(parseInt(e.target.value) || 3000)}
+                />
+              </Field>
+              <Field label="Password" icon={<Lock size={10} />}>
+                <StyledInput
+                  type="password"
+                  value={config?.webPassword ?? ""}
+                  placeholder="No authentication"
+                  onChange={(e) => update({ webPassword: e.target.value || undefined })}
+                />
+              </Field>
+            </div>
+          )}
         </Section>
 
         {/* OpenAI Compatible Section (conditional) */}

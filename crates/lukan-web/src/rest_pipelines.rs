@@ -1,7 +1,12 @@
 use std::sync::Arc;
 
 use axum::{
-    Json, extract::Path, extract::Query, extract::State, http::StatusCode, response::IntoResponse,
+    Json,
+    extract::Path,
+    extract::Query,
+    extract::State,
+    http::StatusCode,
+    response::{Html, IntoResponse},
 };
 use lukan_core::approvals::ApprovalManager;
 use lukan_core::pipelines::{
@@ -354,3 +359,209 @@ pub async fn reject_approval(
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
+
+/// GET /approve/:id — public HTML page for approval (login-gated via JS)
+pub async fn approval_page(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let auth_required = state.auth_required();
+
+    let approval = match ApprovalManager::get(&id).await {
+        Ok(Some(req)) => req,
+        Ok(None) => {
+            return Html(format!(
+                r#"<!DOCTYPE html><html><head><title>Approval Not Found</title>
+                <meta name="viewport" content="width=device-width,initial-scale=1">
+                <style>{}</style></head>
+                <body><div class="card"><h2>Approval not found</h2><p>This approval may have expired or already been resolved.</p></div></body></html>"#,
+                APPROVAL_CSS
+            ))
+            .into_response();
+        }
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+    };
+
+    let pipeline_name = PipelineManager::get(&approval.pipeline_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|p| p.name)
+        .unwrap_or_else(|| approval.pipeline_id.clone());
+
+    let context_escaped = approval
+        .context
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\n', "<br>");
+
+    let approved_msg = format!(
+        "Approved{}",
+        approval
+            .resolved_by
+            .as_deref()
+            .map(|r| format!(" by {r}"))
+            .unwrap_or_default()
+    );
+    let rejected_msg = format!(
+        "Rejected{}",
+        approval
+            .resolved_by
+            .as_deref()
+            .map(|r| format!(" by {r}"))
+            .unwrap_or_default()
+    );
+
+    let (status_class, status_msg, buttons) = match approval.status.as_str() {
+        "pending" => (
+            "pending",
+            "Waiting for your decision",
+            r#"<div class="buttons">
+                    <button class="btn approve" onclick="resolve('approve')">Approve</button>
+                    <button class="btn reject" onclick="resolve('reject')">Reject</button>
+                </div>"#
+                .to_string(),
+        ),
+        "approved" => ("approved", approved_msg.as_str(), String::new()),
+        "rejected" => ("rejected", rejected_msg.as_str(), String::new()),
+        s => (s, s, String::new()),
+    };
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Pipeline Approval — {pipeline_name}</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>{APPROVAL_CSS}</style>
+</head>
+<body>
+    <div id="login-gate" style="display:none">
+        <div class="card">
+            <h2>Login Required</h2>
+            <p>Enter your password to view this approval.</p>
+            <input type="password" id="password" placeholder="Password" onkeydown="if(event.key==='Enter')login()">
+            <button class="btn approve" onclick="login()" style="margin-top:8px;width:100%">Login</button>
+            <div id="login-error" class="error" style="display:none"></div>
+        </div>
+    </div>
+    <div id="approval-content" style="display:none">
+        <div class="card">
+            <div class="header">
+                <div class="pipeline-name">{pipeline_name}</div>
+                <div class="status {status_class}">{status_msg}</div>
+            </div>
+            <div class="context">{context_escaped}</div>
+            {buttons}
+            <div id="result" class="result" style="display:none"></div>
+        </div>
+    </div>
+    <script>
+        const approvalId = "{id}";
+        const authRequired = {auth_required};
+        let token = localStorage.getItem("lukan-token");
+
+        async function init() {{
+            if (!authRequired) {{ show("approval-content"); return; }}
+            if (token) {{
+                const ok = await checkAuth();
+                if (ok) {{ show("approval-content"); return; }}
+            }}
+            show("login-gate");
+        }}
+
+        async function checkAuth() {{
+            try {{
+                const r = await fetch("/api/pipelines/approvals/pending", {{
+                    headers: {{ "Authorization": "Bearer " + token }}
+                }});
+                return r.ok;
+            }} catch {{ return false; }}
+        }}
+
+        async function login() {{
+            const pw = document.getElementById("password").value;
+            try {{
+                const r = await fetch("/api/auth", {{
+                    method: "POST",
+                    headers: {{ "Content-Type": "application/json" }},
+                    body: JSON.stringify({{ password: pw }})
+                }});
+                if (r.ok) {{
+                    const data = await r.json();
+                    token = data.token;
+                    localStorage.setItem("lukan-token", token);
+                    hide("login-gate");
+                    show("approval-content");
+                }} else {{
+                    document.getElementById("login-error").textContent = "Invalid password";
+                    document.getElementById("login-error").style.display = "block";
+                }}
+            }} catch (e) {{
+                document.getElementById("login-error").textContent = e.message;
+                document.getElementById("login-error").style.display = "block";
+            }}
+        }}
+
+        async function resolve(action) {{
+            const btns = document.querySelectorAll(".btn");
+            btns.forEach(b => {{ b.disabled = true; b.style.opacity = "0.5"; }});
+            try {{
+                const headers = {{ "Content-Type": "application/json" }};
+                if (token) headers["Authorization"] = "Bearer " + token;
+                const r = await fetch("/api/pipelines/approvals/" + approvalId + "/" + action, {{
+                    method: "POST", headers, body: "{{}}"
+                }});
+                const el = document.getElementById("result");
+                if (r.ok) {{
+                    el.textContent = action === "approve" ? "Approved successfully" : "Rejected";
+                    el.className = "result " + (action === "approve" ? "approved" : "rejected");
+                }} else {{
+                    el.textContent = "Failed: " + (await r.text());
+                    el.className = "result rejected";
+                }}
+                el.style.display = "block";
+                document.querySelector(".buttons").style.display = "none";
+            }} catch (e) {{
+                alert("Error: " + e.message);
+                btns.forEach(b => {{ b.disabled = false; b.style.opacity = "1"; }});
+            }}
+        }}
+
+        function show(id) {{ document.getElementById(id).style.display = "block"; }}
+        function hide(id) {{ document.getElementById(id).style.display = "none"; }}
+        init();
+    </script>
+</body>
+</html>"#
+    );
+
+    Html(html).into_response()
+}
+
+const APPROVAL_CSS: &str = r#"
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 16px; }
+    .card { background: #141414; border: 1px solid #2a2a2a; border-radius: 12px; padding: 24px; max-width: 540px; width: 100%; }
+    .header { margin-bottom: 16px; }
+    .pipeline-name { font-size: 18px; font-weight: 600; color: #e0e0e0; margin-bottom: 4px; }
+    .status { font-size: 13px; padding: 4px 10px; border-radius: 6px; display: inline-block; }
+    .status.pending { background: rgba(139,92,246,0.15); color: #a78bfa; }
+    .status.approved { background: rgba(34,197,94,0.15); color: #22c55e; }
+    .status.rejected { background: rgba(239,68,68,0.15); color: #ef4444; }
+    .context { font-size: 13px; color: #aaa; line-height: 1.6; padding: 16px; background: #0e0e0e; border: 1px solid #1e1e1e; border-radius: 8px; margin-bottom: 16px; max-height: 300px; overflow-y: auto; word-break: break-word; }
+    .buttons { display: flex; gap: 10px; }
+    .btn { flex: 1; padding: 10px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+    .btn:hover { opacity: 0.85; }
+    .btn.approve { background: #22c55e; color: #fff; }
+    .btn.reject { background: #ef4444; color: #fff; }
+    .result { margin-top: 12px; padding: 10px; border-radius: 8px; font-size: 14px; font-weight: 500; text-align: center; }
+    .result.approved { background: rgba(34,197,94,0.15); color: #22c55e; }
+    .result.rejected { background: rgba(239,68,68,0.15); color: #ef4444; }
+    .error { color: #ef4444; font-size: 12px; margin-top: 8px; }
+    input { width: 100%; padding: 10px; background: #0e0e0e; border: 1px solid #2a2a2a; border-radius: 8px; color: #e0e0e0; font-size: 14px; outline: none; }
+    input:focus { border-color: #8b5cf6; }
+"#;

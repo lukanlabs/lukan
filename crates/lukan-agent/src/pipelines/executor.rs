@@ -650,7 +650,7 @@ async fn execute_approval_step_parallel(
     if let Some(ref cfg) = step.approval
         && let (Some(plugin), Some(channel)) = (&cfg.notify_plugin, &cfg.notify_channel)
     {
-        send_plugin_notification(plugin, channel, &message).await;
+        send_plugin_notification(plugin, channel, &message, &approval_id).await;
     }
 
     let poll_interval = std::time::Duration::from_secs(2);
@@ -778,7 +778,7 @@ async fn execute_approval_step(
     if let Some(ref cfg) = step.approval
         && let (Some(plugin), Some(channel)) = (&cfg.notify_plugin, &cfg.notify_channel)
     {
-        send_plugin_notification(plugin, channel, &message).await;
+        send_plugin_notification(plugin, channel, &message, &approval_id).await;
     }
 
     // Polling loop: check approval status every 2s
@@ -1343,7 +1343,7 @@ fn render_prompt(
 /// Detects the plugin type and uses the appropriate method:
 /// - WhatsApp/Discord/Slack: WebSocket to connector
 /// - Telegram: direct Bot API call
-async fn send_plugin_notification(plugin: &str, channel_id: &str, text: &str) {
+async fn send_plugin_notification(plugin: &str, channel_id: &str, text: &str, approval_id: &str) {
     let config_path = lukan_core::config::LukanPaths::plugin_config(plugin);
     let config: serde_json::Value = tokio::fs::read_to_string(&config_path)
         .await
@@ -1360,6 +1360,12 @@ async fn send_plugin_notification(plugin: &str, channel_id: &str, text: &str) {
     } else {
         format!("{}\n\n[Respond 'yes' to approve or 'no' to reject]", text)
     };
+
+    // Gmail: send email with approval link
+    if plugin == "gmail" {
+        send_gmail_notification(&config, channel_id, &notify_text, approval_id).await;
+        return;
+    }
 
     // Telegram: use Bot API directly
     if plugin == "telegram" {
@@ -1544,6 +1550,149 @@ async fn send_discord_notification(bot_token: &str, channel_id: &str, text: &str
         }
         Err(e) => {
             error!(channel_id, error = %e, "Failed to send Discord DM");
+        }
+    }
+}
+
+/// Send an approval email via Gmail API
+async fn send_gmail_notification(
+    gmail_config: &serde_json::Value,
+    to: &str,
+    text: &str,
+    approval_id: &str,
+) {
+    // Read Gmail OAuth credentials
+    let access_token = gmail_config
+        .get("accessToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let refresh_token = gmail_config
+        .get("refreshToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if access_token.is_empty() {
+        error!("Cannot send Gmail notification: not authenticated. Run 'lukan gmail auth'");
+        return;
+    }
+
+    // Try to refresh token if needed
+    let token = if let (Some(expiry), true) = (
+        gmail_config.get("tokenExpiry").and_then(|v| v.as_i64()),
+        !refresh_token.is_empty(),
+    ) {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        if expiry < now_ms + 5 * 60 * 1000 {
+            // Token expired or close to expiry — refresh
+            let client_id = gmail_config
+                .get("clientId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let client_secret = gmail_config
+                .get("clientSecret")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            // Also try google-workspace config
+            let (cid, csec) = if client_id.is_empty() || client_secret.is_empty() {
+                let gw_path = lukan_core::config::LukanPaths::plugin_config("google-workspace");
+                if let Ok(data) = tokio::fs::read_to_string(&gw_path).await {
+                    let gw: serde_json::Value = serde_json::from_str(&data).unwrap_or_default();
+                    (
+                        gw.get("clientId")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(client_id)
+                            .to_string(),
+                        gw.get("clientSecret")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(client_secret)
+                            .to_string(),
+                    )
+                } else {
+                    (client_id.to_string(), client_secret.to_string())
+                }
+            } else {
+                (client_id.to_string(), client_secret.to_string())
+            };
+
+            if let Ok(resp) = reqwest::Client::new()
+                .post("https://oauth2.googleapis.com/token")
+                .form(&[
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", refresh_token),
+                    ("client_id", &cid),
+                    ("client_secret", &csec),
+                ])
+                .send()
+                .await
+            {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    if let Some(new_token) = data.get("access_token").and_then(|v| v.as_str()) {
+                        new_token.to_string()
+                    } else {
+                        access_token.to_string()
+                    }
+                } else {
+                    access_token.to_string()
+                }
+            } else {
+                access_token.to_string()
+            }
+        } else {
+            access_token.to_string()
+        }
+    } else {
+        access_token.to_string()
+    };
+
+    // Build approval link
+    let lock_path = lukan_core::config::LukanPaths::daemon_lock_file();
+    let base_url = tokio::fs::read_to_string(&lock_path)
+        .await
+        .ok()
+        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
+        .and_then(|v| v.get("port").and_then(|p| p.as_u64()))
+        .map(|port| format!("http://localhost:{port}"))
+        .unwrap_or_else(|| "http://localhost:3000".to_string());
+
+    let approval_link = format!("{base_url}/approve/{approval_id}");
+
+    // Truncate context for email
+    let context = if text.len() > 3000 {
+        format!("{}...", &text[..3000])
+    } else {
+        text.to_string()
+    };
+
+    let body = format!("{context}\n\n---\nApprove or reject this pipeline step:\n{approval_link}");
+
+    // Build MIME message
+    let subject = "Pipeline Approval Required";
+    let mime = format!(
+        "To: {to}\r\nSubject: {subject}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n{body}"
+    );
+    use base64::Engine;
+    let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mime.as_bytes());
+
+    let client = reqwest::Client::new();
+    match client
+        .post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send")
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&serde_json::json!({ "raw": raw }))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                info!(to, "Gmail approval notification sent successfully");
+            } else {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                error!(to, %status, body, "Gmail API error");
+            }
+        }
+        Err(e) => {
+            error!(to, error = %e, "Failed to send Gmail notification");
         }
     }
 }

@@ -442,6 +442,19 @@ async fn dispatch_message(
             send_json(ws_tx, &ServerMessage::ModeChanged { mode }).await;
         }
 
+        ClientMessage::SetDisabledTools { tools, session_id } => {
+            if let Some(sid) = session_id {
+                let disabled: std::collections::HashSet<String> = tools.into_iter().collect();
+                let mut sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get_mut(&sid)
+                    && let Some(ref mut agent) = session.agent
+                {
+                    agent.set_disabled_tools(disabled);
+                    info!(conn_id, session_id = %sid, "Disabled tools updated via WS");
+                }
+            }
+        }
+
         ClientMessage::Approve {
             approved_ids,
             session_id,
@@ -1894,6 +1907,19 @@ async fn handle_mid_turn_message(
             info!(conn_id, %mode, "Permission mode changed mid-turn");
             let _ = state.permission_mode.send(parsed);
             send_json(ws_tx, &ServerMessage::ModeChanged { mode }).await;
+        }
+
+        ClientMessage::SetDisabledTools { tools, session_id } => {
+            if let Some(sid) = session_id {
+                let disabled: std::collections::HashSet<String> = tools.into_iter().collect();
+                let mut sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get_mut(&sid)
+                    && let Some(ref mut agent) = session.agent
+                {
+                    agent.set_disabled_tools(disabled);
+                    info!(conn_id, "Disabled tools updated mid-turn");
+                }
+            }
         }
 
         // Ignore all other messages during a turn

@@ -391,7 +391,7 @@ function EditStepSheet({
     }).catch(() => {});
     listPlugins().then((plugins) => {
       // Only show messaging plugins that can send notifications to users
-      const messagingPlugins = new Set(["whatsapp", "telegram", "slack", "discord", "email"]);
+      const messagingPlugins = new Set(["whatsapp", "telegram", "slack", "discord", "email", "gmail"]);
       const channels = plugins
         .filter((p) => messagingPlugins.has(p.name))
         .map((p) => p.name);
@@ -528,14 +528,15 @@ function EditStepSheet({
             {notifyPlugin && (
               <div style={{ marginBottom: 12 }}>
                 <label style={{ display: "block", fontSize: 10, color: "#666", marginBottom: 4 }}>
-                  {notifyPlugin === "slack" ? "Channel or User ID" : notifyPlugin === "discord" ? "Channel or User ID" : notifyPlugin === "telegram" ? "Chat ID" : "Chat / Group ID"}
+                  {notifyPlugin === "gmail" ? "Recipient Email" : notifyPlugin === "slack" ? "Channel or User ID" : notifyPlugin === "discord" ? "Channel or User ID" : notifyPlugin === "telegram" ? "Chat ID" : "Chat / Group ID"}
                 </label>
                 <input
                   type="text"
                   value={notifyChannel}
                   onChange={(e) => setNotifyChannel(e.target.value)}
                   placeholder={
-                    notifyPlugin === "slack" ? "C01ABC123 or U01XYZ789"
+                    notifyPlugin === "gmail" ? "user@example.com"
+                    : notifyPlugin === "slack" ? "C01ABC123 or U01XYZ789"
                     : notifyPlugin === "discord" ? "1234567890123456"
                     : notifyPlugin === "telegram" ? "-1001234567890"
                     : notifyPlugin === "whatsapp" ? "5491155551234@s.whatsapp.net"
@@ -544,11 +545,12 @@ function EditStepSheet({
                   style={inputStyle}
                 />
                 <div style={{ fontSize: 9, color: "#444", marginTop: 3 }}>
+                  {notifyPlugin === "gmail" && "Email with approval link (approve/reject from browser)"}
                   {notifyPlugin === "slack" && "Channel ID (C...) for group, User ID (U...) for DM"}
                   {notifyPlugin === "discord" && "Right-click channel/user → Copy ID"}
                   {notifyPlugin === "telegram" && "Numeric chat ID (negative for groups)"}
                   {notifyPlugin === "whatsapp" && "Phone@s.whatsapp.net or group JID"}
-                  {!["slack", "discord", "telegram", "whatsapp"].includes(notifyPlugin) && "Channel or chat identifier"}
+                  {!["gmail", "slack", "discord", "telegram", "whatsapp"].includes(notifyPlugin) && "Channel or chat identifier"}
                 </div>
               </div>
             )}

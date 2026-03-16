@@ -102,6 +102,11 @@ pub enum ClientMessage {
     SetPermissionMode {
         mode: String,
     },
+    SetDisabledTools {
+        tools: Vec<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 
     // Auth
     Auth {

@@ -222,6 +222,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/auth", post(auth_handler))
         .route("/api/auth/status", get(auth_status_handler))
         .route("/health", get(health_handler))
+        .route("/approve/{id}", get(rest_pipelines::approval_page))
         .nest("/api", api_routes)
         .fallback(get(static_files::serve_static))
         .layer(cors)

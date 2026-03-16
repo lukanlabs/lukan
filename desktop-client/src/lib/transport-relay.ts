@@ -1108,8 +1108,10 @@ export class RelayTransport implements Transport {
     _args?: Record<string, unknown>,
   ): T {
     switch (command) {
-      case "get_web_ui_status":
-        return { running: true, port: 0, url: this.relayOrigin } as T;
+      case "get_web_ui_status": {
+        const port = new URL(this.relayOrigin).port || (this.relayOrigin.startsWith("https") ? 443 : 80);
+        return { running: true, port: Number(port), url: this.relayOrigin } as T;
+      }
       case "initialize_chat":
         // Return cached init data or wait for it
         if (this.initData) return this.initData as T;

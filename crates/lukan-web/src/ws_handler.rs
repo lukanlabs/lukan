@@ -36,8 +36,9 @@ pub async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let is_relay = headers.get("x-relay-internal").is_some();
+    let is_relay = headers.get("x-relay-internal").is_some() || query.get("internal").is_some();
     ws.on_upgrade(move |socket| handle_connection(socket, state, is_relay))
 }
 

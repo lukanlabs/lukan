@@ -24,6 +24,7 @@ const TAURI_ONLY_COMMANDS = new Set([
   "set_project_cwd",
   "get_cwd",
   "get_recent_projects",
+  "add_recent_project",
 ]);
 
 // Events that come from Tauri (not from WebSocket)

@@ -185,6 +185,17 @@ The agent's reply to a `channelMessage`.
 
 If the agent encountered an error processing the message, `isError` will be `true` and `text` will contain the error description.
 
+#### `sendMessage`
+Send an outbound message to a channel (e.g. pipeline approval notifications). The plugin should forward this to the external service.
+
+```json
+{
+  "type": "sendMessage",
+  "channelId": "chat-123",
+  "text": "Pipeline needs your approval..."
+}
+```
+
 #### `shutdown`
 Graceful shutdown request. The plugin should clean up and exit.
 

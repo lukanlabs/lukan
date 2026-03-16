@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/lukanlabs/lukan/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-  <a href="https://github.com/lukanlabs/lukan/releases"><img alt="Release" src="https://img.shields.io/badge/release-v0.2.0-green"></a>
+  <a href="https://github.com/lukanlabs/lukan/releases"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.2-green"></a>
   <img alt="Rust" src="https://img.shields.io/badge/rust-2024-orange.svg">
   <img alt="Platform" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20WSL-lightgrey">
 </p>
@@ -36,6 +36,7 @@ Built in Rust. Single binary. No runtime dependencies.
 - **Background Workers** — Scheduled autonomous tasks with cron-style execution
 - **Persistent Memory** — Context compaction, session management, and long-term memory across conversations
 - **Skills** — Markdown-based instruction system for project-specific workflows, compatible with community skill formats
+- **Pipelines** — DAG-based multi-agent workflows with visual editor, parallel execution, and human-in-the-loop approval gates
 - **Single Binary** — No runtime dependencies, instant startup
 
 <details>
@@ -295,7 +296,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 | Ollama Cloud | API key via `lukan setup` |
 | Zai | API key via `lukan setup` |
 | Gemini | API key via `lukan setup` |
-| Lukan Cloud | API key via `lukan setup` |
+| Lukan Cloud | Coming soon |
 | OpenAI-compatible | Base URL + API key via `lukan setup` (works with vLLM, Ollama, LM Studio) |
 
 ## Plugins
@@ -335,6 +336,7 @@ lukan plugin logs whatsapp
 | **Whisper** | Channel | Local audio transcription via whisper.cpp |
 | **Telegram** | Channel | Chat with lukan from Telegram (Bot API, groups, user allowlist) |
 | **Slack** | Channel | Chat with lukan from Slack (Socket Mode, threads, channel allowlist) |
+| **Discord** | Channel | Chat with lukan from Discord (Gateway API, threads, voice transcription) |
 | **Nano Banana Pro** | Tools | Image generation via Gemini |
 
 ## Skills

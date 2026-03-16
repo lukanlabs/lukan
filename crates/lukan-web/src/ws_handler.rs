@@ -446,11 +446,12 @@ async fn dispatch_message(
             if let Some(sid) = session_id {
                 let disabled: std::collections::HashSet<String> = tools.into_iter().collect();
                 let mut sessions = state.sessions.lock().await;
-                if let Some(session) = sessions.get_mut(&sid)
-                    && let Some(ref mut agent) = session.agent
-                {
-                    agent.set_disabled_tools(disabled);
-                    info!(conn_id, session_id = %sid, "Disabled tools updated via WS");
+                if let Some(session) = sessions.get_mut(&sid) {
+                    session.disabled_tools = disabled.clone();
+                    if let Some(ref mut agent) = session.agent {
+                        agent.set_disabled_tools(disabled);
+                    }
+                    info!(conn_id, session_id = %sid, "Disabled tools updated");
                 }
             }
         }
@@ -1180,7 +1181,7 @@ async fn dispatch_message(
             {
                 let mut sessions = state.sessions.lock().await;
                 if let Some(session) = sessions.get_mut(tid) {
-                    session.agent = Some(agent);
+                    session.set_agent(agent);
                 }
             }
         }
@@ -1264,7 +1265,7 @@ async fn dispatch_message(
             {
                 let mut sessions = state.sessions.lock().await;
                 if let Some(session) = sessions.get_mut(tid) {
-                    session.agent = Some(agent);
+                    session.set_agent(agent);
                 }
             }
         }
@@ -1347,7 +1348,7 @@ async fn handle_send_message(
             };
             match result {
                 Ok(agent) => {
-                    session.agent = Some(agent);
+                    session.set_agent(agent);
                 }
                 Err(e) => {
                     drop(sessions);
@@ -1578,7 +1579,7 @@ async fn handle_send_message(
                 let mut sessions = state.sessions.lock().await;
                 if let Some(session) = sessions.get_mut(tid) {
                     session.last_session_id = Some(returned_agent.session_id().to_string());
-                    session.agent = Some(returned_agent);
+                    session.set_agent(returned_agent);
                 }
                 // If session was destroyed mid-turn, agent is dropped
             }
@@ -1975,7 +1976,7 @@ async fn handle_load_session(
             if let Some(tid) = tab_id {
                 let mut sessions = state.sessions.lock().await;
                 if let Some(session) = sessions.get_mut(tid) {
-                    session.agent = Some(agent);
+                    session.set_agent(agent);
                 }
             }
 
@@ -2031,7 +2032,7 @@ async fn handle_new_session(
             if let Some(tid) = tab_id {
                 let mut sessions = state.sessions.lock().await;
                 if let Some(session) = sessions.get_mut(tid) {
-                    session.agent = Some(agent);
+                    session.set_agent(agent);
                 }
             }
         }

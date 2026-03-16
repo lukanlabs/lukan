@@ -30,9 +30,19 @@ pub struct WebAgentSession {
     pub label: String,
     /// The persisted ChatSession ID (6-char hex) so we can reload after agent loss.
     pub last_session_id: Option<String>,
+    /// Tools disabled via Alt+P in TUI (applied when agent is created)
+    pub disabled_tools: std::collections::HashSet<String>,
 }
 
 impl WebAgentSession {
+    /// Set the agent and apply any pending disabled_tools
+    pub fn set_agent(&mut self, mut agent: AgentLoop) {
+        if !self.disabled_tools.is_empty() {
+            agent.set_disabled_tools(self.disabled_tools.clone());
+        }
+        self.agent = Some(agent);
+    }
+
     pub fn new() -> Self {
         Self {
             agent: None,
@@ -42,6 +52,7 @@ impl WebAgentSession {
             bg_signal_tx: None,
             label: "Agent 1".to_string(),
             last_session_id: None,
+            disabled_tools: std::collections::HashSet::new(),
         }
     }
 }

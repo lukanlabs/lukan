@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/lukanlabs/lukan/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-  <a href="https://github.com/lukanlabs/lukan/releases"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.4-green"></a>
+  <a href="https://github.com/lukanlabs/lukan/releases"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.5-green"></a>
   <img alt="Rust" src="https://img.shields.io/badge/rust-2024-orange.svg">
   <img alt="Platform" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20WSL-lightgrey">
 </p>

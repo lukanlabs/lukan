@@ -110,22 +110,16 @@ cargo build --release
 ### Docker
 
 ```bash
-# Build the image
-docker build -t lukan .
+docker pull lukanlabs/lukan
+docker run -d -p 3000:3000 --name lukan lukanlabs/lukan
 
-# Run with API key
-docker run -d -p 3000:3000 -e ANTHROPIC_API_KEY=sk-... lukan
-
-# Run with persistent config
-docker run -d -p 3000:3000 -v ~/.config/lukan:/home/lukan/.config/lukan lukan
-
-# Interactive setup inside the container
-docker exec -it <container> bash
-lukan setup
-lukan   # start TUI
+# Configure and start chatting inside the container
+docker exec -it lukan bash
+lukan setup       # configure provider and API keys
+lukan             # start TUI
 ```
 
-The web UI is accessible at `http://localhost:3000`.
+The web UI is accessible at `http://localhost:3000`. You can also build the image locally with `docker build -t lukan .`.
 
 ## Uninstall
 

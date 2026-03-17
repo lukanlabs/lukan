@@ -15,10 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     openssl \
     libssl3 \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd -m -s /bin/bash lukan
+# Create non-root user with sudo access
+RUN useradd -m -s /bin/bash lukan && echo "lukan ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # Install Lukan binary from R2
 ARG TARGETARCH

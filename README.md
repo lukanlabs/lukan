@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/lukanlabs/lukan/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-  <a href="https://github.com/lukanlabs/lukan/releases"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.2-green"></a>
+  <a href="https://github.com/lukanlabs/lukan/releases"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.4-green"></a>
   <img alt="Rust" src="https://img.shields.io/badge/rust-2024-orange.svg">
   <img alt="Platform" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20WSL-lightgrey">
 </p>
@@ -92,7 +92,11 @@ Built in Rust. Single binary. No runtime dependencies.
 ## Install
 
 ```bash
+# CLI only (single binary — includes TUI + Web UI)
 curl -fsSL https://get.lukan.ai/install.sh | bash
+
+# CLI + Desktop app (Tauri)
+curl -fsSL https://get.lukan.ai/install.sh | bash -s -- --desktop
 ```
 
 Or build from source:
@@ -102,6 +106,26 @@ git clone https://github.com/lukanlabs/lukan.git
 cd lukan
 cargo build --release
 ```
+
+### Docker
+
+```bash
+# Build the image
+docker build -t lukan .
+
+# Run with API key
+docker run -d -p 3000:3000 -e ANTHROPIC_API_KEY=sk-... lukan
+
+# Run with persistent config
+docker run -d -p 3000:3000 -v ~/.config/lukan:/home/lukan/.config/lukan lukan
+
+# Interactive setup inside the container
+docker exec -it <container> bash
+lukan setup
+lukan   # start TUI
+```
+
+The web UI is accessible at `http://localhost:3000`.
 
 ## Uninstall
 

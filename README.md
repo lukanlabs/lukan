@@ -13,6 +13,7 @@
   <a href="https://github.com/lukanlabs/lukan/releases"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.5-green"></a>
   <img alt="Rust" src="https://img.shields.io/badge/rust-2024-orange.svg">
   <img alt="Platform" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20WSL-lightgrey">
+  <a href="https://docs.lukan.ai"><img alt="Docs" src="https://img.shields.io/badge/docs-docs.lukan.ai-blueviolet"></a>
 </p>
 
 <p align="center">
@@ -171,17 +172,34 @@ lukan chat --ui web
 lukan chat --desktop
 ```
 
-### Choose your provider
+### Choose your provider and model
+
+Use `lukan setup` to configure your provider and API key, then switch models at any time with `/model` inside the TUI or Web UI. You can also configure providers and API keys directly from the Web or Desktop UI under **Settings → Credentials** and **Settings → Providers**.
+
+For providers that use OAuth, authenticate first:
 
 ```bash
-# Use a specific provider
-lukan chat --provider anthropic
-lukan chat --provider github-copilot
-lukan chat --provider openai-compatible
+# OpenAI Codex — OAuth device flow (no API key needed)
+lukan codex-auth
 
-# Use a specific model
-lukan chat --provider fireworks --model accounts/fireworks/models/llama-v3p3-70b-instruct
+# GitHub Copilot — OAuth device flow
+lukan copilot-auth
+
+# All other providers (Anthropic, Fireworks, Gemini, etc.)
+lukan setup
 ```
+
+To browse and select which models appear in `/model` inside the TUI:
+
+```bash
+lukan models openai-codex
+lukan models anthropic
+lukan models fireworks
+```
+
+This lets you choose which models are available when using `/model` during a chat session.
+
+For more details see [docs.lukan.ai](https://docs.lukan.ai).
 
 ### Browser automation
 

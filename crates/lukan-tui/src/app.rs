@@ -8,6 +8,9 @@ use ratatui::{
     Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Clear, Paragraph, Widget},
 };
 use std::collections::{HashMap, HashSet};
 use std::io::{Stdout, stdout};
@@ -48,6 +51,15 @@ use crate::widgets::subagent_picker::{
 };
 use crate::widgets::task_panel::TaskPanelWidget;
 use crate::widgets::terminal::TerminalWidget;
+use crate::widgets::approval_prompt::{ApprovalPromptWidget, summarize_tool_input};
+use crate::widgets::command_palette::CommandPaletteWidget;
+use crate::widgets::model_palette::ModelPaletteWidget;
+use crate::widgets::plan_review::PlanReviewWidget;
+use crate::widgets::planner_question::PlannerQuestionWidget;
+use crate::widgets::reasoning_palette::ReasoningPaletteWidget;
+use crate::widgets::session_picker::SessionPickerWidget;
+use crate::widgets::tool_picker::ToolPickerWidget;
+use crate::widgets::trust_prompt::TrustPromptWidget;
 use crate::widgets::worker_picker::{
     RunEntry, WorkerEntry, WorkerPicker, WorkerPickerView, WorkerPickerWidget,
 };
@@ -218,50 +230,50 @@ pub struct App {
 }
 
 /// Trust prompt state — shown when the user hasn't trusted this workspace yet
-struct TrustPrompt {
-    cwd: String,
-    selected: usize, // 0 = Yes, 1 = No
+pub(crate) struct TrustPrompt {
+    pub(crate) cwd: String,
+    pub(crate) selected: usize, // 0 = Yes, 1 = No
 }
 
 /// Approval prompt overlay — shown when tools need user approval
-struct ApprovalPrompt {
-    tools: Vec<ToolApprovalRequest>,
+pub(crate) struct ApprovalPrompt {
+    pub(crate) tools: Vec<ToolApprovalRequest>,
     /// Per-tool toggle (default all true = approved)
-    selections: Vec<bool>,
+    pub(crate) selections: Vec<bool>,
     /// Cursor position
-    selected: usize,
+    pub(crate) selected: usize,
 }
 
 /// Interactive model picker state
-struct ModelPicker {
-    models: Vec<String>,
-    selected: usize,
-    current: String,
+pub(crate) struct ModelPicker {
+    pub(crate) models: Vec<String>,
+    pub(crate) selected: usize,
+    pub(crate) current: String,
 }
 
 /// Reasoning effort picker state
-struct ReasoningPicker {
-    model_entry: String,
-    levels: Vec<(&'static str, &'static str, &'static str)>, // (value, label, description)
-    selected: usize,
+pub(crate) struct ReasoningPicker {
+    pub(crate) model_entry: String,
+    pub(crate) levels: Vec<(&'static str, &'static str, &'static str)>, // (value, label, description)
+    pub(crate) selected: usize,
 }
 
 /// Interactive session picker state
-struct SessionPicker {
-    sessions: Vec<SessionSummary>,
-    selected: usize,
-    current_id: Option<String>,
+pub(crate) struct SessionPicker {
+    pub(crate) sessions: Vec<SessionSummary>,
+    pub(crate) selected: usize,
+    pub(crate) current_id: Option<String>,
 }
 
-struct ToolGroup {
-    name: String,
-    tools: Vec<String>,
+pub(crate) struct ToolGroup {
+    pub(crate) name: String,
+    pub(crate) tools: Vec<String>,
 }
 
-struct ToolPicker {
-    groups: Vec<ToolGroup>,
-    selected: usize,
-    disabled: HashSet<String>,
+pub(crate) struct ToolPicker {
+    pub(crate) groups: Vec<ToolGroup>,
+    pub(crate) selected: usize,
+    pub(crate) disabled: HashSet<String>,
 }
 
 const BROWSER_TOOLS: &[&str] = &[
@@ -279,7 +291,7 @@ const BROWSER_TOOLS: &[&str] = &[
 
 /// Plan review overlay mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PlanReviewMode {
+pub(crate) enum PlanReviewMode {
     /// Viewing task list
     List,
     /// Viewing detail for selected task
@@ -289,33 +301,33 @@ enum PlanReviewMode {
 }
 
 /// Plan review overlay state — shown when agent submits a plan
-struct PlanReviewState {
+pub(crate) struct PlanReviewState {
     #[allow(dead_code)]
-    id: String,
-    title: String,
-    plan: String,
-    tasks: Vec<PlanTask>,
-    selected: usize,
-    mode: PlanReviewMode,
-    feedback_input: String,
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) plan: String,
+    pub(crate) tasks: Vec<PlanTask>,
+    pub(crate) selected: usize,
+    pub(crate) mode: PlanReviewMode,
+    pub(crate) feedback_input: String,
     #[allow(dead_code)]
-    scroll: u16,
+    pub(crate) scroll: u16,
 }
 
 /// Planner question overlay state
-struct PlannerQuestionState {
+pub(crate) struct PlannerQuestionState {
     #[allow(dead_code)]
-    id: String,
-    questions: Vec<PlannerQuestionItem>,
-    current_question: usize,
+    pub(crate) id: String,
+    pub(crate) questions: Vec<PlannerQuestionItem>,
+    pub(crate) current_question: usize,
     /// Selected option index per question (last index = custom input)
-    selections: Vec<usize>,
+    pub(crate) selections: Vec<usize>,
     /// For multi-select: which options are toggled per question
-    multi_selections: Vec<Vec<bool>>,
+    pub(crate) multi_selections: Vec<Vec<bool>>,
     /// Whether we're in text-input mode for the custom response
-    editing_custom: bool,
+    pub(crate) editing_custom: bool,
     /// Custom text input per question
-    custom_inputs: Vec<String>,
+    pub(crate) custom_inputs: Vec<String>,
 }
 
 impl App {
@@ -5528,91 +5540,6 @@ fn scroll_overflow(
     Ok(())
 }
 
-// ── Tool Input Summary ────────────────────────────────────────────────────
-
-/// Produce a human-readable one-liner for the tool call input
-fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
-    match name {
-        "Bash" => input
-            .get("command")
-            .and_then(|v| v.as_str())
-            .unwrap_or("(no command)")
-            .to_string(),
-        "ReadFiles" => {
-            let path = input
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let mut s = path.to_string();
-            if let Some(offset) = input.get("offset").and_then(|v| v.as_u64()) {
-                s.push_str(&format!(" (from line {offset})"));
-            }
-            s
-        }
-        "WriteFile" => {
-            let path = input
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let len = input
-                .get("content")
-                .and_then(|v| v.as_str())
-                .map(|c| c.len())
-                .unwrap_or(0);
-            format!("{path} ({len} bytes)")
-        }
-        "EditFile" => {
-            let path = input
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let replace_all = input
-                .get("replace_all")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if replace_all {
-                format!("{path} (replace all)")
-            } else {
-                path.to_string()
-            }
-        }
-        "Grep" => {
-            let pattern = input.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
-            let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            format!("{pattern} in {path}")
-        }
-        "Glob" => input
-            .get("pattern")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?")
-            .to_string(),
-        "WebFetch" => input
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?")
-            .to_string(),
-        "Explore" | "SubAgent" => {
-            let task = input.get("task").and_then(|v| v.as_str()).unwrap_or("?");
-            if task.len() > 80 {
-                let end = task.floor_char_boundary(80);
-                format!("{}…", &task[..end])
-            } else {
-                task.to_string()
-            }
-        }
-        _ => {
-            // Fallback: compact JSON
-            let s = serde_json::to_string(input).unwrap_or_default();
-            if s.len() > 200 {
-                let end = s.floor_char_boundary(200);
-                format!("{}...", &s[..end])
-            } else {
-                s
-            }
-        }
-    }
-}
-
 // ── Tool Result Formatting ────────────────────────────────────────────────
 
 /// Format tool result with tool-aware compact summaries.
@@ -5816,916 +5743,4 @@ fn filtered_commands(input: &str) -> Vec<(&'static str, &'static str)> {
         .filter(|(cmd, _)| cmd.starts_with(input))
         .copied()
         .collect()
-}
-
-struct CommandPaletteWidget<'a> {
-    commands: &'a [(&'static str, &'static str)],
-    selected: usize,
-}
-
-impl<'a> CommandPaletteWidget<'a> {
-    fn new(commands: &'a [(&'static str, &'static str)], selected: usize) -> Self {
-        Self { commands, selected }
-    }
-}
-
-impl Widget for CommandPaletteWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        Clear.render(area, buf);
-        let mut lines: Vec<Line<'_>> = Vec::new();
-
-        // Blank separator line at top
-        lines.push(Line::from(""));
-
-        for (i, (cmd, desc)) in self.commands.iter().enumerate() {
-            let is_selected = i == self.selected;
-            let pointer = if is_selected { "▸ " } else { "  " };
-
-            // Pad command name to align descriptions
-            let padded_cmd = format!("{cmd:<14}");
-
-            if is_selected {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        pointer,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        padded_cmd,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled((*desc).to_string(), Style::default().fg(Color::White)),
-                ]));
-            } else {
-                lines.push(Line::from(vec![
-                    Span::styled(pointer, Style::default().fg(Color::DarkGray)),
-                    Span::styled(padded_cmd, Style::default().fg(Color::Gray)),
-                    Span::styled((*desc).to_string(), Style::default().fg(Color::DarkGray)),
-                ]));
-            }
-        }
-
-        let paragraph = Paragraph::new(lines);
-        paragraph.render(area, buf);
-    }
-}
-
-// ── Reasoning Palette Widget ─────────────────────────────────────────────
-
-struct ReasoningPaletteWidget<'a> {
-    picker: &'a ReasoningPicker,
-}
-
-impl<'a> ReasoningPaletteWidget<'a> {
-    fn new(picker: &'a ReasoningPicker) -> Self {
-        Self { picker }
-    }
-}
-
-impl Widget for ReasoningPaletteWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        Clear.render(area, buf);
-        let mut lines: Vec<Line<'_>> = Vec::new();
-
-        // Header with model name
-        let model_name = self
-            .picker
-            .model_entry
-            .split_once(':')
-            .map(|(_, m)| m)
-            .unwrap_or(&self.picker.model_entry);
-        lines.push(Line::from(Span::styled(
-            format!("  Select Reasoning Level for {model_name}"),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-
-        for (i, (_value, label, desc)) in self.picker.levels.iter().enumerate() {
-            let is_selected = i == self.picker.selected;
-            let pointer = if is_selected { "▸ " } else { "  " };
-            let num = format!("{}. ", i + 1);
-            let padded_label = format!("{label:<20}");
-
-            if is_selected {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        pointer,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        num,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        padded_label,
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled((*desc).to_string(), Style::default().fg(Color::Gray)),
-                ]));
-            } else {
-                lines.push(Line::from(vec![
-                    Span::styled(pointer, Style::default().fg(Color::DarkGray)),
-                    Span::styled(num, Style::default().fg(Color::DarkGray)),
-                    Span::styled(padded_label, Style::default().fg(Color::Gray)),
-                    Span::styled((*desc).to_string(), Style::default().fg(Color::DarkGray)),
-                ]));
-            }
-        }
-
-        let paragraph = Paragraph::new(lines);
-        paragraph.render(area, buf);
-    }
-}
-
-// ── Model Palette Widget ─────────────────────────────────────────────────
-
-use ratatui::{
-    buffer::Buffer,
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Clear, Paragraph, Widget},
-};
-
-struct ModelPaletteWidget<'a> {
-    picker: &'a ModelPicker,
-}
-
-impl<'a> ModelPaletteWidget<'a> {
-    fn new(picker: &'a ModelPicker) -> Self {
-        Self { picker }
-    }
-}
-
-impl Widget for ModelPaletteWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        Clear.render(area, buf);
-        let mut lines: Vec<Line<'_>> = Vec::new();
-
-        // Header
-        lines.push(Line::from(vec![
-            Span::styled(
-                "  Select Model",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "  (d = set as default)",
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]));
-        lines.push(Line::from(""));
-
-        for (i, entry) in self.picker.models.iter().enumerate() {
-            let is_selected = i == self.picker.selected;
-            let is_current = *entry == self.picker.current;
-
-            let pointer = if is_selected { "▸ " } else { "  " };
-            let num = format!("{}. ", i + 1);
-
-            let suffix = if is_current { " (current)" } else { "" };
-
-            if is_selected {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        pointer,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        num,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        entry.clone(),
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(suffix, Style::default().fg(Color::Green)),
-                ]));
-            } else {
-                lines.push(Line::from(vec![
-                    Span::styled(pointer, Style::default().fg(Color::DarkGray)),
-                    Span::styled(num, Style::default().fg(Color::DarkGray)),
-                    Span::styled(entry.clone(), Style::default().fg(Color::Gray)),
-                    Span::styled(suffix, Style::default().fg(Color::Green)),
-                ]));
-            }
-        }
-
-        let paragraph = Paragraph::new(lines);
-        paragraph.render(area, buf);
-    }
-}
-
-// ── Session Picker Widget ───────────────────────────────────────────────
-
-struct SessionPickerWidget<'a> {
-    picker: &'a SessionPicker,
-}
-
-impl<'a> SessionPickerWidget<'a> {
-    fn new(picker: &'a SessionPicker) -> Self {
-        Self { picker }
-    }
-}
-
-impl Widget for SessionPickerWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        Clear.render(area, buf);
-        let mut lines: Vec<Line<'_>> = Vec::new();
-
-        lines.push(Line::from(Span::styled(
-            " Resume Session",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-
-        // Each session takes 1 line
-        let available_rows = area.height.saturating_sub(3) as usize; // minus header + blank + scroll indicator
-        let visible_items = available_rows.max(1);
-        let total = self.picker.sessions.len();
-        let selected = self.picker.selected;
-
-        // Scroll offset: keep selected item visible
-        let scroll_offset = if selected >= visible_items {
-            selected - visible_items + 1
-        } else {
-            0
-        };
-        let end = (scroll_offset + visible_items).min(total);
-
-        for i in scroll_offset..end {
-            let session = &self.picker.sessions[i];
-            let is_selected = i == selected;
-            let is_current = self
-                .picker
-                .current_id
-                .as_ref()
-                .is_some_and(|id| *id == session.id);
-
-            let pointer = if is_selected { "▸ " } else { "  " };
-
-            let time_ago = format_time_ago(session.updated_at);
-            let msg_count = session.message_count;
-
-            let mut spans = vec![
-                Span::styled(
-                    pointer,
-                    if is_selected {
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    },
-                ),
-                Span::styled(
-                    format!("[{}]", session.id),
-                    if is_selected {
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::Yellow)
-                    },
-                ),
-                Span::styled(
-                    format!(" · {msg_count} msgs · {time_ago}"),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ];
-
-            if is_current {
-                spans.push(Span::styled(
-                    " (current)",
-                    Style::default().fg(Color::Green),
-                ));
-            }
-
-            // Last message preview on the right, dimmed
-            if let Some(ref preview) = session.last_message {
-                spans.push(Span::styled(
-                    format!(" · {preview}"),
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
-
-            lines.push(Line::from(spans));
-        }
-
-        // Scroll indicator
-        if total > visible_items {
-            lines.push(Line::from(Span::styled(
-                format!("  ({}/{total})", selected + 1),
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
-
-        let paragraph = Paragraph::new(lines);
-        paragraph.render(area, buf);
-    }
-}
-
-// ── Trust Prompt Widget ─────────────────────────────────────────────────
-
-struct TrustPromptWidget<'a> {
-    prompt: &'a TrustPrompt,
-}
-
-impl<'a> TrustPromptWidget<'a> {
-    fn new(prompt: &'a TrustPrompt) -> Self {
-        Self { prompt }
-    }
-}
-
-impl Widget for TrustPromptWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        use ratatui::widgets::{Block, Borders, Wrap};
-
-        Clear.render(area, buf);
-
-        let yes_pointer = if self.prompt.selected == 0 {
-            "❯ "
-        } else {
-            "  "
-        };
-        let no_pointer = if self.prompt.selected == 1 {
-            "❯ "
-        } else {
-            "  "
-        };
-
-        let yes_style = if self.prompt.selected == 0 {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        let no_style = if self.prompt.selected == 1 {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-
-        let lines = vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                " Workspace access:",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                format!(" {}", self.prompt.cwd),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                " Quick safety check: Is this a project you created or",
-                Style::default().fg(Color::White),
-            )),
-            Line::from(Span::styled(
-                " one you trust? If you're not sure, take a moment to",
-                Style::default().fg(Color::White),
-            )),
-            Line::from(Span::styled(
-                " review what's in this folder first.",
-                Style::default().fg(Color::White),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                " lukan will be able to read, edit, and execute code",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(Span::styled(
-                " and files in this directory.",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(format!(" {yes_pointer}"), yes_style),
-                Span::styled("1. Yes, I trust this folder", yes_style),
-            ]),
-            Line::from(vec![
-                Span::styled(format!(" {no_pointer}"), no_style),
-                Span::styled("2. No, exit", no_style),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                " Enter to confirm · Esc to cancel",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ];
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
-
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false });
-        paragraph.render(area, buf);
-    }
-}
-
-// ── Approval Prompt Widget ───────────────────────────────────────────────
-
-struct ApprovalPromptWidget<'a> {
-    prompt: &'a ApprovalPrompt,
-}
-
-impl<'a> ApprovalPromptWidget<'a> {
-    fn new(prompt: &'a ApprovalPrompt) -> Self {
-        Self { prompt }
-    }
-}
-
-impl Widget for ApprovalPromptWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        use ratatui::widgets::{Block, Borders, Wrap};
-
-        Clear.render(area, buf);
-
-        let mut lines: Vec<Line<'_>> = Vec::new();
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            " Tool Approval Required",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-
-        for (i, tool) in self.prompt.tools.iter().enumerate() {
-            let is_selected = i == self.prompt.selected;
-            let is_checked = self.prompt.selections.get(i).copied().unwrap_or(false);
-
-            let pointer = if is_selected { "▸ " } else { "  " };
-            let checkbox = if is_checked { "[x] " } else { "[ ] " };
-
-            let summary = summarize_tool_input(&tool.name, &tool.input);
-            let label = format!(
-                "{}{}",
-                tool.name,
-                if summary.len() > 60 {
-                    let end = summary.floor_char_boundary(57);
-                    format!("({}...)", &summary[..end])
-                } else {
-                    format!("({summary})")
-                }
-            );
-
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Gray)
-            };
-
-            let check_style = if is_checked {
-                Style::default().fg(Color::Green)
-            } else {
-                Style::default().fg(Color::Red)
-            };
-
-            lines.push(Line::from(vec![
-                Span::styled(format!(" {pointer}"), style),
-                Span::styled(checkbox.to_string(), check_style),
-                Span::styled(label, style),
-            ]));
-        }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            " Space toggle · Enter submit · a approve all · A always allow · Esc deny all",
-            Style::default().fg(Color::DarkGray),
-        )));
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Tool Approval ")
-            .border_style(Style::default().fg(Color::Yellow));
-
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false });
-        paragraph.render(area, buf);
-    }
-}
-
-// ── Plan Review Widget ───────────────────────────────────────────────────
-
-struct PlanReviewWidget<'a> {
-    state: &'a PlanReviewState,
-}
-
-impl<'a> PlanReviewWidget<'a> {
-    fn new(state: &'a PlanReviewState) -> Self {
-        Self { state }
-    }
-}
-
-impl Widget for PlanReviewWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        use ratatui::widgets::{Block, Borders, Wrap};
-
-        Clear.render(area, buf);
-
-        let mut lines: Vec<Line<'_>> = Vec::new();
-
-        match self.state.mode {
-            PlanReviewMode::List => {
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    format!(" Plan: {}", self.state.title),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )));
-                lines.push(Line::from(""));
-
-                for (i, task) in self.state.tasks.iter().enumerate() {
-                    let is_selected = i == self.state.selected;
-                    let pointer = if is_selected { "▸ " } else { "  " };
-                    let style = if is_selected {
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::Gray)
-                    };
-
-                    lines.push(Line::from(vec![
-                        Span::styled(format!(" {pointer}"), style),
-                        Span::styled(format!("{}. {}", i + 1, task.title), style),
-                    ]));
-                }
-
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    " a=accept · r=request changes · Enter=view detail · Esc=reject",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-            PlanReviewMode::Detail => {
-                let task = &self.state.tasks[self.state.selected];
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    format!(" Task {}: {}", self.state.selected + 1, task.title),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )));
-                lines.push(Line::from(""));
-
-                // Render task detail as plain text (markdown rendered as-is)
-                for line in task.detail.lines() {
-                    lines.push(Line::from(Span::styled(
-                        format!(" {line}"),
-                        Style::default().fg(Color::White),
-                    )));
-                }
-
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    " Esc=back to list",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-            PlanReviewMode::Feedback => {
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    " Request Changes",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    " Type your feedback:",
-                    Style::default().fg(Color::White),
-                )));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    format!(" > {}_", self.state.feedback_input),
-                    Style::default().fg(Color::Green),
-                )));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    " Enter=submit · Esc=cancel",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        }
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Plan Review ")
-            .border_style(Style::default().fg(Color::Cyan));
-
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false });
-        paragraph.render(area, buf);
-    }
-}
-
-// ── Tool Picker Widget ───────────────────────────────────────────────────
-
-struct ToolPickerWidget<'a> {
-    picker: &'a ToolPicker,
-}
-
-impl<'a> ToolPickerWidget<'a> {
-    fn new(picker: &'a ToolPicker) -> Self {
-        Self { picker }
-    }
-}
-
-impl Widget for ToolPickerWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        use ratatui::widgets::{Block, Borders, Wrap};
-
-        Clear.render(area, buf);
-
-        let mut lines: Vec<Line<'_>> = Vec::new();
-        lines.push(Line::from(""));
-
-        let mut tool_row = 0usize;
-        let mut selected_line = 0usize;
-
-        for group in &self.picker.groups {
-            lines.push(Line::from(Span::styled(
-                format!(" ── {} ──", group.name),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )));
-
-            for tool in &group.tools {
-                let is_selected = tool_row == self.picker.selected;
-                if is_selected {
-                    selected_line = lines.len();
-                }
-                let is_disabled = self.picker.disabled.contains(tool);
-                let pointer = if is_selected { "▸ " } else { "  " };
-                let checkbox = if is_disabled { "[ ]" } else { "[x]" };
-                let checkbox_style = if is_disabled {
-                    Style::default().fg(Color::Red)
-                } else {
-                    Style::default().fg(Color::Green)
-                };
-
-                lines.push(Line::from(vec![
-                    Span::styled(pointer.to_string(), Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("{checkbox} "), checkbox_style),
-                    Span::styled(
-                        tool.clone(),
-                        if is_selected {
-                            Style::default()
-                                .fg(Color::White)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(Color::Gray)
-                        },
-                    ),
-                ]));
-
-                tool_row += 1;
-            }
-            lines.push(Line::from(""));
-        }
-
-        let available_rows = area.height.saturating_sub(2) as usize;
-        let scroll_y = if selected_line >= available_rows {
-            (selected_line - available_rows + 1) as u16
-        } else {
-            0
-        };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Tools (Alt+P) · Space toggle ")
-            .border_style(Style::default().fg(Color::Cyan))
-            .style(Style::default().bg(Color::Rgb(20, 20, 20)));
-
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .scroll((scroll_y, 0))
-            .style(Style::default().bg(Color::Rgb(20, 20, 20)));
-        paragraph.render(area, buf);
-    }
-}
-
-// ── Planner Question Widget ──────────────────────────────────────────────
-
-struct PlannerQuestionWidget<'a> {
-    state: &'a PlannerQuestionState,
-}
-
-impl<'a> PlannerQuestionWidget<'a> {
-    fn new(state: &'a PlannerQuestionState) -> Self {
-        Self { state }
-    }
-}
-
-impl Widget for PlannerQuestionWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        use ratatui::widgets::{Block, Borders, Wrap};
-
-        Clear.render(area, buf);
-
-        let qi = self.state.current_question;
-        let q = &self.state.questions[qi];
-
-        let mut lines: Vec<Line<'_>> = Vec::new();
-
-        lines.push(Line::from(""));
-
-        // Tab headers
-        let mut tab_spans: Vec<Span<'_>> = vec![Span::raw(" ")];
-        for (i, question) in self.state.questions.iter().enumerate() {
-            let style = if i == qi {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-            tab_spans.push(Span::styled(format!(" {} ", question.header), style));
-            if i + 1 < self.state.questions.len() {
-                tab_spans.push(Span::styled(" | ", Style::default().fg(Color::DarkGray)));
-            }
-        }
-        lines.push(Line::from(tab_spans));
-        lines.push(Line::from(""));
-
-        // Question text
-        lines.push(Line::from(Span::styled(
-            format!(" {}", q.question),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-
-        // Options
-        let custom_idx = q.options.len(); // virtual "Custom response..." index
-        for (i, opt) in q.options.iter().enumerate() {
-            let is_selected = i == self.state.selections[qi];
-            let is_checked = q.multi_select
-                && self.state.multi_selections[qi]
-                    .get(i)
-                    .copied()
-                    .unwrap_or(false);
-
-            let pointer = if is_selected { "▸ " } else { "  " };
-            let checkbox = if q.multi_select {
-                if is_checked { "[x] " } else { "[ ] " }
-            } else if is_selected {
-                "(●) "
-            } else {
-                "( ) "
-            };
-
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Gray)
-            };
-
-            lines.push(Line::from(vec![
-                Span::styled(format!(" {pointer}"), style),
-                Span::styled(checkbox.to_string(), style),
-                Span::styled(opt.label.clone(), style),
-            ]));
-
-            if let Some(ref desc) = opt.description {
-                lines.push(Line::from(Span::styled(
-                    format!("       {desc}"),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        }
-
-        // "Custom response..." option (always last)
-        {
-            let is_selected = self.state.selections[qi] == custom_idx;
-            let pointer = if is_selected { "▸ " } else { "  " };
-            let radio = if is_selected { "(●) " } else { "( ) " };
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-            lines.push(Line::from(vec![
-                Span::styled(format!(" {pointer}"), style),
-                Span::styled(radio.to_string(), style),
-                Span::styled("Custom response...", style),
-            ]));
-        }
-
-        // Custom text input area (shown when editing_custom is active)
-        if self.state.editing_custom && self.state.selections[qi] == custom_idx {
-            lines.push(Line::from(""));
-            let input_text = &self.state.custom_inputs[qi];
-            let display = if input_text.is_empty() {
-                vec![Span::styled(
-                    "  Type your response here…",
-                    Style::default().fg(Color::DarkGray),
-                )]
-            } else {
-                vec![
-                    Span::styled("  ", Style::default()),
-                    Span::styled(input_text.clone(), Style::default().fg(Color::White)),
-                    Span::styled("█", Style::default().fg(Color::Yellow)),
-                ]
-            };
-            lines.push(Line::from(display));
-        }
-
-        lines.push(Line::from(""));
-        let hint = if self.state.editing_custom {
-            " Type response · Enter submit · Esc back"
-        } else if self.state.questions.len() > 1 {
-            " ↑↓ select · Space/Enter choose · Tab next · Enter confirm · Esc cancel"
-        } else {
-            " ↑↓ select · Space/Enter choose · Enter confirm · Esc cancel"
-        };
-        lines.push(Line::from(Span::styled(
-            hint,
-            Style::default().fg(Color::DarkGray),
-        )));
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Planner Question ")
-            .border_style(Style::default().fg(Color::Magenta));
-
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false });
-        paragraph.render(area, buf);
-    }
-}
-
-/// Format a timestamp as a human-readable "time ago" string
-fn format_time_ago(dt: chrono::DateTime<Utc>) -> String {
-    let now = Utc::now();
-    let duration = now.signed_duration_since(dt);
-
-    let seconds = duration.num_seconds();
-    if seconds < 60 {
-        return format!("{seconds}s ago");
-    }
-
-    let minutes = duration.num_minutes();
-    if minutes < 60 {
-        return format!("{minutes}m ago");
-    }
-
-    let hours = duration.num_hours();
-    if hours < 24 {
-        return format!("{hours}h ago");
-    }
-
-    let days = duration.num_days();
-    if days < 30 {
-        return format!("{days}d ago");
-    }
-
-    let months = days / 30;
-    format!("{months}mo ago")
 }

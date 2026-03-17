@@ -4535,6 +4535,13 @@ impl App {
                     "system",
                     format!("Switched to {entry}{effort_label}"),
                 ));
+
+                // Notify daemon so it uses the new model for agent creation
+                if let Some(ref daemon) = self.daemon_tx {
+                    let _ = daemon.send(&crate::ws_client::OutMessage::SetModel {
+                        model: entry.to_string(),
+                    });
+                }
             }
             Err(e) => {
                 self.messages

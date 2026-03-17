@@ -3,18 +3,18 @@ set -euo pipefail
 
 # Parse command line arguments
 TARGET=""
-INSTALL_DESKTOP=true
+INSTALL_DESKTOP=false
 
 for arg in "$@"; do
   case "${arg}" in
-    --no-desktop)
-      INSTALL_DESKTOP=false
+    --desktop)
+      INSTALL_DESKTOP=true
       ;;
     --help|-h)
       echo "Usage: $0 [OPTIONS] [stable|latest|daily|VERSION]"
       echo ""
       echo "Options:"
-      echo "  --no-desktop    Skip desktop app installation (CLI only)"
+      echo "  --desktop       Also install the desktop app (Tauri)"
       echo "  --help, -h      Show this help"
       exit 0
       ;;
@@ -257,11 +257,9 @@ mkdir -p "${BIN_DIR}"
 install_binary "lukan-${PLATFORM}" "lukan"
 ok "Checksum verified"
 
-# Install lukan-desktop (unless --no-desktop)
+# Install lukan-desktop (only with --desktop)
 if [ "${INSTALL_DESKTOP}" = true ] && echo "${CHECKSUMS}" | grep -q "lukan-desktop-${PLATFORM}"; then
   install_binary "lukan-desktop-${PLATFORM}" "lukan-desktop" || warn "Desktop app not installed (optional)"
-elif [ "${INSTALL_DESKTOP}" = false ]; then
-  info "Skipping desktop app (--no-desktop)"
 fi
 
 # --- Restart daemon if running (pick up new binary) ---

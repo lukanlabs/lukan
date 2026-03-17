@@ -83,12 +83,13 @@ pub async fn list_providers() -> impl IntoResponse {
     ];
 
     let current_model = config.model.clone();
+    let has_model = current_model.is_some();
     let list: Vec<ProviderInfoDto> = providers
         .iter()
         .map(|p| ProviderInfoDto {
             name: p.to_string(),
             default_model: String::new(),
-            active: config.provider == *p,
+            active: has_model && config.provider == *p,
             current_model: if config.provider == *p {
                 current_model.clone()
             } else {

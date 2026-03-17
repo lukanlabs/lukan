@@ -77,6 +77,8 @@ pub async fn get_provider_status() -> impl IntoResponse {
         ProviderName::GithubCopilot,
         ProviderName::OpenaiCodex,
         ProviderName::Zai,
+        ProviderName::OllamaCloud,
+        ProviderName::LukanCloud,
         ProviderName::OpenaiCompatible,
         ProviderName::Gemini,
     ];

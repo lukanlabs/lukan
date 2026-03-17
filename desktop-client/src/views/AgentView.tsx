@@ -138,6 +138,16 @@ export default function AgentView() {
 
   const activeStats = activeTabId ? statsRef.current.get(activeTabId) : undefined;
 
+  // Show placeholder while tabs are loading (first render, async createAgentTab)
+  if (tabs.length === 0) {
+    return (
+      <div className="flex flex-1 flex-col min-h-0 min-w-0 w-full overflow-hidden items-center justify-center"
+           style={{ color: "var(--text-secondary)", opacity: 0.5 }}>
+        Loading...
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-1 flex-col min-h-0 min-w-0 w-full overflow-hidden">
       <AgentTabBar

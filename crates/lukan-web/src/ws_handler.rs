@@ -1943,8 +1943,13 @@ async fn send_init(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
-    let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
+    // Show empty provider when no model is configured (fresh install)
+    let provider_name = if model_name.is_empty() {
+        String::new()
+    } else {
+        state.provider_name.lock().await.clone()
+    };
     let permission_mode = state.permission_mode.borrow().to_string();
 
     send_json(

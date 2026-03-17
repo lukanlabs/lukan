@@ -1,5 +1,6 @@
 mod agent_loop;
 pub mod message_history;
+pub(crate) mod memory_helpers;
 pub mod permission_matcher;
 pub mod pipelines;
 pub mod session_manager;

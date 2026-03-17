@@ -1809,6 +1809,14 @@ async fn handle_set_model(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
+    // Reload credentials from disk so codex-auth/setup changes are picked up
+    {
+        let mut config = state.config.lock().await;
+        if let Ok(fresh_creds) = lukan_core::config::CredentialsManager::load().await {
+            config.credentials = fresh_creds;
+        }
+    }
+
     // Parse "provider:model" format
     let (provider_str, model_str) = if let Some(colon) = model.find(':') {
         (model[..colon].to_string(), model[colon + 1..].to_string())
@@ -2003,6 +2011,20 @@ async fn send_planner_answer(state: &AppState, session_id: Option<&str>, answer:
 
 /// Create a new AgentLoop
 async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
+    // Reload config + credentials from disk so changes from setup/codex-auth
+    // (which write to disk but don't notify the running daemon) are picked up.
+    {
+        let mut config = state.config.lock().await;
+        if let Ok(fresh_creds) = lukan_core::config::CredentialsManager::load().await {
+            config.credentials = fresh_creds;
+        }
+        if config.config.model.is_none()
+            && let Ok(fresh) = lukan_core::config::ConfigManager::load().await
+        {
+            config.config = fresh;
+        }
+    }
+
     let config = state.config.lock().await;
     let provider = create_provider(&config)?;
     let has_browser = lukan_browser::BrowserManager::get().is_some();
@@ -2093,6 +2115,19 @@ async fn create_agent_with_session(
     state: &Arc<AppState>,
     session_id: &str,
 ) -> anyhow::Result<AgentLoop> {
+    // Reload config + credentials from disk (same reason as create_agent)
+    {
+        let mut config = state.config.lock().await;
+        if let Ok(fresh_creds) = lukan_core::config::CredentialsManager::load().await {
+            config.credentials = fresh_creds;
+        }
+        if config.config.model.is_none()
+            && let Ok(fresh) = lukan_core::config::ConfigManager::load().await
+        {
+            config.config = fresh;
+        }
+    }
+
     let config = state.config.lock().await;
     let provider = create_provider(&config)?;
     let has_browser = lukan_browser::BrowserManager::get().is_some();

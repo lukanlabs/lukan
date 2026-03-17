@@ -289,20 +289,20 @@ export default function ConfigTab() {
 
       <div className="flex flex-col gap-4">
         {/* LLM Section */}
-        <Section icon={<Cpu size={15} />} title="Language Model" description="Provider and model configuration">
+        <Section icon={<Cpu size={15} />} title="Language Model" description="Current model — change in Providers tab">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Provider" icon={<Cpu size={10} />}>
-              <StyledSelect
-                value={config.provider}
-                options={providerOptions}
-                onChange={(val) => update({ provider: val, model: undefined })}
+              <StyledInput
+                value={selectedProvider?.active ? config.provider : "Not configured"}
+                readOnly
+                style={{ opacity: selectedProvider?.active ? 1 : 0.5 }}
               />
             </Field>
             <Field label="Model" icon={<Hash size={10} />}>
-              <StyledSelect
-                value={config.model ?? ""}
-                options={modelOptions}
-                onChange={(val) => update({ model: val || undefined })}
+              <StyledInput
+                value={config.model || "Not configured"}
+                readOnly
+                style={{ opacity: config.model ? 1 : 0.5 }}
               />
             </Field>
           </div>

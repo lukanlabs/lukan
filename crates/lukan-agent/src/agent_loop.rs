@@ -721,9 +721,11 @@ impl AgentLoop {
             .and_then(|c| c.timezone)
             .unwrap_or_else(|| "UTC".to_string());
         let mut dynamic = format!(
-            "Current date: {} ({}). Use this for any time-relative operations.",
+            "Current date: {} ({}). Use this for any time-relative operations.\n\
+             Working directory: {}. All file operations and commands run here. Do NOT cd to other directories or operate on files outside this workspace.",
             now.format("%Y-%m-%d %H:%M UTC"),
-            tz_name
+            tz_name,
+            self.cwd.display()
         );
 
         // Include current tasks in dynamic section

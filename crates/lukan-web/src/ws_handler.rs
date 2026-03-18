@@ -2154,7 +2154,15 @@ async fn create_agent_with_session(
     state: &Arc<AppState>,
     session_id: &str,
 ) -> anyhow::Result<AgentLoop> {
-    let effective_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Read the session's cwd from disk so we use the correct working directory
+    let session_cwd = SessionManager::load(session_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.cwd)
+        .map(PathBuf::from);
+    let effective_cwd = session_cwd
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     // Reload config + credentials from disk (same reason as create_agent)
     {
         let mut config = state.config.lock().await;

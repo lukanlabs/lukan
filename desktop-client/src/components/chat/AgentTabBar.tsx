@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Plus, X, FolderOpen } from "lucide-react";
 import type { AgentTab } from "../../hooks/useAgentSessions";
 import type { TokenUsage } from "../../lib/types";
+import FolderPicker from "./FolderPicker";
 
 interface AgentTabBarProps {
   tabs: AgentTab[];
@@ -32,6 +33,7 @@ export default function AgentTabBar({
 }: AgentTabBarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -83,10 +85,7 @@ export default function AgentTabBar({
           <Plus size={15} />
         </button>
         <button
-          onClick={() => {
-            const path = prompt("Working directory for new agent:");
-            if (path?.trim()) onCreate(path.trim());
-          }}
+          onClick={() => setShowFolderPicker(true)}
           className="flex items-center justify-center w-7 h-7 rounded-md border-none cursor-pointer transition-colors"
           style={{ color: "#a1a1aa", background: "transparent" }}
           onMouseEnter={(e) => {
@@ -183,6 +182,15 @@ export default function AgentTabBar({
             </span>
           )}
         </div>
+      )}
+      {showFolderPicker && (
+        <FolderPicker
+          onSelect={(path) => {
+            setShowFolderPicker(false);
+            onCreate(path);
+          }}
+          onCancel={() => setShowFolderPicker(false)}
+        />
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, MessageSquare, Loader2, Search, Trash2, CheckSquare, Square, X } from "lucide-react";
+import { MessageSquare, Loader2, Search, Trash2, CheckSquare, Square, X } from "lucide-react";
 import type { SessionSummary } from "../../../lib/types";
 import { listSessions, deleteSession, deleteAllSessions } from "../../../lib/tauri";
 
@@ -282,21 +282,6 @@ export function SessionsPanel({
             </button>
           </>
         )}
-        <button
-          onClick={onNewSession}
-          title="New Session"
-          style={{
-            border: "none",
-            background: "transparent",
-            color: "var(--text-muted)",
-            cursor: "pointer",
-            padding: 4,
-            borderRadius: 4,
-            flexShrink: 0,
-          }}
-        >
-          <Plus size={14} />
-        </button>
       </div>
 
       {filtered === null ? (

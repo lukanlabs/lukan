@@ -55,6 +55,44 @@ pub struct ToolContext {
     pub tab_id: Option<String>,
 }
 
+/// Run a tokio Command with cancellation support.
+/// Spawns the process, then races `wait_with_output()` against the cancel token.
+/// On cancellation, kills the process tree and returns an error.
+pub async fn run_command_cancellable(
+    mut cmd: tokio::process::Command,
+    cancel: &Option<CancellationToken>,
+    timeout: std::time::Duration,
+) -> anyhow::Result<std::process::Output> {
+    let child = cmd.spawn()?;
+    let pid = child.id().unwrap_or(0);
+
+    tokio::select! {
+        result = tokio::time::timeout(timeout, child.wait_with_output()) => {
+            match result {
+                Ok(Ok(output)) => Ok(output),
+                Ok(Err(e)) => Err(e.into()),
+                Err(_) => {
+                    if pid > 0 {
+                        bg_processes::kill_process_group_force(pid).await;
+                    }
+                    Err(anyhow::anyhow!("Command timed out after {}s", timeout.as_secs()))
+                }
+            }
+        }
+        _ = async {
+            match cancel {
+                Some(t) => t.cancelled().await,
+                None => std::future::pending().await,
+            }
+        } => {
+            if pid > 0 {
+                bg_processes::kill_process_group_force(pid).await;
+            }
+            Err(anyhow::anyhow!("Cancelled by user."))
+        }
+    }
+}
+
 impl ToolContext {
     /// Check if a path is allowed under the configured restrictions.
     /// Returns `Ok(())` if allowed, or an error `ToolResult` if blocked.

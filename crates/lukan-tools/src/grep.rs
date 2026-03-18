@@ -3,7 +3,7 @@ use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 use tokio::process::Command;
 
-use crate::{Tool, ToolContext, sandbox};
+use crate::{Tool, ToolContext, run_command_cancellable, sandbox};
 
 const MAX_OUTPUT_BYTES: usize = 30_000;
 const GREP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
@@ -171,13 +171,13 @@ impl Tool for GrepTool {
         };
 
         // Try rg first, fallback to grep
-        let output = try_rg(&opts, &ctx.cwd)
+        let output = try_rg(&opts, &ctx.cwd, &ctx.cancel)
             .await
             .map_err(|_| anyhow::anyhow!("rg not available"));
 
         let output = match output {
             Ok(o) => o,
-            Err(_) => try_grep(&opts, &ctx.cwd).await?,
+            Err(_) => try_grep(&opts, &ctx.cwd, &ctx.cancel).await?,
         };
 
         let mut text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -223,6 +223,7 @@ struct GrepOpts<'a> {
 async fn try_rg(
     opts: &GrepOpts<'_>,
     cwd: &std::path::Path,
+    cancel: &Option<tokio_util::sync::CancellationToken>,
 ) -> anyhow::Result<std::process::Output> {
     let mut cmd = Command::new("rg");
 
@@ -274,16 +275,13 @@ async fn try_rg(
 
     cmd.arg(opts.pattern).arg(opts.path).current_dir(cwd);
 
-    let output = tokio::time::timeout(GREP_TIMEOUT, cmd.output())
-        .await
-        .map_err(|_| anyhow::anyhow!("rg timed out after {}s", GREP_TIMEOUT.as_secs()))??;
-    // rg exit code 1 means no matches (not an error)
-    Ok(output)
+    run_command_cancellable(cmd, cancel, GREP_TIMEOUT).await
 }
 
 async fn try_grep(
     opts: &GrepOpts<'_>,
     cwd: &std::path::Path,
+    cancel: &Option<tokio_util::sync::CancellationToken>,
 ) -> anyhow::Result<std::process::Output> {
     let mut cmd = Command::new("grep");
 
@@ -326,8 +324,5 @@ async fn try_grep(
 
     cmd.arg(opts.pattern).arg(opts.path).current_dir(cwd);
 
-    let output = tokio::time::timeout(GREP_TIMEOUT, cmd.output())
-        .await
-        .map_err(|_| anyhow::anyhow!("grep timed out after {}s", GREP_TIMEOUT.as_secs()))??;
-    Ok(output)
+    run_command_cancellable(cmd, cancel, GREP_TIMEOUT).await
 }

@@ -1,0 +1,636 @@
+use super::helpers::format_tool_result_named;
+use super::*;
+
+impl App {
+    pub(super) fn handle_subagent_update(&mut self, update: SubAgentUpdate) {
+        // Upsert into global manager so Alt+S can find daemon subagents
+        let update_for_upsert = update.clone();
+        tokio::spawn(async move {
+            lukan_agent::sub_agent::upsert_from_update(&update_for_upsert).await;
+        });
+
+        // Show message when subagent completes or errors
+        if update.status == "completed" || update.status == "error" || update.status == "aborted" {
+            let task_preview = if update.task.len() > 50 {
+                format!("{}...", &update.task[..update.task.floor_char_boundary(47)])
+            } else {
+                update.task.clone()
+            };
+            self.messages.push(ChatMessage::new(
+                "system",
+                format!("SubAgent {} {}: {}", update.id, update.status, task_preview),
+            ));
+        }
+
+        if let Some(ref mut picker) = self.subagent_picker {
+            // Update detail view if viewing this specific agent
+            if picker.view == SubAgentPickerView::ChatDetail && picker.detail_id == update.id {
+                picker.detail_status = update.status.clone();
+                picker.detail_turns = format!("{}/{}", update.turns, update.max_turns);
+                picker.detail_tokens = format!(
+                    "{}in/{}out tokens",
+                    update.input_tokens, update.output_tokens
+                );
+                picker.detail_error = update.error.clone();
+                picker.detail_messages = update
+                    .chat_messages
+                    .iter()
+                    .map(|m| ChatMessage::new(&m.role, &m.content))
+                    .collect();
+            }
+        }
+    }
+
+    /// Send an approval response — routes to daemon or in-process channel.
+    pub(super) fn send_approval(&self, response: ApprovalResponse) {
+        if let Some(ref daemon) = self.daemon_tx {
+            let tab = self.daemon_tab_id.clone();
+            let msg = match &response {
+                ApprovalResponse::Approved { approved_ids } => {
+                    crate::ws_client::OutMessage::Approve {
+                        approved_ids: approved_ids.clone(),
+                        session_id: tab,
+                    }
+                }
+                ApprovalResponse::AlwaysAllow {
+                    approved_ids,
+                    tools,
+                } => crate::ws_client::OutMessage::AlwaysAllow {
+                    approved_ids: approved_ids.clone(),
+                    tools: tools.clone(),
+                    session_id: tab,
+                },
+                ApprovalResponse::DeniedAll => {
+                    crate::ws_client::OutMessage::DenyAll { session_id: tab }
+                }
+            };
+            let _ = daemon.send(&msg);
+        } else if let Some(ref tx) = self.approval_tx {
+            let _ = tx.try_send(response);
+        }
+    }
+
+    /// Send a plan review response — routes to daemon or in-process channel.
+    pub(super) fn send_plan_review(&self, response: PlanReviewResponse) {
+        if let Some(ref daemon) = self.daemon_tx {
+            let tab = self.daemon_tab_id.clone();
+            let msg = match &response {
+                PlanReviewResponse::Accepted { modified_tasks } => {
+                    crate::ws_client::OutMessage::PlanAccept {
+                        tasks: modified_tasks
+                            .as_ref()
+                            .and_then(|t| serde_json::to_value(t).ok()),
+                        session_id: tab,
+                    }
+                }
+                PlanReviewResponse::Rejected { feedback } => {
+                    crate::ws_client::OutMessage::PlanReject {
+                        feedback: feedback.clone(),
+                        session_id: tab,
+                    }
+                }
+                PlanReviewResponse::TaskFeedback {
+                    task_index,
+                    feedback,
+                } => crate::ws_client::OutMessage::PlanTaskFeedback {
+                    task_index: *task_index as u32,
+                    feedback: feedback.clone(),
+                    session_id: tab,
+                },
+            };
+            let _ = daemon.send(&msg);
+        } else if let Some(ref tx) = self.plan_review_tx {
+            let _ = tx.try_send(response);
+        }
+    }
+
+    /// Send a planner answer — routes to daemon or in-process channel.
+    pub(super) fn send_planner_answer(&self, answer: String) {
+        if let Some(ref daemon) = self.daemon_tx {
+            let msg = crate::ws_client::OutMessage::AnswerQuestion {
+                answer,
+                session_id: self.daemon_tab_id.clone(),
+            };
+            let _ = daemon.send(&msg);
+        } else if let Some(ref tx) = self.planner_answer_tx {
+            let _ = tx.try_send(answer);
+        }
+    }
+
+    /// Handle events from the daemon WebSocket connection.
+    pub(super) fn handle_daemon_event(&mut self, event: crate::ws_client::DaemonEvent) {
+        use crate::ws_client::DaemonEvent;
+        match event {
+            DaemonEvent::Stream(stream_event, saved_session_id) => {
+                // Only process stream events for our current session
+                if let Some(ref broadcast_sid) = saved_session_id {
+                    if let Some(ref our_sid) = self.session_id {
+                        if broadcast_sid != our_sid {
+                            return; // Not our session, ignore
+                        }
+                    } else {
+                        return; // No session selected, ignore broadcasts
+                    }
+                }
+                self.handle_stream_event(stream_event);
+            }
+            DaemonEvent::UserMessage { .. } => {
+                // Handled elsewhere or ignored
+            }
+            DaemonEvent::Init { session_id, .. } => {
+                self.session_id = Some(session_id);
+            }
+            DaemonEvent::TabCreated { .. } => {}
+            DaemonEvent::ProcessingComplete {
+                session_id,
+                context_size,
+                aborted: _,
+            } => {
+                self.session_id = Some(session_id);
+                if let Some(cs) = context_size {
+                    self.context_size = cs;
+                }
+                // Ensure streaming is stopped (handle_stream_event should have done this
+                // via MessageEnd, but this is a safety net)
+                if self.is_streaming {
+                    self.is_streaming = false;
+                }
+            }
+            DaemonEvent::SessionList { sessions } => {
+                self.session_picker = Some(SessionPicker {
+                    sessions: sessions
+                        .into_iter()
+                        .map(|s| SessionSummary {
+                            id: s.id,
+                            name: s.name,
+                            created_at: s.created_at,
+                            updated_at: s.updated_at,
+                            message_count: s.message_count,
+                            provider: s.provider,
+                            model: s.model,
+                            last_message: s.last_message,
+                        })
+                        .collect(),
+                    selected: 0,
+                    current_id: self.session_id.clone(),
+                });
+                self.force_redraw = true;
+            }
+            DaemonEvent::SessionLoaded {
+                session_id,
+                messages: loaded_messages,
+                context_size,
+            } => {
+                self.session_id = Some(session_id.clone());
+                self.context_size = context_size;
+                // Clear current messages and populate from loaded session
+                self.messages.clear();
+                self.committed_msg_idx = 0;
+                self.viewport_scroll = 0;
+                for msg in &loaded_messages {
+                    use lukan_core::models::messages::{ContentBlock, MessageContent, Role};
+                    let display_role = match msg.role {
+                        Role::User => "user",
+                        Role::Assistant => "assistant",
+                        _ => "system",
+                    };
+                    let blocks = match &msg.content {
+                        MessageContent::Text(text) => {
+                            if !text.trim().is_empty() {
+                                self.messages.push(ChatMessage::new(display_role, text));
+                            }
+                            continue;
+                        }
+                        MessageContent::Blocks(blocks) => blocks,
+                    };
+                    for block in blocks {
+                        match block {
+                            ContentBlock::Text { text } => {
+                                if !text.trim().is_empty() {
+                                    self.messages.push(ChatMessage::new(display_role, text));
+                                }
+                            }
+                            ContentBlock::ToolUse { name, .. } => {
+                                self.messages
+                                    .push(ChatMessage::new("tool_call", format!("● {name}(...)")));
+                            }
+                            ContentBlock::ToolResult { content, .. } => {
+                                let preview = if content.len() > 200 {
+                                    format!("{}...", &content[..200])
+                                } else {
+                                    content.clone()
+                                };
+                                self.messages.push(ChatMessage::new("tool_result", preview));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!(
+                        "Loaded session {session_id} ({} messages)",
+                        loaded_messages.len()
+                    ),
+                ));
+                self.force_redraw = true;
+            }
+            DaemonEvent::ModelChanged {
+                provider_name,
+                model_name,
+            } => {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Model changed to {provider_name}:{model_name}"),
+                ));
+            }
+            DaemonEvent::CheckpointList { checkpoints } => {
+                if checkpoints.is_empty() {
+                    self.messages.push(ChatMessage::new(
+                        "system",
+                        "No checkpoints in current session.",
+                    ));
+                } else {
+                    let entries: Vec<RewindEntry> = checkpoints
+                        .iter()
+                        .map(|cp| {
+                            let (additions, deletions) =
+                                cp.snapshots.iter().fold((0u32, 0u32), |(a, d), snap| {
+                                    (
+                                        a + snap
+                                            .diff
+                                            .as_ref()
+                                            .map(|d| d.matches("\n+").count() as u32)
+                                            .unwrap_or(0),
+                                        d + snap
+                                            .diff
+                                            .as_ref()
+                                            .map(|d| d.matches("\n-").count() as u32)
+                                            .unwrap_or(0),
+                                    )
+                                });
+                            RewindEntry {
+                                checkpoint_id: Some(cp.id.clone()),
+                                message: cp.message.clone(),
+                                files_changed: cp.snapshots.len(),
+                                additions,
+                                deletions,
+                            }
+                        })
+                        .collect();
+                    self.rewind_picker = Some(RewindPicker::new(entries));
+                }
+                self.force_redraw = true;
+            }
+            DaemonEvent::CompactComplete {
+                session_id,
+                messages: _,
+            } => {
+                self.session_id = Some(session_id);
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "Session compacted successfully.",
+                ));
+                self.force_redraw = true;
+            }
+            DaemonEvent::CheckpointRestored {
+                session_id,
+                messages: _,
+            } => {
+                self.session_id = Some(session_id);
+                self.messages
+                    .push(ChatMessage::new("system", "Checkpoint restored."));
+                self.force_redraw = true;
+            }
+            DaemonEvent::BgProcessList { processes } => {
+                if processes.is_empty() {
+                    self.messages
+                        .push(ChatMessage::new("system", "No background processes."));
+                } else {
+                    let entries: Vec<BgEntry> = processes
+                        .into_iter()
+                        .map(|p| {
+                            let alive = p.status == "Running";
+                            let started_at = chrono::DateTime::parse_from_rfc3339(&p.started_at)
+                                .map(|dt| dt.with_timezone(&Utc))
+                                .unwrap_or_else(|_| Utc::now());
+                            BgEntry {
+                                pid: p.pid,
+                                command: p.command,
+                                started_at,
+                                alive,
+                            }
+                        })
+                        .collect();
+                    self.bg_picker = Some(BgPicker::new(entries));
+                }
+                self.force_redraw = true;
+            }
+            DaemonEvent::BgProcessLog { pid, log } => {
+                // Update the bg_picker log view if it's showing this process
+                if let Some(ref mut picker) = self.bg_picker
+                    && (picker.log_pid == pid || picker.log_pid == 0)
+                {
+                    picker.log_content = log;
+                    picker.log_pid = pid;
+                }
+                self.force_redraw = true;
+            }
+            DaemonEvent::Error(error) => {
+                self.is_streaming = false;
+                self.messages
+                    .push(ChatMessage::new("system", format!("Error: {error}")));
+            }
+            DaemonEvent::Disconnected => {
+                self.is_streaming = false;
+                self.daemon_tx = None;
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    "Disconnected from daemon. Falling back to in-process mode.",
+                ));
+            }
+        }
+    }
+
+    pub(super) fn handle_stream_event(&mut self, event: StreamEvent) {
+        match event {
+            StreamEvent::MessageStart => {
+                self.streaming_text.clear();
+                self.streaming_thinking.clear();
+                self.active_tool = None;
+                self.turn_text_msg_idx = None;
+            }
+            StreamEvent::TextDelta { text } => {
+                self.streaming_text.push_str(&text);
+            }
+            StreamEvent::ThinkingDelta { text } => {
+                self.streaming_thinking.push_str(&text);
+            }
+            StreamEvent::ToolUseStart { name, .. } => {
+                // Flush current text as a message before tool call.
+                // If we already flushed text earlier in this turn, append to
+                // the same message so mid-sentence splits don't occur.
+                self.active_tool = Some(name.clone());
+                let content = std::mem::take(&mut self.streaming_text);
+                let trimmed = content.trim_end().to_string();
+                if !trimmed.is_empty() {
+                    if let Some(idx) = self.turn_text_msg_idx {
+                        if idx < self.messages.len() && self.messages[idx].role == "assistant" {
+                            self.messages[idx].content.push_str(&trimmed);
+                        } else {
+                            self.messages.push(ChatMessage::new("assistant", trimmed));
+                            self.turn_text_msg_idx = Some(self.messages.len() - 1);
+                        }
+                    } else {
+                        self.messages.push(ChatMessage::new("assistant", trimmed));
+                        self.turn_text_msg_idx = Some(self.messages.len() - 1);
+                    }
+                }
+            }
+            StreamEvent::ToolUseEnd { id, name, input } => {
+                // ● ToolName(input summary)
+                let summary = summarize_tool_input(&name, &input);
+                let mut msg = ChatMessage::new("tool_call", format!("● {name}({summary})"));
+                msg.tool_id = Some(id);
+                self.messages.push(msg);
+
+                // Auto-refresh task panel when task tools are used
+                if matches!(name.as_str(), "TaskAdd" | "TaskUpdate" | "TaskList") {
+                    self.task_panel_needs_refresh = true;
+                }
+            }
+            StreamEvent::ToolProgress { id, name, content } => {
+                self.active_tool = Some(name);
+                let sanitized = sanitize_for_display(&content);
+                let insert_pos = self.tool_insert_position(&id);
+
+                // Try to consolidate with existing progress for this tool
+                if insert_pos > 0 {
+                    let prev = &self.messages[insert_pos - 1];
+                    if prev.role == "tool_result"
+                        && prev.tool_id.as_deref() == Some(&*id)
+                        && prev.diff.is_none()
+                    {
+                        let prev = &mut self.messages[insert_pos - 1];
+                        prev.content.push('\n');
+                        prev.content.push_str(&format!("     {sanitized}"));
+                        return;
+                    }
+                }
+
+                let mut msg = ChatMessage::new("tool_result", format!("  ⎿  {content}"));
+                msg.tool_id = Some(id);
+                self.messages.insert(insert_pos, msg);
+            }
+            StreamEvent::ToolResult {
+                id,
+                name,
+                content,
+                is_error,
+                diff,
+                ..
+            } => {
+                self.active_tool = None;
+                let is_err = is_error.unwrap_or(false);
+
+                // For compact tools (ReadFile, Grep, Glob): update the existing
+                // progress message in-place instead of adding a new line.
+                let compact = matches!(name.as_str(), "ReadFiles" | "Grep" | "Glob")
+                    && !is_err
+                    && diff.is_none();
+
+                if compact {
+                    let summary = format_tool_result_named(&name, &content, false);
+                    // Find existing progress message for this tool_id and replace
+                    if let Some(pos) = self
+                        .messages
+                        .iter()
+                        .rposition(|m| m.role == "tool_result" && m.tool_id.as_deref() == Some(&id))
+                    {
+                        self.messages[pos].content = summary;
+                    } else {
+                        // No progress message found — insert normally
+                        let insert_pos = self.tool_insert_position(&id);
+                        let mut msg = ChatMessage::new("tool_result", summary);
+                        msg.tool_id = Some(id);
+                        self.messages.insert(insert_pos, msg);
+                    }
+                } else {
+                    let formatted = format_tool_result_named(&name, &content, is_err);
+                    let insert_pos = self.tool_insert_position(&id);
+                    let mut msg = ChatMessage::with_diff("tool_result", formatted, diff);
+                    msg.tool_id = Some(id);
+                    self.messages.insert(insert_pos, msg);
+                }
+            }
+            StreamEvent::Usage {
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+            } => {
+                self.input_tokens += input_tokens;
+                self.output_tokens += output_tokens;
+                self.cache_read_tokens += cache_read_tokens.unwrap_or(0);
+                self.cache_creation_tokens += cache_creation_tokens.unwrap_or(0);
+                // The input_tokens of the latest call IS the current context size
+                self.context_size = input_tokens;
+            }
+            StreamEvent::MessageEnd { stop_reason } => {
+                let content = std::mem::take(&mut self.streaming_text);
+                let trimmed = content.trim_end().to_string();
+                if !trimmed.is_empty() {
+                    if let Some(idx) = self.turn_text_msg_idx {
+                        if idx < self.messages.len() && self.messages[idx].role == "assistant" {
+                            self.messages[idx].content.push_str(&trimmed);
+                        } else {
+                            self.messages.push(ChatMessage::new("assistant", trimmed));
+                        }
+                    } else {
+                        self.messages.push(ChatMessage::new("assistant", trimmed));
+                    }
+                }
+                self.turn_text_msg_idx = None;
+                // When stop_reason is ToolUse, tools are about to execute —
+                // keep is_streaming=true so Alt+B works and the UI shows
+                // "streaming" status. ToolResult events will follow, and
+                // the final MessageEnd (with EndTurn) will set it to false.
+                // Drain queued messages — inject mid-turn or at end of turn
+                if self.is_daemon_mode() && !self.queued_messages.lock().unwrap().is_empty() {
+                    let remaining: Vec<String> =
+                        self.queued_messages.lock().unwrap().drain(..).collect();
+                    self.input = remaining.join("\n");
+                    self.cursor_pos = self.input.len();
+                    self.pending_queue_submit = true;
+                }
+
+                if stop_reason != StopReason::ToolUse {
+                    self.is_streaming = false;
+                    self.active_tool = None;
+                }
+            }
+            StreamEvent::ApprovalRequired { tools } => {
+                let count = tools.len();
+                self.approval_prompt = Some(ApprovalPrompt {
+                    selections: vec![true; count],
+                    selected: 0,
+                    tools,
+                });
+            }
+            StreamEvent::PlanReview {
+                id,
+                title,
+                plan,
+                tasks,
+            } => {
+                self.plan_review = Some(PlanReviewState {
+                    id,
+                    title,
+                    plan,
+                    tasks,
+                    selected: 0,
+                    mode: PlanReviewMode::List,
+                    feedback_input: String::new(),
+                    scroll: 0,
+                });
+            }
+            StreamEvent::PlannerQuestion { id, questions } => {
+                let n = questions.len();
+                let multi_sels: Vec<Vec<bool>> = questions
+                    .iter()
+                    .map(|q| vec![false; q.options.len()])
+                    .collect();
+                self.planner_question = Some(PlannerQuestionState {
+                    id,
+                    questions,
+                    current_question: 0,
+                    selections: vec![0; n],
+                    multi_selections: multi_sels,
+                    editing_custom: false,
+                    custom_inputs: vec![String::new(); n],
+                });
+            }
+            StreamEvent::ModeChanged { mode } => {
+                if let Ok(parsed) = serde_json::from_value::<PermissionMode>(
+                    serde_json::Value::String(mode.clone()),
+                ) {
+                    self.permission_mode = parsed;
+                }
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Mode changed to: {mode}"),
+                ));
+            }
+            StreamEvent::Error { error } => {
+                self.messages
+                    .push(ChatMessage::new("assistant", format!("Error: {error}")));
+                self.is_streaming = false;
+                self.queued_messages.lock().unwrap().clear();
+            }
+            StreamEvent::ExploreProgress { id, activity, .. } => {
+                // Find existing progress message for this explore ID
+                let existing = self
+                    .messages
+                    .iter()
+                    .rposition(|m| m.role == "tool_result" && m.tool_id.as_deref() == Some(&id));
+
+                if let Some(idx) = existing {
+                    self.messages[idx].content = activity;
+                } else {
+                    let insert_pos = self.tool_insert_position(&id);
+                    let mut msg = ChatMessage::new("tool_result", activity);
+                    msg.tool_id = Some(id);
+                    self.messages.insert(insert_pos, msg);
+                }
+            }
+            StreamEvent::SystemNotification {
+                source,
+                level,
+                detail,
+            } => {
+                let msg = format!("[{level}] {source}: {detail}");
+                self.toast_notifications.push((msg, Instant::now()));
+            }
+            StreamEvent::QueuedMessageInjected { text } => {
+                // Flush any partial streaming text before inserting the user message
+                if !self.streaming_text.is_empty() {
+                    let content = std::mem::take(&mut self.streaming_text);
+                    self.messages.push(ChatMessage::new("assistant", content));
+                }
+                self.messages.push(ChatMessage::new("user", &text));
+            }
+            StreamEvent::SubAgentUpdate {
+                id,
+                task,
+                status,
+                turns,
+                max_turns,
+                input_tokens,
+                output_tokens,
+                error,
+                chat_messages,
+            } => {
+                // Convert daemon stream event into the in-process SubAgentUpdate format
+                let update = SubAgentUpdate {
+                    id,
+                    task,
+                    status,
+                    turns: turns as usize,
+                    max_turns: max_turns as usize,
+                    input_tokens,
+                    output_tokens,
+                    error,
+                    chat_messages: chat_messages
+                        .into_iter()
+                        .map(|m| lukan_agent::sub_agent::SubAgentChatMsg {
+                            role: m.role,
+                            content: m.content,
+                        })
+                        .collect(),
+                };
+                self.handle_subagent_update(update);
+            }
+            _ => {}
+        }
+    }
+}

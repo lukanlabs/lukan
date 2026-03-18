@@ -335,6 +335,19 @@ async fn dispatch_message(
             }
         }
 
+        ClientMessage::AddContext {
+            content,
+            session_id,
+        } => {
+            let tab = session_id.unwrap_or_default();
+            let mut sessions = state.sessions.lock().await;
+            if let Some(session) = sessions.get_mut(&tab)
+                && let Some(ref mut agent) = session.agent
+            {
+                agent.add_user_context(&content);
+            }
+        }
+
         ClientMessage::Abort { session_id } => {
             if let Some(sid) = &session_id {
                 if let Some(token) = cancel_tokens.get(sid) {

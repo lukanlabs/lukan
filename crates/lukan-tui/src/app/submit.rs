@@ -433,8 +433,14 @@ impl App {
                     self.messages
                         .push(ChatMessage::new("system", display_output));
 
-                    // Add to agent context (skip in daemon mode — agent lives on server)
-                    if self.daemon_tx.is_none() {
+                    // Add to agent context so the agent sees the command output
+                    if let Some(ref daemon) = self.daemon_tx {
+                        // Daemon mode: add to agent history without triggering a turn
+                        let _ = daemon.send(&crate::ws_client::OutMessage::AddContext {
+                            content: context_msg,
+                            session_id: self.daemon_tab_id.clone(),
+                        });
+                    } else {
                         let agent = match self.agent.take() {
                             Some(a) => a,
                             None => self.create_agent().await,

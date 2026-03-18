@@ -77,6 +77,12 @@ pub enum ClientMessage {
     DeleteAllSessions,
 
     // Agent tabs (multi-agent)
+    /// Add context to agent history without triggering a turn (e.g. !command output)
+    AddContext {
+        content: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
     CreateAgentTab {
         #[serde(default)]
         cwd: Option<String>,

@@ -433,15 +433,17 @@ impl App {
                     self.messages
                         .push(ChatMessage::new("system", display_output));
 
-                    // Add to agent context
-                    let agent = match self.agent.take() {
-                        Some(a) => a,
-                        None => self.create_agent().await,
-                    };
-                    let mut agent = agent;
-                    agent.add_user_context(&context_msg);
-                    self.session_id = Some(agent.session_id().to_string());
-                    self.agent = Some(agent);
+                    // Add to agent context (skip in daemon mode — agent lives on server)
+                    if self.daemon_tx.is_none() {
+                        let agent = match self.agent.take() {
+                            Some(a) => a,
+                            None => self.create_agent().await,
+                        };
+                        let mut agent = agent;
+                        agent.add_user_context(&context_msg);
+                        self.session_id = Some(agent.session_id().to_string());
+                        self.agent = Some(agent);
+                    }
                 }
                 Err(e) => {
                     self.messages.push(ChatMessage::new(

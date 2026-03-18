@@ -56,13 +56,14 @@ export default function AgentTabBar({
 
   return (
     <div
-      className="flex items-center gap-0.5 px-2 h-9 flex-shrink-0 overflow-x-auto min-w-0"
+      className="flex items-center h-9 flex-shrink-0 min-w-0"
       style={{
         background: "#0c0c0c",
         borderBottom: "1px solid rgba(60, 60, 60, 0.4)",
       }}
     >
-      {/* Tabs */}
+      {/* Scrollable tabs area */}
+      <div className="flex items-center gap-0.5 px-2 overflow-x-auto min-w-0 flex-1">
       {tabs.map((t, i) => {
         const isActive = t.id === activeTabId;
         const label = t.label || `Agent ${i + 1}`;
@@ -125,6 +126,10 @@ export default function AgentTabBar({
           </button>
         );
       })}
+      </div>
+
+      {/* Fixed buttons area */}
+      <div className="flex items-center gap-0.5 px-1 flex-shrink-0">
 
       {/* New tab button */}
       <button
@@ -165,11 +170,8 @@ export default function AgentTabBar({
         <FolderOpen size={14} />
       </button>
 
-      {/* Spacer */}
-      <div className="flex-1" />
-
       {/* Context / token stats — hidden on mobile */}
-      <div className="hidden sm:flex items-center gap-3">
+      <div className="hidden sm:flex items-center gap-3 ml-2">
         {hasCtx && (
           <span className="text-[10px] text-zinc-600 font-mono">
             ctx {formatTokens(contextSize)}
@@ -180,6 +182,7 @@ export default function AgentTabBar({
             {formatTokens(tokenUsage.input)}in / {formatTokens(tokenUsage.output)}out
           </span>
         )}
+      </div>
       </div>
     </div>
   );

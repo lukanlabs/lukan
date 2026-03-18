@@ -287,22 +287,31 @@ impl Tool for BashTool {
             };
         }
 
-        // No bg_signal — simple foreground with timeout + cancellation
-        let cancel_token = ctx.cancel.clone();
-        let timeout_fut = tokio::time::timeout(
-            std::time::Duration::from_millis(timeout_ms),
-            child.wait_with_output(),
-        );
+        // No bg_signal — foreground with timeout + cancellation.
+        // Still use OutputDrainer + log file so subagent processes have
+        // visible output in the /bg picker.
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+        let log_path = bg_processes::log_file_path(child_pid);
+        let drainer = OutputDrainer::start(child_pid, stdout_pipe, stderr_pipe, &log_path, true);
 
-        tokio::select! {
-            result = timeout_fut => {
-                match result {
-                    Ok(Ok(output)) => build_foreground_result(output),
-                    Ok(Err(e)) => Ok(ToolResult::error(format!("Failed to execute command: {e}"))),
-                    Err(_) => Ok(ToolResult::error(format!(
-                        "Command timed out after {timeout_ms}ms"
-                    ))),
-                }
+        // Register as bg process so it's visible in /bg while running
+        if child_pid > 0 {
+            bg_processes::add_bg_process(
+                child_pid,
+                command.to_string(),
+                log_path.clone(),
+                ctx.session_id.clone(),
+                ctx.agent_label.clone(),
+                ctx.tab_id.clone(),
+            );
+        }
+
+        let cancel_token = ctx.cancel.clone();
+        let timeout_dur = std::time::Duration::from_millis(timeout_ms);
+        let race = tokio::select! {
+            res = tokio::time::timeout(timeout_dur, child.wait()) => {
+                res.ok()
             }
             _ = async {
                 match &cancel_token {
@@ -313,7 +322,32 @@ impl Tool for BashTool {
                 if child_pid > 0 {
                     bg_processes::kill_process_group_force(child_pid).await;
                 }
-                Ok(ToolResult::error("Cancelled by user."))
+                bg_processes::remove_bg_process(child_pid);
+                let _ = tokio::fs::remove_file(&log_path).await;
+                return Ok(ToolResult::error("Cancelled by user."));
+            }
+        };
+
+        // Process completed or timed out — collect output
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let (stdout_data, stderr_data) = drainer.collect().await;
+        bg_processes::remove_bg_process(child_pid);
+        let _ = tokio::fs::remove_file(&log_path).await;
+
+        match race {
+            Some(Ok(status)) => build_foreground_result_from_parts(
+                &stdout_data,
+                &stderr_data,
+                status.code().unwrap_or(-1),
+            ),
+            Some(Err(e)) => Ok(ToolResult::error(format!("Failed to execute command: {e}"))),
+            None => {
+                if child_pid > 0 {
+                    let _ = child.kill().await;
+                }
+                Ok(ToolResult::error(format!(
+                    "Command timed out after {timeout_ms}ms"
+                )))
             }
         }
     }
@@ -592,13 +626,4 @@ fn build_foreground_result_from_parts(
     } else {
         Ok(ToolResult::error(content))
     }
-}
-
-/// Build a ToolResult from a completed foreground process
-fn build_foreground_result(output: std::process::Output) -> anyhow::Result<ToolResult> {
-    build_foreground_result_from_parts(
-        &output.stdout,
-        &output.stderr,
-        output.status.code().unwrap_or(-1),
-    )
 }

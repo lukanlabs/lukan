@@ -356,11 +356,11 @@ async fn dispatch_message(
                     token.cancel();
                     // Token + lock cleanup happens when the task signals done_tx
                 } else {
-                    // Not in a turn — just release processing lock
+                    // Not in a turn (or token lost after relay reconnect) —
+                    // force-release the processing lock regardless of owner conn_id
                     let mut processing = state.processing_sessions.lock().await;
-                    if processing.get(sid) == Some(&conn_id) {
-                        processing.remove(sid);
-                        info!(conn_id, session_id = %sid, "Aborted processing (no active turn)");
+                    if processing.remove(sid).is_some() {
+                        info!(conn_id, session_id = %sid, "Force-released processing lock on abort");
                     }
                 }
             }

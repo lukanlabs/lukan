@@ -87,15 +87,11 @@ pub(crate) fn extract_section(text: &str, start_marker: &str, end_marker: &str) 
 }
 
 /// Resolve the active memory path: project memory if `.active` marker exists,
-/// otherwise global memory if it exists, otherwise None.
+/// otherwise None. Global memory is never auto-updated — it's user-managed only.
 pub(crate) fn active_memory_path() -> Option<PathBuf> {
     let active_marker = LukanPaths::project_memory_active_file();
     if active_marker.exists() {
         return Some(LukanPaths::project_memory_file());
-    }
-    let global = LukanPaths::global_memory_file();
-    if global.exists() {
-        return Some(global);
     }
     None
 }

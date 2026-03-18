@@ -140,10 +140,10 @@ impl App {
                 saved_session_id,
             } => {
                 // Show user messages from other clients in the same session
-                if let Some(ref broadcast_sid) = saved_session_id {
-                    if self.session_id.as_deref() == Some(broadcast_sid) {
-                        self.messages.push(ChatMessage::new("user", &content));
-                    }
+                if let Some(ref broadcast_sid) = saved_session_id
+                    && self.session_id.as_deref() == Some(broadcast_sid)
+                {
+                    self.messages.push(ChatMessage::new("user", &content));
                 }
             }
             DaemonEvent::Init { session_id, .. } => {

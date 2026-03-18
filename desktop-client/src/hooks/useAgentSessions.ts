@@ -61,8 +61,8 @@ export function useAgentSessions() {
     persistTabs(t, active, _sessionMap);
   }, []);
 
-  const createTab = useCallback(async () => {
-    const id = await createAgentTab();
+  const createTab = useCallback(async (cwd?: string) => {
+    const id = await createAgentTab(cwd);
     const tab: AgentTab = { id };
     setTabs((prev) => {
       const next = [...prev, tab];

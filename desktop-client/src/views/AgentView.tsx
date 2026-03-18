@@ -155,7 +155,7 @@ export default function AgentView() {
         activeTabId={activeTabId}
         onSwitch={switchTab}
         onClose={handleDestroyTab}
-        onCreate={createTab}
+        onCreate={(cwd) => createTab(cwd)}
         onRename={renameTab}
         tokenUsage={activeStats?.tokenUsage}
         contextSize={activeStats?.contextSize}

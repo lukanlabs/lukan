@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X, FolderOpen } from "lucide-react";
 import type { AgentTab } from "../../hooks/useAgentSessions";
 import type { TokenUsage } from "../../lib/types";
 
@@ -8,7 +8,7 @@ interface AgentTabBarProps {
   activeTabId: string | null;
   onSwitch: (id: string) => void;
   onClose: (id: string) => void;
-  onCreate: () => void;
+  onCreate: (cwd?: string) => void;
   onRename: (id: string, label: string) => void;
   tokenUsage?: TokenUsage;
   contextSize?: number;
@@ -128,7 +128,7 @@ export default function AgentTabBar({
 
       {/* New tab button */}
       <button
-        onClick={onCreate}
+        onClick={() => onCreate()}
         className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
         style={{ color: "#71717a", background: "transparent" }}
         onMouseEnter={(e) => {
@@ -142,6 +142,27 @@ export default function AgentTabBar({
         title="New agent tab"
       >
         <Plus size={14} />
+      </button>
+
+      {/* New tab in specific directory */}
+      <button
+        onClick={() => {
+          const path = prompt("Working directory for new agent:");
+          if (path?.trim()) onCreate(path.trim());
+        }}
+        className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
+        style={{ color: "#71717a", background: "transparent" }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "rgba(50, 50, 50, 0.3)";
+          e.currentTarget.style.color = "#fafafa";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "transparent";
+          e.currentTarget.style.color = "#71717a";
+        }}
+        title="New agent tab in specific directory"
+      >
+        <FolderOpen size={14} />
       </button>
 
       {/* Spacer */}

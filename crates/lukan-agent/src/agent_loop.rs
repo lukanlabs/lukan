@@ -205,7 +205,8 @@ impl AgentLoop {
         let plan_review_rx = config.plan_review_rx;
         let planner_answer_rx = config.planner_answer_rx;
         let skip_session_save = config.skip_session_save;
-        let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
+        let mut session = SessionManager::create(&config.provider_name, &config.model_name).await?;
+        session.cwd = Some(config.cwd.to_string_lossy().to_string());
         let available_skills = lukan_tools::skills::discover_skills(&config.cwd).await;
         Ok(Self {
             provider: config.provider,

@@ -1545,7 +1545,16 @@ impl AgentLoop {
                             })
                             .await;
 
-                        // Keep current permission mode; user can cycle modes manually.
+                        // Switch from Planner to Auto so the agent can implement.
+                        // Other modes (Auto, Skip, Manual) stay unchanged.
+                        if self.permission_matcher.mode() == PermissionMode::Planner {
+                            self.permission_matcher.set_mode(PermissionMode::Auto);
+                            let _ = event_tx
+                                .send(StreamEvent::ModeChanged {
+                                    mode: "Auto".to_string(),
+                                })
+                                .await;
+                        }
                         // Rebuild system prompt with latest tasks + plan context.
                         self.rebuild_system_prompt().await;
 

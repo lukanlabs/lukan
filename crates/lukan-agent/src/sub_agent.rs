@@ -1535,11 +1535,17 @@ fn format_sub_agent_result(entry: &SubAgentEntry) -> ToolResult {
 
     let mut output = entry.text_output.clone();
 
-    // If text_output is empty and the subagent is still running, check for
-    // live output from background processes spawned by this subagent.
+    // If text_output is empty, check for live output from background
+    // processes spawned by this subagent (tagged with agent_label).
     if output.trim().is_empty() {
         let label_prefix = format!("subagent:{}", entry.id);
         let live_logs = lukan_tools::bg_processes::get_logs_by_label_prefix(&label_prefix, 100);
+        info!(
+            subagent_id = %entry.id,
+            label_prefix = %label_prefix,
+            live_logs_len = live_logs.len(),
+            "SubAgentResult: checking bg process logs"
+        );
         if !live_logs.is_empty() {
             output = live_logs;
         }

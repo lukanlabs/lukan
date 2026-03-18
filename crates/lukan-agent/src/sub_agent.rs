@@ -727,6 +727,12 @@ pub async fn abort_sub_agent(id: &str) -> bool {
     let mut mgr = MANAGER.write().await;
     if let Some(token) = mgr.cancel_tokens.remove(id) {
         token.cancel();
+        // Mark as aborted immediately so the UI reflects the change
+        // before the spawned task has a chance to process the cancellation.
+        if let Some(entry) = mgr.entries.get_mut(id) {
+            entry.status = SubAgentStatus::Aborted;
+            entry.completed_at = Some(Utc::now());
+        }
         true
     } else {
         false

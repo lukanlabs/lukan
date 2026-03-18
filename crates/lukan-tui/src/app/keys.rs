@@ -710,44 +710,40 @@ impl App {
                         && let Some(entry) = picker.selected_entry()
                     {
                         let entry_id = entry.id.clone();
-                        // In daemon mode, send abort via WS; otherwise local
+                        // In daemon mode, send abort via WS; in-process mode, abort locally.
+                        // Both paths also mark the local manager entry as Aborted so the
+                        // picker refresh below sees the updated status immediately.
                         if let Some(ref tx) = self.daemon_tx {
                             let msg = crate::ws_client::OutMessage::AbortSubAgent {
                                 id: entry_id.clone(),
                             };
                             let _ = tx.send(&msg);
-                        } else {
-                            lukan_agent::sub_agent::abort_sub_agent(&entry_id).await;
                         }
+                        // Always call local abort — in daemon mode this marks
+                        // the local mirror entry as Aborted; in in-process mode
+                        // it cancels the actual token.
+                        lukan_agent::sub_agent::abort_sub_agent(&entry_id).await;
+
                         self.messages.push(ChatMessage::new(
                             "system",
                             format!("SubAgent {entry_id} killed"),
                         ));
-                        // Refresh picker
+                        // Refresh picker — aborted entries are excluded
                         let agents = get_all_sub_agents().await;
-                        if agents.is_empty() {
+                        let running: Vec<_> = agents
+                            .iter()
+                            .filter(|a| a.status == lukan_agent::sub_agent::SubAgentStatus::Running)
+                            .collect();
+                        if running.is_empty() {
                             self.subagent_picker = None;
+                            self.force_redraw = true;
                         } else {
-                            let entries: Vec<SubAgentDisplayEntry> = agents
+                            let entries: Vec<SubAgentDisplayEntry> = running
                                 .iter()
                                 .map(|a| {
-                                    let elapsed = if a.status
-                                        == lukan_agent::sub_agent::SubAgentStatus::Running
-                                    {
-                                        let secs = chrono::Utc::now()
-                                            .signed_duration_since(a.started_at)
-                                            .num_seconds();
-                                        format!("{secs}s running")
-                                    } else {
-                                        a.completed_at
-                                            .map(|c| {
-                                                let secs = c
-                                                    .signed_duration_since(a.started_at)
-                                                    .num_seconds();
-                                                format!("{secs}s")
-                                            })
-                                            .unwrap_or_else(|| "?".to_string())
-                                    };
+                                    let secs = chrono::Utc::now()
+                                        .signed_duration_since(a.started_at)
+                                        .num_seconds();
                                     let task_preview = if a.task.len() > 60 {
                                         let end = a.task.floor_char_boundary(57);
                                         format!("{}...", &a.task[..end])
@@ -759,7 +755,7 @@ impl App {
                                         task: task_preview,
                                         status: format!("{}", a.status),
                                         turns: format!("{}/{}", a.turns, a.max_turns),
-                                        elapsed,
+                                        elapsed: format!("{secs}s running"),
                                     }
                                 })
                                 .collect();

@@ -29,8 +29,8 @@ use crate::memory_helpers::{
     active_memory_path, extract_section, format_messages_for_context, write_memory_file_to,
 };
 use crate::message_history::MessageHistory;
-use crate::vision_preprocessor::extract_image_urls;
 use crate::session_manager::SessionManager;
+use crate::vision_preprocessor::extract_image_urls;
 
 // ── Thresholds ────────────────────────────────────────────────────────────
 
@@ -2029,4 +2029,3 @@ impl AgentLoop {
         results
     }
 }
-

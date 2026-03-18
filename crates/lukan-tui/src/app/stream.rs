@@ -122,15 +122,11 @@ impl App {
         use crate::ws_client::DaemonEvent;
         match event {
             DaemonEvent::Stream(stream_event, saved_session_id) => {
-                // Only process stream events for our current session
-                if let Some(ref broadcast_sid) = saved_session_id {
-                    if let Some(ref our_sid) = self.session_id {
-                        if broadcast_sid != our_sid {
-                            return; // Not our session, ignore
-                        }
-                    } else {
-                        return; // No session selected, ignore broadcasts
-                    }
+                // Broadcasts from other clients always carry savedSessionId.
+                // The TUI receives its own events directly (without savedSessionId),
+                // so ignore ALL broadcasts to prevent cross-session visual leaking.
+                if saved_session_id.is_some() {
+                    return;
                 }
                 self.handle_stream_event(stream_event);
             }

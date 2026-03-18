@@ -2,6 +2,8 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { useAgentSessions, getSessionMap, setSessionMapEntry, deleteSessionMapEntry } from "../hooks/useAgentSessions";
 import { ChatPanel } from "./ChatView";
 import AgentTabBar from "../components/chat/AgentTabBar";
+import FolderPicker from "../components/chat/FolderPicker";
+import { Plus, FolderOpen } from "lucide-react";
 import type { TokenUsage } from "../lib/types";
 
 interface TabStats {
@@ -138,12 +140,62 @@ export default function AgentView() {
 
   const activeStats = activeTabId ? statsRef.current.get(activeTabId) : undefined;
 
-  // Show placeholder while tabs are loading (first render, async createAgentTab)
+  const [showEmptyFolderPicker, setShowEmptyFolderPicker] = useState(false);
+
+  // Show welcome screen when no tabs exist
   if (tabs.length === 0) {
     return (
-      <div className="flex flex-1 flex-col min-h-0 min-w-0 w-full overflow-hidden items-center justify-center"
-           style={{ color: "var(--text-secondary)", opacity: 0.5 }}>
-        Loading...
+      <div className="flex flex-1 flex-col min-h-0 min-w-0 w-full overflow-hidden items-center justify-center gap-4">
+        <div style={{ color: "var(--text-secondary)", fontSize: 14, opacity: 0.7 }}>
+          No agents running
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={() => createTab()}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 16px",
+              borderRadius: 6,
+              border: "1px solid rgba(60,60,60,0.6)",
+              background: "rgba(40,40,40,0.5)",
+              color: "#e4e4e7",
+              cursor: "pointer",
+              fontSize: 13,
+            }}
+          >
+            <Plus size={16} />
+            New Agent
+          </button>
+          <button
+            onClick={() => setShowEmptyFolderPicker(true)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 16px",
+              borderRadius: 6,
+              border: "1px solid rgba(60,60,60,0.6)",
+              background: "rgba(40,40,40,0.5)",
+              color: "#e4e4e7",
+              cursor: "pointer",
+              fontSize: 13,
+            }}
+          >
+            <FolderOpen size={16} />
+            Open in Directory
+          </button>
+        </div>
+        {showEmptyFolderPicker && (
+          <FolderPicker
+            onSelect={(path) => {
+              setShowEmptyFolderPicker(false);
+              createTab(path);
+            }}
+            onCancel={() => setShowEmptyFolderPicker(false)}
+          />
+        )}
       </div>
     );
   }

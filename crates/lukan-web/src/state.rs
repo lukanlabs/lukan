@@ -34,6 +34,8 @@ pub struct WebAgentSession {
     pub disabled_tools: std::collections::HashSet<String>,
     /// Messages queued by the user while the agent is processing (injected mid-turn)
     pub queued_messages: Arc<std::sync::Mutex<Vec<String>>>,
+    /// Working directory for this session (from the client that created it)
+    pub cwd: Option<String>,
 }
 
 impl WebAgentSession {
@@ -56,6 +58,7 @@ impl WebAgentSession {
             last_session_id: None,
             disabled_tools: std::collections::HashSet::new(),
             queued_messages: Arc::new(std::sync::Mutex::new(Vec::new())),
+            cwd: None,
         }
     }
 }

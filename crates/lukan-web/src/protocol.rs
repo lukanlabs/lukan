@@ -77,7 +77,10 @@ pub enum ClientMessage {
     DeleteAllSessions,
 
     // Agent tabs (multi-agent)
-    CreateAgentTab,
+    CreateAgentTab {
+        #[serde(default)]
+        cwd: Option<String>,
+    },
     DestroyAgentTab {
         session_id: String,
     },

@@ -83,7 +83,10 @@ pub enum OutMessage {
         session_id: Option<String>,
     },
     ListSessions,
-    CreateAgentTab,
+    CreateAgentTab {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+    },
     ListBgProcesses,
     GetBgProcessLog {
         pid: u32,
@@ -251,7 +254,10 @@ pub async fn connect(
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
     // Create our own agent tab so TUI doesn't share the singleton with web
-    let create_msg = serde_json::to_string(&OutMessage::CreateAgentTab)?;
+    let tui_cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
+    let create_msg = serde_json::to_string(&OutMessage::CreateAgentTab { cwd: tui_cwd })?;
     ws_tx
         .send(tungstenite::Message::Text(create_msg.into()))
         .await

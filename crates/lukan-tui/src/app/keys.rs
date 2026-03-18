@@ -886,12 +886,18 @@ impl App {
                     .push(ChatMessage::new("system", "Response cancelled."));
             }
         } else if key.code == KeyCode::Enter && self.is_streaming {
-            // Enter during streaming: queue the message (supports multiple)
+            // Enter during streaming: queue the message for mid-turn injection
             if !self.input.trim().is_empty() {
-                self.queued_messages
-                    .lock()
-                    .unwrap()
-                    .push(self.input.trim().to_string());
+                let text = self.input.trim().to_string();
+                // In daemon mode, send QueueMessage so the daemon injects mid-turn
+                if let Some(ref daemon) = self.daemon_tx {
+                    let _ = daemon.send(&crate::ws_client::OutMessage::QueueMessage {
+                        content: text.clone(),
+                        session_id: self.daemon_tab_id.clone(),
+                    });
+                }
+                // Also queue locally (for in-process mode and for UI display)
+                self.queued_messages.lock().unwrap().push(text);
                 self.input.clear();
                 self.cursor_pos = 0;
                 self.paste_info = None;

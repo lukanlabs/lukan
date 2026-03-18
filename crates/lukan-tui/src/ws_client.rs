@@ -26,6 +26,11 @@ pub enum OutMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
     },
+    QueueMessage {
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
     Approve {
         approved_ids: Vec<String>,
         #[serde(skip_serializing_if = "Option::is_none")]

@@ -26,6 +26,12 @@ pub enum ClientMessage {
         #[serde(default)]
         session_id: Option<String>,
     },
+    /// Queue a message for mid-turn injection (accepted while processing)
+    QueueMessage {
+        content: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
     Approve {
         approved_ids: Vec<String>,
         #[serde(default)]

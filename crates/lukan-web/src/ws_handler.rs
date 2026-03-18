@@ -323,6 +323,18 @@ async fn dispatch_message(
             });
         }
 
+        ClientMessage::QueueMessage {
+            content,
+            session_id,
+        } => {
+            let tab = session_id.unwrap_or_default();
+            // Push into the session's queued_messages (read by the running agent turn)
+            let mut sessions = state.sessions.lock().await;
+            if let Some(session) = sessions.get_mut(&tab) {
+                session.queued_messages.lock().unwrap().push(content);
+            }
+        }
+
         ClientMessage::Abort { session_id } => {
             if let Some(sid) = &session_id {
                 if let Some(token) = cancel_tokens.get(sid) {
@@ -1432,10 +1444,16 @@ async fn handle_send_message(
 
     let cancel_for_agent = cancel_token.clone();
 
+    // Get the queued_messages handle for mid-turn injection
+    let queued = {
+        let sessions = state.sessions.lock().await;
+        sessions.get(&tab).map(|s| Arc::clone(&s.queued_messages))
+    };
+
     // Spawn the agent turn
     let agent_handle = tokio::spawn(async move {
         let result = agent
-            .run_turn(&content, event_tx, Some(cancel_for_agent), None)
+            .run_turn(&content, event_tx, Some(cancel_for_agent), queued)
             .await;
         (agent, result)
     });

@@ -323,6 +323,31 @@ async fn dispatch_message(
             });
         }
 
+        ClientMessage::QueueMessage {
+            content,
+            session_id,
+        } => {
+            let tab = session_id.unwrap_or_default();
+            // Push into the session's queued_messages (read by the running agent turn)
+            let mut sessions = state.sessions.lock().await;
+            if let Some(session) = sessions.get_mut(&tab) {
+                session.queued_messages.lock().unwrap().push(content);
+            }
+        }
+
+        ClientMessage::AddContext {
+            content,
+            session_id,
+        } => {
+            let tab = session_id.unwrap_or_default();
+            let mut sessions = state.sessions.lock().await;
+            if let Some(session) = sessions.get_mut(&tab)
+                && let Some(ref mut agent) = session.agent
+            {
+                agent.add_user_context(&content);
+            }
+        }
+
         ClientMessage::Abort { session_id } => {
             if let Some(sid) = &session_id {
                 if let Some(token) = cancel_tokens.get(sid) {
@@ -331,11 +356,11 @@ async fn dispatch_message(
                     token.cancel();
                     // Token + lock cleanup happens when the task signals done_tx
                 } else {
-                    // Not in a turn — just release processing lock
+                    // Not in a turn (or token lost after relay reconnect) —
+                    // force-release the processing lock regardless of owner conn_id
                     let mut processing = state.processing_sessions.lock().await;
-                    if processing.get(sid) == Some(&conn_id) {
-                        processing.remove(sid);
-                        info!(conn_id, session_id = %sid, "Aborted processing (no active turn)");
+                    if processing.remove(sid).is_some() {
+                        info!(conn_id, session_id = %sid, "Force-released processing lock on abort");
                     }
                 }
             }
@@ -360,8 +385,8 @@ async fn dispatch_message(
             handle_new_session(session_id.as_deref(), state, ws_tx).await;
         }
 
-        ClientMessage::CreateAgentTab => {
-            handle_create_agent_tab(state, ws_tx).await;
+        ClientMessage::CreateAgentTab { cwd } => {
+            handle_create_agent_tab(state, ws_tx, cwd).await;
         }
 
         ClientMessage::DestroyAgentTab { session_id } => {
@@ -1366,10 +1391,11 @@ async fn handle_send_message(
             .entry(tab.clone())
             .or_insert_with(WebAgentSession::new);
         if session.agent.is_none() {
+            let session_cwd = session.cwd.clone();
             let result = if let Some(ref last_id) = session.last_session_id {
                 create_agent_with_session(&state, last_id).await
             } else {
-                create_agent(&state).await
+                create_agent(&state, session_cwd.as_deref()).await
             };
             match result {
                 Ok(agent) => {
@@ -1432,10 +1458,16 @@ async fn handle_send_message(
 
     let cancel_for_agent = cancel_token.clone();
 
+    // Get the queued_messages handle for mid-turn injection
+    let queued = {
+        let sessions = state.sessions.lock().await;
+        sessions.get(&tab).map(|s| Arc::clone(&s.queued_messages))
+    };
+
     // Spawn the agent turn
     let agent_handle = tokio::spawn(async move {
         let result = agent
-            .run_turn(&content, event_tx, Some(cancel_for_agent), None)
+            .run_turn(&content, event_tx, Some(cancel_for_agent), queued)
             .await;
         (agent, result)
     });
@@ -1742,8 +1774,14 @@ async fn handle_new_session(
         }
     }
 
-    // Create new agent
-    match create_agent(state).await {
+    // Create new agent (use session cwd if available)
+    let session_cwd = if let Some(tid) = tab_id {
+        let sessions = state.sessions.lock().await;
+        sessions.get(tid).and_then(|s| s.cwd.clone())
+    } else {
+        None
+    };
+    match create_agent(state, session_cwd.as_deref()).await {
         Ok(agent) => {
             if let Some(tid) = tab_id {
                 let mut sessions = state.sessions.lock().await;
@@ -1772,6 +1810,7 @@ async fn handle_new_session(
 async fn handle_create_agent_tab(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+    cwd: Option<String>,
 ) {
     let tab_id = uuid::Uuid::new_v4().to_string();
 
@@ -1779,6 +1818,7 @@ async fn handle_create_agent_tab(
     let tab_number = sessions.len() + 1;
     let mut session = WebAgentSession::new();
     session.label = format!("Agent {tab_number}");
+    session.cwd = cwd;
     sessions.insert(tab_id.clone(), session);
 
     send_json(
@@ -2015,7 +2055,14 @@ async fn send_planner_answer(state: &AppState, session_id: Option<&str>, answer:
 }
 
 /// Create a new AgentLoop
-async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
+async fn create_agent(
+    state: &Arc<AppState>,
+    client_cwd: Option<&str>,
+) -> anyhow::Result<AgentLoop> {
+    let effective_cwd = client_cwd
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
     // Reload config + credentials from disk so changes from setup/codex-auth
     // (which write to disk but don't notify the running daemon) are picked up.
     {
@@ -2034,7 +2081,7 @@ async fn create_agent(state: &Arc<AppState>) -> anyhow::Result<AgentLoop> {
     let provider = create_provider(&config)?;
     let has_browser = lukan_browser::BrowserManager::get().is_some();
     let system_prompt = build_system_prompt(has_browser).await;
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = effective_cwd.clone();
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
     let permission_mode = state.permission_mode.borrow().clone();
@@ -2120,6 +2167,15 @@ async fn create_agent_with_session(
     state: &Arc<AppState>,
     session_id: &str,
 ) -> anyhow::Result<AgentLoop> {
+    // Read the session's cwd from disk so we use the correct working directory
+    let session_cwd = SessionManager::load(session_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.cwd)
+        .map(PathBuf::from);
+    let effective_cwd = session_cwd
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     // Reload config + credentials from disk (same reason as create_agent)
     {
         let mut config = state.config.lock().await;
@@ -2137,7 +2193,7 @@ async fn create_agent_with_session(
     let provider = create_provider(&config)?;
     let has_browser = lukan_browser::BrowserManager::get().is_some();
     let system_prompt = build_system_prompt(has_browser).await;
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = effective_cwd.clone();
     let provider_name = state.provider_name.lock().await.clone();
     let model_name = state.model_name.lock().await.clone();
     let permission_mode = state.permission_mode.borrow().clone();

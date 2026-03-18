@@ -605,7 +605,7 @@ export class RelayTransport implements Transport {
       case "set_permission_mode":
         return { type: "set_permission_mode", mode: args?.mode };
       case "create_agent_tab":
-        return { type: "create_agent_tab" };
+        return { type: "create_agent_tab", ...(args?.cwd ? { cwd: args.cwd } : {}) };
       case "destroy_agent_tab":
         return { type: "destroy_agent_tab", sessionId: args?.sessionId };
       case "rename_agent_tab":

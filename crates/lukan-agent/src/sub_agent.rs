@@ -524,6 +524,7 @@ async fn run_sub_agent(
             let sandbox_cfg = sandbox.clone();
             let ap = allowed_paths.clone();
             let cancel_token = cancel.clone();
+            let sa_id = id.clone();
             handles.push(tokio::spawn(async move {
                 let ctx = ToolContext {
                     progress_tx: None,
@@ -537,7 +538,7 @@ async fn run_sub_agent(
                     cancel: cancel_token,
                     session_id: None,
                     extra_env: HashMap::new(),
-                    agent_label: None,
+                    agent_label: Some(format!("subagent:{sa_id}")),
                     tab_id: None,
                 };
                 match reg.execute(&n, inp, &ctx).await {
@@ -549,9 +550,28 @@ async fn run_sub_agent(
 
         let mut result_blocks = Vec::new();
         for (i, handle) in handles.into_iter().enumerate() {
-            let result = match handle.await {
-                Ok(r) => r,
-                Err(e) => ToolResult::error(format!("Join error: {e}")),
+            // Wait for the tool, but if cancellation arrives, abort remaining handles
+            let result = tokio::select! {
+                res = handle => {
+                    match res {
+                        Ok(r) => r,
+                        Err(e) => ToolResult::error(format!("Join error: {e}")),
+                    }
+                }
+                _ = async {
+                    match cancel.as_ref() {
+                        Some(t) => t.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    // Cancellation arrived while waiting for tools — the tools
+                    // will see the cancelled token and kill their child processes.
+                    // Give them a moment to clean up, then break.
+                    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                    final_status = SubAgentStatus::Aborted;
+                    text_output.push_str("\n[Cancelled by user]");
+                    break 'outer;
+                }
             };
             let (tool_id, tool_name, _) = &pending_tools[i];
 
@@ -723,14 +743,32 @@ pub async fn upsert_from_update(update: &SubAgentUpdate) {
 }
 
 /// Abort a running sub-agent by ID.
+/// Cancels the token, marks as aborted, and kills any background
+/// processes the subagent spawned.
 pub async fn abort_sub_agent(id: &str) -> bool {
-    let mut mgr = MANAGER.write().await;
-    if let Some(token) = mgr.cancel_tokens.remove(id) {
-        token.cancel();
-        true
-    } else {
-        false
+    let found = {
+        let mut mgr = MANAGER.write().await;
+        if let Some(token) = mgr.cancel_tokens.remove(id) {
+            token.cancel();
+            // Mark as aborted immediately so the UI reflects the change
+            // before the spawned task has a chance to process the cancellation.
+            if let Some(entry) = mgr.entries.get_mut(id) {
+                entry.status = SubAgentStatus::Aborted;
+                entry.completed_at = Some(Utc::now());
+            }
+            true
+        } else {
+            false
+        }
+    };
+    // Drop the MANAGER lock before the potentially slow kill calls
+    // Kill any background processes spawned by this subagent
+    let label_prefix = format!("subagent:{id}");
+    let killed = lukan_tools::bg_processes::kill_by_label_prefix(&label_prefix).await;
+    if !killed.is_empty() {
+        info!(id, ?killed, "Killed background processes for subagent");
     }
+    found
 }
 
 /// Get all sub-agent entries (for UI display)
@@ -1496,6 +1534,23 @@ fn format_sub_agent_result(entry: &SubAgentEntry) -> ToolResult {
         });
 
     let mut output = entry.text_output.clone();
+
+    // If text_output is empty, check for live output from background
+    // processes spawned by this subagent (tagged with agent_label).
+    if output.trim().is_empty() {
+        let label_prefix = format!("subagent:{}", entry.id);
+        let live_logs = lukan_tools::bg_processes::get_logs_by_label_prefix(&label_prefix, 100);
+        info!(
+            subagent_id = %entry.id,
+            label_prefix = %label_prefix,
+            live_logs_len = live_logs.len(),
+            "SubAgentResult: checking bg process logs"
+        );
+        if !live_logs.is_empty() {
+            output = live_logs;
+        }
+    }
+
     if output.len() > 50_000 {
         let half = 25_000;
         output = format!(

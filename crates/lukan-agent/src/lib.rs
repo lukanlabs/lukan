@@ -1,4 +1,5 @@
 mod agent_loop;
+pub(crate) mod memory_helpers;
 pub mod message_history;
 pub mod permission_matcher;
 pub mod pipelines;

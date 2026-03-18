@@ -11,7 +11,7 @@ use lukan_core::models::events::{
     ApprovalResponse, PlanReviewResponse, PlanTask, PlannerQuestionItem, StopReason, StreamEvent,
     TaskInfo, ToolApprovalRequest,
 };
-use lukan_core::models::messages::{ContentBlock, ImageSource, Message, MessageContent, Role};
+use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
 use lukan_core::models::sessions::ChatSession;
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
@@ -19,16 +19,18 @@ use lukan_tools::{ToolContext, ToolRegistry};
 use crate::permission_matcher::{
     PLANNER_TOOL_WHITELIST, PermissionMatcher, ToolVerdict, generate_allow_pattern,
 };
-use base64::Engine;
 use lukan_core::config::project_config::ProjectConfig;
 use rand::Rng;
-use regex::Regex;
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use crate::memory_helpers::{
+    active_memory_path, extract_section, format_messages_for_context, write_memory_file_to,
+};
 use crate::message_history::MessageHistory;
 use crate::session_manager::SessionManager;
+use crate::vision_preprocessor::extract_image_urls;
 
 // ── Thresholds ────────────────────────────────────────────────────────────
 
@@ -203,7 +205,8 @@ impl AgentLoop {
         let plan_review_rx = config.plan_review_rx;
         let planner_answer_rx = config.planner_answer_rx;
         let skip_session_save = config.skip_session_save;
-        let session = SessionManager::create(&config.provider_name, &config.model_name).await?;
+        let mut session = SessionManager::create(&config.provider_name, &config.model_name).await?;
+        session.cwd = Some(config.cwd.to_string_lossy().to_string());
         let available_skills = lukan_tools::skills::discover_skills(&config.cwd).await;
         Ok(Self {
             provider: config.provider,
@@ -719,9 +722,11 @@ impl AgentLoop {
             .and_then(|c| c.timezone)
             .unwrap_or_else(|| "UTC".to_string());
         let mut dynamic = format!(
-            "Current date: {} ({}). Use this for any time-relative operations.",
+            "Current date: {} ({}). Use this for any time-relative operations.\n\
+             Working directory: {}. All file operations and commands run here. Do NOT cd to other directories or operate on files outside this workspace.",
             now.format("%Y-%m-%d %H:%M UTC"),
-            tz_name
+            tz_name,
+            self.cwd.display()
         );
 
         // Include current tasks in dynamic section
@@ -1543,7 +1548,16 @@ impl AgentLoop {
                             })
                             .await;
 
-                        // Keep current permission mode; user can cycle modes manually.
+                        // Switch from Planner to Auto so the agent can implement.
+                        // Other modes (Auto, Skip, Manual) stay unchanged.
+                        if self.permission_matcher.mode() == PermissionMode::Planner {
+                            self.permission_matcher.set_mode(PermissionMode::Auto);
+                            let _ = event_tx
+                                .send(StreamEvent::ModeChanged {
+                                    mode: "Auto".to_string(),
+                                })
+                                .await;
+                        }
                         // Rebuild system prompt with latest tasks + plan context.
                         self.rebuild_system_prompt().await;
 
@@ -2026,207 +2040,4 @@ impl AgentLoop {
         }
         results
     }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────
-
-/// Format messages into a text representation for compaction/memory LLM calls
-fn format_messages_for_context(messages: &[Message]) -> String {
-    let mut output = String::new();
-    for msg in messages {
-        let role = match msg.role {
-            Role::User => "User",
-            Role::Assistant => "Assistant",
-            Role::Tool => "Tool",
-        };
-
-        match &msg.content {
-            MessageContent::Text(text) => {
-                output.push_str(&format!("[{role}]: {text}\n\n"));
-            }
-            MessageContent::Blocks(blocks) => {
-                for block in blocks {
-                    match block {
-                        ContentBlock::Text { text } => {
-                            output.push_str(&format!("[{role}]: {text}\n\n"));
-                        }
-                        ContentBlock::Thinking { text } => {
-                            output.push_str(&format!("[{role} thinking]: {text}\n\n"));
-                        }
-                        ContentBlock::ToolUse { name, input, .. } => {
-                            let input_str = serde_json::to_string(input).unwrap_or_default();
-                            let truncated = if input_str.len() > 500 {
-                                let end = input_str.floor_char_boundary(500);
-                                format!("{}...", &input_str[..end])
-                            } else {
-                                input_str
-                            };
-                            output.push_str(&format!("[{role} tool_use]: {name}({truncated})\n\n"));
-                        }
-                        ContentBlock::ToolResult {
-                            content, is_error, ..
-                        } => {
-                            let prefix = if *is_error == Some(true) {
-                                "ERROR"
-                            } else {
-                                "result"
-                            };
-                            // Truncate long tool results
-                            let truncated = if content.len() > 2000 {
-                                let end = content.floor_char_boundary(2000);
-                                format!("{}...(truncated)", &content[..end])
-                            } else {
-                                content.clone()
-                            };
-                            output.push_str(&format!("[Tool {prefix}]: {truncated}\n\n"));
-                        }
-                        ContentBlock::Image { .. } => {
-                            output.push_str(&format!("[{role}]: [Image]\n\n"));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    output
-}
-
-/// Extract a section between two markers from LLM output
-fn extract_section(text: &str, start_marker: &str, end_marker: &str) -> Option<String> {
-    let start = text.find(start_marker)?;
-    let content_start = start + start_marker.len();
-    let content = if end_marker.is_empty() {
-        &text[content_start..]
-    } else if let Some(end) = text[content_start..].find(end_marker) {
-        &text[content_start..content_start + end]
-    } else {
-        &text[content_start..]
-    };
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-/// Resolve the active memory path: project memory if `.active` marker exists,
-/// otherwise global memory if it exists, otherwise None.
-fn active_memory_path() -> Option<PathBuf> {
-    let active_marker = LukanPaths::project_memory_active_file();
-    if active_marker.exists() {
-        return Some(LukanPaths::project_memory_file());
-    }
-    let global = LukanPaths::global_memory_file();
-    if global.exists() {
-        return Some(global);
-    }
-    None
-}
-
-/// Write memory content to a specific path
-async fn write_memory_file_to(path: &std::path::Path, content: &str) {
-    if let Some(parent) = path.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
-    }
-    if let Err(e) = tokio::fs::write(path, content).await {
-        error!("Failed to write MEMORY.md: {e}");
-    }
-}
-
-/// Infer MIME type from a URL's file extension.
-fn media_type_from_url(url: &str) -> Option<String> {
-    let path = url.split('?').next().unwrap_or(url);
-    let ext = path.rsplit('.').next()?.to_lowercase();
-    match ext.as_str() {
-        "png" => Some("image/png".into()),
-        "jpg" | "jpeg" => Some("image/jpeg".into()),
-        "gif" => Some("image/gif".into()),
-        "webp" => Some("image/webp".into()),
-        "svg" => Some("image/svg+xml".into()),
-        "bmp" => Some("image/bmp".into()),
-        "ico" => Some("image/x-icon".into()),
-        _ => None,
-    }
-}
-
-/// Flatten RGBA image to RGB with white background, re-encode as PNG.
-/// Returns the original bytes unchanged if not RGBA or if processing fails.
-fn flatten_alpha(bytes: &[u8]) -> Vec<u8> {
-    let img = match image::load_from_memory(bytes) {
-        Ok(img) => img,
-        Err(_) => return bytes.to_vec(),
-    };
-
-    if !matches!(
-        img.color(),
-        image::ColorType::Rgba8 | image::ColorType::Rgba16
-    ) {
-        return bytes.to_vec();
-    }
-
-    let rgba = img.to_rgba8();
-    let (w, h) = rgba.dimensions();
-    let mut rgb = image::RgbImage::new(w, h);
-    for (x, y, pixel) in rgba.enumerate_pixels() {
-        let [r, g, b, a] = pixel.0;
-        let alpha = a as f32 / 255.0;
-        let blend = |fg: u8| -> u8 { (fg as f32 * alpha + 255.0 * (1.0 - alpha)) as u8 };
-        rgb.put_pixel(x, y, image::Rgb([blend(r), blend(g), blend(b)]));
-    }
-
-    let mut buf = std::io::Cursor::new(Vec::new());
-    if rgb.write_to(&mut buf, image::ImageFormat::Png).is_ok() {
-        buf.into_inner()
-    } else {
-        bytes.to_vec()
-    }
-}
-
-/// Extract image URLs from user text, fetch them, and return cleaned text + base64 image blocks.
-async fn extract_image_urls(text: &str) -> (String, Vec<ContentBlock>) {
-    let re = Regex::new(r"https?://\S+\.(?:png|jpe?g|gif|webp|svg|bmp|ico)(?:\?\S*)?").unwrap();
-
-    let urls: Vec<String> = re.find_iter(text).map(|m| m.as_str().to_string()).collect();
-    if urls.is_empty() {
-        return (text.to_string(), Vec::new());
-    }
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap();
-
-    let mut images = Vec::new();
-    for url in &urls {
-        match client.get(url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                let media_type = resp
-                    .headers()
-                    .get("content-type")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-                    .or_else(|| media_type_from_url(url));
-
-                match resp.bytes().await {
-                    Ok(bytes) => {
-                        // Flatten RGBA transparency to white background
-                        let processed = flatten_alpha(&bytes);
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(&processed);
-                        images.push(ContentBlock::Image {
-                            source: ImageSource::Base64,
-                            data: b64,
-                            media_type,
-                        });
-                    }
-                    Err(e) => warn!("Failed to read image bytes from {url}: {e}"),
-                }
-            }
-            Ok(resp) => warn!("Failed to fetch image {url}: HTTP {}", resp.status()),
-            Err(e) => warn!("Failed to fetch image {url}: {e}"),
-        }
-    }
-
-    let cleaned = re.replace_all(text, "").trim().to_string();
-    (cleaned, images)
 }

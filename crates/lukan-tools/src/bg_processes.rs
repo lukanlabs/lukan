@@ -303,6 +303,57 @@ pub async fn kill_process_group_force(pid: u32) {
     debug!(pid, "Sent SIGKILL to process tree");
 }
 
+/// Get combined log output from all bg processes whose label starts with `prefix`.
+/// Returns up to `max_lines` of the most recent output across all matching processes.
+pub fn get_logs_by_label_prefix(prefix: &str, max_lines: usize) -> String {
+    let pids: Vec<u32> = {
+        let t = tracker().lock().unwrap();
+        t.processes
+            .values()
+            .filter(|p| p.label.as_deref().is_some_and(|l| l.starts_with(prefix)))
+            .map(|p| p.pid)
+            .collect()
+    };
+    let mut combined = String::new();
+    for pid in pids {
+        if let Some(log) = get_bg_log(pid, max_lines)
+            && !log.trim().is_empty()
+        {
+            if !combined.is_empty() {
+                combined.push('\n');
+            }
+            combined.push_str(&log);
+        }
+    }
+    combined
+}
+
+/// Kill all background processes whose label starts with `prefix`.
+/// Returns the PIDs that were killed.
+pub async fn kill_by_label_prefix(prefix: &str) -> Vec<u32> {
+    let pids: Vec<u32> = {
+        let t = tracker().lock().unwrap();
+        t.processes
+            .values()
+            .filter(|p| {
+                p.label.as_deref().is_some_and(|l| l.starts_with(prefix))
+                    && p.exited_at.is_none()
+                    && !p.killed
+            })
+            .map(|p| p.pid)
+            .collect()
+    };
+    for &pid in &pids {
+        kill_process_group_force(pid).await;
+        let mut t = tracker().lock().unwrap();
+        if let Some(proc) = t.processes.get_mut(&pid) {
+            proc.killed = true;
+            proc.exited_at = Some(Utc::now());
+        }
+    }
+    pids
+}
+
 /// Wait for a background process to finish, polling every `poll_interval_ms`.
 /// Returns the log content when done, or None on timeout.
 pub async fn wait_bg_process(pid: u32, timeout_ms: u64) -> Option<String> {

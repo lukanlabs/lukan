@@ -44,7 +44,7 @@ impl Tool for WebFetchTool {
     async fn execute(
         &self,
         input: serde_json::Value,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> anyhow::Result<ToolResult> {
         let url_str = input
             .get("url")
@@ -76,9 +76,22 @@ impl Tool for WebFetchTool {
             .timeout(REQUEST_TIMEOUT)
             .build()?;
 
-        let response = match client.get(url.as_str()).send().await {
-            Ok(r) => r,
-            Err(e) => return Ok(ToolResult::error(format!("Request failed: {e}"))),
+        let fetch_fut = client.get(url.as_str()).send();
+        let response = tokio::select! {
+            result = fetch_fut => {
+                match result {
+                    Ok(r) => r,
+                    Err(e) => return Ok(ToolResult::error(format!("Request failed: {e}"))),
+                }
+            }
+            _ = async {
+                match &ctx.cancel {
+                    Some(t) => t.cancelled().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                return Ok(ToolResult::error("Cancelled by user."));
+            }
         };
 
         let status = response.status();

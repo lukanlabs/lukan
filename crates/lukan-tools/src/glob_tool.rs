@@ -98,8 +98,9 @@ impl Tool for GlobTool {
         };
 
         // Run blocking walk in a spawn_blocking to avoid blocking the async runtime
+        let cancel = ctx.cancel.clone();
         let base = base_path.clone();
-        let matches = tokio::task::spawn_blocking(move || {
+        let walk_handle = tokio::task::spawn_blocking(move || {
             let mut results: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
             for entry in WalkDir::new(&base)
                 .follow_links(true)
@@ -129,8 +130,20 @@ impl Tool for GlobTool {
             // Sort by mtime descending (newest first)
             results.sort_by(|a, b| b.1.cmp(&a.1));
             results
-        })
-        .await?;
+        });
+
+        // Race the walk against cancellation
+        let matches = tokio::select! {
+            result = walk_handle => result?,
+            _ = async {
+                match &cancel {
+                    Some(t) => t.cancelled().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                return Ok(ToolResult::error("Cancelled by user."));
+            }
+        };
 
         if matches.is_empty() {
             return Ok(ToolResult::success("No files matched."));

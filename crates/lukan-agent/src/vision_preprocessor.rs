@@ -4,9 +4,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use base64::Engine;
 use lukan_core::models::events::StreamEvent;
 use lukan_core::models::messages::{ContentBlock, ImageSource, Message, MessageContent, Role};
 use lukan_providers::{Provider, StreamParams, SystemPrompt};
+use regex::Regex;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -232,4 +234,102 @@ async fn describe_with_provider(provider: &dyn Provider, image_block: ContentBlo
     } else {
         format!("[Image description: {description}]")
     }
+}
+
+// ── Image URL extraction ───────────────────────────────────────────────────
+
+/// Infer MIME type from a URL's file extension.
+pub(crate) fn media_type_from_url(url: &str) -> Option<String> {
+    let path = url.split('?').next().unwrap_or(url);
+    let ext = path.rsplit('.').next()?.to_lowercase();
+    match ext.as_str() {
+        "png" => Some("image/png".into()),
+        "jpg" | "jpeg" => Some("image/jpeg".into()),
+        "gif" => Some("image/gif".into()),
+        "webp" => Some("image/webp".into()),
+        "svg" => Some("image/svg+xml".into()),
+        "bmp" => Some("image/bmp".into()),
+        "ico" => Some("image/x-icon".into()),
+        _ => None,
+    }
+}
+
+/// Flatten RGBA image to RGB with white background, re-encode as PNG.
+/// Returns the original bytes unchanged if not RGBA or if processing fails.
+pub(crate) fn flatten_alpha(bytes: &[u8]) -> Vec<u8> {
+    let img = match image::load_from_memory(bytes) {
+        Ok(img) => img,
+        Err(_) => return bytes.to_vec(),
+    };
+
+    if !matches!(
+        img.color(),
+        image::ColorType::Rgba8 | image::ColorType::Rgba16
+    ) {
+        return bytes.to_vec();
+    }
+
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let mut rgb = image::RgbImage::new(w, h);
+    for (x, y, pixel) in rgba.enumerate_pixels() {
+        let [r, g, b, a] = pixel.0;
+        let alpha = a as f32 / 255.0;
+        let blend = |fg: u8| -> u8 { (fg as f32 * alpha + 255.0 * (1.0 - alpha)) as u8 };
+        rgb.put_pixel(x, y, image::Rgb([blend(r), blend(g), blend(b)]));
+    }
+
+    let mut buf = std::io::Cursor::new(Vec::new());
+    if rgb.write_to(&mut buf, image::ImageFormat::Png).is_ok() {
+        buf.into_inner()
+    } else {
+        bytes.to_vec()
+    }
+}
+
+/// Extract image URLs from user text, fetch them, and return cleaned text + base64 image blocks.
+pub(crate) async fn extract_image_urls(text: &str) -> (String, Vec<ContentBlock>) {
+    let re = Regex::new(r"https?://\S+\.(?:png|jpe?g|gif|webp|svg|bmp|ico)(?:\?\S*)?").unwrap();
+
+    let urls: Vec<String> = re.find_iter(text).map(|m| m.as_str().to_string()).collect();
+    if urls.is_empty() {
+        return (text.to_string(), Vec::new());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap();
+
+    let mut images = Vec::new();
+    for url in &urls {
+        match client.get(url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let media_type = resp
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+                    .or_else(|| media_type_from_url(url));
+
+                match resp.bytes().await {
+                    Ok(bytes) => {
+                        let processed = flatten_alpha(&bytes);
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&processed);
+                        images.push(ContentBlock::Image {
+                            source: ImageSource::Base64,
+                            data: b64,
+                            media_type,
+                        });
+                    }
+                    Err(e) => warn!("Failed to read image bytes from {url}: {e}"),
+                }
+            }
+            Ok(resp) => warn!("Failed to fetch image {url}: HTTP {}", resp.status()),
+            Err(e) => warn!("Failed to fetch image {url}: {e}"),
+        }
+    }
+
+    let cleaned = re.replace_all(text, "").trim().to_string();
+    (cleaned, images)
 }

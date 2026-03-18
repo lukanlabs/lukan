@@ -74,6 +74,17 @@ impl SessionManager {
         Ok(sessions)
     }
 
+    /// List sessions filtered by working directory.
+    /// Only returns sessions that were created in the given cwd.
+    /// Sessions without a cwd (old format) are excluded.
+    pub async fn list_for_cwd(cwd: &str) -> Result<Vec<SessionSummary>> {
+        let all = Self::list().await?;
+        Ok(all
+            .into_iter()
+            .filter(|s| s.cwd.as_deref() == Some(cwd))
+            .collect())
+    }
+
     /// Delete a session file. Returns true if it existed.
     pub async fn delete(id: &str) -> Result<bool> {
         let path = LukanPaths::session_file(id);

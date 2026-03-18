@@ -170,8 +170,8 @@ export const pickDirectory = () =>
   getTransport().call<string | null>("pick_directory");
 
 // Chat — tab management
-export const createAgentTab = () =>
-  getTransport().call<string>("create_agent_tab");
+export const createAgentTab = (cwd?: string) =>
+  getTransport().call<string>("create_agent_tab", cwd ? { cwd } : undefined);
 export const destroyAgentTab = (sessionId: string) =>
   getTransport().call<void>("destroy_agent_tab", { sessionId });
 export const renameAgentTab = (sessionId: string, label: string) =>

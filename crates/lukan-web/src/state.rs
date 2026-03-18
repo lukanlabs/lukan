@@ -32,6 +32,10 @@ pub struct WebAgentSession {
     pub last_session_id: Option<String>,
     /// Tools disabled via Alt+P in TUI (applied when agent is created)
     pub disabled_tools: std::collections::HashSet<String>,
+    /// Messages queued by the user while the agent is processing (injected mid-turn)
+    pub queued_messages: Arc<std::sync::Mutex<Vec<String>>>,
+    /// Working directory for this session (from the client that created it)
+    pub cwd: Option<String>,
 }
 
 impl WebAgentSession {
@@ -53,6 +57,8 @@ impl WebAgentSession {
             label: "Agent 1".to_string(),
             last_session_id: None,
             disabled_tools: std::collections::HashSet::new(),
+            queued_messages: Arc::new(std::sync::Mutex::new(Vec::new())),
+            cwd: None,
         }
     }
 }

@@ -31,6 +31,9 @@ pub struct ChatSession {
     /// Summary from last compaction
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction_summary: Option<String>,
+    /// Working directory where the session was created
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 /// Summary of a session for listing
@@ -47,6 +50,9 @@ pub struct SessionSummary {
     /// Last user message (truncated) for display in session picker
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_message: Option<String>,
+    /// Working directory where the session was created
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 impl ChatSession {
@@ -67,6 +73,9 @@ impl ChatSession {
             last_memory_update_tokens: 0,
             last_context_size: 0,
             compaction_summary: None,
+            cwd: std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string()),
         }
     }
 
@@ -99,6 +108,7 @@ impl ChatSession {
             provider: self.provider.clone(),
             model: self.model.clone(),
             last_message,
+            cwd: self.cwd.clone(),
         }
     }
 }
@@ -237,6 +247,7 @@ mod tests {
             provider: Some("anthropic".into()),
             model: Some("claude-3".into()),
             last_message: Some("hello".into()),
+            cwd: None,
         };
         let json = serde_json::to_string(&summary).unwrap();
         assert!(json.contains(r#""messageCount":10"#));

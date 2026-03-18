@@ -838,8 +838,9 @@ impl App {
         ));
 
         // Auto-load most recent session if --continue was passed
+        let continue_cwd = cwd.to_string_lossy().to_string();
         if self.continue_session
-            && let Ok(sessions) = SessionManager::list().await
+            && let Ok(sessions) = SessionManager::list_for_cwd(&continue_cwd).await
         {
             if let Some(most_recent) = sessions.first() {
                 let session_id = most_recent.id.clone();

@@ -173,6 +173,7 @@ impl App {
                             provider: s.provider,
                             model: s.model,
                             last_message: s.last_message,
+                            cwd: None,
                         })
                         .collect(),
                     selected: 0,

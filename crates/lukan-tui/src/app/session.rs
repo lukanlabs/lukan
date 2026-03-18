@@ -4,7 +4,11 @@ use super::*;
 impl App {
     /// Open the interactive session picker
     pub(super) async fn open_session_picker(&mut self) {
-        let sessions = match SessionManager::list().await {
+        let cwd = std::env::current_dir()
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let sessions = match SessionManager::list_for_cwd(&cwd).await {
             Ok(s) => s,
             Err(e) => {
                 self.messages.push(ChatMessage::new(

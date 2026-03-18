@@ -1534,6 +1534,17 @@ fn format_sub_agent_result(entry: &SubAgentEntry) -> ToolResult {
         });
 
     let mut output = entry.text_output.clone();
+
+    // If text_output is empty and the subagent is still running, check for
+    // live output from background processes spawned by this subagent.
+    if output.trim().is_empty() {
+        let label_prefix = format!("subagent:{}", entry.id);
+        let live_logs = lukan_tools::bg_processes::get_logs_by_label_prefix(&label_prefix, 100);
+        if !live_logs.is_empty() {
+            output = live_logs;
+        }
+    }
+
     if output.len() > 50_000 {
         let half = 25_000;
         output = format!(

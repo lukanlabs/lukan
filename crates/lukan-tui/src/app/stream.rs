@@ -122,16 +122,29 @@ impl App {
         use crate::ws_client::DaemonEvent;
         match event {
             DaemonEvent::Stream(stream_event, saved_session_id) => {
-                // Broadcasts from other clients always carry savedSessionId.
-                // The TUI receives its own events directly (without savedSessionId),
-                // so ignore ALL broadcasts to prevent cross-session visual leaking.
-                if saved_session_id.is_some() {
-                    return;
+                // Broadcasts from other clients carry savedSessionId.
+                // Accept if it matches our session (same session in Web UI),
+                // reject if it's a different session.
+                if let Some(ref broadcast_sid) = saved_session_id {
+                    match &self.session_id {
+                        Some(our_sid) if broadcast_sid == our_sid => {
+                            // Same session — accept (e.g. Web UI talking in our session)
+                        }
+                        _ => return, // Different session or no session yet — ignore
+                    }
                 }
                 self.handle_stream_event(stream_event);
             }
-            DaemonEvent::UserMessage { .. } => {
-                // Handled elsewhere or ignored
+            DaemonEvent::UserMessage {
+                content,
+                saved_session_id,
+            } => {
+                // Show user messages from other clients in the same session
+                if let Some(ref broadcast_sid) = saved_session_id {
+                    if self.session_id.as_deref() == Some(broadcast_sid) {
+                        self.messages.push(ChatMessage::new("user", &content));
+                    }
+                }
             }
             DaemonEvent::Init { session_id, .. } => {
                 self.session_id = Some(session_id);

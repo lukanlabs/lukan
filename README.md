@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/lukanlabs/lukan/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-  <a href="https://github.com/lukanlabs/lukan/releases"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.5-green"></a>
+  <a href="https://github.com/lukanlabs/lukan/releases"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.6-green"></a>
   <img alt="Rust" src="https://img.shields.io/badge/rust-2024-orange.svg">
   <img alt="Platform" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20WSL-lightgrey">
   <a href="https://docs.lukan.ai"><img alt="Docs" src="https://img.shields.io/badge/docs-docs.lukan.ai-blueviolet"></a>
@@ -100,6 +100,12 @@ curl -fsSL https://get.lukan.ai/install.sh | bash
 curl -fsSL https://get.lukan.ai/install.sh | bash -s -- --desktop
 ```
 
+<details>
+<summary>See install in action</summary>
+<br>
+<img src="examples/img/install.gif" alt="Install" width="700">
+</details>
+
 Or build from source:
 
 ```bash
@@ -159,6 +165,12 @@ lukan chat
 lukan chat -c
 ```
 
+<details>
+<summary>See setup in action</summary>
+<br>
+<img src="examples/img/setup.gif" alt="Setup" width="700">
+</details>
+
 ### Choose your interface
 
 ```bash
@@ -189,6 +201,12 @@ lukan copilot-auth
 lukan setup
 ```
 
+<details>
+<summary>See Codex auth in action</summary>
+<br>
+<img src="examples/img/codex-auth.gif" alt="Codex Auth" width="700">
+</details>
+
 To browse and select which models appear in `/model` inside the TUI:
 
 ```bash
@@ -196,6 +214,12 @@ lukan models openai-codex
 lukan models anthropic
 lukan models fireworks
 ```
+
+<details>
+<summary>See model selection in action</summary>
+<br>
+<img src="examples/img/codex-models.gif" alt="Model Selection" width="700">
+</details>
 
 This lets you choose which models are available when using `/model` during a chat session.
 

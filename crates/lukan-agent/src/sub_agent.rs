@@ -549,9 +549,28 @@ async fn run_sub_agent(
 
         let mut result_blocks = Vec::new();
         for (i, handle) in handles.into_iter().enumerate() {
-            let result = match handle.await {
-                Ok(r) => r,
-                Err(e) => ToolResult::error(format!("Join error: {e}")),
+            // Wait for the tool, but if cancellation arrives, abort remaining handles
+            let result = tokio::select! {
+                res = handle => {
+                    match res {
+                        Ok(r) => r,
+                        Err(e) => ToolResult::error(format!("Join error: {e}")),
+                    }
+                }
+                _ = async {
+                    match cancel.as_ref() {
+                        Some(t) => t.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    // Cancellation arrived while waiting for tools — the tools
+                    // will see the cancelled token and kill their child processes.
+                    // Give them a moment to clean up, then break.
+                    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                    final_status = SubAgentStatus::Aborted;
+                    text_output.push_str("\n[Cancelled by user]");
+                    break 'outer;
+                }
             };
             let (tool_id, tool_name, _) = &pending_tools[i];
 

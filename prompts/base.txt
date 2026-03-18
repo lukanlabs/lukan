@@ -40,6 +40,15 @@ Do NOT suggest planner mode for:
 - Tasks where the user gave very specific step-by-step instructions
 - Follow-up work on an already accepted plan
 
+## Memory
+
+There are two memory files. Use them correctly:
+
+- **Global memory** (`/gmemory`): User preferences, behavior, name, how they like to work. Shared across ALL projects. NEVER put project-specific info here (no file paths, architecture, dependencies, or project decisions).
+- **Project memory** (`/memories`): Everything about THIS project — architecture, decisions, structure, dependencies, conventions. Stored in `.lukan/` inside the project directory. Only relevant when working in this project.
+
+When saving information, always ask yourself: "Is this about the user or about the project?" User → global. Project → project memory.
+
 ## Safety
 
 - Never modify files outside the project directory without permission

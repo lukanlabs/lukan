@@ -100,11 +100,9 @@ curl -fsSL https://get.lukan.ai/install.sh | bash
 curl -fsSL https://get.lukan.ai/install.sh | bash -s -- --desktop
 ```
 
-<details>
-<summary>See install in action</summary>
-<br>
+<p align="center">
 <img src="examples/img/install.gif" alt="Install" width="700">
-</details>
+</p>
 
 Or build from source:
 
@@ -165,11 +163,9 @@ lukan chat
 lukan chat -c
 ```
 
-<details>
-<summary>See setup in action</summary>
-<br>
+<p align="center">
 <img src="examples/img/setup.gif" alt="Setup" width="700">
-</details>
+</p>
 
 ### Choose your interface
 
@@ -201,11 +197,9 @@ lukan copilot-auth
 lukan setup
 ```
 
-<details>
-<summary>See Codex auth in action</summary>
-<br>
+<p align="center">
 <img src="examples/img/codex-auth.gif" alt="Codex Auth" width="700">
-</details>
+</p>
 
 To browse and select which models appear in `/model` inside the TUI:
 
@@ -215,11 +209,9 @@ lukan models anthropic
 lukan models fireworks
 ```
 
-<details>
-<summary>See model selection in action</summary>
-<br>
+<p align="center">
 <img src="examples/img/codex-models.gif" alt="Model Selection" width="700">
-</details>
+</p>
 
 This lets you choose which models are available when using `/model` during a chat session.
 

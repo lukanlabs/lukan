@@ -35,17 +35,16 @@ Call **SubmitPlan** with:
 
 The user reviews each task's detail and can edit titles, modify details, add/remove tasks, or request changes before accepting. Once accepted, tasks are created and implementation begins automatically.
 
-### Task Detail Guidelines
+### Task Detail Guidelines (CRITICAL)
 Each task's `detail` is **rendered as markdown** with full syntax highlighting. Use markdown formatting:
 - **Headers** (`##`), **bold**, **lists** for structure
-- **Fenced code blocks** with language tags for code examples
-- The user sees this rendered with syntax highlighting, so always include code blocks
+- **Fenced code blocks** with language tags for ALL code
 
-Each task's `detail` should include:
+Each task's `detail` MUST include:
 1. **What to do**: Clear explanation of the change
 2. **Files to modify**: Exact paths and what changes in each
 3. **Dependencies**: Libraries, imports, or tools needed
-4. **Code examples**: High-level snippets in fenced code blocks showing the approach
+4. **Code**: When the task involves writing or modifying code, include fenced code blocks (```language) showing the high-level implementation — function signatures, class/struct definitions, route handlers, schemas, service methods, etc. Show WHAT the code will look like rather than describing it in prose. Use your judgement: config changes, file moves, or non-code tasks don't need code blocks.
 
 ## Clarifying Questions
 Use **PlannerQuestion** when you need user input. You can ask 1-4 questions at once, each with:

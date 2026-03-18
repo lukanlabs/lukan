@@ -151,6 +151,14 @@ impl App {
                 if self.is_streaming {
                     self.is_streaming = false;
                 }
+                // Now that the daemon is done processing, submit any queued messages
+                if !self.queued_messages.lock().unwrap().is_empty() {
+                    let remaining: Vec<String> =
+                        self.queued_messages.lock().unwrap().drain(..).collect();
+                    self.input = remaining.join("\n");
+                    self.cursor_pos = self.input.len();
+                    self.pending_queue_submit = true;
+                }
             }
             DaemonEvent::SessionList { sessions } => {
                 self.session_picker = Some(SessionPicker {
@@ -491,14 +499,8 @@ impl App {
                 // keep is_streaming=true so Alt+B works and the UI shows
                 // "streaming" status. ToolResult events will follow, and
                 // the final MessageEnd (with EndTurn) will set it to false.
-                // Drain queued messages — inject mid-turn or at end of turn
-                if self.is_daemon_mode() && !self.queued_messages.lock().unwrap().is_empty() {
-                    let remaining: Vec<String> =
-                        self.queued_messages.lock().unwrap().drain(..).collect();
-                    self.input = remaining.join("\n");
-                    self.cursor_pos = self.input.len();
-                    self.pending_queue_submit = true;
-                }
+                // In daemon mode, queued messages are submitted after
+                // ProcessingComplete (not here) to avoid "already processing".
 
                 if stop_reason != StopReason::ToolUse {
                     self.is_streaming = false;

@@ -503,7 +503,11 @@ impl App {
                 // ProcessingComplete (not here) to avoid "already processing".
 
                 if stop_reason != StopReason::ToolUse {
-                    self.is_streaming = false;
+                    // In daemon mode, keep is_streaming=true until ProcessingComplete
+                    // so that Enter enqueues instead of sending (avoids "already processing").
+                    if !self.is_daemon_mode() {
+                        self.is_streaming = false;
+                    }
                     self.active_tool = None;
                 }
             }

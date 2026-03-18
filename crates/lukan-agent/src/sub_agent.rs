@@ -524,6 +524,7 @@ async fn run_sub_agent(
             let sandbox_cfg = sandbox.clone();
             let ap = allowed_paths.clone();
             let cancel_token = cancel.clone();
+            let sa_id = id.clone();
             handles.push(tokio::spawn(async move {
                 let ctx = ToolContext {
                     progress_tx: None,
@@ -537,7 +538,7 @@ async fn run_sub_agent(
                     cancel: cancel_token,
                     session_id: None,
                     extra_env: HashMap::new(),
-                    agent_label: None,
+                    agent_label: Some(format!("subagent:{sa_id}")),
                     tab_id: None,
                 };
                 match reg.execute(&n, inp, &ctx).await {
@@ -742,20 +743,32 @@ pub async fn upsert_from_update(update: &SubAgentUpdate) {
 }
 
 /// Abort a running sub-agent by ID.
+/// Cancels the token, marks as aborted, and kills any background
+/// processes the subagent spawned.
 pub async fn abort_sub_agent(id: &str) -> bool {
-    let mut mgr = MANAGER.write().await;
-    if let Some(token) = mgr.cancel_tokens.remove(id) {
-        token.cancel();
-        // Mark as aborted immediately so the UI reflects the change
-        // before the spawned task has a chance to process the cancellation.
-        if let Some(entry) = mgr.entries.get_mut(id) {
-            entry.status = SubAgentStatus::Aborted;
-            entry.completed_at = Some(Utc::now());
+    let found = {
+        let mut mgr = MANAGER.write().await;
+        if let Some(token) = mgr.cancel_tokens.remove(id) {
+            token.cancel();
+            // Mark as aborted immediately so the UI reflects the change
+            // before the spawned task has a chance to process the cancellation.
+            if let Some(entry) = mgr.entries.get_mut(id) {
+                entry.status = SubAgentStatus::Aborted;
+                entry.completed_at = Some(Utc::now());
+            }
+            true
+        } else {
+            false
         }
-        true
-    } else {
-        false
+    };
+    // Drop the MANAGER lock before the potentially slow kill calls
+    // Kill any background processes spawned by this subagent
+    let label_prefix = format!("subagent:{id}");
+    let killed = lukan_tools::bg_processes::kill_by_label_prefix(&label_prefix).await;
+    if !killed.is_empty() {
+        info!(id, ?killed, "Killed background processes for subagent");
     }
+    found
 }
 
 /// Get all sub-agent entries (for UI display)

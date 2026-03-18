@@ -303,6 +303,32 @@ pub async fn kill_process_group_force(pid: u32) {
     debug!(pid, "Sent SIGKILL to process tree");
 }
 
+/// Kill all background processes whose label starts with `prefix`.
+/// Returns the PIDs that were killed.
+pub async fn kill_by_label_prefix(prefix: &str) -> Vec<u32> {
+    let pids: Vec<u32> = {
+        let t = tracker().lock().unwrap();
+        t.processes
+            .values()
+            .filter(|p| {
+                p.label.as_deref().is_some_and(|l| l.starts_with(prefix))
+                    && p.exited_at.is_none()
+                    && !p.killed
+            })
+            .map(|p| p.pid)
+            .collect()
+    };
+    for &pid in &pids {
+        kill_process_group_force(pid).await;
+        let mut t = tracker().lock().unwrap();
+        if let Some(proc) = t.processes.get_mut(&pid) {
+            proc.killed = true;
+            proc.exited_at = Some(Utc::now());
+        }
+    }
+    pids
+}
+
 /// Wait for a background process to finish, polling every `poll_interval_ms`.
 /// Returns the log content when done, or None on timeout.
 pub async fn wait_bg_process(pid: u32, timeout_ms: u64) -> Option<String> {

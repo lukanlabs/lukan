@@ -2,7 +2,7 @@ FROM ubuntu:24.04
 
 LABEL maintainer="Lukan Labs <hello@lukan.ai>"
 LABEL description="Lukan AI Agent — ready to run"
-LABEL version="0.1.5"
+LABEL version="0.1.6"
 
 # Avoid interactive prompts during package install
 ENV DEBIAN_FRONTEND=noninteractive

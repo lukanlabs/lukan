@@ -20,7 +20,11 @@ pub struct ProjectConfig {
     pub allowed_paths: Vec<String>,
     /// Environment variable names whose values should be redacted from tool output.
     /// Values are replaced with [REDACTED:VAR_NAME] before passing to the LLM.
-    #[serde(default, skip_serializing_if = "Vec::is_empty", alias = "blocked_env_vars")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        alias = "blocked_env_vars"
+    )]
     pub blocked_env_vars: Vec<String>,
 }
 

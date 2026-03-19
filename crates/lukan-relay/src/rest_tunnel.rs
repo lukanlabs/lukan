@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use tracing::warn;
@@ -81,6 +81,7 @@ pub async fn e2e_rest_tunnel_handler(
         path: "/api/_e2e".to_string(),
         headers: HashMap::new(),
         body: body_bytes,
+        target_port: None,
     })
     .unwrap();
 
@@ -197,6 +198,7 @@ pub async fn rest_tunnel_handler(
         path: path.clone(),
         headers,
         body: body_bytes,
+        target_port: None,
     })
     .unwrap();
 
@@ -229,6 +231,154 @@ pub async fn rest_tunnel_handler(
             // Timeout
             state.pending_rest.remove(&request_id);
             warn!(path = %path, "REST tunnel request timed out");
+            (StatusCode::GATEWAY_TIMEOUT, "Request timed out").into_response()
+        }
+    }
+}
+
+/// Port tunnel handler: proxy requests to a specific port on the user's machine.
+/// Supports two URL patterns:
+///   /tunnel/{port}/...           — uses first connected device
+///   /tunnel/{device}/{port}/...  — targets specific device
+pub async fn port_tunnel_handler(
+    State(state): State<SharedState>,
+    Path(raw_path): Path<String>,
+    request: Request<Body>,
+) -> Response {
+    // Parse: first segment is either a port (number) or device name
+    let segments: Vec<&str> = raw_path.splitn(3, '/').collect();
+    let (device, port, path) = match segments.as_slice() {
+        [first, rest @ ..] => {
+            if let Ok(p) = first.parse::<u16>() {
+                // /tunnel/{port}/...
+                (None, p, rest.join("/"))
+            } else if let Some(second) = rest.first()
+                && let Ok(p) = second.parse::<u16>()
+            {
+                // /tunnel/{device}/{port}/...
+                let remaining = if rest.len() > 1 {
+                    rest[1..].join("/")
+                } else {
+                    String::new()
+                };
+                (Some(first.to_string()), p, remaining)
+            } else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "Invalid tunnel URL. Use /tunnel/{port}/path or /tunnel/{device}/{port}/path",
+                )
+                    .into_response();
+            }
+        }
+        _ => return (StatusCode::BAD_REQUEST, "Invalid tunnel URL").into_response(),
+    };
+    port_tunnel_inner(state, device, port, path, request).await
+}
+
+async fn port_tunnel_inner(
+    state: SharedState,
+    explicit_device: Option<String>,
+    port: u16,
+    path: String,
+    request: Request<Body>,
+) -> Response {
+    let token = auth::extract_token_from_cookie(request.headers()).or_else(|| {
+        request
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string())
+    });
+
+    let claims = match token {
+        Some(t) => auth::verify_jwt(&state.browser_jwt_secret(), &t)
+            .or_else(|_| auth::verify_jwt(&state.jwt_secret, &t))
+            .map_err(|_| ()),
+        None => Err(()),
+    };
+
+    let claims = match claims {
+        Ok(c) => c,
+        Err(()) => {
+            return (StatusCode::UNAUTHORIZED, "Missing or invalid authorization").into_response();
+        }
+    };
+
+    // Resolve device: explicit > header > first connected
+    let device = explicit_device
+        .or_else(|| extract_device(request.headers()))
+        .unwrap_or_else(|| {
+            state
+                .list_device_names(&claims.sub)
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+        });
+
+    if device.is_empty() || !state.has_daemon(&claims.sub, &device) {
+        return (StatusCode::BAD_GATEWAY, "Daemon not connected").into_response();
+    }
+
+    let method = request.method().to_string();
+    let tunnel_path = format!("/{path}");
+
+    let mut headers = HashMap::new();
+    for (k, v) in request.headers() {
+        if let Ok(val) = v.to_str() {
+            let name = k.as_str().to_lowercase();
+            if name != "authorization" && name != "host" && name != "connection" {
+                headers.insert(name, val.to_string());
+            }
+        }
+    }
+
+    let body_bytes = match axum::body::to_bytes(request.into_body(), 10 * 1024 * 1024).await {
+        Ok(b) => b.to_vec(),
+        Err(_) => return (StatusCode::BAD_REQUEST, "Body too large").into_response(),
+    };
+
+    let request_id = uuid::Uuid::new_v4().to_string();
+
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    state
+        .pending_rest
+        .insert(request_id.clone(), PendingRestRequest { tx: resp_tx });
+
+    let relay_msg = serde_json::to_string(&RelayToDaemon::RestRequest {
+        request_id: request_id.clone(),
+        method,
+        path: tunnel_path.clone(),
+        headers,
+        body: body_bytes,
+        target_port: Some(port),
+    })
+    .unwrap();
+
+    if !state.send_to_daemon(&claims.sub, &device, &relay_msg) {
+        state.pending_rest.remove(&request_id);
+        return (StatusCode::BAD_GATEWAY, "Failed to send to daemon").into_response();
+    }
+
+    match tokio::time::timeout(Duration::from_secs(TUNNEL_TIMEOUT_SECS), resp_rx).await {
+        Ok(Ok(tunnel_resp)) => {
+            let status =
+                StatusCode::from_u16(tunnel_resp.status).unwrap_or(StatusCode::BAD_GATEWAY);
+            let mut response = Response::builder().status(status);
+            for (k, v) in &tunnel_resp.headers {
+                response = response.header(k.as_str(), v.as_str());
+            }
+            response
+                .body(Body::from(tunnel_resp.body))
+                .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "").into_response())
+        }
+        Ok(Err(_)) => {
+            state.pending_rest.remove(&request_id);
+            (StatusCode::BAD_GATEWAY, "Daemon disconnected").into_response()
+        }
+        Err(_) => {
+            state.pending_rest.remove(&request_id);
+            warn!(port, path = %tunnel_path, "Port tunnel request timed out");
             (StatusCode::GATEWAY_TIMEOUT, "Request timed out").into_response()
         }
     }

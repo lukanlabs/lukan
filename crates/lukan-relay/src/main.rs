@@ -128,6 +128,9 @@ fn create_router(state: SharedState) -> Router {
         .route("/api/_e2e", post(rest_tunnel::e2e_rest_tunnel_handler))
         // REST tunnel — catch-all for /api/*
         .route("/api/{*path}", any(rest_tunnel::rest_tunnel_handler))
+        // Port tunnel — proxy to user's local port
+        // /tunnel/{port}/... or /tunnel/{device}/{port}/...
+        .route("/tunnel/{*path}", any(rest_tunnel::port_tunnel_handler))
         // Health check
         .route("/health", get(health))
         // List user's connected devices (requires auth)

@@ -307,6 +307,7 @@ async fn handle_relay_message(
             path,
             headers,
             body,
+            target_port,
         } => {
             // Check if this is an E2E REST tunnel request
             if path == "/api/_e2e" {
@@ -320,11 +321,11 @@ async fn handle_relay_message(
                 )
                 .await;
             } else {
-                // Regular REST tunnel
+                // Use target_port if specified (port tunnel), otherwise daemon's own port
+                let port = target_port.unwrap_or(local_port);
                 let response_tx = response_tx.clone();
                 tokio::spawn(async move {
-                    let result =
-                        tunnel_rest_request(local_port, &method, &path, &headers, &body).await;
+                    let result = tunnel_rest_request(port, &method, &path, &headers, &body).await;
                     let resp = match result {
                         Ok((status, resp_headers, resp_body)) => DaemonToRelay::RestResponse {
                             request_id,

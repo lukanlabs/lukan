@@ -342,13 +342,6 @@ impl Provider for GeminiProvider {
                 match sse_event {
                     SseEvent::Done => break,
                     SseEvent::Data(data) => {
-                        // Log raw SSE data for debugging thought signatures
-                        if data.contains("functionCall") || data.contains("thoughtSignature") {
-                            tracing::info!(
-                                "Gemini SSE (functionCall): {}",
-                                &data[..data.len().min(500)]
-                            );
-                        }
                         let response: GeminiStreamResponse = match serde_json::from_str(&data) {
                             Ok(r) => r,
                             Err(err) => {
@@ -403,12 +396,6 @@ impl Provider for GeminiProvider {
                                             let id = format!("call_{}", uuid_v4_simple());
                                             let mut input =
                                                 fc.args.clone().unwrap_or(serde_json::json!({}));
-
-                                            tracing::debug!(
-                                                name = %fc.name,
-                                                has_thought_sig = part.thought_signature.is_some(),
-                                                "Gemini functionCall received"
-                                            );
 
                                             // Store thought_signature in input so it survives
                                             // the message round-trip and can be sent back

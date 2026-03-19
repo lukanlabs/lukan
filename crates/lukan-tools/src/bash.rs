@@ -297,11 +297,6 @@ impl Tool for BashTool {
 
         // Register as bg process so it's visible in /bg while running
         if child_pid > 0 {
-            debug!(
-                child_pid,
-                agent_label = ?ctx.agent_label,
-                "Registering foreground bash as bg process"
-            );
             bg_processes::add_bg_process(
                 child_pid,
                 command.to_string(),

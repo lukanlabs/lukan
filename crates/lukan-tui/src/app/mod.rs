@@ -718,9 +718,15 @@ impl App {
             extra_env: self.config.credentials.flatten_skill_env(),
         };
 
+        let blocked_env_vars = project_cfg
+            .as_ref()
+            .map(|c| c.blocked_env_vars.clone())
+            .unwrap_or_default();
+
         match AgentLoop::new(config).await {
             Ok(mut agent) => {
                 agent.set_disabled_tools(self.disabled_tools.clone());
+                agent.set_blocked_env_vars(blocked_env_vars);
                 agent
             }
             Err(e) => {

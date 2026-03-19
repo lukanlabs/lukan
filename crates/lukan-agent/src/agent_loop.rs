@@ -143,6 +143,8 @@ pub struct AgentLoop {
     pub label: Option<String>,
     /// Frontend tab ID for matching bg processes with UI tabs
     pub tab_id: Option<String>,
+    /// Environment variable names whose values are redacted from tool output
+    blocked_env_vars: Vec<String>,
 }
 
 /// A system event from a plugin, queued for injection into the agent context.
@@ -237,6 +239,7 @@ impl AgentLoop {
             extra_env: config.extra_env,
             label: None,
             tab_id: None,
+            blocked_env_vars: Vec::new(),
         })
     }
 
@@ -326,6 +329,7 @@ impl AgentLoop {
             extra_env: config.extra_env,
             label: None,
             tab_id: None,
+            blocked_env_vars: Vec::new(),
         })
     }
 
@@ -680,6 +684,11 @@ impl AgentLoop {
         tokio::spawn(async move {
             crate::sub_agent::set_disabled_tools(disabled).await;
         });
+    }
+
+    /// Set env var names whose values should be redacted from tool output.
+    pub fn set_blocked_env_vars(&mut self, vars: Vec<String>) {
+        self.blocked_env_vars = vars;
     }
 
     /// Rebuild the system prompt based on current mode and plan state.
@@ -1231,20 +1240,23 @@ impl AgentLoop {
             // Add tool results to history and forward events
             let mut result_blocks = Vec::new();
             for (tool, result) in pending_tools.iter().zip(tool_results.iter()) {
+                // Redact blocked env var values from tool output
+                let content = lukan_tools::redact_env_vars(&result.content, &self.blocked_env_vars);
+
                 result_blocks.push(ContentBlock::ToolResult {
                     tool_use_id: tool.id.clone(),
-                    content: result.content.clone(),
+                    content: content.clone(),
                     is_error: if result.is_error { Some(true) } else { None },
                     diff: result.diff.clone(),
                     image: result.image.clone(),
                 });
 
-                // Send ToolResult event to TUI
+                // Send ToolResult event to TUI (also redacted)
                 let _ = event_tx
                     .send(StreamEvent::ToolResult {
                         id: tool.id.clone(),
                         name: tool.name.clone(),
-                        content: result.content.clone(),
+                        content,
                         is_error: if result.is_error { Some(true) } else { None },
                         diff: result.diff.clone(),
                         image: result.image.clone(),
@@ -2008,6 +2020,7 @@ impl AgentLoop {
                     extra_env,
                     agent_label,
                     tab_id,
+                    blocked_env_vars: Vec::new(),
                 };
 
                 match registry.execute(&name, input, &ctx).await {

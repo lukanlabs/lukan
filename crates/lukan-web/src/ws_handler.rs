@@ -2159,6 +2159,11 @@ async fn create_agent(
                 .collect::<std::collections::HashSet<_>>(),
         );
     }
+    let blocked_env_vars = project_cfg
+        .as_ref()
+        .map(|c| c.blocked_env_vars.clone())
+        .unwrap_or_default();
+    agent.set_blocked_env_vars(blocked_env_vars);
     Ok(agent)
 }
 
@@ -2274,6 +2279,11 @@ async fn create_agent_with_session(
                 .collect::<std::collections::HashSet<_>>(),
         );
     }
+    let blocked_env_vars = project_cfg
+        .as_ref()
+        .map(|c| c.blocked_env_vars.clone())
+        .unwrap_or_default();
+    agent.set_blocked_env_vars(blocked_env_vars);
     Ok(agent)
 }
 

@@ -156,6 +156,11 @@ impl App {
         match AgentLoop::load_session(config, &session_id).await {
             Ok(mut agent) => {
                 agent.set_disabled_tools(self.disabled_tools.clone());
+                let blocked_env_vars = project_cfg
+                    .as_ref()
+                    .map(|c| c.blocked_env_vars.clone())
+                    .unwrap_or_default();
+                agent.set_blocked_env_vars(blocked_env_vars);
                 // Rebuild UI messages from the loaded session
                 self.messages.clear();
                 self.committed_msg_idx = 0;

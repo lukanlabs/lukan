@@ -163,15 +163,31 @@ impl GeminiProvider {
                             }
                         }
                         ContentBlock::ToolUse { id: _, name, input } => {
-                            parts.push(serde_json::json!({
+                            // Extract thought_signature if present, pass clean args
+                            let sig = input.get("__thought_signature").and_then(|v| v.as_str());
+                            let mut clean_args = input.clone();
+                            if let Some(obj) = clean_args.as_object_mut() {
+                                obj.remove("__thought_signature");
+                            }
+                            let mut fc = serde_json::json!({
                                 "functionCall": {
                                     "name": name,
-                                    "args": input
+                                    "args": clean_args
                                 }
-                            }));
+                            });
+                            if let Some(sig) = sig {
+                                fc["functionCall"]["thoughtSignature"] = serde_json::json!(sig);
+                            }
+                            parts.push(fc);
                         }
-                        ContentBlock::Thinking { .. } => {
-                            // Skip thinking blocks
+                        ContentBlock::Thinking { text } => {
+                            // Include thinking as thought parts for models that require it
+                            if !text.is_empty() {
+                                parts.push(serde_json::json!({
+                                    "thought": true,
+                                    "text": text
+                                }));
+                            }
                         }
                         _ => {}
                     }
@@ -360,16 +376,37 @@ impl Provider for GeminiProvider {
                                 if let Some(ref content) = candidate.content {
                                     for part in &content.parts {
                                         if let Some(ref text) = part.text {
-                                            tx.send(StreamEvent::TextDelta { text: text.clone() })
+                                            if part.thought == Some(true) {
+                                                tx.send(StreamEvent::ThinkingDelta {
+                                                    text: text.clone(),
+                                                })
                                                 .await
                                                 .ok();
+                                            } else {
+                                                tx.send(StreamEvent::TextDelta {
+                                                    text: text.clone(),
+                                                })
+                                                .await
+                                                .ok();
+                                            }
                                         }
 
                                         if let Some(ref fc) = part.function_call {
                                             has_function_call = true;
                                             let id = format!("call_{}", uuid_v4_simple());
-                                            let input =
+                                            let mut input =
                                                 fc.args.clone().unwrap_or(serde_json::json!({}));
+
+                                            // Store thought_signature in input so it survives
+                                            // the message round-trip and can be sent back
+                                            if let Some(ref sig) = fc.thought_signature
+                                                && let Some(obj) = input.as_object_mut()
+                                            {
+                                                obj.insert(
+                                                    "__thought_signature".to_string(),
+                                                    serde_json::json!(sig),
+                                                );
+                                            }
 
                                             tx.send(StreamEvent::ToolUseStart {
                                                 id: id.clone(),
@@ -457,6 +494,8 @@ struct GeminiPart {
     #[serde(default)]
     text: Option<String>,
     #[serde(default)]
+    thought: Option<bool>,
+    #[serde(default)]
     function_call: Option<GeminiFunctionCall>,
 }
 
@@ -466,6 +505,8 @@ struct GeminiFunctionCall {
     name: String,
     #[serde(default)]
     args: Option<serde_json::Value>,
+    #[serde(default)]
+    thought_signature: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -733,13 +774,15 @@ mod tests {
     }
 
     #[test]
-    fn convert_assistant_parts_skips_thinking() {
+    fn convert_assistant_parts_includes_thinking() {
         let p = make_provider();
         let content = MessageContent::Blocks(vec![ContentBlock::Thinking {
             text: "reasoning".into(),
         }]);
         let parts = p.convert_assistant_parts(&content);
-        assert!(parts.is_empty());
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["thought"], true);
+        assert_eq!(parts[0]["text"], "reasoning");
     }
 
     // ── convert_user_parts ────────────────────────────────────────────

@@ -163,15 +163,31 @@ impl GeminiProvider {
                             }
                         }
                         ContentBlock::ToolUse { id: _, name, input } => {
-                            parts.push(serde_json::json!({
+                            // Extract thought_signature if present, pass clean args
+                            let sig = input.get("__thought_signature").and_then(|v| v.as_str());
+                            let mut clean_args = input.clone();
+                            if let Some(obj) = clean_args.as_object_mut() {
+                                obj.remove("__thought_signature");
+                            }
+                            let mut part = serde_json::json!({
                                 "functionCall": {
                                     "name": name,
-                                    "args": input
+                                    "args": clean_args
                                 }
-                            }));
+                            });
+                            if let Some(sig) = sig {
+                                part["thoughtSignature"] = serde_json::json!(sig);
+                            }
+                            parts.push(part);
                         }
-                        ContentBlock::Thinking { .. } => {
-                            // Skip thinking blocks
+                        ContentBlock::Thinking { text } => {
+                            // Include thinking as thought parts for models that require it
+                            if !text.is_empty() {
+                                parts.push(serde_json::json!({
+                                    "thought": true,
+                                    "text": text
+                                }));
+                            }
                         }
                         _ => {}
                     }
@@ -281,8 +297,8 @@ impl Provider for GeminiProvider {
         }
 
         let url = format!(
-            "{}/models/{}:streamGenerateContent?alt=sse&key={}",
-            GEMINI_API_BASE, self.model, self.api_key
+            "{}/models/{}:streamGenerateContent?alt=sse",
+            GEMINI_API_BASE, self.model
         );
 
         debug!("Sending request to Gemini API (model: {})", self.model);
@@ -291,6 +307,7 @@ impl Provider for GeminiProvider {
             .client
             .post(&url)
             .header("content-type", "application/json")
+            .header("x-goog-api-key", &self.api_key)
             .json(&body)
             .send()
             .await
@@ -359,16 +376,37 @@ impl Provider for GeminiProvider {
                                 if let Some(ref content) = candidate.content {
                                     for part in &content.parts {
                                         if let Some(ref text) = part.text {
-                                            tx.send(StreamEvent::TextDelta { text: text.clone() })
+                                            if part.thought == Some(true) {
+                                                tx.send(StreamEvent::ThinkingDelta {
+                                                    text: text.clone(),
+                                                })
                                                 .await
                                                 .ok();
+                                            } else {
+                                                tx.send(StreamEvent::TextDelta {
+                                                    text: text.clone(),
+                                                })
+                                                .await
+                                                .ok();
+                                            }
                                         }
 
                                         if let Some(ref fc) = part.function_call {
                                             has_function_call = true;
                                             let id = format!("call_{}", uuid_v4_simple());
-                                            let input =
+                                            let mut input =
                                                 fc.args.clone().unwrap_or(serde_json::json!({}));
+
+                                            // Store thought_signature in input so it survives
+                                            // the message round-trip and can be sent back
+                                            if let Some(ref sig) = part.thought_signature
+                                                && let Some(obj) = input.as_object_mut()
+                                            {
+                                                obj.insert(
+                                                    "__thought_signature".to_string(),
+                                                    serde_json::json!(sig),
+                                                );
+                                            }
 
                                             tx.send(StreamEvent::ToolUseStart {
                                                 id: id.clone(),
@@ -456,7 +494,11 @@ struct GeminiPart {
     #[serde(default)]
     text: Option<String>,
     #[serde(default)]
+    thought: Option<bool>,
+    #[serde(default)]
     function_call: Option<GeminiFunctionCall>,
+    #[serde(default)]
+    thought_signature: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -494,11 +536,12 @@ pub struct GeminiModel {
 
 /// Fetch available models from the Gemini API
 pub async fn fetch_gemini_models(api_key: &str) -> Result<Vec<GeminiModel>> {
-    let url = format!("{}/models?key={}", GEMINI_API_BASE, api_key);
+    let url = format!("{}/models", GEMINI_API_BASE);
     let client = Client::new();
 
     let resp = client
         .get(&url)
+        .header("x-goog-api-key", api_key)
         .send()
         .await
         .context("Failed to connect to Gemini API")?;
@@ -731,13 +774,15 @@ mod tests {
     }
 
     #[test]
-    fn convert_assistant_parts_skips_thinking() {
+    fn convert_assistant_parts_includes_thinking() {
         let p = make_provider();
         let content = MessageContent::Blocks(vec![ContentBlock::Thinking {
             text: "reasoning".into(),
         }]);
         let parts = p.convert_assistant_parts(&content);
-        assert!(parts.is_empty());
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["thought"], true);
+        assert_eq!(parts[0]["text"], "reasoning");
     }
 
     // ── convert_user_parts ────────────────────────────────────────────

@@ -1540,12 +1540,6 @@ fn format_sub_agent_result(entry: &SubAgentEntry) -> ToolResult {
     if output.trim().is_empty() {
         let label_prefix = format!("subagent:{}", entry.id);
         let live_logs = lukan_tools::bg_processes::get_logs_by_label_prefix(&label_prefix, 100);
-        info!(
-            subagent_id = %entry.id,
-            label_prefix = %label_prefix,
-            live_logs_len = live_logs.len(),
-            "SubAgentResult: checking bg process logs"
-        );
         if !live_logs.is_empty() {
             output = live_logs;
         }

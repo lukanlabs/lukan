@@ -169,16 +169,16 @@ impl GeminiProvider {
                             if let Some(obj) = clean_args.as_object_mut() {
                                 obj.remove("__thought_signature");
                             }
-                            let mut fc = serde_json::json!({
+                            let mut part = serde_json::json!({
                                 "functionCall": {
                                     "name": name,
                                     "args": clean_args
                                 }
                             });
                             if let Some(sig) = sig {
-                                fc["functionCall"]["thoughtSignature"] = serde_json::json!(sig);
+                                part["thoughtSignature"] = serde_json::json!(sig);
                             }
-                            parts.push(fc);
+                            parts.push(part);
                         }
                         ContentBlock::Thinking { text } => {
                             // Include thinking as thought parts for models that require it
@@ -342,6 +342,13 @@ impl Provider for GeminiProvider {
                 match sse_event {
                     SseEvent::Done => break,
                     SseEvent::Data(data) => {
+                        // Log raw SSE data for debugging thought signatures
+                        if data.contains("functionCall") || data.contains("thoughtSignature") {
+                            tracing::info!(
+                                "Gemini SSE (functionCall): {}",
+                                &data[..data.len().min(500)]
+                            );
+                        }
                         let response: GeminiStreamResponse = match serde_json::from_str(&data) {
                             Ok(r) => r,
                             Err(err) => {
@@ -397,9 +404,15 @@ impl Provider for GeminiProvider {
                                             let mut input =
                                                 fc.args.clone().unwrap_or(serde_json::json!({}));
 
+                                            tracing::debug!(
+                                                name = %fc.name,
+                                                has_thought_sig = part.thought_signature.is_some(),
+                                                "Gemini functionCall received"
+                                            );
+
                                             // Store thought_signature in input so it survives
                                             // the message round-trip and can be sent back
-                                            if let Some(ref sig) = fc.thought_signature
+                                            if let Some(ref sig) = part.thought_signature
                                                 && let Some(obj) = input.as_object_mut()
                                             {
                                                 obj.insert(
@@ -497,6 +510,8 @@ struct GeminiPart {
     thought: Option<bool>,
     #[serde(default)]
     function_call: Option<GeminiFunctionCall>,
+    #[serde(default)]
+    thought_signature: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -505,8 +520,6 @@ struct GeminiFunctionCall {
     name: String,
     #[serde(default)]
     args: Option<serde_json::Value>,
-    #[serde(default)]
-    thought_signature: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

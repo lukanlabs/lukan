@@ -39,6 +39,10 @@ struct Cli {
     /// Continue the most recent chat session
     #[arg(long, short = 'c')]
     r#continue: bool,
+
+    /// Bind daemon to localhost only (not accessible from the network)
+    #[arg(long)]
+    local_only: bool,
 }
 
 #[derive(Subcommand)]
@@ -190,6 +194,13 @@ async fn main() -> Result<()> {
     }
 
     let cli = Cli::parse();
+
+    // Set LUKAN_LOCAL_ONLY env var if --local-only flag is set.
+    // ensure_daemon_running() will auto-restart the daemon if the mode changed.
+    if cli.local_only {
+        // SAFETY: set_var is called once at startup before any threads are spawned
+        unsafe { std::env::set_var("LUKAN_LOCAL_ONLY", "1") };
+    }
 
     // Ensure config dirs exist
     LukanPaths::ensure_dirs().await?;

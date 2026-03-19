@@ -80,6 +80,9 @@ pub struct AppConfig {
     /// MCP (Model Context Protocol) server configurations
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
+    /// Bind daemon to localhost only (not accessible from the network)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub local_only: bool,
 }
 
 /// Configuration for an MCP (Model Context Protocol) server.
@@ -118,6 +121,7 @@ impl Default for AppConfig {
             browser_cdp_url: None,
             disabled_tools: None,
             mcp_servers: HashMap::new(),
+            local_only: false,
         }
     }
 }

@@ -14,6 +14,8 @@ use lukan_core::config::{ConfigManager, CredentialsManager, LukanPaths, Resolved
 struct DaemonLock {
     pid: u32,
     port: u16,
+    #[serde(default)]
+    local_only: bool,
 }
 
 #[derive(Subcommand)]
@@ -33,10 +35,17 @@ pub enum DaemonCommands {
 pub async fn handle_daemon_command(command: DaemonCommands) -> Result<()> {
     match command {
         DaemonCommands::Start { detach } => {
+            // Read local_only from config or LUKAN_LOCAL_ONLY env var
+            let local_only = std::env::var("LUKAN_LOCAL_ONLY").is_ok_and(|v| v == "1")
+                || std::fs::read_to_string(LukanPaths::config_file())
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|v| v.get("localOnly").and_then(|v| v.as_bool()))
+                    .unwrap_or(false);
             if detach {
-                start_detached()?;
+                start_detached_with_opts(local_only)?;
             } else {
-                run_daemon().await?;
+                run_daemon_with_opts(local_only).await?;
             }
         }
         DaemonCommands::Stop => {
@@ -63,7 +72,7 @@ pub async fn handle_daemon_command(command: DaemonCommands) -> Result<()> {
 
 /// Run the daemon in the current process (foreground).
 /// Starts both the web server and the worker scheduler.
-async fn run_daemon() -> Result<()> {
+async fn run_daemon_with_opts(local_only: bool) -> Result<()> {
     if is_daemon_running() {
         let pid = read_pid_file().unwrap_or(0);
         bail!("Daemon already running (PID {pid})");
@@ -96,7 +105,8 @@ async fn run_daemon() -> Result<()> {
         let mut last_err = None;
         let mut result = None;
         for port in preferred_port..preferred_port.saturating_add(10) {
-            match lukan_web::start_daemon_server(resolved.clone(), port).await {
+            match lukan_web::start_daemon_server_with_opts(resolved.clone(), port, local_only).await
+            {
                 Ok(r) => {
                     result = Some(r);
                     break;
@@ -120,6 +130,7 @@ async fn run_daemon() -> Result<()> {
     let lock = DaemonLock {
         pid,
         port: actual_port,
+        local_only,
     };
     std::fs::write(
         &lock_path,
@@ -263,7 +274,7 @@ async fn run_daemon() -> Result<()> {
 }
 
 /// Spawn the daemon as a detached background process.
-fn start_detached() -> Result<()> {
+fn start_detached_with_opts(local_only: bool) -> Result<()> {
     if is_daemon_running() {
         let pid = read_pid_file().unwrap_or(0);
         println!("  Daemon already running (PID {pid})");
@@ -280,13 +291,15 @@ fn start_detached() -> Result<()> {
         .open(&log_path)
         .context("Failed to create daemon log file")?;
 
-    let child = std::process::Command::new(&self_exe)
-        .args(["daemon", "start"])
+    let mut cmd = std::process::Command::new(&self_exe);
+    cmd.args(["daemon", "start"])
         .stdin(std::process::Stdio::null())
         .stdout(log_file.try_clone()?)
-        .stderr(log_file)
-        .spawn()
-        .context("Failed to spawn daemon process")?;
+        .stderr(log_file);
+    if local_only {
+        cmd.env("LUKAN_LOCAL_ONLY", "1");
+    }
+    let child = cmd.spawn().context("Failed to spawn daemon process")?;
 
     println!("  Daemon started (PID {})", child.id());
     println!("  Log: {}", log_path.display());
@@ -338,13 +351,27 @@ pub fn stop_daemon() -> Result<()> {
 /// Returns the port the daemon's web server is listening on.
 /// Called automatically from UIs and CLI worker commands.
 pub fn ensure_daemon_running() -> Result<u16> {
+    let want_local = std::env::var("LUKAN_LOCAL_ONLY").is_ok_and(|v| v == "1")
+        || std::fs::read_to_string(LukanPaths::config_file())
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("localOnly").and_then(|v| v.as_bool()))
+            .unwrap_or(false);
+
     // Check lock file first (new format with port)
     if let Some(lock) = read_lock_file() {
         if is_process_alive(lock.pid) {
-            return Ok(lock.port);
+            // Restart if local_only mode changed
+            if lock.local_only != want_local {
+                info!("Daemon bind mode changed, restarting");
+                let _ = stop_daemon();
+            } else {
+                return Ok(lock.port);
+            }
+        } else {
+            // Stale lock file
+            cleanup_lock_files();
         }
-        // Stale lock file
-        cleanup_lock_files();
     }
 
     // Check legacy PID file
@@ -373,13 +400,15 @@ pub fn ensure_daemon_running() -> Result<u16> {
         .try_clone()
         .context("Cannot auto-start daemon: failed to clone log file handle")?;
 
-    let child = std::process::Command::new(&self_exe)
-        .args(["daemon", "start"])
+    let mut cmd = std::process::Command::new(&self_exe);
+    cmd.args(["daemon", "start"])
         .stdin(std::process::Stdio::null())
         .stdout(log_clone)
-        .stderr(log_file)
-        .spawn()
-        .context("Failed to auto-start daemon")?;
+        .stderr(log_file);
+    if want_local {
+        cmd.env("LUKAN_LOCAL_ONLY", "1");
+    }
+    let child = cmd.spawn().context("Failed to auto-start daemon")?;
 
     info!(pid = child.id(), "Auto-started daemon");
 

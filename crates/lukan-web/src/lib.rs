@@ -100,6 +100,16 @@ pub async fn start_daemon_server(
     resolved: ResolvedConfig,
     port: u16,
 ) -> Result<(u16, tokio::task::JoinHandle<Result<(), std::io::Error>>)> {
+    start_daemon_server_with_opts(resolved, port, false).await
+}
+
+/// Start the daemon server with options.
+/// If `local_only` is true, binds to 127.0.0.1 instead of 0.0.0.0.
+pub async fn start_daemon_server_with_opts(
+    resolved: ResolvedConfig,
+    port: u16,
+    local_only: bool,
+) -> Result<(u16, tokio::task::JoinHandle<Result<(), std::io::Error>>)> {
     let state = Arc::new(AppState::new(resolved));
 
     // Spawn background task to poll notification file and broadcast to WebSocket clients
@@ -130,10 +140,11 @@ pub async fn start_daemon_server(
 
     let router = server::create_router(Arc::clone(&state));
 
-    let addr = format!("0.0.0.0:{port}");
+    let host = if local_only { "127.0.0.1" } else { "0.0.0.0" };
+    let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     let actual_port = listener.local_addr()?.port();
-    tracing::info!("Web server listening on 0.0.0.0:{actual_port}");
+    tracing::info!("Web server listening on {host}:{actual_port}");
 
     let handle = tokio::spawn(async move { axum::serve(listener, router).await });
 

@@ -4,6 +4,9 @@ on:
   push:
     tags: ['v*']
 
+permissions:
+  contents: write
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true

@@ -281,8 +281,8 @@ impl Provider for GeminiProvider {
         }
 
         let url = format!(
-            "{}/models/{}:streamGenerateContent?alt=sse&key={}",
-            GEMINI_API_BASE, self.model, self.api_key
+            "{}/models/{}:streamGenerateContent?alt=sse",
+            GEMINI_API_BASE, self.model
         );
 
         debug!("Sending request to Gemini API (model: {})", self.model);
@@ -291,6 +291,7 @@ impl Provider for GeminiProvider {
             .client
             .post(&url)
             .header("content-type", "application/json")
+            .header("x-goog-api-key", &self.api_key)
             .json(&body)
             .send()
             .await
@@ -494,11 +495,12 @@ pub struct GeminiModel {
 
 /// Fetch available models from the Gemini API
 pub async fn fetch_gemini_models(api_key: &str) -> Result<Vec<GeminiModel>> {
-    let url = format!("{}/models?key={}", GEMINI_API_BASE, api_key);
+    let url = format!("{}/models", GEMINI_API_BASE);
     let client = Client::new();
 
     let resp = client
         .get(&url)
+        .header("x-goog-api-key", api_key)
         .send()
         .await
         .context("Failed to connect to Gemini API")?;

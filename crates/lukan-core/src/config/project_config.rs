@@ -18,6 +18,10 @@ pub struct ProjectConfig {
     /// Paths can be absolute or use `~` for home directory.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_paths: Vec<String>,
+    /// Environment variable names whose values should be redacted from tool output.
+    /// Values are replaced with [REDACTED:VAR_NAME] before passing to the LLM.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_env_vars: Vec<String>,
 }
 
 impl Default for ProjectConfig {
@@ -27,6 +31,7 @@ impl Default for ProjectConfig {
             permissions: PermissionsConfig::default(),
             trusted: false,
             allowed_paths: Vec::new(),
+            blocked_env_vars: Vec::new(),
         }
     }
 }
@@ -201,10 +206,12 @@ mod tests {
             },
             trusted: true,
             allowed_paths: vec!["/tmp/extra".into(), "~/projects".into()],
+            blocked_env_vars: vec!["SECRET_KEY".into()],
         };
         let json = serde_json::to_string_pretty(&config).unwrap();
         let parsed: ProjectConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.permission_mode, PermissionMode::Manual);
+        assert_eq!(parsed.blocked_env_vars, vec!["SECRET_KEY"]);
         assert!(parsed.trusted);
         assert_eq!(parsed.allowed_paths.len(), 2);
         assert_eq!(parsed.permissions.deny, vec!["rm -rf /"]);

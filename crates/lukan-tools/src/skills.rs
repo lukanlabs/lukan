@@ -238,6 +238,7 @@ mod tests {
             extra_env: std::collections::HashMap::new(),
             agent_label: None,
             tab_id: None,
+            blocked_env_vars: Vec::new(),
         };
         let input = serde_json::json!({"name": "my-skill"});
         let result = tool.execute(input, &ctx).await.unwrap();

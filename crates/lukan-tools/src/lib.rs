@@ -53,6 +53,26 @@ pub struct ToolContext {
     pub agent_label: Option<String>,
     /// Tab ID for associating background processes with the frontend tab
     pub tab_id: Option<String>,
+    /// Environment variable names whose values are redacted from tool output
+    pub blocked_env_vars: Vec<String>,
+}
+
+/// Redact values of blocked env vars from tool output.
+/// Replaces actual values with [REDACTED:VAR_NAME] so the LLM knows the var
+/// exists but cannot see its value.
+pub fn redact_env_vars(output: &str, blocked_vars: &[String]) -> String {
+    if blocked_vars.is_empty() {
+        return output.to_string();
+    }
+    let mut result = output.to_string();
+    for var_name in blocked_vars {
+        if let Ok(value) = std::env::var(var_name)
+            && !value.is_empty()
+        {
+            result = result.replace(&value, &format!("[REDACTED:{var_name}]"));
+        }
+    }
+    result
 }
 
 /// Run a tokio Command with cancellation support.
@@ -310,6 +330,7 @@ mod tests {
             extra_env: HashMap::new(),
             agent_label: None,
             tab_id: None,
+            blocked_env_vars: Vec::new(),
         }
     }
 

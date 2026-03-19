@@ -540,6 +540,7 @@ async fn run_sub_agent(
                     extra_env: HashMap::new(),
                     agent_label: Some(format!("subagent:{sa_id}")),
                     tab_id: None,
+                    blocked_env_vars: Vec::new(),
                 };
                 match reg.execute(&n, inp, &ctx).await {
                     Ok(r) => r,
@@ -1297,6 +1298,7 @@ pub async fn run_explore(
                         extra_env: HashMap::new(),
                         agent_label: None,
                         tab_id: None,
+                        blocked_env_vars: Vec::new(),
                     };
                     match reg.execute(&n, inp, &ctx).await {
                         Ok(r) => r,

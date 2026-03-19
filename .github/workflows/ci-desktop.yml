@@ -16,6 +16,9 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-desktop-${{ github.ref }}
   cancel-in-progress: true

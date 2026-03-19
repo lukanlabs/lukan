@@ -228,9 +228,12 @@ impl App {
                                     self.messages.push(ChatMessage::new(display_role, text));
                                 }
                             }
-                            ContentBlock::ToolUse { name, .. } => {
-                                self.messages
-                                    .push(ChatMessage::new("tool_call", format!("● {name}(...)")));
+                            ContentBlock::ToolUse { name, input, .. } => {
+                                let summary = summarize_tool_input(name, input);
+                                self.messages.push(ChatMessage::new(
+                                    "tool_call",
+                                    format!("● {name}({summary})"),
+                                ));
                             }
                             ContentBlock::ToolResult { content, .. } => {
                                 let preview = if content.len() > 200 {

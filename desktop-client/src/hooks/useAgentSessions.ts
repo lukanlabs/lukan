@@ -129,7 +129,7 @@ export function useAgentSessions() {
         // ignore
       }
 
-      if (stored && stored.tabs.length > 0) {
+      if (stored && stored.tabs && stored.tabs.length > 0) {
         // Re-create backend tabs for each stored tab, preserving labels
         const restoredTabs: AgentTab[] = [];
         const oldToNew = new Map<string, string>();

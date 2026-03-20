@@ -22,8 +22,8 @@ export function useTerminalSessions() {
   /** Initialize by listing existing tmux sessions and reconnecting to each. */
   const initialize = useCallback(async () => {
     try {
-      const existing = await terminalList();
-      if (existing.length === 0) {
+      const existing = await terminalList() ?? [];
+      if (!Array.isArray(existing) || existing.length === 0) {
         // No existing sessions — create a fresh one
         const info = await terminalCreate(undefined, 80, 24);
         setSessions([info]);

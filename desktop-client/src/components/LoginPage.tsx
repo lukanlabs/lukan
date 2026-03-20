@@ -319,7 +319,7 @@ export default function LoginPage({ onAuthenticated, message, devices, onLogout 
                   </p>
                 </div>
 
-                {devices.length === 0 ? (
+                {!devices || devices.length === 0 ? (
                   <div
                     style={{
                       padding: "24px 16px",

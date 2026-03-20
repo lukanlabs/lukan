@@ -1355,7 +1355,7 @@ async fn send_plugin_notification(plugin: &str, channel_id: &str, text: &str, ap
     let notify_text = if text.len() > 2000 {
         format!(
             "{}...\n\n[Respond 'yes' to approve or 'no' to reject]",
-            &text[..2000]
+            &text[..text.floor_char_boundary(2000)]
         )
     } else {
         format!("{}\n\n[Respond 'yes' to approve or 'no' to reject]", text)
@@ -1467,7 +1467,7 @@ async fn send_discord_notification(bot_token: &str, channel_id: &str, text: &str
 
     // Discord has a 2000 char limit per message
     let truncated = if text.len() > 1900 {
-        format!("{}...", &text[..1900])
+        format!("{}...", &text[..text.floor_char_boundary(1900)])
     } else {
         text.to_string()
     };
@@ -1659,7 +1659,7 @@ async fn send_gmail_notification(
 
     // Truncate context for email
     let context = if text.len() > 3000 {
-        format!("{}...", &text[..3000])
+        format!("{}...", &text[..text.floor_char_boundary(3000)])
     } else {
         text.to_string()
     };

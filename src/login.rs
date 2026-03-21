@@ -259,10 +259,22 @@ async fn restart_daemon_if_running() {
 }
 
 /// Run the `lukan logout` command.
+/// Removes relay config and restarts the daemon to disconnect from the relay.
 pub async fn run_logout() -> Result<()> {
     RelayConfig::remove().await?;
     println!("  Logged out. Relay config removed.");
-    println!("  Restart the daemon to disconnect from the relay.");
+
+    // Restart daemon to disconnect from relay
+    if crate::daemon::is_daemon_running() {
+        crate::daemon::stop_daemon()?;
+        // Wait for daemon to fully stop
+        for _ in 0..10 {
+            if !crate::daemon::is_daemon_running() { break; }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        println!("  Restarting daemon...");
+        crate::daemon::restart_daemon()?;
+    }
     Ok(())
 }
 

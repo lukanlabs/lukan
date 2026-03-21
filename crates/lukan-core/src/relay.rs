@@ -61,6 +61,9 @@ pub enum RelayToDaemon {
         headers: HashMap<String, String>,
         #[serde(with = "base64_bytes")]
         body: Vec<u8>,
+        /// Optional target port for port tunneling (default: daemon's own port)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_port: Option<u16>,
     },
     /// Notify daemon that a new browser connection was opened for this user.
     ConnectionOpened { connection_id: String },
@@ -226,6 +229,7 @@ mod tests {
             path: "/api/config".into(),
             headers: HashMap::new(),
             body: b"hello world".to_vec(),
+            target_port: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         // Body should be base64-encoded

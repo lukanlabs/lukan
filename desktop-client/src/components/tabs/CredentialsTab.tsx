@@ -89,7 +89,10 @@ export default function CredentialsTab() {
     setTestResult(null);
     try {
       const result = await testProvider(selected.provider);
-      setTestResult({ status: "success", message: result });
+      const msg = typeof result === "object" && result !== null && "message" in result
+        ? (result as { message: string }).message
+        : String(result);
+      setTestResult({ status: "success", message: msg });
     } catch (e) {
       setTestResult({ status: "error", message: `${e}` });
     } finally {

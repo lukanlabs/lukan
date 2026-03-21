@@ -81,6 +81,7 @@ pub async fn e2e_rest_tunnel_handler(
         path: "/api/_e2e".to_string(),
         headers: HashMap::new(),
         body: body_bytes,
+        target_port: None,
     })
     .unwrap();
 
@@ -197,6 +198,7 @@ pub async fn rest_tunnel_handler(
         path: path.clone(),
         headers,
         body: body_bytes,
+        target_port: None,
     })
     .unwrap();
 

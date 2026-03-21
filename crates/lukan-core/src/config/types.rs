@@ -62,6 +62,8 @@ pub struct AppConfig {
     pub openai_compatible_provider_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openai_compatible_provider_options: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zai_base_url: Option<String>,
     /// Password for web UI authentication (None = no auth required)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_password: Option<String>,
@@ -122,6 +124,7 @@ impl Default for AppConfig {
             disabled_tools: None,
             mcp_servers: HashMap::new(),
             local_only: false,
+            zai_base_url: None,
         }
     }
 }

@@ -149,26 +149,45 @@ export class RelayTransport implements Transport {
     return this.relayOrigin;
   }
 
+  private totpCode: string | null = null;
+
   private get wsUrl(): string {
     const url = new URL(this.relayOrigin);
     const proto = url.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${url.host}/ws/client?device=${encodeURIComponent(this.device)}`;
+    let wsUrl = `${proto}//${url.host}/ws/client?device=${encodeURIComponent(this.device)}`;
+    if (this.totpCode) wsUrl += `&totp=${encodeURIComponent(this.totpCode)}`;
+    return wsUrl;
   }
 
   async connect(): Promise<void> {
-    // Auth is via HttpOnly cookie — sent automatically by the browser.
-    // No token management needed in JS.
+    // Check if TOTP is required before attempting WebSocket
+    try {
+      const preflight = await fetch(`${this.relayOrigin}/ws/client/preflight`, {
+        credentials: "include",
+      });
+      if (preflight.ok) {
+        const data = await preflight.json();
+        if (data.totpRequired) {
+          const code = await this.promptTotp();
+          if (!code) throw new Error("TOTP verification cancelled");
+          this.totpCode = code;
+        }
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message === "TOTP verification cancelled") throw e;
+      // Preflight failed — try connecting anyway (relay might not support preflight)
+    }
+
     return new Promise<void>((resolve, reject) => {
       let settled = false;
 
-      // Cookie is sent automatically during the WS upgrade handshake
       const ws = new WebSocket(this.wsUrl);
       this.ws = ws;
 
       ws.onopen = async () => {
         if (!settled) {
           settled = true;
-          // Attempt E2E handshake (non-blocking — resolve immediately)
+          this.totpCode = null; // Clear after successful connection
           resolve();
           this.tryE2EHandshake();
         }
@@ -214,15 +233,103 @@ export class RelayTransport implements Transport {
     });
   }
 
-  private reconnect(): void {
+  private promptTotp(): Promise<string | null> {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.style.cssText = "position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center";
+
+      const backdrop = document.createElement("div");
+      backdrop.style.cssText = "position:absolute;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px)";
+      overlay.appendChild(backdrop);
+
+      const modal = document.createElement("div");
+      modal.style.cssText = `
+        position:relative;width:380px;max-width:90vw;
+        background:rgba(20,20,20,0.95);
+        border:1px solid rgba(60,60,60,0.5);
+        border-radius:12px;
+        box-shadow:0 12px 40px rgba(0,0,0,0.6),0 4px 12px rgba(0,0,0,0.4);
+        overflow:hidden;
+      `.replace(/\s+/g, "");
+
+      modal.innerHTML = `
+        <div style="padding:24px 24px 0;border-bottom:1px solid rgba(50,50,50,0.3)">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <span style="font-size:15px;font-weight:600;color:#fafafa">Verification required</span>
+          </div>
+          <p style="font-size:13px;color:#52525b;margin:0;padding-bottom:16px">Enter the 6-digit code from your authenticator app to connect to this device.</p>
+        </div>
+        <div style="padding:20px 24px">
+          <input id="totp-modal-input" type="text" maxlength="10" autocomplete="one-time-code" inputmode="numeric" placeholder="000000"
+            style="width:100%;padding:14px;border-radius:8px;border:1px solid rgba(60,60,60,0.5);background:rgba(255,255,255,0.03);color:#fafafa;font-size:22px;font-family:'JetBrains Mono','Fira Code','Consolas',monospace;text-align:center;letter-spacing:8px;outline:none;box-sizing:border-box;transition:border-color 180ms ease" />
+          <p style="margin:10px 0 0;font-size:11px;color:#52525b;text-align:center">You can also use a recovery code</p>
+        </div>
+        <div style="padding:0 24px 20px;display:flex;gap:8px">
+          <button id="totp-modal-cancel"
+            style="flex:1;padding:10px;border-radius:8px;border:1px solid rgba(60,60,60,0.5);background:transparent;color:#a1a1aa;font-size:13px;font-weight:500;cursor:pointer;transition:all 180ms ease">
+            Cancel
+          </button>
+          <button id="totp-modal-submit"
+            style="flex:1;padding:10px;border-radius:8px;border:none;background:#fafafa;color:#0a0a0a;font-size:13px;font-weight:600;cursor:pointer;transition:all 180ms ease">
+            Verify
+          </button>
+        </div>
+      `;
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const input = modal.querySelector("#totp-modal-input") as HTMLInputElement;
+      setTimeout(() => input.focus(), 50);
+
+      // Focus ring
+      input.addEventListener("focus", () => { input.style.borderColor = "rgba(100,100,100,0.6)"; });
+      input.addEventListener("blur", () => { input.style.borderColor = "rgba(60,60,60,0.5)"; });
+
+      const cleanup = () => { if (overlay.parentNode) document.body.removeChild(overlay); };
+
+      const submit = () => {
+        const code = input.value.trim();
+        if (code) { cleanup(); resolve(code); }
+      };
+
+      modal.querySelector("#totp-modal-submit")!.addEventListener("click", submit);
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+
+      modal.querySelector("#totp-modal-cancel")!.addEventListener("click", () => {
+        cleanup(); resolve(null);
+      });
+
+      backdrop.addEventListener("click", () => {
+        cleanup(); resolve(null);
+      });
+    });
+  }
+
+  private async reconnect(): Promise<void> {
     this.clearE2E();
 
-    // Cookie is sent automatically
+    // Check TOTP again on reconnect
+    try {
+      const preflight = await fetch(`${this.relayOrigin}/ws/client/preflight`, { credentials: "include" });
+      if (preflight.ok) {
+        const data = await preflight.json();
+        if (data.totpRequired) {
+          const code = await this.promptTotp();
+          if (code) this.totpCode = code;
+          else return; // User cancelled
+        }
+      }
+    } catch { /* continue without TOTP */ }
+
     const ws = new WebSocket(this.wsUrl);
+    this.totpCode = null; // Clear after use
     this.ws = ws;
 
     ws.onopen = () => {
-      // New handshake on reconnect (forward secrecy)
       this.tryE2EHandshake();
     };
 

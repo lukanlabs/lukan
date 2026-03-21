@@ -69,6 +69,7 @@ async fn run_bridge_loop(
     loop {
         info!(relay_url = %config.relay_url, "Connecting to relay server...");
 
+        let started = std::time::Instant::now();
         match connect_and_run(&config, local_port, &mut shutdown_rx).await {
             Ok(()) => {
                 info!("Relay bridge shut down gracefully");
@@ -77,6 +78,11 @@ async fn run_bridge_loop(
             Err(e) => {
                 warn!(error = %e, cause = ?e, backoff_secs = backoff.as_secs(), "Relay connection failed, retrying");
             }
+        }
+
+        // If we were connected for >10s, reset backoff (likely a server restart, not a permanent failure)
+        if started.elapsed() > Duration::from_secs(10) {
+            backoff = Duration::from_secs(1);
         }
 
         // Wait with backoff, but allow shutdown during the wait

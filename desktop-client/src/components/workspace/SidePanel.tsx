@@ -1,5 +1,7 @@
+import { useState, useEffect } from "react";
 import { X } from "lucide-react";
 import type { SidePanelId, BgProcessInfo, ViewDeclaration } from "../../lib/types";
+import { getCwd } from "../../lib/tauri";
 import { FilesPanel } from "./panels/FilesPanel";
 import { WorkersPanel } from "./panels/WorkersPanel";
 import { PipelinesPanel } from "./panels/PipelinesPanel";
@@ -56,6 +58,15 @@ export function SidePanel({
   activePluginRunning,
   onClose,
 }: SidePanelProps) {
+  const [pluginCwd, setPluginCwd] = useState<string | undefined>();
+
+  // Get cwd for plugin webview
+  useEffect(() => {
+    if (activePanel === "plugin") {
+      getCwd().then(setPluginCwd).catch(() => {});
+    }
+  }, [activePanel, currentSessionId]);
+
   const title =
     activePanel === "plugin" && activePluginName
       ? activePluginName
@@ -103,6 +114,7 @@ export function SidePanel({
             pluginName={activePluginName}
             views={activePluginViews ?? []}
             running={activePluginRunning ?? false}
+            cwd={pluginCwd}
           />
         )}
       </div>

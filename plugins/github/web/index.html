@@ -41,7 +41,7 @@
   .badge-failure { background: rgba(251,113,133,0.1); color: #fb7185; }
   .badge-pending { background: rgba(251,191,36,0.1); color: #fbbf24; }
   .meta { font-size: 10px; color: #52525b; }
-  .title { font-size: 12px; font-weight: 500; color: #e4e4e7; }
+  .title { font-size: 12px; font-weight: 500; color: #e4e4e7; word-wrap: break-word; overflow-wrap: break-word; }
   .mono { font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 11px; }
   .empty, .loading { text-align: center; padding: 20px 0; color: #52525b; font-size: 11px; }
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
@@ -61,7 +61,7 @@
   .graph-row { display: flex; align-items: flex-start; gap: 0; min-height: 28px; }
   .graph-rail { width: 60px; min-width: 60px; position: relative; flex-shrink: 0; }
   .graph-info { flex: 1; min-width: 0; padding: 3px 0; }
-  .graph-msg { font-size: 11px; color: #e4e4e7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .graph-msg { font-size: 11px; color: #e4e4e7; overflow: hidden; text-overflow: ellipsis; word-wrap: break-word; }
   .graph-meta { font-size: 10px; color: #3f3f46; }
   .graph-sha { font-family: "JetBrains Mono", monospace; font-size: 10px; color: #52525b; }
   .graph-branch-tag {
@@ -185,14 +185,31 @@ async function detectGitDir() {
     const r = await fetch(window.location.origin + "/api/cwd");
     if (r.ok) {
       const cwd = await r.json();
-      gitDir = cwd;
-      document.getElementById("git-dir-label").textContent = cwd.split("/").pop() || "Git";
+      setGitDir(cwd);
     }
   } catch {}
 }
 
-async function gitCmd(cmd) {
-  const r = await fetch(window.location.origin + "/api/git?cmd=" + cmd + "&dir=" + encodeURIComponent(gitDir));
+function setGitDir(dir) {
+  gitDir = dir;
+  const name = dir.split("/").pop() || "Git";
+  document.getElementById("git-dir-label").textContent = name;
+}
+
+// Listen for cwd updates from parent (when user switches agent tabs)
+window.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "cwd" && e.data.path) {
+    setGitDir(e.data.path);
+    // Reload git graph if it's the active tab
+    const gitTab = document.getElementById("tab-git");
+    if (gitTab && gitTab.classList.contains("active")) loadGitGraph();
+  }
+});
+
+async function gitCmd(cmd, args) {
+  let url = window.location.origin + "/api/git?cmd=" + cmd + "&dir=" + encodeURIComponent(gitDir);
+  if (args) url += "&args=" + encodeURIComponent(args);
+  const r = await fetch(url);
   if (!r.ok) throw new Error(r.status);
   const data = await r.json();
   if (!data.ok) throw new Error(data.stderr || "git error");
@@ -206,7 +223,13 @@ async function loadGitGraph() {
   try {
     if (!gitDir) await detectGitDir();
 
-    const output = await gitCmd("log-full");
+    let output;
+    try {
+      output = await gitCmd("log-full");
+    } catch (e) {
+      el.innerHTML = '<div class="empty" style="padding:30px 0"><div style="margin-bottom:8px;color:#52525b">Not a git repository</div><div style="font-size:10px;color:#3f3f46">' + esc(gitDir) + '</div></div>';
+      return;
+    }
     if (!output.trim()) { el.innerHTML = '<div class="empty">No commits</div>'; return; }
 
     // Parse: SHA|Parents|Author|Date|Message|Refs

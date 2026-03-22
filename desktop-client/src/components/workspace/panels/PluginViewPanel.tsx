@@ -78,14 +78,30 @@ function StatusView({ pluginName, viewId }: { pluginName: string; viewId: string
 
 // ── WebView sub-component ─────────────────────────────────────────
 
-function WebView({ pluginName }: { pluginName: string }) {
+function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
   const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
   const src = `${base}/api/plugins/${encodeURIComponent(pluginName)}/web/index.html`;
 
+  // Send cwd to iframe when it changes
+  useEffect(() => {
+    if (iframeRef.current?.contentWindow && cwd) {
+      iframeRef.current.contentWindow.postMessage({ type: "cwd", path: cwd }, "*");
+    }
+  }, [cwd]);
+
+  const handleLoad = () => {
+    if (iframeRef.current?.contentWindow && cwd) {
+      iframeRef.current.contentWindow.postMessage({ type: "cwd", path: cwd }, "*");
+    }
+  };
+
   return (
     <iframe
+      ref={iframeRef}
       src={src}
+      onLoad={handleLoad}
       style={{
         width: "100%",
         height: "calc(100vh - 120px)",
@@ -103,9 +119,10 @@ interface PluginViewPanelProps {
   pluginName: string;
   views: ViewDeclaration[];
   running: boolean;
+  cwd?: string;
 }
 
-export function PluginViewPanel({ pluginName, views, running }: PluginViewPanelProps) {
+export function PluginViewPanel({ pluginName, views, running, cwd }: PluginViewPanelProps) {
   // Build effective tabs: declared views + auto-appended events tab
   const effectiveViews: ViewDeclaration[] = [
     ...views,
@@ -160,7 +177,7 @@ export function PluginViewPanel({ pluginName, views, running }: PluginViewPanelP
         <StatusView pluginName={pluginName} viewId={active.id} />
       )}
       {active?.viewType === "webview" && (
-        <WebView pluginName={pluginName} />
+        <WebView pluginName={pluginName} cwd={cwd} />
       )}
       {active?.viewType === "events" && (
         <EventsPanel sourceFilter={pluginName} />

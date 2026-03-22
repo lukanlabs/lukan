@@ -97,6 +97,8 @@ pub struct AppState {
     pub stream_tx: broadcast::Sender<StreamBroadcast>,
     /// Cancellation tokens for running pipeline executions (keyed by pipeline_id)
     pub pipeline_cancel_tokens: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    /// CWD of the most recently active agent session (for plugins)
+    pub active_cwd: std::sync::Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -141,6 +143,7 @@ impl AppState {
             terminal_tx,
             stream_tx,
             pipeline_cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
+            active_cwd: std::sync::Mutex::new(None),
         }
     }
 

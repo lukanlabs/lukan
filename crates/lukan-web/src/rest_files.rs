@@ -584,7 +584,14 @@ pub async fn git_command(Query(q): Query<std::collections::HashMap<String, Strin
     }
 }
 
-pub async fn get_cwd() -> impl IntoResponse {
+pub async fn get_cwd(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::state::AppState>>,
+) -> impl IntoResponse {
+    // Return active session cwd if available, otherwise process cwd
+    let active = state.active_cwd.lock().unwrap().clone();
+    if let Some(cwd) = active {
+        return Json(serde_json::json!(cwd)).into_response();
+    }
     match std::env::current_dir() {
         Ok(p) => Json(serde_json::json!(p.to_string_lossy())).into_response(),
         Err(e) => (

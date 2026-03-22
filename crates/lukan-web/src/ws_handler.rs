@@ -302,6 +302,16 @@ async fn dispatch_message(
                 processing.insert(tab.clone(), conn_id);
             }
 
+            // Update active_cwd for plugins when this session is used
+            {
+                let sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get(&tab) {
+                    if let Some(ref cwd) = session.cwd {
+                        *state.active_cwd.lock().unwrap() = Some(cwd.clone());
+                    }
+                }
+            }
+
             let cancel_token = CancellationToken::new();
             cancel_tokens.insert(tab.clone(), cancel_token.clone());
 
@@ -1818,8 +1828,13 @@ async fn handle_create_agent_tab(
     let tab_number = sessions.len() + 1;
     let mut session = WebAgentSession::new();
     session.label = format!("Agent {tab_number}");
-    session.cwd = cwd;
+    session.cwd = cwd.clone();
     sessions.insert(tab_id.clone(), session);
+
+    // Update active_cwd for plugins
+    if let Some(ref dir) = cwd {
+        *state.active_cwd.lock().unwrap() = Some(dir.clone());
+    }
 
     send_json(
         ws_tx,

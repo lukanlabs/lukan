@@ -547,6 +547,21 @@ pub async fn git_command(Query(q): Query<std::collections::HashMap<String, Strin
         "status" => vec!["status", "--porcelain"],
         "remote" => vec!["remote", "-v"],
         "diff-stat" => vec!["diff", "--stat"],
+        "show" => {
+            // Show files for a specific commit — args = sha
+            let sha = extra_args.split_whitespace().next().unwrap_or("HEAD");
+            let result = std::process::Command::new("git")
+                .args(["show", "--stat", "--format=%B", sha])
+                .current_dir(dir)
+                .output();
+            return match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
+                }
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
+            };
+        }
         _ => return (StatusCode::BAD_REQUEST, "Invalid git command. Allowed: log, log-full, branch, status, remote, diff-stat").into_response(),
     };
 

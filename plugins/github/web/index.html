@@ -76,6 +76,22 @@
     transition: all 0.15s;
   }
   .branch-chip.active { color: #fafafa; border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.06); }
+
+  /* Commit detail (expandable) */
+  .commit-row { cursor: pointer; }
+  .commit-row:hover .graph-msg { color: #fafafa; }
+  .commit-detail {
+    margin: 2px 0 6px; padding: 6px 10px; border-radius: 6px;
+    background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05);
+    font-size: 11px;
+  }
+  .commit-detail .full-msg { color: #a1a1aa; margin-bottom: 6px; white-space: pre-wrap; }
+  .commit-files { list-style: none; }
+  .commit-files li { padding: 2px 0; font-family: "JetBrains Mono", monospace; font-size: 10px; display: flex; gap: 6px; }
+  .file-add { color: #4ade80; }
+  .file-mod { color: #fbbf24; }
+  .file-del { color: #fb7185; }
+  .file-name { color: #a1a1aa; }
 </style>
 </head>
 <body>
@@ -301,17 +317,93 @@ async function loadGitGraph() {
         return `<span class="graph-branch-tag" style="background:${col}20;color:${col};border:1px solid ${col}40">${esc(ref)}</span>`;
       }).join("");
 
-      html += `<div style="height:${ROW_H}px;display:flex;align-items:center">
+      html += `<div class="commit-row" data-sha="${c.sha}" data-source="git" style="min-height:${ROW_H}px;display:flex;align-items:center">
         <div class="graph-info" style="padding:0">
           <div class="graph-msg">${esc(c.message)}${tags}</div>
           <div class="graph-meta"><span class="graph-sha">${c.sha.slice(0,7)}</span> · ${esc(c.author)} · ${timeAgo(c.date)}</div>
         </div>
-      </div>`;
+      </div>
+      <div class="commit-detail" id="detail-${c.sha}" style="display:none"></div>`;
     });
     html += "</div></div>";
     el.innerHTML = html;
+    attachCommitClickHandlers(el);
 
   } catch (e) { showError("Git: " + e.message); }
+}
+
+// ── Commit detail (click to expand) ──
+function attachCommitClickHandlers(container) {
+  container.querySelectorAll(".commit-row").forEach(row => {
+    row.addEventListener("click", async () => {
+      const sha = row.dataset.sha;
+      const source = row.dataset.source; // "git" or "github"
+      const detail = document.getElementById("detail-" + sha);
+      if (!detail) return;
+
+      // Toggle
+      if (detail.style.display !== "none") {
+        detail.style.display = "none";
+        return;
+      }
+
+      detail.innerHTML = '<span class="meta">Loading...</span>';
+      detail.style.display = "";
+
+      try {
+        if (source === "git") {
+          // Local git show
+          const r = await fetch(window.location.origin + "/api/git?cmd=show&dir=" + encodeURIComponent(gitDir) + "&args=" + encodeURIComponent(sha));
+          const data = await r.json();
+          if (!data.ok) throw new Error(data.stderr);
+          const out = data.stdout;
+
+          // Parse: first part is commit message, then blank line, then file stats
+          const parts = out.split("\n");
+          let msgLines = [];
+          let fileLines = [];
+          let inFiles = false;
+          for (const line of parts) {
+            if (!inFiles && (line.match(/^\s+\d+\s+(file|insertion|deletion)/) || line.match(/^\s.*\|/))) {
+              inFiles = true;
+            }
+            if (inFiles) fileLines.push(line);
+            else msgLines.push(line);
+          }
+
+          const msg = msgLines.join("\n").trim();
+          const filesHtml = fileLines.filter(l => l.includes("|")).map(l => {
+            const match = l.match(/^\s*(.+?)\s*\|\s*(\d+)\s*(.*)/);
+            if (!match) return "";
+            const name = match[1].trim();
+            const changes = match[2];
+            const bar = match[3] || "";
+            const adds = (bar.match(/\+/g) || []).length;
+            const dels = (bar.match(/-/g) || []).length;
+            return `<li><span class="file-add">+${adds}</span><span class="file-del">-${dels}</span><span class="file-name">${esc(name)}</span></li>`;
+          }).join("");
+
+          detail.innerHTML = `<div class="full-msg">${esc(msg)}</div><ul class="commit-files">${filesHtml || '<li class="meta">No file changes</li>'}</ul>`;
+
+        } else {
+          // GitHub API
+          const r = await gh("/repos/" + repo + "/commits/" + sha);
+          if (!r.ok) throw new Error(r.status);
+          const data = await r.json();
+          const msg = data.commit.message;
+          const files = data.files || [];
+          const filesHtml = files.map(f => {
+            const status = f.status === "added" ? "file-add" : f.status === "removed" ? "file-del" : "file-mod";
+            return `<li><span class="file-add">+${f.additions}</span><span class="file-del">-${f.deletions}</span><span class="${status}">${esc(f.filename)}</span></li>`;
+          }).join("");
+
+          detail.innerHTML = `<div class="full-msg">${esc(msg)}</div><ul class="commit-files">${filesHtml || '<li class="meta">No file changes</li>'}</ul>`;
+        }
+      } catch (e) {
+        detail.innerHTML = `<span class="meta">Error: ${esc(e.message)}</span>`;
+      }
+    });
+  });
 }
 
 // ── Graph ──
@@ -469,16 +561,18 @@ async function loadGraph() {
         `<span class="graph-branch-tag" style="background:${t.color}20;color:${t.color};border:1px solid ${t.color}40">${esc(t.name)}</span>`
       ).join("");
 
-      html += `<div class="graph-row" style="height:${ROW_H}px">
+      html += `<div class="commit-row" data-sha="${c.sha}" data-source="github" style="height:${ROW_H}px">
         <div class="graph-info">
           <div class="graph-msg">${esc(c.message)}${tags}</div>
           <div class="graph-meta"><span class="graph-sha">${c.sha.slice(0,7)}</span> · ${esc(c.author)} · ${timeAgo(c.date)}</div>
         </div>
-      </div>`;
+      </div>
+      <div class="commit-detail" id="detail-${c.sha}" style="display:none"></div>`;
     });
 
     html += "</div></div>";
     container.innerHTML = html;
+    attachCommitClickHandlers(container);
 
   } catch (e) { showError("Graph: " + e.message); }
 }

@@ -17,7 +17,7 @@ pub mod schema_adapter;
 pub mod sse;
 pub mod think_tag_parser;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use lukan_core::config::types::{AppConfig, Credentials};
 use lukan_core::config::{CredentialsManager, ProviderName, ResolvedConfig};
 use tracing::debug;
@@ -167,16 +167,17 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
             }))
         }
         ProviderName::Zai => {
-            let api_key =
-                CredentialsManager::get_api_key(&config.credentials, &ProviderName::Zai)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
+            let api_key = CredentialsManager::get_api_key(&config.credentials, &ProviderName::Zai)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
                         "Missing z.ai API key. Set it via `lukan setup` or ZAI_API_KEY env var"
                     )
-                    })?;
+                })?;
             let supports_images = is_vision_model(&model, config);
             // Use config zaiBaseURL if set, otherwise default to z.ai coding endpoint
-            let base_url = config.config.zai_base_url
+            let base_url = config
+                .config
+                .zai_base_url
                 .as_ref()
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| openai_compat::normalize_base_url(s.trim()))
@@ -220,13 +221,9 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
             Ok(Box::new(gemini::GeminiProvider::new(
                 api_key, model, max_tokens,
             )))
-        }
-        provider => {
-            bail!(
-                "Provider '{}' is not yet implemented. Available: anthropic, openai-codex, nebius, fireworks, github-copilot, ollama-cloud, openai-compatible, lukan-cloud, gemini",
-                provider
-            );
-        }
+        } // All ProviderName variants are covered above.
+          // If a new variant is added to the enum, this match will fail to compile,
+          // reminding you to add the provider implementation here.
     }
 }
 

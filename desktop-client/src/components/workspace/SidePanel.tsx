@@ -60,10 +60,13 @@ export function SidePanel({
 }: SidePanelProps) {
   const [pluginCwd, setPluginCwd] = useState<string | undefined>();
 
-  // Get cwd for plugin webview
+  // Get cwd for plugin webview (delay to let active-tab POST update first)
   useEffect(() => {
     if (activePanel === "plugin") {
-      getCwd().then(setPluginCwd).catch(() => {});
+      const timer = setTimeout(() => {
+        getCwd().then(setPluginCwd).catch(() => {});
+      }, 200);
+      return () => clearTimeout(timer);
     }
   }, [activePanel, currentSessionId]);
 

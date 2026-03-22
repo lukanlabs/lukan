@@ -584,6 +584,36 @@ pub async fn git_command(Query(q): Query<std::collections::HashMap<String, Strin
     }
 }
 
+/// POST /api/active-tab — notify which tab is active (updates cwd for plugins)
+pub async fn set_active_tab(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::state::AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if let Some(tab_id) = body.get("tabId").and_then(|v| v.as_str()) {
+        // Extract cwd and session_id from in-memory session
+        let (mem_cwd, session_id) = {
+            let sessions = state.sessions.lock().await;
+            if let Some(session) = sessions.get(tab_id) {
+                (session.cwd.clone(), session.last_session_id.clone())
+            } else {
+                (None, None)
+            }
+        };
+
+        if let Some(cwd) = mem_cwd {
+            *state.active_cwd.lock().unwrap() = Some(cwd);
+        } else if let Some(sid) = session_id {
+            // Fallback: read cwd from persisted session on disk
+            if let Ok(Some(saved)) = lukan_agent::SessionManager::load(&sid).await {
+                if let Some(cwd) = saved.cwd {
+                    *state.active_cwd.lock().unwrap() = Some(cwd);
+                }
+            }
+        }
+    }
+    StatusCode::OK
+}
+
 pub async fn get_cwd(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::state::AppState>>,
 ) -> impl IntoResponse {

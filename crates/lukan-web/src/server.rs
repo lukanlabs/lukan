@@ -140,6 +140,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/files/write", put(rest_files::write_file))
         .route("/cwd", get(rest_files::get_cwd))
         .route("/git", get(rest_files::git_command))
+        .route("/active-tab", axum::routing::post(rest_files::set_active_tab))
         // Background processes
         .route("/processes", get(rest_processes::list_bg_processes))
         .route(

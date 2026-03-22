@@ -1730,10 +1730,24 @@ async fn handle_load_session(
             let context_size = agent.last_context_size();
             let sid = agent.session_id().to_string();
 
-            // Store in session
+            // Store in session and restore cwd from saved session
             if let Some(tid) = tab_id {
+                // Read cwd from the saved session file
+                let saved_cwd = SessionManager::load(saved_session_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|s| s.cwd);
+
                 let mut sessions = state.sessions.lock().await;
                 if let Some(session) = sessions.get_mut(tid) {
+                    if session.cwd.is_none() {
+                        session.cwd = saved_cwd;
+                    }
+                    // Update active_cwd for plugins
+                    if let Some(ref cwd) = session.cwd {
+                        *state.active_cwd.lock().unwrap() = Some(cwd.clone());
+                    }
                     session.set_agent(agent);
                 }
             }

@@ -84,15 +84,20 @@
   </div>
   <div id="app" style="display:none">
     <div class="tabs">
-      <button class="active" data-tab="graph">Graph</button>
+      <button class="active" data-tab="git">Git</button>
+      <button data-tab="graph">Graph</button>
       <button data-tab="branches">Branches</button>
       <button data-tab="prs">PRs</button>
       <button data-tab="actions">Actions</button>
     </div>
     <div id="error" class="error-msg" style="display:none"></div>
 
-    <div id="tab-graph" class="section active">
-      <div class="header"><h2>Commit Graph</h2><button class="refresh-btn" onclick="loadGraph()">↻</button></div>
+    <div id="tab-git" class="section active">
+      <div class="header"><h2 id="git-dir-label">Local Git</h2><button class="refresh-btn" onclick="loadGitGraph()">↻</button></div>
+      <div id="git-graph"><div class="loading">Loading...</div></div>
+    </div>
+    <div id="tab-graph" class="section ">
+      <div class="header"><h2>GitHub Graph</h2><button class="refresh-btn" onclick="loadGraph()">↻</button></div>
       <div id="branch-filters" class="branch-filter"></div>
       <div id="graph-container"><div class="loading">Loading...</div></div>
     </div>
@@ -148,12 +153,166 @@ document.querySelectorAll(".tabs button").forEach(btn => {
     document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "git") loadGitGraph();
     if (btn.dataset.tab === "graph") loadGraph();
     if (btn.dataset.tab === "branches") loadBranches();
     if (btn.dataset.tab === "prs") loadPRs();
     if (btn.dataset.tab === "actions") loadActions();
   });
 });
+
+// ── Git (local) ──
+let gitDir = "";
+
+async function detectGitDir() {
+  try {
+    const r = await fetch(window.location.origin + "/api/cwd");
+    if (r.ok) {
+      const cwd = await r.json();
+      gitDir = cwd;
+      document.getElementById("git-dir-label").textContent = cwd.split("/").pop() || "Git";
+    }
+  } catch {}
+}
+
+async function gitCmd(cmd) {
+  const r = await fetch(window.location.origin + "/api/git?cmd=" + cmd + "&dir=" + encodeURIComponent(gitDir));
+  if (!r.ok) throw new Error(r.status);
+  const data = await r.json();
+  if (!data.ok) throw new Error(data.stderr || "git error");
+  return data.stdout;
+}
+
+async function loadGitGraph() {
+  const el = document.getElementById("git-graph");
+  el.innerHTML = '<div class="loading">Loading...</div>';
+
+  try {
+    if (!gitDir) await detectGitDir();
+
+    const output = await gitCmd("log-full");
+    if (!output.trim()) { el.innerHTML = '<div class="empty">No commits</div>'; return; }
+
+    // Parse: SHA|Parents|Author|Date|Message|Refs
+    const lines = output.trim().split("\n");
+    const commits = [];
+    const branchHeads = {}; // sha → [ref names]
+    const allBranches = new Set();
+
+    lines.forEach(line => {
+      const parts = line.split("|");
+      if (parts.length < 5) return;
+      const sha = parts[0];
+      const parents = parts[1].trim() ? parts[1].trim().split(" ") : [];
+      const author = parts[2];
+      const date = parts[3];
+      const message = parts[4];
+      const refs = parts[5] || "";
+
+      commits.push({ sha, parents, author, date, message, refs });
+
+      // Parse refs for branch labels
+      if (refs.trim()) {
+        const refNames = refs.split(",").map(r => r.trim())
+          .filter(r => !r.startsWith("tag:"))
+          .map(r => r.replace("HEAD -> ", "").replace("origin/", "").trim())
+          .filter(r => r);
+        if (refNames.length) {
+          branchHeads[sha] = refNames;
+          refNames.forEach(r => allBranches.add(r));
+        }
+      }
+    });
+
+    // Assign lanes: map each commit to a column based on branch
+    const branchLane = {};
+    let nextLane = 0;
+    [...allBranches].forEach(b => { branchLane[b] = nextLane++; });
+
+    // Assign each commit a lane
+    const commitLane = {};
+    const shaToIdx = {};
+    commits.forEach((c, i) => {
+      shaToIdx[c.sha] = i;
+      // Use the first ref's lane, or parent's lane, or next available
+      if (branchHeads[c.sha]) {
+        commitLane[c.sha] = branchLane[branchHeads[c.sha][0]] || 0;
+      } else if (c.parents.length && commitLane[c.parents[0]] !== undefined) {
+        commitLane[c.sha] = commitLane[c.parents[0]];
+      }
+    });
+
+    // Second pass for commits without lanes
+    commits.forEach(c => {
+      if (commitLane[c.sha] === undefined) {
+        if (c.parents.length && commitLane[c.parents[0]] !== undefined) {
+          commitLane[c.sha] = commitLane[c.parents[0]];
+        } else {
+          commitLane[c.sha] = 0;
+        }
+      }
+    });
+
+    const numLanes = Math.max(nextLane, 1);
+    const ROW_H = 24;
+    const COL_W = 12;
+    const PAD = 6;
+    const railW = PAD + numLanes * COL_W + 8;
+    const totalH = commits.length * ROW_H;
+
+    // SVG
+    let svg = `<svg width="${railW}" height="${totalH}" style="position:absolute;top:0;left:0">`;
+
+    // Lines from each commit to its parents
+    commits.forEach((c, i) => {
+      const y = i * ROW_H + ROW_H / 2;
+      const lane = commitLane[c.sha] || 0;
+      const x = PAD + lane * COL_W + COL_W / 2;
+      const color = COLORS[lane % COLORS.length];
+
+      c.parents.forEach(psha => {
+        const pIdx = shaToIdx[psha];
+        if (pIdx !== undefined) {
+          const py = pIdx * ROW_H + ROW_H / 2;
+          const pLane = commitLane[psha] || 0;
+          const px = PAD + pLane * COL_W + COL_W / 2;
+
+          if (lane === pLane) {
+            svg += `<line x1="${x}" y1="${y}" x2="${px}" y2="${py}" stroke="${color}" stroke-width="1.5" opacity="0.4"/>`;
+          } else {
+            svg += `<path d="M${x},${y} C${x},${y+12} ${px},${py-12} ${px},${py}" stroke="${COLORS[pLane % COLORS.length]}" stroke-width="1.5" fill="none" opacity="0.3"/>`;
+          }
+        }
+      });
+
+      // Dot
+      svg += `<circle cx="${x}" cy="${y}" r="3" fill="${color}"/>`;
+    });
+    svg += "</svg>";
+
+    // Rows
+    let html = `<div style="position:relative">`;
+    html += svg;
+    html += `<div style="margin-left:${railW}px">`;
+    commits.forEach((c, i) => {
+      const tags = (branchHeads[c.sha] || []).map(ref => {
+        const lane = branchLane[ref] || 0;
+        const col = COLORS[lane % COLORS.length];
+        return `<span class="graph-branch-tag" style="background:${col}20;color:${col};border:1px solid ${col}40">${esc(ref)}</span>`;
+      }).join("");
+
+      html += `<div style="height:${ROW_H}px;display:flex;align-items:center">
+        <div class="graph-info" style="padding:0">
+          <div class="graph-msg">${esc(c.message)}${tags}</div>
+          <div class="graph-meta"><span class="graph-sha">${c.sha.slice(0,7)}</span> · ${esc(c.author)} · ${timeAgo(c.date)}</div>
+        </div>
+      </div>`;
+    });
+    html += "</div></div>";
+    el.innerHTML = html;
+
+  } catch (e) { showError("Git: " + e.message); }
+}
 
 // ── Graph ──
 let graphBranches = [];
@@ -402,12 +561,12 @@ function showError(msg) {
 }
 
 (async () => {
-  if (await loadConfig()) {
-    document.getElementById("app").style.display = "";
-    loadGraph();
-  } else {
-    document.getElementById("setup").style.display = "";
-  }
+  // Git tab works without GitHub config
+  document.getElementById("app").style.display = "";
+  await detectGitDir();
+  loadGitGraph();
+  // Load GitHub config in background (for Graph/PRs/Actions tabs)
+  loadConfig();
 })();
 </script>
 </body>

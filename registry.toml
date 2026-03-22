@@ -100,7 +100,7 @@ plugin_type = "tools"
 source = "archive"
 
 [plugins.github.assets.all]
-url = "https://get.lukan.ai/plugins/lukan-plugin-github-v2.tar.gz"
+url = "https://get.lukan.ai/plugins/lukan-plugin-github-v3.tar.gz"
 
 [plugins.discord]
 description = "Discord bot channel via Gateway WebSocket"

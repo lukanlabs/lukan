@@ -532,6 +532,43 @@ mod tests {
 }
 
 /// GET /api/cwd
+/// GET /api/git — execute read-only git commands
+/// Query params: cmd (log|branch|status|diff|remote), dir (optional), args (optional)
+pub async fn git_command(Query(q): Query<std::collections::HashMap<String, String>>) -> impl IntoResponse {
+    let cmd = q.get("cmd").map(|s| s.as_str()).unwrap_or("");
+    let dir = q.get("dir").map(|s| s.as_str()).unwrap_or(".");
+    let extra_args = q.get("args").map(|s| s.as_str()).unwrap_or("");
+
+    // Whitelist: only read-only git commands
+    let args: Vec<&str> = match cmd {
+        "log" => vec!["log", "--all", "--oneline", "--graph", "--parents", "--decorate=short", "-100"],
+        "log-full" => vec!["log", "--all", "--format=%H|%P|%an|%aI|%s|%D", "-200"],
+        "branch" => vec!["branch", "-a", "--format=%(refname:short) %(objectname:short) %(upstream:short)"],
+        "status" => vec!["status", "--porcelain"],
+        "remote" => vec!["remote", "-v"],
+        "diff-stat" => vec!["diff", "--stat"],
+        _ => return (StatusCode::BAD_REQUEST, "Invalid git command. Allowed: log, log-full, branch, status, remote, diff-stat").into_response(),
+    };
+
+    let result = std::process::Command::new("git")
+        .args(&args)
+        .current_dir(dir)
+        .output();
+
+    match result {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Json(serde_json::json!({
+                "ok": output.status.success(),
+                "stdout": stdout,
+                "stderr": stderr,
+            })).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to run git: {e}")).into_response(),
+    }
+}
+
 pub async fn get_cwd() -> impl IntoResponse {
     match std::env::current_dir() {
         Ok(p) => Json(serde_json::json!(p.to_string_lossy())).into_response(),

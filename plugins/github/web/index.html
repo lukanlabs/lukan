@@ -11,6 +11,8 @@
     background: #0a0a0a; color: #fafafa; font-size: 12px; line-height: 1.4;
     padding: 8px; overflow-y: auto;
   }
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  body { scrollbar-width: none; }
   .tabs { display: flex; gap: 0; border-bottom: 1px solid rgba(60,60,60,0.4); margin-bottom: 8px; }
   .tabs button {
     padding: 5px 12px; font-size: 11px; font-weight: 500; color: #52525b;
@@ -54,6 +56,26 @@
   .setup-msg { padding: 16px; text-align: center; color: #52525b; font-size: 11px; }
   .row { display: flex; align-items: center; gap: 6px; }
   .protected { font-size: 9px; padding: 0 4px; border-radius: 3px; background: rgba(251,191,36,0.1); color: #fbbf24; }
+
+  /* Graph styles */
+  .graph-row { display: flex; align-items: flex-start; gap: 0; min-height: 28px; }
+  .graph-rail { width: 60px; min-width: 60px; position: relative; flex-shrink: 0; }
+  .graph-info { flex: 1; min-width: 0; padding: 3px 0; }
+  .graph-msg { font-size: 11px; color: #e4e4e7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .graph-meta { font-size: 10px; color: #3f3f46; }
+  .graph-sha { font-family: "JetBrains Mono", monospace; font-size: 10px; color: #52525b; }
+  .graph-branch-tag {
+    display: inline-flex; font-size: 9px; padding: 0 5px; border-radius: 3px;
+    font-weight: 500; margin-left: 6px; vertical-align: middle;
+  }
+  #graph-canvas { display: block; }
+  .branch-filter { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+  .branch-chip {
+    font-size: 10px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.1); background: none; color: #71717a;
+    transition: all 0.15s;
+  }
+  .branch-chip.active { color: #fafafa; border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.06); }
 </style>
 </head>
 <body>
@@ -62,12 +84,19 @@
   </div>
   <div id="app" style="display:none">
     <div class="tabs">
-      <button class="active" data-tab="branches">Branches</button>
+      <button class="active" data-tab="graph">Graph</button>
+      <button data-tab="branches">Branches</button>
       <button data-tab="prs">PRs</button>
       <button data-tab="actions">Actions</button>
     </div>
     <div id="error" class="error-msg" style="display:none"></div>
-    <div id="tab-branches" class="section active">
+
+    <div id="tab-graph" class="section active">
+      <div class="header"><h2>Commit Graph</h2><button class="refresh-btn" onclick="loadGraph()">↻</button></div>
+      <div id="branch-filters" class="branch-filter"></div>
+      <div id="graph-container"><div class="loading">Loading...</div></div>
+    </div>
+    <div id="tab-branches" class="section">
       <div class="header"><h2>Branches</h2><button class="refresh-btn" onclick="loadBranches()">↻</button></div>
       <div id="branches-list"><div class="loading">Loading...</div></div>
     </div>
@@ -83,6 +112,7 @@
 <script>
 let token = "", repo = "";
 const API = "https://api.github.com";
+const COLORS = ["#6366f1","#4ade80","#f59e0b","#fb7185","#8b5cf6","#06b6d4","#ec4899","#10b981","#ef4444","#3b82f6"];
 
 async function loadConfig() {
   try {
@@ -109,18 +139,192 @@ function timeAgo(d) {
   return Math.floor(s/86400) + "d";
 }
 
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+// ── Tabs ──
 document.querySelectorAll(".tabs button").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
     document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "graph") loadGraph();
     if (btn.dataset.tab === "branches") loadBranches();
     if (btn.dataset.tab === "prs") loadPRs();
     if (btn.dataset.tab === "actions") loadActions();
   });
 });
 
+// ── Graph ──
+let graphBranches = [];
+let graphData = {};
+let selectedBranches = new Set();
+
+async function loadGraph() {
+  const container = document.getElementById("graph-container");
+  const filters = document.getElementById("branch-filters");
+  container.innerHTML = '<div class="loading">Loading...</div>';
+
+  try {
+    // Fetch branches
+    const br = await gh("/repos/" + repo + "/branches?per_page=15");
+    if (!br.ok) throw new Error(br.status);
+    graphBranches = await br.json();
+
+    // Default: show first 5 branches
+    if (selectedBranches.size === 0) {
+      graphBranches.slice(0, 5).forEach(b => selectedBranches.add(b.name));
+    }
+
+    // Render branch filter chips
+    filters.innerHTML = graphBranches.map((b, i) =>
+      `<button class="branch-chip ${selectedBranches.has(b.name) ? 'active' : ''}" data-branch="${esc(b.name)}" style="${selectedBranches.has(b.name) ? 'border-color:' + COLORS[i % COLORS.length] + ';color:' + COLORS[i % COLORS.length] : ''}">${esc(b.name)}</button>`
+    ).join("");
+
+    filters.querySelectorAll(".branch-chip").forEach(chip => {
+      chip.addEventListener("click", () => {
+        const name = chip.dataset.branch;
+        if (selectedBranches.has(name)) selectedBranches.delete(name);
+        else selectedBranches.add(name);
+        loadGraph();
+      });
+    });
+
+    // Fetch commits for selected branches
+    const activeBranches = graphBranches.filter(b => selectedBranches.has(b.name));
+    const fetches = activeBranches.map(b =>
+      gh("/repos/" + repo + "/commits?sha=" + encodeURIComponent(b.name) + "&per_page=15")
+        .then(r => r.ok ? r.json() : [])
+    );
+    const results = await Promise.all(fetches);
+
+    // Build unified commit list
+    const commitMap = new Map(); // sha → { commit, branches: Set }
+    activeBranches.forEach((b, i) => {
+      (results[i] || []).forEach(c => {
+        if (commitMap.has(c.sha)) {
+          commitMap.get(c.sha).branches.add(b.name);
+        } else {
+          commitMap.set(c.sha, {
+            sha: c.sha,
+            message: c.commit.message.split("\n")[0],
+            author: c.commit.author.name || c.author?.login || "?",
+            date: c.commit.author.date,
+            parents: c.parents.map(p => p.sha),
+            branches: new Set([b.name]),
+          });
+        }
+      });
+    });
+
+    // Sort by date descending
+    const commits = [...commitMap.values()].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    if (!commits.length) {
+      container.innerHTML = '<div class="empty">No commits</div>';
+      return;
+    }
+
+    // Assign columns to branches
+    const branchOrder = activeBranches.map(b => b.name);
+    const branchCol = {};
+    branchOrder.forEach((name, i) => { branchCol[name] = i; });
+
+    // Find which column each commit goes in (leftmost branch)
+    function commitCol(c) {
+      let min = 999;
+      c.branches.forEach(b => { if (branchCol[b] !== undefined && branchCol[b] < min) min = branchCol[b]; });
+      return min === 999 ? 0 : min;
+    }
+
+    const ROW_H = 28;
+    const COL_W = 14;
+    const DOT_R = 3;
+    const PAD_LEFT = 6;
+    const numCols = branchOrder.length;
+    const railWidth = PAD_LEFT + numCols * COL_W + 10;
+    const totalH = commits.length * ROW_H;
+
+    // Build SVG for the rail
+    let svg = `<svg width="${railWidth}" height="${totalH}" style="position:absolute;top:0;left:0">`;
+
+    // Draw branch lines
+    const branchLastY = {};
+    commits.forEach((c, row) => {
+      const y = row * ROW_H + ROW_H / 2;
+      c.branches.forEach(b => {
+        const col = branchCol[b];
+        if (col === undefined) return;
+        const x = PAD_LEFT + col * COL_W + COL_W / 2;
+        const color = COLORS[col % COLORS.length];
+
+        if (branchLastY[b] !== undefined) {
+          svg += `<line x1="${x}" y1="${branchLastY[b]}" x2="${x}" y2="${y}" stroke="${color}" stroke-width="1.5" opacity="0.4"/>`;
+        }
+        branchLastY[b] = y;
+      });
+    });
+
+    // Draw dots and merge lines
+    commits.forEach((c, row) => {
+      const y = row * ROW_H + ROW_H / 2;
+      const col = commitCol(c);
+      const x = PAD_LEFT + col * COL_W + COL_W / 2;
+      const color = COLORS[col % COLORS.length];
+
+      // Merge lines to parents in different columns
+      c.parents.forEach(psha => {
+        const pIdx = commits.findIndex(pc => pc.sha === psha);
+        if (pIdx >= 0) {
+          const parent = commits[pIdx];
+          const pCol = commitCol(parent);
+          if (pCol !== col) {
+            const py = pIdx * ROW_H + ROW_H / 2;
+            const px = PAD_LEFT + pCol * COL_W + COL_W / 2;
+            svg += `<path d="M${x},${y} C${x},${y + 14} ${px},${py - 14} ${px},${py}" stroke="${COLORS[pCol % COLORS.length]}" stroke-width="1.5" fill="none" opacity="0.3"/>`;
+          }
+        }
+      });
+
+      // Dot
+      svg += `<circle cx="${x}" cy="${y}" r="${DOT_R}" fill="${color}"/>`;
+    });
+
+    svg += "</svg>";
+
+    // Build rows
+    let html = `<div style="position:relative">`;
+    html += svg;
+    html += `<div style="margin-left:${railWidth}px">`;
+
+    // Branch labels for heads
+    const branchHeads = {};
+    activeBranches.forEach((b, i) => {
+      const headSha = b.commit.sha;
+      if (!branchHeads[headSha]) branchHeads[headSha] = [];
+      branchHeads[headSha].push({ name: b.name, color: COLORS[i % COLORS.length] });
+    });
+
+    commits.forEach((c, row) => {
+      const tags = (branchHeads[c.sha] || []).map(t =>
+        `<span class="graph-branch-tag" style="background:${t.color}20;color:${t.color};border:1px solid ${t.color}40">${esc(t.name)}</span>`
+      ).join("");
+
+      html += `<div class="graph-row" style="height:${ROW_H}px">
+        <div class="graph-info">
+          <div class="graph-msg">${esc(c.message)}${tags}</div>
+          <div class="graph-meta"><span class="graph-sha">${c.sha.slice(0,7)}</span> · ${esc(c.author)} · ${timeAgo(c.date)}</div>
+        </div>
+      </div>`;
+    });
+
+    html += "</div></div>";
+    container.innerHTML = html;
+
+  } catch (e) { showError("Graph: " + e.message); }
+}
+
+// ── Branches ──
 async function loadBranches() {
   const el = document.getElementById("branches-list");
   el.innerHTML = '<div class="loading">Loading...</div>';
@@ -131,13 +335,14 @@ async function loadBranches() {
     if (!branches.length) { el.innerHTML = '<div class="empty">No branches</div>'; return; }
     el.innerHTML = branches.map(b =>
       `<div class="card row" style="justify-content:space-between">
-        <div class="row"><span class="mono">${b.name}</span>${b.protected ? '<span class="protected">protected</span>' : ''}</div>
+        <div class="row"><span class="mono">${esc(b.name)}</span>${b.protected ? '<span class="protected">protected</span>' : ''}</div>
         <span class="meta">${b.commit.sha.slice(0,7)}</span>
       </div>`
     ).join("");
   } catch (e) { showError("Branches: " + e.message); }
 }
 
+// ── PRs ──
 async function loadPRs() {
   const el = document.getElementById("prs-list");
   el.innerHTML = '<div class="loading">Loading...</div>';
@@ -154,14 +359,15 @@ async function loadPRs() {
       return `<div class="card">
         <div class="row" style="gap:6px;margin-bottom:2px">
           <span class="badge ${badge}">${label}</span>
-          <span class="title">#${pr.number} ${pr.title}</span>
+          <span class="title">#${pr.number} ${esc(pr.title)}</span>
         </div>
-        <div class="meta">${pr.user.login} · ${pr.head.ref} → ${pr.base.ref} · ${timeAgo(pr.updated_at)}</div>
+        <div class="meta">${esc(pr.user.login)} · ${esc(pr.head.ref)} → ${esc(pr.base.ref)} · ${timeAgo(pr.updated_at)}</div>
       </div>`;
     }).join("");
   } catch (e) { showError("PRs: " + e.message); }
 }
 
+// ── Actions ──
 async function loadActions() {
   const el = document.getElementById("actions-list");
   el.innerHTML = '<div class="loading">Loading...</div>';
@@ -180,9 +386,9 @@ async function loadActions() {
       return `<div class="card">
         <div class="row" style="gap:6px;margin-bottom:2px">
           <span class="badge ${badge}">${label}</span>
-          <span class="title">${run.name}</span>
+          <span class="title">${esc(run.name)}</span>
         </div>
-        <div class="meta">${run.head_branch} · ${run.head_sha.slice(0,7)} · ${timeAgo(run.updated_at)}</div>
+        <div class="meta">${esc(run.head_branch)} · ${run.head_sha.slice(0,7)} · ${timeAgo(run.updated_at)}</div>
       </div>`;
     }).join("");
   } catch (e) { showError("Actions: " + e.message); }
@@ -198,7 +404,7 @@ function showError(msg) {
 (async () => {
   if (await loadConfig()) {
     document.getElementById("app").style.display = "";
-    loadBranches();
+    loadGraph();
   } else {
     document.getElementById("setup").style.display = "";
   }

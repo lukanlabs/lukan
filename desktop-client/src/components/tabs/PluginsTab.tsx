@@ -467,7 +467,7 @@ function MasterView({
                 )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {plugin.pluginType === "channel" && (
+                {plugin.pluginType === "channel" || plugin.activityBar && (
                   <span className="w-1.5 h-1.5 rounded-full" style={{
                     background: plugin.running ? "#4ade80" : "var(--text-muted)",
                     boxShadow: plugin.running ? "0 0 6px rgba(74,222,128,0.4)" : "none",
@@ -574,7 +574,7 @@ function DetailView({
             background: "rgba(255,255,255,0.05)", color: "var(--text-muted)",
             border: "1px solid var(--border)",
           }}>{plugin.pluginType}</span>
-          {plugin.pluginType === "channel" && (
+          {plugin.pluginType === "channel" || plugin.activityBar && (
             <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{
               background: plugin.running ? "rgba(74,222,128,0.12)" : "rgba(255,255,255,0.05)",
               color: plugin.running ? "#4ade80" : "var(--text-muted)",
@@ -587,7 +587,7 @@ function DetailView({
       </div>
 
       {/* Action buttons (only for channel plugins) */}
-      {plugin.pluginType === "channel" && (
+      {plugin.pluginType === "channel" || plugin.activityBar && (
         <div className="flex gap-1.5 flex-wrap mb-4">
           {plugin.running ? (
             <>
@@ -675,7 +675,7 @@ function DetailView({
       )}
 
       {/* Tools */}
-      {plugin.pluginType === "channel" && (
+      {plugin.pluginType === "channel" || plugin.activityBar && (
         <PluginToolsSection pluginName={plugin.name} config={config} onConfigSave={onConfigSave} />
       )}
 
@@ -691,7 +691,7 @@ function DetailView({
       )}
 
       {/* Logs */}
-      {plugin.pluginType === "channel" && (
+      {plugin.pluginType === "channel" || plugin.activityBar && (
         <Section
           icon={<ScrollText size={12} />}
           title="Logs"

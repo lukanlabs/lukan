@@ -753,6 +753,45 @@ pub async fn get_plugin_view_data(
     }
 }
 
+/// GET /api/plugins/:name/web/*path — serve static files from plugin's web/ directory
+pub async fn serve_plugin_web(
+    Path((plugin_name, file_path)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let plugins_dir = LukanPaths::plugins_dir();
+    let web_dir = plugins_dir.join(&plugin_name).join("web");
+    let file = if file_path.is_empty() || file_path == "/" {
+        web_dir.join("index.html")
+    } else {
+        web_dir.join(file_path.trim_start_matches('/'))
+    };
+
+    // Security: prevent path traversal
+    if !file.starts_with(&web_dir) {
+        return (StatusCode::FORBIDDEN, "Invalid path").into_response();
+    }
+
+    if !file.exists() {
+        // SPA fallback
+        let index = web_dir.join("index.html");
+        if index.exists() {
+            let content = std::fs::read(&index).unwrap_or_default();
+            let mime = "text/html";
+            return ([(axum::http::header::CONTENT_TYPE, mime)], content).into_response();
+        }
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
+
+    match std::fs::read(&file) {
+        Ok(content) => {
+            let mime = mime_guess::from_path(&file)
+                .first_or_octet_stream()
+                .to_string();
+            ([(axum::http::header::CONTENT_TYPE, mime.as_str())], content).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 /// GET /api/plugins/:name/auth/qr
 pub async fn get_plugin_auth_qr(Path(name): Path<String>) -> impl IntoResponse {
     let manifest = match PluginManager::load_manifest(&name).await {

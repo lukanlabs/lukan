@@ -76,6 +76,27 @@ function StatusView({ pluginName, viewId }: { pluginName: string; viewId: string
   );
 }
 
+// ── WebView sub-component ─────────────────────────────────────────
+
+function WebView({ pluginName }: { pluginName: string }) {
+  const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
+  const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
+  const src = `${base}/api/plugins/${encodeURIComponent(pluginName)}/web/`;
+
+  return (
+    <iframe
+      src={src}
+      style={{
+        width: "100%",
+        height: "calc(100vh - 120px)",
+        border: "none",
+        background: "var(--bg-base)",
+      }}
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+    />
+  );
+}
+
 // ── Main PluginViewPanel ─────────────────────────────────────────
 
 interface PluginViewPanelProps {
@@ -137,6 +158,9 @@ export function PluginViewPanel({ pluginName, views, running }: PluginViewPanelP
       {/* Render active view */}
       {active?.viewType === "status" && (
         <StatusView pluginName={pluginName} viewId={active.id} />
+      )}
+      {active?.viewType === "webview" && (
+        <WebView pluginName={pluginName} />
       )}
       {active?.viewType === "events" && (
         <EventsPanel sourceFilter={pluginName} />

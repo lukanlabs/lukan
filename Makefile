@@ -115,6 +115,12 @@ package-plugins: bundle-plugins
 	@# Discord plugin
 	@cd plugins/discord/dist && tar czf ../../../dist/plugins/lukan-plugin-discord.tar.gz .
 	@echo "  Packaged: lukan-plugin-discord.tar.gz"
+	@# GitHub plugin (no bundling needed — static files)
+	@mkdir -p plugins/github/dist/web
+	@cp plugins/github/plugin.toml plugins/github/bridge.js plugins/github/dist/
+	@cp -r plugins/github/web/* plugins/github/dist/web/
+	@cd plugins/github/dist && tar czf ../../../dist/plugins/lukan-plugin-github.tar.gz .
+	@echo "  Packaged: lukan-plugin-github.tar.gz"
 
 ## package-whisper: Build whisper plugin binary and create platform-specific tarball
 WHISPER_ARCH := $(if $(filter x86_64 x86,$(UNAME_M)),x86_64,$(if $(filter aarch64 arm64,$(UNAME_M)),aarch64,$(UNAME_M)))

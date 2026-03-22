@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHub</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    background: #0a0a0a;
+    color: #fafafa;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid rgba(60,60,60,0.5); margin-bottom: 16px; }
+  .tabs button {
+    padding: 8px 16px; font-size: 13px; font-weight: 500; color: #52525b;
+    background: none; border: none; border-bottom: 2px solid transparent;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .tabs button.active { color: #fafafa; border-bottom-color: #fafafa; }
+  .tabs button:hover { color: #a1a1aa; }
+
+  .section { display: none; }
+  .section.active { display: block; }
+
+  .card {
+    padding: 12px 14px; border-radius: 10px; margin-bottom: 8px;
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+    transition: background 0.15s;
+  }
+  .card:hover { background: rgba(255,255,255,0.05); }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; padding: 2px 8px; border-radius: 9999px;
+    font-weight: 500;
+  }
+  .badge-open { background: rgba(74,222,128,0.1); color: #4ade80; }
+  .badge-merged { background: rgba(139,92,246,0.1); color: #a78bfa; }
+  .badge-closed { background: rgba(251,113,133,0.1); color: #fb7185; }
+  .badge-draft { background: rgba(255,255,255,0.06); color: #71717a; }
+  .badge-success { background: rgba(74,222,128,0.1); color: #4ade80; }
+  .badge-failure { background: rgba(251,113,133,0.1); color: #fb7185; }
+  .badge-pending { background: rgba(251,191,36,0.1); color: #fbbf24; }
+
+  .meta { font-size: 11px; color: #52525b; }
+  .title { font-size: 13px; font-weight: 600; color: #fafafa; margin-bottom: 4px; }
+  .subtitle { font-size: 12px; color: #a1a1aa; }
+  .mono { font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 12px; }
+
+  .empty { text-align: center; padding: 40px 0; color: #52525b; }
+  .loading { text-align: center; padding: 40px 0; color: #52525b; }
+
+  .refresh-btn {
+    padding: 4px 10px; border-radius: 6px; font-size: 11px;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+    color: #a1a1aa; cursor: pointer; transition: all 0.15s;
+  }
+  .refresh-btn:hover { background: rgba(255,255,255,0.1); color: #fafafa; }
+
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .header h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #52525b; }
+
+  a { color: #a1a1aa; text-decoration: none; }
+  a:hover { color: #fafafa; }
+
+  .error-msg { padding: 12px; border-radius: 8px; background: rgba(251,113,133,0.08); border: 1px solid rgba(251,113,133,0.2); color: #fb7185; font-size: 12px; margin-bottom: 16px; }
+  .setup-msg { padding: 16px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); text-align: center; }
+</style>
+</head>
+<body>
+  <div id="setup" class="setup-msg" style="display:none">
+    <p style="margin-bottom:8px;color:#a1a1aa">Configure your GitHub token and repository in the plugin settings</p>
+    <p class="mono" style="color:#52525b">Settings → Plugins → GitHub → Configure</p>
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="tabs">
+      <button class="active" data-tab="branches">Branches</button>
+      <button data-tab="prs">Pull Requests</button>
+      <button data-tab="actions">Actions</button>
+    </div>
+
+    <div id="error" class="error-msg" style="display:none"></div>
+
+    <!-- Branches -->
+    <div id="tab-branches" class="section active">
+      <div class="header">
+        <h2>Branches</h2>
+        <button class="refresh-btn" onclick="loadBranches()">Refresh</button>
+      </div>
+      <div id="branches-list"><div class="loading">Loading...</div></div>
+    </div>
+
+    <!-- Pull Requests -->
+    <div id="tab-prs" class="section">
+      <div class="header">
+        <h2>Pull Requests</h2>
+        <button class="refresh-btn" onclick="loadPRs()">Refresh</button>
+      </div>
+      <div id="prs-list"><div class="loading">Loading...</div></div>
+    </div>
+
+    <!-- Actions -->
+    <div id="tab-actions" class="section">
+      <div class="header">
+        <h2>Workflow Runs</h2>
+        <button class="refresh-btn" onclick="loadActions()">Refresh</button>
+      </div>
+      <div id="actions-list"><div class="loading">Loading...</div></div>
+    </div>
+  </div>
+
+<script>
+// ── Config ──
+let token = "";
+let repo = "";
+const API = "https://api.github.com";
+
+// Read config from plugin API
+async function loadConfig() {
+  try {
+    const base = window.location.origin;
+    const r = await fetch(base + "/api/plugins/github/config");
+    if (!r.ok) return false;
+    const cfg = await r.json();
+    token = cfg.token || "";
+    repo = cfg.defaultRepo || "";
+    return !!(token && repo);
+  } catch { return false; }
+}
+
+function gh(path) {
+  return fetch(API + path, {
+    headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json" },
+  });
+}
+
+function timeAgo(date) {
+  const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.floor(s/60) + "m ago";
+  if (s < 86400) return Math.floor(s/3600) + "h ago";
+  return Math.floor(s/86400) + "d ago";
+}
+
+// ── Tabs ──
+document.querySelectorAll(".tabs button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+
+    if (btn.dataset.tab === "branches") loadBranches();
+    if (btn.dataset.tab === "prs") loadPRs();
+    if (btn.dataset.tab === "actions") loadActions();
+  });
+});
+
+// ── Branches ──
+async function loadBranches() {
+  const el = document.getElementById("branches-list");
+  el.innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const r = await gh("/repos/" + repo + "/branches?per_page=30");
+    if (!r.ok) throw new Error(r.status);
+    const branches = await r.json();
+    if (!branches.length) { el.innerHTML = '<div class="empty">No branches</div>'; return; }
+    el.innerHTML = branches.map(b =>
+      `<div class="card" style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <span class="mono">${b.name}</span>
+          ${b.protected ? '<span class="badge" style="margin-left:8px;background:rgba(251,191,36,0.1);color:#fbbf24">protected</span>' : ''}
+        </div>
+        <span class="meta">${b.commit.sha.slice(0,7)}</span>
+      </div>`
+    ).join("");
+  } catch (e) { showError("Failed to load branches: " + e.message); }
+}
+
+// ── Pull Requests ──
+async function loadPRs() {
+  const el = document.getElementById("prs-list");
+  el.innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const r = await gh("/repos/" + repo + "/pulls?state=all&per_page=20&sort=updated&direction=desc");
+    if (!r.ok) throw new Error(r.status);
+    const prs = await r.json();
+    if (!prs.length) { el.innerHTML = '<div class="empty">No pull requests</div>'; return; }
+    el.innerHTML = prs.map(pr => {
+      let badge = "badge-open";
+      let label = "Open";
+      if (pr.merged_at) { badge = "badge-merged"; label = "Merged"; }
+      else if (pr.state === "closed") { badge = "badge-closed"; label = "Closed"; }
+      else if (pr.draft) { badge = "badge-draft"; label = "Draft"; }
+      return `<div class="card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span class="badge ${badge}">${label}</span>
+          <span class="title" style="margin:0">#${pr.number} ${pr.title}</span>
+        </div>
+        <div class="meta">${pr.user.login} · ${pr.head.ref} → ${pr.base.ref} · ${timeAgo(pr.updated_at)}</div>
+      </div>`;
+    }).join("");
+  } catch (e) { showError("Failed to load PRs: " + e.message); }
+}
+
+// ── Actions ──
+async function loadActions() {
+  const el = document.getElementById("actions-list");
+  el.innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const r = await gh("/repos/" + repo + "/actions/runs?per_page=20");
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    const runs = data.workflow_runs || [];
+    if (!runs.length) { el.innerHTML = '<div class="empty">No workflow runs</div>'; return; }
+    el.innerHTML = runs.map(run => {
+      let badge = "badge-pending";
+      let label = run.status;
+      if (run.conclusion === "success") { badge = "badge-success"; label = "Success"; }
+      else if (run.conclusion === "failure") { badge = "badge-failure"; label = "Failed"; }
+      else if (run.status === "in_progress") { badge = "badge-pending"; label = "Running"; }
+      else if (run.status === "queued") { badge = "badge-pending"; label = "Queued"; }
+      return `<div class="card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span class="badge ${badge}">${label}</span>
+          <span class="title" style="margin:0">${run.name}</span>
+        </div>
+        <div class="meta">${run.head_branch} · ${run.head_sha.slice(0,7)} · ${timeAgo(run.updated_at)}</div>
+      </div>`;
+    }).join("");
+  } catch (e) { showError("Failed to load actions: " + e.message); }
+}
+
+function showError(msg) {
+  const el = document.getElementById("error");
+  el.textContent = msg;
+  el.style.display = "";
+  setTimeout(() => { el.style.display = "none"; }, 5000);
+}
+
+// ── Init ──
+(async () => {
+  const ok = await loadConfig();
+  if (!ok) {
+    document.getElementById("setup").style.display = "";
+    return;
+  }
+  document.getElementById("app").style.display = "";
+  loadBranches();
+})();
+</script>
+</body>
+</html>

@@ -93,6 +93,15 @@ source = "archive"
 [plugins.slack.assets.all]
 url = "https://get.lukan.ai/plugins/lukan-plugin-slack.tar.gz"
 
+[plugins.github]
+description = "GitHub integration — branches, PRs, workflows, issues"
+version = "0.1.0"
+plugin_type = "tools"
+source = "archive"
+
+[plugins.github.assets.all]
+url = "https://get.lukan.ai/plugins/lukan-plugin-github.tar.gz"
+
 [plugins.discord]
 description = "Discord bot channel via Gateway WebSocket"
 version = "0.1.0"

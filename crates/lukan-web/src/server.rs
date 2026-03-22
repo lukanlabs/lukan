@@ -113,6 +113,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/plugins/{name}/views/{view_id}",
             get(rest_plugins::get_plugin_view_data),
         )
+        .route(
+            "/plugins/{name}/web/{*path}",
+            get(rest_plugins::serve_plugin_web),
+        )
         // Memory
         .route("/memory/global", get(rest_memory::get_global_memory))
         .route("/memory/global", put(rest_memory::save_global_memory))

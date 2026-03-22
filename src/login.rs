@@ -10,18 +10,30 @@ use lukan_core::relay::RelayConfig;
 pub async fn run_login(relay_url: Option<&str>) -> Result<()> {
     let relay_url = relay_url.unwrap_or("https://remote.lukan.ai");
 
+    // TODO: re-enable browser login when device limit check is implemented for that flow
+    // let selection = dialoguer::Select::new()
+    //     .with_prompt("How would you like to authenticate?")
+    //     .items(&[
+    //         "Browser (opens login page)",
+    //         "Device code (for headless/SSH)",
+    //     ])
+    //     .default(0)
+    //     .interact()?;
+    //
+    // match selection {
+    //     0 => run_local_login(relay_url).await,
+    //     1 => run_device_code_login(relay_url).await,
+    //     _ => unreachable!(),
+    // }
+
     let selection = dialoguer::Select::new()
         .with_prompt("How would you like to authenticate?")
-        .items(&[
-            "Browser (opens login page)",
-            "Device code (for headless/SSH)",
-        ])
+        .items(&["Device code (for headless/SSH)"])
         .default(0)
         .interact()?;
 
     match selection {
-        0 => run_local_login(relay_url).await,
-        1 => run_device_code_login(relay_url).await,
+        0 => run_device_code_login(relay_url).await,
         _ => unreachable!(),
     }
 }
@@ -126,6 +138,7 @@ async fn run_device_code_login(relay_url: &str) -> Result<()> {
 }
 
 /// Original localhost callback login flow (requires local browser access).
+#[allow(dead_code)]
 async fn run_local_login(relay_url: &str) -> Result<()> {
     // Find a free port for the local callback server
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -259,10 +272,24 @@ async fn restart_daemon_if_running() {
 }
 
 /// Run the `lukan logout` command.
+/// Removes relay config and restarts the daemon to disconnect from the relay.
 pub async fn run_logout() -> Result<()> {
     RelayConfig::remove().await?;
     println!("  Logged out. Relay config removed.");
-    println!("  Restart the daemon to disconnect from the relay.");
+
+    // Restart daemon to disconnect from relay
+    if crate::daemon::is_daemon_running() {
+        crate::daemon::stop_daemon()?;
+        // Wait for daemon to fully stop
+        for _ in 0..10 {
+            if !crate::daemon::is_daemon_running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        println!("  Restarting daemon...");
+        crate::daemon::restart_daemon()?;
+    }
     Ok(())
 }
 

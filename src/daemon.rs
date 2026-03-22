@@ -347,6 +347,17 @@ pub fn stop_daemon() -> Result<()> {
     Ok(())
 }
 
+/// Restart the daemon (start detached after stop).
+pub fn restart_daemon() -> Result<()> {
+    let local_only = std::env::var("LUKAN_LOCAL_ONLY").is_ok_and(|v| v == "1")
+        || std::fs::read_to_string(LukanPaths::config_file())
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("localOnly").and_then(|v| v.as_bool()))
+            .unwrap_or(false);
+    start_detached_with_opts(local_only)
+}
+
 /// Ensure the daemon is running; start it detached if not.
 /// Returns the port the daemon's web server is listening on.
 /// Called automatically from UIs and CLI worker commands.

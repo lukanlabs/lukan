@@ -1,21 +1,22 @@
 #!/usr/bin/env node
-// GitHub Plugin Bridge
-// Minimal bridge — the plugin primarily uses webview for UI.
-// This bridge just keeps the plugin process alive.
+// GitHub Plugin Bridge — keeps the plugin alive for webview
 
 import { createInterface } from "readline";
 
 const rl = createInterface({ input: process.stdin });
 
+// Signal ready
+process.stdout.write(JSON.stringify({ type: "ready", version: "0.1.0", capabilities: [] }) + "\n");
+
+// Keep alive — process stdin messages
 rl.on("line", (line) => {
   try {
     const msg = JSON.parse(line);
-    if (msg.type === "configure") {
-      // Store config
-      process.stdout.write(JSON.stringify({ type: "log", level: "info", message: "GitHub plugin configured" }) + "\n");
+    if (msg.type === "ping") {
+      process.stdout.write(JSON.stringify({ type: "pong" }) + "\n");
     }
   } catch {}
 });
 
-// Keep alive
-process.stdout.write(JSON.stringify({ type: "log", level: "info", message: "GitHub plugin started" }) + "\n");
+// Prevent exit
+process.stdin.resume();

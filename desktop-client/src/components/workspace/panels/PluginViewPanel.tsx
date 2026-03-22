@@ -81,7 +81,7 @@ function StatusView({ pluginName, viewId }: { pluginName: string; viewId: string
 function WebView({ pluginName }: { pluginName: string }) {
   const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
   const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
-  const src = `${base}/api/plugins/${encodeURIComponent(pluginName)}/web/`;
+  const src = `${base}/api/plugins/${encodeURIComponent(pluginName)}/web/index.html`;
 
   return (
     <iframe
@@ -92,7 +92,7 @@ function WebView({ pluginName }: { pluginName: string }) {
         border: "none",
         background: "var(--bg-base)",
       }}
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+      sandbox="allow-scripts allow-same-origin allow-forms"
     />
   );
 }

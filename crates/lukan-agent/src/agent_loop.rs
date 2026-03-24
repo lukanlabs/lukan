@@ -1062,6 +1062,28 @@ impl AgentLoop {
                         ));
                     }
                 }
+
+                // WriteFile with missing/empty params — skip approval, return error
+                if tool.name == "WriteFile" {
+                    let fp = tool
+                        .input
+                        .get("file_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let content = tool
+                        .input
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if fp.is_empty() || content.is_empty() {
+                        preflight_failed.push((
+                            idx,
+                            lukan_core::models::tools::ToolResult::error(
+                                "WriteFile called with empty file_path or content. Re-generate the full file content and try again."
+                            ),
+                        ));
+                    }
+                }
             }
             // Remove preflight-failed tools from pending so they skip approval
             let preflight_ids: std::collections::HashSet<usize> =

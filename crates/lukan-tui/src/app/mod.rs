@@ -1026,12 +1026,15 @@ impl App {
                                 && self.reasoning_picker.is_none()
                             {
                                 let char_count = text.chars().count();
-                                let label = format!("[Pasted Content {char_count} chars]");
                                 let start = self.cursor_pos;
                                 self.input.insert_str(start, &text);
                                 let end = start + text.len();
                                 self.cursor_pos = end;
-                                self.paste_info = Some((start, end, label));
+                                // Short pastes: inline. Long pastes: collapsed block.
+                                if char_count > 200 {
+                                    let label = format!("[Pasted Content {char_count} chars]");
+                                    self.paste_info = Some((start, end, label));
+                                }
                                 self.esc_pending = false;
                                 self.cmd_palette_idx = 0;
                             }

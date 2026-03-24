@@ -131,6 +131,10 @@ pub struct App {
     esc_pending: bool,
     /// When set: (start_byte, end_byte, preview_label). Paste block inside self.input.
     paste_info: Option<(usize, usize, String)>,
+    /// Current position in input history (indexes into user messages from self.messages)
+    history_idx: Option<usize>,
+    /// Saved current input when browsing history
+    history_saved_input: String,
     /// Background process picker state
     bg_picker: Option<BgPicker>,
     /// Worker picker overlay state
@@ -380,6 +384,8 @@ impl App {
             pending_queue_submit: false,
             esc_pending: false,
             paste_info: None,
+            history_idx: None,
+            history_saved_input: String::new(),
             bg_picker: None,
             worker_picker: None,
             subagent_picker: None,
@@ -1026,12 +1032,15 @@ impl App {
                                 && self.reasoning_picker.is_none()
                             {
                                 let char_count = text.chars().count();
-                                let label = format!("[Pasted Content {char_count} chars]");
                                 let start = self.cursor_pos;
                                 self.input.insert_str(start, &text);
                                 let end = start + text.len();
                                 self.cursor_pos = end;
-                                self.paste_info = Some((start, end, label));
+                                // Short pastes: inline. Long pastes: collapsed block.
+                                if char_count > 200 {
+                                    let label = format!("[Pasted Content {char_count} chars]");
+                                    self.paste_info = Some((start, end, label));
+                                }
                                 self.esc_pending = false;
                                 self.cmd_palette_idx = 0;
                             }

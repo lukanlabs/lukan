@@ -24,9 +24,10 @@ pub async fn preprocess_images(
     provider: &dyn Provider,
     vision_provider: &Option<Arc<dyn Provider>>,
 ) -> Vec<Message> {
-    // Fast path: provider handles images natively
+    // Fast path: provider handles images natively — but still need to
+    // extract data URL images from ToolResults into Image blocks
     if provider.supports_images() {
-        return messages.to_vec();
+        return expand_tool_result_images(messages);
     }
 
     // Quick scan: anything to do?
@@ -40,6 +41,67 @@ pub async fn preprocess_images(
     let mut out = Vec::with_capacity(messages.len());
     for msg in messages {
         out.push(rewrite_message(msg, vision_provider, &mut cache).await);
+    }
+    out
+}
+
+/// For vision-capable providers: expand ToolResult.image data URLs into
+/// separate Image content blocks so the provider can see them.
+fn expand_tool_result_images(messages: &[Message]) -> Vec<Message> {
+    let mut out = Vec::with_capacity(messages.len());
+    for msg in messages {
+        let blocks = match &msg.content {
+            MessageContent::Blocks(b) => b,
+            _ => {
+                out.push(msg.clone());
+                continue;
+            }
+        };
+
+        let mut needs_expand = false;
+        for block in blocks {
+            if let ContentBlock::ToolResult { image: Some(_), .. } = block {
+                needs_expand = true;
+                break;
+            }
+        }
+
+        if !needs_expand {
+            out.push(msg.clone());
+            continue;
+        }
+
+        let mut new_blocks = Vec::with_capacity(blocks.len() + 1);
+        for block in blocks {
+            match block {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                    diff,
+                    image: Some(data_url),
+                } => {
+                    // Keep the text tool result
+                    new_blocks.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_use_id.clone(),
+                        content: content.clone(),
+                        is_error: *is_error,
+                        diff: diff.clone(),
+                        image: None,
+                    });
+                    // Add the image as a separate block
+                    new_blocks.push(parse_data_url_to_image_block(data_url));
+                }
+                other => new_blocks.push(other.clone()),
+            }
+        }
+
+        out.push(Message {
+            role: msg.role.clone(),
+            content: MessageContent::Blocks(new_blocks),
+            tool_call_id: msg.tool_call_id.clone(),
+            name: msg.name.clone(),
+        });
     }
     out
 }

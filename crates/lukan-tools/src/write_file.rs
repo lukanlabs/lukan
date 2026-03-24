@@ -52,6 +52,12 @@ impl Tool for WriteFileTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing required field: content"))?;
 
+        if content.is_empty() {
+            return Ok(ToolResult::error(
+                "Content is empty. If conversation was compacted, re-generate the file content before writing.",
+            ));
+        }
+
         let path = PathBuf::from(file_path_str);
         let path = if path.is_absolute() {
             path

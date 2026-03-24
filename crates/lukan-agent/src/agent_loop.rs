@@ -811,6 +811,12 @@ impl AgentLoop {
 
         // Add user message to history, extracting any image URLs as vision blocks
         let (clean_text, image_blocks) = extract_image_urls(user_message).await;
+        if !image_blocks.is_empty() {
+            tracing::info!(
+                count = image_blocks.len(),
+                "Extracted image URLs from user message"
+            );
+        }
         if image_blocks.is_empty() {
             self.history.add_user_message(user_message);
         } else {
@@ -1053,6 +1059,28 @@ impl AgentLoop {
                             lukan_core::models::tools::ToolResult::error(format!(
                                 "File has not been read yet. Use ReadFiles first: {fp}"
                             )),
+                        ));
+                    }
+                }
+
+                // WriteFile with missing/empty params — skip approval, return error
+                if tool.name == "WriteFile" {
+                    let fp = tool
+                        .input
+                        .get("file_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let content = tool
+                        .input
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if fp.is_empty() || content.is_empty() {
+                        preflight_failed.push((
+                            idx,
+                            lukan_core::models::tools::ToolResult::error(
+                                "WriteFile called with empty file_path or content. Re-generate the full file content and try again."
+                            ),
                         ));
                     }
                 }

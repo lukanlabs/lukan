@@ -811,6 +811,9 @@ impl AgentLoop {
 
         // Add user message to history, extracting any image URLs as vision blocks
         let (clean_text, image_blocks) = extract_image_urls(user_message).await;
+        if !image_blocks.is_empty() {
+            tracing::info!(count = image_blocks.len(), "Extracted image URLs from user message");
+        }
         if image_blocks.is_empty() {
             self.history.add_user_message(user_message);
         } else {

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use base64::Engine;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
@@ -75,6 +76,46 @@ impl Tool for ReadFileTool {
             .get("limit")
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_LIMIT);
+
+        // Check if the file is an image — return as base64 data URL
+        let is_image = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| {
+                matches!(
+                    e.to_lowercase().as_str(),
+                    "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "svg"
+                )
+            })
+            .unwrap_or(false);
+
+        if is_image {
+            match tokio::fs::read(&path).await {
+                Ok(bytes) => {
+                    let ext = path.extension().unwrap().to_str().unwrap().to_lowercase();
+                    let mime = match ext.as_str() {
+                        "png" => "image/png",
+                        "jpg" | "jpeg" => "image/jpeg",
+                        "gif" => "image/gif",
+                        "webp" => "image/webp",
+                        "bmp" => "image/bmp",
+                        "svg" => "image/svg+xml",
+                        _ => "image/png",
+                    };
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    let data_url = format!("data:{mime};base64,{b64}");
+                    ctx.read_files.lock().await.insert(path.clone());
+                    let size_kb = bytes.len() / 1024;
+                    let mut result = ToolResult::success(format!(
+                        "Image file: {} ({size_kb} KB, {mime})",
+                        path.display()
+                    ));
+                    result.image = Some(data_url);
+                    return Ok(result);
+                }
+                Err(e) => return Ok(ToolResult::error(format!("Failed to read image: {e}"))),
+            }
+        }
 
         let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,

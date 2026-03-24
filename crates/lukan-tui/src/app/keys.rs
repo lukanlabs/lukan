@@ -1145,6 +1145,50 @@ impl App {
                 KeyCode::Down if has_palette => {
                     self.cmd_palette_idx = (self.cmd_palette_idx + 1) % cmds.len().max(1);
                 }
+                KeyCode::Up if !has_palette && !self.input.contains('\n') => {
+                    let count = self.messages.iter().filter(|m| m.role == "user").count();
+                    if count > 0 {
+                        match self.history_idx {
+                            None => {
+                                self.history_saved_input = self.input.clone();
+                                self.history_idx = Some(count - 1);
+                            }
+                            Some(idx) if idx > 0 => {
+                                self.history_idx = Some(idx - 1);
+                            }
+                            _ => {}
+                        }
+                        if let Some(idx) = self.history_idx
+                            && let Some(msg) =
+                                self.messages.iter().filter(|m| m.role == "user").nth(idx)
+                        {
+                            self.input = msg.content.clone();
+                            self.cursor_pos = self.input.len();
+                            self.paste_info = None;
+                        }
+                    }
+                }
+                KeyCode::Down if !has_palette && self.history_idx.is_some() => {
+                    let count = self.messages.iter().filter(|m| m.role == "user").count();
+                    let idx = self.history_idx.unwrap();
+                    if idx + 1 < count {
+                        self.history_idx = Some(idx + 1);
+                        if let Some(msg) = self
+                            .messages
+                            .iter()
+                            .filter(|m| m.role == "user")
+                            .nth(idx + 1)
+                        {
+                            self.input = msg.content.clone();
+                            self.cursor_pos = self.input.len();
+                        }
+                    } else {
+                        self.history_idx = None;
+                        self.input = self.history_saved_input.clone();
+                        self.cursor_pos = self.input.len();
+                    }
+                    self.paste_info = None;
+                }
                 KeyCode::Esc => {
                     if has_palette && !self.esc_pending {
                         self.input.clear();

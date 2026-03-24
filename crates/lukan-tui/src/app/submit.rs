@@ -5,6 +5,9 @@ impl App {
     pub(super) async fn submit_message(&mut self, agent_tx: mpsc::Sender<StreamEvent>) {
         let text = self.input.trim().to_string();
         let display = self.display_input().trim().to_string();
+
+        self.history_idx = None;
+
         self.input.clear();
         self.cursor_pos = 0;
         self.paste_info = None;

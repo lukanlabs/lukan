@@ -131,6 +131,10 @@ pub struct App {
     esc_pending: bool,
     /// When set: (start_byte, end_byte, preview_label). Paste block inside self.input.
     paste_info: Option<(usize, usize, String)>,
+    /// Current position in input history (indexes into user messages from self.messages)
+    history_idx: Option<usize>,
+    /// Saved current input when browsing history
+    history_saved_input: String,
     /// Background process picker state
     bg_picker: Option<BgPicker>,
     /// Worker picker overlay state
@@ -380,6 +384,8 @@ impl App {
             pending_queue_submit: false,
             esc_pending: false,
             paste_info: None,
+            history_idx: None,
+            history_saved_input: String::new(),
             bg_picker: None,
             worker_picker: None,
             subagent_picker: None,

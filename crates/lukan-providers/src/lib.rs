@@ -302,7 +302,6 @@ fn is_vision_model(model: &str, config: &ResolvedConfig) -> bool {
         || lower.contains("gpt-4o")
         || lower.contains("gpt-5")
         || lower.contains("claude")
-        || lower.contains("minimax")
 }
 
 /// Generic OpenAI-compatible provider for custom endpoints (vLLM, Ollama, LM Studio, etc.)

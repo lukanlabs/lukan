@@ -534,16 +534,30 @@ mod tests {
 /// GET /api/cwd
 /// GET /api/git — execute read-only git commands
 /// Query params: cmd (log|branch|status|diff|remote), dir (optional), args (optional)
-pub async fn git_command(Query(q): Query<std::collections::HashMap<String, String>>) -> impl IntoResponse {
+pub async fn git_command(
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
     let cmd = q.get("cmd").map(|s| s.as_str()).unwrap_or("");
     let dir = q.get("dir").map(|s| s.as_str()).unwrap_or(".");
     let extra_args = q.get("args").map(|s| s.as_str()).unwrap_or("");
 
     // Whitelist: only read-only git commands
     let args: Vec<&str> = match cmd {
-        "log" => vec!["log", "--all", "--oneline", "--graph", "--parents", "--decorate=short", "-100"],
+        "log" => vec![
+            "log",
+            "--all",
+            "--oneline",
+            "--graph",
+            "--parents",
+            "--decorate=short",
+            "-100",
+        ],
         "log-full" => vec!["log", "--all", "--format=%H|%P|%an|%aI|%s|%D", "-200"],
-        "branch" => vec!["branch", "-a", "--format=%(refname:short) %(objectname:short) %(upstream:short)"],
+        "branch" => vec![
+            "branch",
+            "-a",
+            "--format=%(refname:short) %(objectname:short) %(upstream:short)",
+        ],
         "status" => vec!["status", "--porcelain"],
         "remote" => vec!["remote", "-v"],
         "diff-stat" => vec!["diff", "--stat"],
@@ -559,10 +573,18 @@ pub async fn git_command(Query(q): Query<std::collections::HashMap<String, Strin
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                     Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
                 }
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
+                Err(e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response()
+                }
             };
         }
-        _ => return (StatusCode::BAD_REQUEST, "Invalid git command. Allowed: log, log-full, branch, status, remote, diff-stat").into_response(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "Invalid git command. Allowed: log, log-full, branch, status, remote, diff-stat",
+            )
+                .into_response();
+        }
     };
 
     let result = std::process::Command::new("git")
@@ -578,9 +600,14 @@ pub async fn git_command(Query(q): Query<std::collections::HashMap<String, Strin
                 "ok": output.status.success(),
                 "stdout": stdout,
                 "stderr": stderr,
-            })).into_response()
+            }))
+            .into_response()
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to run git: {e}")).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to run git: {e}"),
+        )
+            .into_response(),
     }
 }
 
@@ -600,16 +627,20 @@ pub async fn set_active_tab(
             }
         };
 
-        if let Some(cwd) = mem_cwd {
-            *state.active_cwd.lock().unwrap() = Some(cwd);
-        } else if let Some(sid) = session_id {
+        if let Some(ref cwd) = mem_cwd {
+            *state.active_cwd.lock().unwrap() = Some(cwd.clone());
+        } else if let Some(ref sid) = session_id {
             // Fallback: read cwd from persisted session on disk
-            if let Ok(Some(saved)) = lukan_agent::SessionManager::load(&sid).await {
-                if let Some(cwd) = saved.cwd {
-                    *state.active_cwd.lock().unwrap() = Some(cwd);
-                }
+            if let Ok(Some(saved)) = lukan_agent::SessionManager::load(sid).await
+                && let Some(ref cwd) = saved.cwd
+            {
+                *state.active_cwd.lock().unwrap() = Some(cwd.clone());
             }
+        } else {
+            tracing::debug!(tab_id, "No cwd or session_id found for tab");
         }
+    } else {
+        tracing::warn!("set_active_tab called without tabId");
     }
     StatusCode::OK
 }

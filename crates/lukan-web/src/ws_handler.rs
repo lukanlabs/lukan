@@ -305,10 +305,10 @@ async fn dispatch_message(
             // Update active_cwd for plugins when this session is used
             {
                 let sessions = state.sessions.lock().await;
-                if let Some(session) = sessions.get(&tab) {
-                    if let Some(ref cwd) = session.cwd {
-                        *state.active_cwd.lock().unwrap() = Some(cwd.clone());
-                    }
+                if let Some(session) = sessions.get(&tab)
+                    && let Some(ref cwd) = session.cwd
+                {
+                    *state.active_cwd.lock().unwrap() = Some(cwd.clone());
                 }
             }
 
@@ -1744,6 +1744,7 @@ async fn handle_load_session(
                     if session.cwd.is_none() {
                         session.cwd = saved_cwd;
                     }
+                    session.last_session_id = Some(saved_session_id.to_string());
                     // Update active_cwd for plugins
                     if let Some(ref cwd) = session.cwd {
                         *state.active_cwd.lock().unwrap() = Some(cwd.clone());

@@ -200,11 +200,25 @@ function setGitDir(dir) {
 window.addEventListener("message", (e) => {
   if (e.data && e.data.type === "cwd" && e.data.path) {
     setGitDir(e.data.path);
-    // Reload git graph if it's the active tab
     const gitTab = document.getElementById("tab-git");
     if (gitTab && gitTab.classList.contains("active")) loadGitGraph();
   }
 });
+
+// Poll cwd every 2s to detect tab changes (backup for when postMessage doesn't arrive)
+setInterval(async () => {
+  try {
+    const r = await fetch(window.location.origin + "/api/cwd");
+    if (r.ok) {
+      const cwd = await r.json();
+      if (cwd && cwd !== gitDir) {
+        setGitDir(cwd);
+        const gitTab = document.getElementById("tab-git");
+        if (gitTab && gitTab.classList.contains("active")) loadGitGraph();
+      }
+    }
+  } catch {}
+}, 2000);
 
 async function gitCmd(cmd, args) {
   let url = window.location.origin + "/api/git?cmd=" + cmd + "&dir=" + encodeURIComponent(gitDir);

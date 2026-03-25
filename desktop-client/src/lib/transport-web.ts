@@ -1055,6 +1055,8 @@ export class WebTransport implements Transport {
         };
       case "get_cwd":
         return { method: "GET", url: "/api/cwd" };
+      case "set_active_tab":
+        return { method: "POST", url: "/api/active-tab" };
 
       // ── Workers ──
       case "list_workers":

@@ -59,16 +59,24 @@ export function SidePanel({
   onClose,
 }: SidePanelProps) {
   const [pluginCwd, setPluginCwd] = useState<string | undefined>();
+  const [tabChangeCounter, setTabChangeCounter] = useState(0);
 
-  // Get cwd for plugin webview (delay to let active-tab POST update first)
+  // Listen for tab changes from agent sessions
+  useEffect(() => {
+    const handler = () => setTabChangeCounter((c) => c + 1);
+    window.addEventListener("active-tab-changed", handler);
+    return () => window.removeEventListener("active-tab-changed", handler);
+  }, []);
+
+  // Get cwd for plugin webview when tab changes
   useEffect(() => {
     if (activePanel === "plugin") {
       const timer = setTimeout(() => {
         getCwd().then(setPluginCwd).catch(() => {});
-      }, 200);
+      }, 300);
       return () => clearTimeout(timer);
     }
-  }, [activePanel, currentSessionId]);
+  }, [activePanel, tabChangeCounter, currentSessionId]);
 
   const title =
     activePanel === "plugin" && activePluginName

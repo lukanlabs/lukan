@@ -1041,6 +1041,8 @@ export class RelayTransport implements Transport {
         };
       case "get_cwd":
         return { method: "GET", url: "/api/cwd" };
+      case "set_active_tab":
+        return { method: "POST", url: "/api/active-tab" };
       case "list_bg_processes": {
         const qs = args?.sessionId
           ? `?sessionId=${encodeURIComponent(args.sessionId as string)}`

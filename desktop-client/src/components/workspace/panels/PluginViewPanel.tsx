@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { CheckCircle, AlertTriangle, AlertCircle, Info, Loader, X } from "lucide-react";
+import { CheckCircle, AlertTriangle, AlertCircle, Info, Loader } from "lucide-react";
 import type { ViewDeclaration, PluginViewEnvelope, StatusViewItem } from "../../../lib/types";
 import { getPluginViewData, getCwd } from "../../../lib/tauri";
 import { EventsPanel } from "./EventsPanel";
-import { DiffView } from "../../chat/DiffView";
 
 // ── StatusView sub-component ──────────────────────────────────────
 
@@ -84,8 +83,6 @@ function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
   const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
   const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
   const src = `${base}/api/plugins/${encodeURIComponent(pluginName)}/web/index.html`;
-  const [diffData, setDiffData] = useState<{ diff: string; file: string; sha: string } | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
 
   // Send cwd to iframe when it changes
   useEffect(() => {
@@ -100,25 +97,23 @@ function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
     }
   };
 
-  // Listen for postMessage from iframe (open-diff)
+  // Listen for postMessage from iframe (open-diff) → fetch diff → open in FileViewer
   useEffect(() => {
     const handler = async (e: MessageEvent) => {
       if (e.data?.type === "open-diff" && e.data.sha && e.data.file) {
-        setDiffLoading(true);
-        setDiffData({ diff: "", file: e.data.file, sha: e.data.sha });
         try {
           const dir = e.data.dir || cwd || ".";
           const r = await fetch(`${base}/api/git?cmd=diff-file&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.sha + " " + e.data.file)}`);
           const data = await r.json();
-          if (data.ok && data.stdout) {
-            setDiffData({ diff: data.stdout, file: e.data.file, sha: e.data.sha });
-          } else {
-            setDiffData({ diff: `No diff available for ${e.data.file}`, file: e.data.file, sha: e.data.sha });
-          }
+          const diff = data.ok && data.stdout ? data.stdout : `No diff available for ${e.data.file}`;
+          window.dispatchEvent(new CustomEvent("open-diff-viewer", {
+            detail: { path: e.data.file, diff, sha: e.data.sha },
+          }));
         } catch {
-          setDiffData({ diff: "Failed to load diff", file: e.data.file, sha: e.data.sha });
+          window.dispatchEvent(new CustomEvent("open-diff-viewer", {
+            detail: { path: e.data.file, diff: "Failed to load diff", sha: e.data.sha },
+          }));
         }
-        setDiffLoading(false);
       }
     };
     window.addEventListener("message", handler);
@@ -126,67 +121,18 @@ function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
   }, [base, cwd]);
 
   return (
-    <>
-      <iframe
-        ref={iframeRef}
-        src={src}
-        onLoad={handleLoad}
-        style={{
-          width: "100%",
-          height: "calc(100vh - 120px)",
-          border: "none",
-          background: "var(--bg-base)",
-        }}
-        sandbox="allow-scripts allow-same-origin allow-forms"
-      />
-      {diffData && (
-        <div
-          style={{
-            position: "fixed", inset: 0, zIndex: 100,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          <div
-            style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
-            onClick={() => setDiffData(null)}
-          />
-          <div
-            style={{
-              position: "relative", width: "90%", maxWidth: 700, maxHeight: "80vh",
-              background: "var(--surface-raised, #141414)",
-              border: "1px solid var(--border, rgba(60,60,60,0.5))",
-              borderRadius: 12, overflow: "hidden",
-              boxShadow: "0 12px 40px rgba(0,0,0,0.6)",
-            }}
-          >
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "10px 14px", borderBottom: "1px solid var(--border-subtle, rgba(50,50,50,0.3))",
-            }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#fafafa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {diffData.file}
-                </div>
-                <div style={{ fontSize: 11, color: "#52525b", fontFamily: "monospace" }}>{diffData.sha.slice(0, 7)}</div>
-              </div>
-              <button
-                onClick={() => setDiffData(null)}
-                style={{ background: "none", border: "none", color: "#71717a", cursor: "pointer", padding: 4 }}
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <div style={{ overflow: "auto", maxHeight: "calc(80vh - 50px)", padding: "0" }}>
-              {diffLoading ? (
-                <div style={{ textAlign: "center", padding: 24, color: "#52525b", fontSize: 12 }}>Loading diff...</div>
-              ) : (
-                <DiffView diff={diffData.diff} />
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+    <iframe
+      ref={iframeRef}
+      src={src}
+      onLoad={handleLoad}
+      style={{
+        width: "100%",
+        height: "calc(100vh - 120px)",
+        border: "none",
+        background: "var(--bg-base)",
+      }}
+      sandbox="allow-scripts allow-same-origin allow-forms"
+    />
   );
 }
 

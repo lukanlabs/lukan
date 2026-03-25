@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
-import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw } from "lucide-react";
+import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw, GitCommit } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { MarkdownRenderer } from "../chat/MarkdownRenderer";
+import { DiffView } from "../chat/DiffView";
 import { readFile, writeFile } from "../../lib/tauri";
 import type { FileContent } from "../../lib/types";
 
@@ -448,9 +449,13 @@ interface FileViewerProps {
   path: string;
   fileSize?: number;
   onClose: () => void;
+  /** When set, renders a diff view instead of loading file content */
+  diff?: string;
+  /** Short commit SHA shown in the header for diff mode */
+  diffSha?: string;
 }
 
-export function FileViewer({ path, fileSize, onClose }: FileViewerProps) {
+export function FileViewer({ path, fileSize, onClose, diff, diffSha }: FileViewerProps) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -460,7 +465,13 @@ export function FileViewer({ path, fileSize, onClose }: FileViewerProps) {
   const [dirty, setDirty] = useState(false);
   const [initialLine, setInitialLine] = useState<number | undefined>(undefined);
 
+  const isDiffMode = diff != null;
+
   useEffect(() => {
+    if (isDiffMode) {
+      setLoading(false);
+      return;
+    }
     let active = true;
     setLoading(true);
     setError(null);
@@ -482,7 +493,7 @@ export function FileViewer({ path, fileSize, onClose }: FileViewerProps) {
       .catch((e) => { if (active) setError(String(e)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [path, fileSize]);
+  }, [path, fileSize, isDiffMode]);
 
   const canEdit = file ? isEditable(getFileType(file)) : false;
 
@@ -584,7 +595,11 @@ export function FileViewer({ path, fileSize, onClose }: FileViewerProps) {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
-          <File size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+          {isDiffMode ? (
+            <GitCommit size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
+          ) : (
+            <File size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+          )}
           <span
             style={{
               fontSize: 12,
@@ -598,7 +613,22 @@ export function FileViewer({ path, fileSize, onClose }: FileViewerProps) {
             {file?.name ?? path.split("/").pop()}
             {dirty && " *"}
           </span>
-          {file && (
+          {isDiffMode && diffSha && (
+            <span
+              style={{
+                fontSize: 10,
+                fontFamily: "var(--font-mono)",
+                color: "var(--text-muted)",
+                background: "var(--bg-tertiary, rgba(255,255,255,0.06))",
+                padding: "1px 6px",
+                borderRadius: 4,
+                flexShrink: 0,
+              }}
+            >
+              {diffSha.slice(0, 7)}
+            </span>
+          )}
+          {file && !isDiffMode && (
             <span
               style={{
                 fontSize: 11,
@@ -624,7 +654,7 @@ export function FileViewer({ path, fileSize, onClose }: FileViewerProps) {
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          {editing ? (
+          {!isDiffMode && (editing ? (
             <>
               <button
                 onClick={handleCancel}
@@ -656,7 +686,7 @@ export function FileViewer({ path, fileSize, onClose }: FileViewerProps) {
                 <Pencil size={14} />
               </button>
             )
-          )}
+          ))}
           <button
             onClick={onClose}
             style={headerBtnStyle}
@@ -668,30 +698,36 @@ export function FileViewer({ path, fileSize, onClose }: FileViewerProps) {
       </div>
 
       {/* Body */}
-      {loading && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1 }}>
-          <Loader2 size={24} style={{ color: "var(--text-muted)", animation: "spin 1s linear infinite" }} />
-        </div>
-      )}
+      {isDiffMode ? (
+        <DiffView diff={diff} fullHeight />
+      ) : (
+        <>
+          {loading && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1 }}>
+              <Loader2 size={24} style={{ color: "var(--text-muted)", animation: "spin 1s linear infinite" }} />
+            </div>
+          )}
 
-      {error && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, color: "var(--danger)" }}>
-          <div style={{ textAlign: "center" }}>
-            <AlertCircle size={32} style={{ marginBottom: 8 }} />
-            <div style={{ fontSize: 13 }}>{error}</div>
-          </div>
-        </div>
-      )}
+          {error && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, color: "var(--danger)" }}>
+              <div style={{ textAlign: "center" }}>
+                <AlertCircle size={32} style={{ marginBottom: 8 }} />
+                <div style={{ fontSize: 13 }}>{error}</div>
+              </div>
+            </div>
+          )}
 
-      {file && (
-        <FileContentView
-          file={file}
-          editing={editing}
-          editContent={editContent}
-          onEditChange={handleEditChange}
-          onDoubleClickLine={handleDoubleClickLine}
-          initialLine={initialLine}
-        />
+          {file && (
+            <FileContentView
+              file={file}
+              editing={editing}
+              editContent={editContent}
+              onEditChange={handleEditChange}
+              onDoubleClickLine={handleDoubleClickLine}
+              initialLine={initialLine}
+            />
+          )}
+        </>
       )}
     </div>
   );

@@ -65,6 +65,7 @@ export default function App() {
   const [processLog, setProcessLog] = useState<BgProcessInfo | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [filePreviewSize, setFilePreviewSize] = useState(0);
+  const [diffPreview, setDiffPreview] = useState<{ path: string; diff: string; sha: string } | null>(null);
   const [terminalAttachedIds, setTerminalAttachedIds] = useState<string[]>([]);
   const [runningMonitors, setRunningMonitors] = useState<PluginInfo[]>([]);
   const [unreadSources, setUnreadSources] = useState<Set<string>>(new Set());
@@ -185,9 +186,20 @@ export default function App() {
     return () => window.removeEventListener("terminal-attached-ids", onAttachedIds);
   }, []);
 
+  // Listen for diff viewer requests from plugin webviews
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ path: string; diff: string; sha: string }>).detail;
+      if (detail) setDiffPreview(detail);
+    };
+    window.addEventListener("open-diff-viewer", handler);
+    return () => window.removeEventListener("open-diff-viewer", handler);
+  }, []);
+
   // Auto-close file preview when switching views
   useEffect(() => {
     setFilePreview(null);
+    setDiffPreview(null);
   }, [workspace.mode]);
 
   // Listen for pipeline open requests from PipelinesPanel
@@ -289,6 +301,8 @@ export default function App() {
           filePreview={filePreview}
           filePreviewSize={filePreviewSize}
           onCloseFilePreview={() => setFilePreview(null)}
+          diffPreview={diffPreview}
+          onCloseDiffPreview={() => setDiffPreview(null)}
         />
 
         {workspace.showSettings && (

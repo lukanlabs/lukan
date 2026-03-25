@@ -15,9 +15,11 @@ interface MainAreaProps {
   filePreview?: string | null;
   filePreviewSize?: number;
   onCloseFilePreview?: () => void;
+  diffPreview?: { path: string; diff: string; sha: string } | null;
+  onCloseDiffPreview?: () => void;
 }
 
-export function MainArea({ mode, pipelineId, onPipelineBack, processLog, processLogSessionId, onCloseProcessLog, filePreview, filePreviewSize, onCloseFilePreview }: MainAreaProps) {
+export function MainArea({ mode, pipelineId, onPipelineBack, processLog, processLogSessionId, onCloseProcessLog, filePreview, filePreviewSize, onCloseFilePreview, diffPreview, onCloseDiffPreview }: MainAreaProps) {
   return (
     <div className="main-area" style={{ position: "relative" }}>
       {/* Always mounted — display toggle preserves state */}
@@ -52,6 +54,16 @@ export function MainArea({ mode, pipelineId, onPipelineBack, processLog, process
       {/* File preview overlay */}
       {filePreview && onCloseFilePreview && (
         <FileViewer path={filePreview} fileSize={filePreviewSize} onClose={onCloseFilePreview} />
+      )}
+
+      {/* Diff preview overlay */}
+      {diffPreview && onCloseDiffPreview && (
+        <FileViewer
+          path={diffPreview.path}
+          diff={diffPreview.diff}
+          diffSha={diffPreview.sha}
+          onClose={onCloseDiffPreview}
+        />
       )}
     </div>
   );

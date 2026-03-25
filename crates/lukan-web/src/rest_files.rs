@@ -566,7 +566,7 @@ pub async fn git_command(
             let sha = parts.next().unwrap_or("HEAD");
             let file = parts.next().unwrap_or("");
             let result = std::process::Command::new("git")
-                .args(["diff", &format!("{sha}^"), sha, "--", file])
+                .args(["diff", "-U99999", &format!("{sha}^"), sha, "--", file])
                 .current_dir(dir)
                 .output();
             return match result {
@@ -583,7 +583,7 @@ pub async fn git_command(
             // Show files for a specific commit — args = sha
             let sha = extra_args.split_whitespace().next().unwrap_or("HEAD");
             let result = std::process::Command::new("git")
-                .args(["show", "--stat", "--format=%B", sha])
+                .args(["show", "--numstat", "--format=%B", sha])
                 .current_dir(dir)
                 .output();
             return match result {

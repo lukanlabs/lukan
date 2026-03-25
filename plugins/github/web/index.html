@@ -407,13 +407,13 @@ function attachCommitClickHandlers(container) {
           if (!data.ok) throw new Error(data.stderr);
           const out = data.stdout;
 
-          // Parse: first part is commit message, then blank line, then file stats
+          // Parse numstat: commit message, then blank line, then "adds\tdels\tfile" lines
           const parts = out.split("\n");
           let msgLines = [];
           let fileLines = [];
           let inFiles = false;
           for (const line of parts) {
-            if (!inFiles && (line.match(/^\s+\d+\s+(file|insertion|deletion)/) || line.match(/^\s.*\|/))) {
+            if (!inFiles && line.match(/^\d+\t\d+\t/)) {
               inFiles = true;
             }
             if (inFiles) fileLines.push(line);
@@ -421,14 +421,10 @@ function attachCommitClickHandlers(container) {
           }
 
           const msg = msgLines.join("\n").trim();
-          const filesHtml = fileLines.filter(l => l.includes("|")).map(l => {
-            const match = l.match(/^\s*(.+?)\s*\|\s*(\d+)\s*(.*)/);
-            if (!match) return "";
-            const name = match[1].trim();
-            const changes = match[2];
-            const bar = match[3] || "";
-            const adds = (bar.match(/\+/g) || []).length;
-            const dels = (bar.match(/-/g) || []).length;
+          const filesHtml = fileLines.filter(l => l.match(/^\d+\t\d+\t/)).map(l => {
+            const [adds, dels, ...rest] = l.split("\t");
+            const name = rest.join("\t").trim();
+            if (!name) return "";
             return `<li data-diff-file="${esc(name)}" data-diff-sha="${sha}" style="cursor:pointer" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''"><span class="file-add">+${adds}</span><span class="file-del">-${dels}</span><span class="file-name">${esc(name)}</span></li>`;
           }).join("");
 

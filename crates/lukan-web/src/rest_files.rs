@@ -577,6 +577,44 @@ pub async fn git_command(
                 Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
             };
         }
+        "diff-working" => {
+            // Diff for a working-tree file against HEAD — args = file_path
+            let file = extra_args.trim();
+            // Try HEAD diff first (tracked files)
+            let result = std::process::Command::new("git")
+                .args(["diff", "-U99999", "HEAD", "--", file])
+                .current_dir(dir)
+                .output();
+            return match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    if stdout.trim().is_empty() {
+                        // Might be untracked or only staged — try unstaged diff
+                        let unstaged = std::process::Command::new("git")
+                            .args(["diff", "-U99999", "--", file])
+                            .current_dir(dir)
+                            .output();
+                        if let Ok(u) = unstaged {
+                            let us = String::from_utf8_lossy(&u.stdout).to_string();
+                            if !us.trim().is_empty() {
+                                return Json(serde_json::json!({ "ok": true, "stdout": us, "stderr": "" })).into_response();
+                            }
+                        }
+                        // Try showing untracked file as all-additions
+                        let file_path = std::path::Path::new(dir).join(file);
+                        if file_path.exists() {
+                            if let Ok(content) = std::fs::read_to_string(&file_path) {
+                                let lines: Vec<String> = content.lines().map(|l| format!("+{l}")).collect();
+                                let header = format!("--- /dev/null\n+++ b/{file}\n@@ -0,0 +1,{} @@\n{}", lines.len(), lines.join("\n"));
+                                return Json(serde_json::json!({ "ok": true, "stdout": header, "stderr": "" })).into_response();
+                            }
+                        }
+                    }
+                    Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
+                }
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
+            };
+        }
         "remote" => vec!["remote", "-v"],
         "diff-stat" => vec!["diff", "--stat"],
         "show" => {

@@ -274,7 +274,7 @@ function CodeEditor({
             border: "none",
             outline: "none",
             background: "transparent",
-            color: "transparent",
+            color: "rgba(200,200,200,0.4)",
             caretColor: "#fff",
             overflow: "auto",
             zIndex: 1,

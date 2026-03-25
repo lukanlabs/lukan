@@ -75,6 +75,29 @@
   }
   .branch-chip.active { color: #fafafa; border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.06); }
 
+  /* Working changes */
+  .changes-section { margin-bottom: 10px; border-bottom: 1px solid rgba(60,60,60,0.3); padding-bottom: 8px; }
+  .changes-section .header h2 { color: #52525b; }
+  .change-file {
+    display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 4px;
+    cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 10px;
+    transition: background 0.12s;
+  }
+  .change-file:hover { background: rgba(255,255,255,0.05); }
+  .change-badge {
+    display: inline-block; width: 14px; text-align: center; font-size: 9px;
+    font-weight: 700; border-radius: 2px; flex-shrink: 0; line-height: 14px;
+  }
+  .change-badge.M { color: #fbbf24; background: rgba(251,191,36,0.12); }
+  .change-badge.A { color: #4ade80; background: rgba(74,222,128,0.12); }
+  .change-badge.D { color: #fb7185; background: rgba(251,113,133,0.12); }
+  .change-badge.U { color: #60a5fa; background: rgba(96,165,250,0.12); }
+  .change-badge.R { color: #a78bfa; background: rgba(139,92,246,0.12); }
+  .change-name { color: #a1a1aa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .change-dir { color: #3f3f46; font-size: 9px; }
+  .changes-count { font-size: 10px; color: #52525b; font-weight: 400; margin-left: 4px; }
+  .changes-empty { padding: 8px 0; text-align: center; color: #3f3f46; font-size: 10px; }
+
   /* Commit detail (expandable) */
   .commit-row { cursor: pointer; }
   .commit-row:hover .graph-msg { color: #fafafa; }
@@ -109,7 +132,14 @@
     <div id="tab-git" class="section active">
       <div class="header">
         <h2><span id="git-dir-label">Git</span> <span id="git-branch-label" style="color:#4ade80;font-size:10px;font-weight:500;text-transform:none;letter-spacing:0"></span></h2>
-        <button class="refresh-btn" onclick="loadGitGraph()">↻</button>
+        <button class="refresh-btn" onclick="loadGitGraph(); loadChanges()">↻</button>
+      </div>
+      <!-- Working tree changes -->
+      <div id="changes-section" class="changes-section" style="display:none">
+        <div class="header" style="margin-bottom:4px">
+          <h2>Changes <span id="changes-count" class="changes-count"></span></h2>
+        </div>
+        <div id="changes-list"></div>
       </div>
       <div id="git-graph"><div class="loading">Loading...</div></div>
     </div>
@@ -170,7 +200,7 @@ document.querySelectorAll(".tabs button").forEach(btn => {
     document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
-    if (btn.dataset.tab === "git") loadGitGraph();
+    if (btn.dataset.tab === "git") { loadGitGraph(); loadChanges(); }
     if (btn.dataset.tab === "graph") loadGraph();
     if (btn.dataset.tab === "branches") loadBranches();
     if (btn.dataset.tab === "prs") loadPRs();
@@ -202,7 +232,7 @@ window.addEventListener("message", (e) => {
   if (e.data && e.data.type === "cwd" && e.data.path) {
     setGitDir(e.data.path);
     const gitTab = document.getElementById("tab-git");
-    if (gitTab && gitTab.classList.contains("active")) loadGitGraph();
+    if (gitTab && gitTab.classList.contains("active")) { loadGitGraph(); loadChanges(); }
   }
 });
 
@@ -215,7 +245,7 @@ setInterval(async () => {
       if (cwd && cwd !== gitDir) {
         setGitDir(cwd);
         const gitTab = document.getElementById("tab-git");
-        if (gitTab && gitTab.classList.contains("active")) loadGitGraph();
+        if (gitTab && gitTab.classList.contains("active")) { loadGitGraph(); loadChanges(); }
       }
     }
   } catch {}
@@ -379,6 +409,81 @@ async function loadGitGraph() {
     attachCommitClickHandlers(el);
 
   } catch (e) { showError("Git: " + e.message); }
+}
+
+// ── Working tree changes ──
+async function loadChanges() {
+  const section = document.getElementById("changes-section");
+  const list = document.getElementById("changes-list");
+  const countEl = document.getElementById("changes-count");
+
+  try {
+    if (!gitDir) await detectGitDir();
+    const output = await gitCmd("status");
+    if (!output.trim()) {
+      section.style.display = "none";
+      return;
+    }
+
+    // Parse porcelain v1: "XY path" or "XY old -> new" for renames
+    const files = output.trim().split("\n").map(line => {
+      line = line.replace(/\r$/, ""); // strip CR if present
+      if (line.length < 4) return null;
+      const idx = line[0], wt = line[1];
+      // Skip 2-char status and trim any whitespace between status and path
+      let path = line.substring(2).trimStart();
+      // Strip surrounding quotes (git quotes special chars)
+      if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
+
+      // Handle renames: "old -> new"
+      const arrow = path.indexOf(" -> ");
+      if (arrow >= 0) {
+        path = path.slice(arrow + 4);
+        if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
+      }
+
+      // Determine display status
+      let status = "M";
+      if (idx === "?" && wt === "?") status = "U";
+      else if (idx === "A" || wt === "A") status = "A";
+      else if (idx === "D" || wt === "D") status = "D";
+      else if (idx === "R" || wt === "R") status = "R";
+
+      // Split path into dir + name for display
+      const lastSlash = path.lastIndexOf("/");
+      const dir = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "";
+      const name = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
+
+      return { status, path, dir, name };
+    }).filter(f => f && f.path);
+
+    if (files.length === 0) {
+      section.style.display = "none";
+      return;
+    }
+
+    section.style.display = "";
+    countEl.textContent = "(" + files.length + ")";
+
+    // Build DOM elements directly (avoid data-attribute issues)
+    list.innerHTML = "";
+    files.forEach(f => {
+      const div = document.createElement("div");
+      div.className = "change-file";
+      div.innerHTML = '<span class="change-badge ' + f.status + '">' + f.status + '</span>'
+        + '<span class="change-name">' + (f.dir ? '<span class="change-dir">' + esc(f.dir) + '</span>' : '') + esc(f.name) + '</span>';
+      // Use closure — no data-attributes needed
+      div.addEventListener("click", () => {
+        window.parent.postMessage({ type: "open-diff-working", file: f.path, dir: gitDir }, "*");
+      });
+      list.appendChild(div);
+    });
+
+  } catch (e) {
+    // Show error instead of silently hiding
+    section.style.display = "";
+    list.innerHTML = '<div class="changes-empty">Error: ' + esc(e.message) + '</div>';
+  }
 }
 
 // ── Commit detail (click to expand) ──
@@ -717,6 +822,7 @@ function showError(msg) {
   document.getElementById("app").style.display = "";
   await detectGitDir();
   loadGitGraph();
+  loadChanges();
   // Load GitHub config in background (for Graph/PRs/Actions tabs)
   loadConfig();
 })();

@@ -97,12 +97,13 @@ function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
     }
   };
 
-  // Listen for postMessage from iframe (open-diff) → fetch diff → open in FileViewer
+  // Listen for postMessage from iframe (open-diff, open-diff-working) → fetch diff → open in FileViewer
   useEffect(() => {
     const handler = async (e: MessageEvent) => {
+      const dir = e.data?.dir || cwd || ".";
+
       if (e.data?.type === "open-diff" && e.data.sha && e.data.file) {
         try {
-          const dir = e.data.dir || cwd || ".";
           const r = await fetch(`${base}/api/git?cmd=diff-file&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.sha + " " + e.data.file)}`);
           const data = await r.json();
           const diff = data.ok && data.stdout ? data.stdout : `No diff available for ${e.data.file}`;
@@ -112,6 +113,21 @@ function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
         } catch {
           window.dispatchEvent(new CustomEvent("open-diff-viewer", {
             detail: { path: e.data.file, diff: "Failed to load diff", sha: e.data.sha },
+          }));
+        }
+      }
+
+      if (e.data?.type === "open-diff-working" && e.data.file) {
+        try {
+          const r = await fetch(`${base}/api/git?cmd=diff-working&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.file)}`);
+          const data = await r.json();
+          const diff = data.ok && data.stdout ? data.stdout : `No working changes for ${e.data.file}`;
+          window.dispatchEvent(new CustomEvent("open-diff-viewer", {
+            detail: { path: e.data.file, diff, sha: "working" },
+          }));
+        } catch {
+          window.dispatchEvent(new CustomEvent("open-diff-viewer", {
+            detail: { path: e.data.file, diff: "Failed to load diff", sha: "working" },
           }));
         }
       }

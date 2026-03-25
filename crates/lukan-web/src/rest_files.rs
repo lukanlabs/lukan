@@ -559,6 +559,7 @@ pub async fn git_command(
             "--format=%(refname:short) %(objectname:short) %(upstream:short)",
         ],
         "status" => vec!["status", "--porcelain"],
+        "head" => vec!["rev-parse", "--abbrev-ref", "HEAD"],
         "remote" => vec!["remote", "-v"],
         "diff-stat" => vec!["diff", "--stat"],
         "show" => {

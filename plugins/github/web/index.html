@@ -57,18 +57,16 @@
   .row { display: flex; align-items: center; gap: 6px; }
   .protected { font-size: 9px; padding: 0 4px; border-radius: 3px; background: rgba(251,191,36,0.1); color: #fbbf24; }
 
-  /* Graph styles */
-  .graph-row { display: flex; align-items: flex-start; gap: 0; min-height: 28px; }
-  .graph-rail { width: 60px; min-width: 60px; position: relative; flex-shrink: 0; }
-  .graph-info { flex: 1; min-width: 0; padding: 3px 0; }
-  .graph-msg { font-size: 11px; color: #e4e4e7; overflow: hidden; text-overflow: ellipsis; word-wrap: break-word; }
-  .graph-meta { font-size: 10px; color: #3f3f46; }
+  /* Graph styles — compact like VSCode Source Control */
+  .graph-info { flex: 1; min-width: 0; }
+  .graph-msg { font-size: 11px; color: #d4d4d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .graph-meta { font-size: 10px; color: #3f3f46; white-space: nowrap; }
   .graph-sha { font-family: "JetBrains Mono", monospace; font-size: 10px; color: #52525b; }
   .graph-branch-tag {
-    display: inline-flex; font-size: 9px; padding: 0 5px; border-radius: 3px;
-    font-weight: 500; margin-left: 6px; vertical-align: middle;
+    display: inline-flex; font-size: 8px; padding: 0 4px; border-radius: 3px;
+    font-weight: 600; margin-left: 4px; vertical-align: middle; line-height: 14px;
   }
-  #graph-canvas { display: block; }
+  .graph-branch-tag.head { border-width: 1.5px; }
   .branch-filter { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
   .branch-chip {
     font-size: 10px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
@@ -109,7 +107,10 @@
     <div id="error" class="error-msg" style="display:none"></div>
 
     <div id="tab-git" class="section active">
-      <div class="header"><h2 id="git-dir-label">Local Git</h2><button class="refresh-btn" onclick="loadGitGraph()">↻</button></div>
+      <div class="header">
+        <h2><span id="git-dir-label">Git</span> <span id="git-branch-label" style="color:#4ade80;font-size:10px;font-weight:500;text-transform:none;letter-spacing:0"></span></h2>
+        <button class="refresh-btn" onclick="loadGitGraph()">↻</button>
+      </div>
       <div id="git-graph"><div class="loading">Loading...</div></div>
     </div>
     <div id="tab-graph" class="section ">
@@ -230,12 +231,17 @@ async function gitCmd(cmd, args) {
   return data.stdout;
 }
 
+let currentBranch = "";
+
 async function loadGitGraph() {
   const el = document.getElementById("git-graph");
   el.innerHTML = '<div class="loading">Loading...</div>';
 
   try {
     if (!gitDir) await detectGitDir();
+
+    // Get current branch
+    try { currentBranch = (await gitCmd("head")).trim(); } catch { currentBranch = ""; }
 
     let output;
     try {
@@ -307,10 +313,11 @@ async function loadGitGraph() {
     });
 
     const numLanes = Math.max(nextLane, 1);
-    const ROW_H = 24;
-    const COL_W = 12;
-    const PAD = 6;
-    const railW = PAD + numLanes * COL_W + 8;
+    const ROW_H = 18;
+    const COL_W = 2;
+    const PAD = 1;
+    const DOT_R = 1;
+    const railW = PAD + numLanes * COL_W + 1;
     const totalH = commits.length * ROW_H;
 
     // SVG
@@ -331,17 +338,21 @@ async function loadGitGraph() {
           const px = PAD + pLane * COL_W + COL_W / 2;
 
           if (lane === pLane) {
-            svg += `<line x1="${x}" y1="${y}" x2="${px}" y2="${py}" stroke="${color}" stroke-width="1.5" opacity="0.4"/>`;
+            svg += `<line x1="${x}" y1="${y}" x2="${px}" y2="${py}" stroke="${color}" stroke-width="0.5" opacity="0.5"/>`;
           } else {
-            svg += `<path d="M${x},${y} C${x},${y+12} ${px},${py-12} ${px},${py}" stroke="${COLORS[pLane % COLORS.length]}" stroke-width="1.5" fill="none" opacity="0.3"/>`;
+            svg += `<path d="M${x},${y} C${x},${y+4} ${px},${py-4} ${px},${py}" stroke="${COLORS[pLane % COLORS.length]}" stroke-width="0.5" fill="none" opacity="0.4"/>`;
           }
         }
       });
 
       // Dot
-      svg += `<circle cx="${x}" cy="${y}" r="3" fill="${color}"/>`;
+      svg += `<circle cx="${x}" cy="${y}" r="${DOT_R}" fill="${color}"/>`;
     });
     svg += "</svg>";
+
+    // Update branch in header
+    const branchLabel = document.getElementById("git-branch-label");
+    if (branchLabel) branchLabel.textContent = currentBranch ? "⎋ " + currentBranch : "";
 
     // Rows
     let html = `<div style="position:relative">`;
@@ -351,14 +362,15 @@ async function loadGitGraph() {
       const tags = (branchHeads[c.sha] || []).map(ref => {
         const lane = branchLane[ref] || 0;
         const col = COLORS[lane % COLORS.length];
-        return `<span class="graph-branch-tag" style="background:${col}20;color:${col};border:1px solid ${col}40">${esc(ref)}</span>`;
+        const isHead = ref === currentBranch;
+        return `<span class="graph-branch-tag${isHead ? ' head' : ''}" style="background:${col}${isHead ? '30' : '15'};color:${col};border:1px solid ${col}${isHead ? '80' : '30'}">${esc(ref)}</span>`;
       }).join("");
 
-      html += `<div class="commit-row" data-sha="${c.sha}" data-source="git" style="min-height:${ROW_H}px;display:flex;align-items:center">
-        <div class="graph-info" style="padding:0">
+      html += `<div class="commit-row" data-sha="${c.sha}" data-source="git" style="height:${ROW_H}px;display:flex;align-items:center">
+        <div class="graph-info">
           <div class="graph-msg">${esc(c.message)}${tags}</div>
-          <div class="graph-meta"><span class="graph-sha">${c.sha.slice(0,7)}</span> · ${esc(c.author)} · ${timeAgo(c.date)}</div>
         </div>
+        <div class="graph-meta" style="flex-shrink:0;margin-left:6px"><span class="graph-sha">${c.sha.slice(0,7)}</span> ${timeAgo(c.date)}</div>
       </div>
       <div class="commit-detail" id="detail-${c.sha}" style="display:none"></div>`;
     });

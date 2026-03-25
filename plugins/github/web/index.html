@@ -242,6 +242,9 @@ async function loadGitGraph() {
 
     // Get current branch
     try { currentBranch = (await gitCmd("head")).trim(); } catch { currentBranch = ""; }
+    // Always update branch label
+    const branchLabel = document.getElementById("git-branch-label");
+    if (branchLabel) branchLabel.textContent = currentBranch ? "⎋ " + currentBranch : "";
 
     let output;
     try {
@@ -350,9 +353,6 @@ async function loadGitGraph() {
     });
     svg += "</svg>";
 
-    // Update branch in header
-    const branchLabel = document.getElementById("git-branch-label");
-    if (branchLabel) branchLabel.textContent = currentBranch ? "⎋ " + currentBranch : "";
 
     // Rows
     let html = `<div style="position:relative">`;
@@ -429,10 +429,17 @@ function attachCommitClickHandlers(container) {
             const bar = match[3] || "";
             const adds = (bar.match(/\+/g) || []).length;
             const dels = (bar.match(/-/g) || []).length;
-            return `<li><span class="file-add">+${adds}</span><span class="file-del">-${dels}</span><span class="file-name">${esc(name)}</span></li>`;
+            return `<li data-diff-file="${esc(name)}" data-diff-sha="${sha}" style="cursor:pointer" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''"><span class="file-add">+${adds}</span><span class="file-del">-${dels}</span><span class="file-name">${esc(name)}</span></li>`;
           }).join("");
 
           detail.innerHTML = `<div class="full-msg">${esc(msg)}</div><ul class="commit-files">${filesHtml || '<li class="meta">No file changes</li>'}</ul>`;
+          // Attach click handlers for file diff
+          detail.querySelectorAll("[data-diff-file]").forEach(li => {
+            li.addEventListener("click", (e) => {
+              e.stopPropagation();
+              window.parent.postMessage({ type: "open-diff", sha: li.dataset.diffSha, file: li.dataset.diffFile, dir: gitDir }, "*");
+            });
+          });
 
         } else {
           // GitHub API
@@ -443,10 +450,16 @@ function attachCommitClickHandlers(container) {
           const files = data.files || [];
           const filesHtml = files.map(f => {
             const status = f.status === "added" ? "file-add" : f.status === "removed" ? "file-del" : "file-mod";
-            return `<li><span class="file-add">+${f.additions}</span><span class="file-del">-${f.deletions}</span><span class="${status}">${esc(f.filename)}</span></li>`;
+            return `<li data-diff-file="${esc(f.filename)}" data-diff-sha="${sha}" style="cursor:pointer" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''"><span class="file-add">+${f.additions}</span><span class="file-del">-${f.deletions}</span><span class="${status}">${esc(f.filename)}</span></li>`;
           }).join("");
 
           detail.innerHTML = `<div class="full-msg">${esc(msg)}</div><ul class="commit-files">${filesHtml || '<li class="meta">No file changes</li>'}</ul>`;
+          detail.querySelectorAll("[data-diff-file]").forEach(li => {
+            li.addEventListener("click", (e) => {
+              e.stopPropagation();
+              window.parent.postMessage({ type: "open-diff", sha: li.dataset.diffSha, file: li.dataset.diffFile, dir: gitDir }, "*");
+            });
+          });
         }
       } catch (e) {
         detail.innerHTML = `<span class="meta">Error: ${esc(e.message)}</span>`;

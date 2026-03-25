@@ -560,6 +560,23 @@ pub async fn git_command(
         ],
         "status" => vec!["status", "--porcelain"],
         "head" => vec!["rev-parse", "--abbrev-ref", "HEAD"],
+        "diff-file" => {
+            // Diff for a specific file in a commit — args = "sha file_path"
+            let mut parts = extra_args.splitn(2, ' ');
+            let sha = parts.next().unwrap_or("HEAD");
+            let file = parts.next().unwrap_or("");
+            let result = std::process::Command::new("git")
+                .args(["diff", &format!("{sha}^"), sha, "--", file])
+                .current_dir(dir)
+                .output();
+            return match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
+                }
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
+            };
+        }
         "remote" => vec!["remote", "-v"],
         "diff-stat" => vec!["diff", "--stat"],
         "show" => {

@@ -8,6 +8,13 @@ import { FileViewer } from "./FileViewer";
 
 type SplitMode = "off" | "horizontal" | "vertical";
 
+export interface FileTab {
+  path: string;
+  size?: number;
+  diff?: string;
+  sha?: string;
+}
+
 interface MainAreaProps {
   mode: WorkspaceMode;
   pipelineId?: string | null;
@@ -15,15 +22,16 @@ interface MainAreaProps {
   processLog?: BgProcessInfo | null;
   processLogSessionId?: string;
   onCloseProcessLog?: () => void;
-  filePreview?: string | null;
-  filePreviewSize?: number;
-  onCloseFilePreview?: () => void;
-  diffPreview?: { path: string; diff: string; sha: string } | null;
-  onCloseDiffPreview?: () => void;
+  openTabs?: FileTab[];
+  activeTabIdx?: number;
+  onSetActiveTab?: (idx: number) => void;
+  onCloseTab?: (idx: number) => void;
+  onCloseAllTabs?: () => void;
 }
 
-export function MainArea({ mode, pipelineId, onPipelineBack, processLog, processLogSessionId, onCloseProcessLog, filePreview, filePreviewSize, onCloseFilePreview, diffPreview, onCloseDiffPreview }: MainAreaProps) {
-  const hasViewer = !!(filePreview || diffPreview);
+export function MainArea({ mode, pipelineId, onPipelineBack, processLog, processLogSessionId, onCloseProcessLog, openTabs = [], activeTabIdx = 0, onSetActiveTab, onCloseTab, onCloseAllTabs }: MainAreaProps) {
+  const hasViewer = openTabs.length > 0;
+  const activeTab = openTabs[activeTabIdx] ?? null;
   const [splitMode, setSplitMode] = useState<SplitMode>("horizontal");
   const [splitPct, setSplitPct] = useState(50);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -56,20 +64,20 @@ export function MainArea({ mode, pipelineId, onPipelineBack, processLog, process
     if (m !== "off") setSplitPct(50);
   }, []);
 
-  const onCloseViewer = filePreview ? onCloseFilePreview : onCloseDiffPreview;
-
-  const viewerEl = filePreview && onCloseFilePreview ? (
+  const viewerEl = activeTab ? (
     <FileViewer
-      path={filePreview} fileSize={filePreviewSize} onClose={onCloseFilePreview}
-      split={isSplit} splitDirection={isHorizontal ? "horizontal" : "vertical"}
+      path={activeTab.path}
+      fileSize={activeTab.size}
+      diff={activeTab.diff}
+      diffSha={activeTab.sha}
+      onClose={() => onCloseTab?.(activeTabIdx)}
+      split={isSplit}
+      splitDirection={isHorizontal ? "horizontal" : "vertical"}
       onSplitChange={handleSplitChange}
-    />
-  ) : diffPreview && onCloseDiffPreview ? (
-    <FileViewer
-      path={diffPreview.path} diff={diffPreview.diff} diffSha={diffPreview.sha}
-      onClose={onCloseDiffPreview}
-      split={isSplit} splitDirection={isHorizontal ? "horizontal" : "vertical"}
-      onSplitChange={handleSplitChange}
+      tabs={openTabs}
+      activeTabIdx={activeTabIdx}
+      onTabClick={onSetActiveTab}
+      onTabClose={onCloseTab}
     />
   ) : null;
 
@@ -123,12 +131,10 @@ export function MainArea({ mode, pipelineId, onPipelineBack, processLog, process
   if (isSplit && viewerEl) {
     const flexDir = isHorizontal ? "row" : "column";
     const handleSize = isHorizontal ? { width: 4, cursor: "col-resize" as const } : { height: 4, cursor: "row-resize" as const };
-    const mainFlex = `0 0 ${splitPct}%`;
-    const viewerFlex = `0 0 ${100 - splitPct}%`;
 
     return (
       <div ref={containerRef} className="main-area" style={{ position: "relative", display: "flex", flexDirection: flexDir }}>
-        <div style={{ flex: mainFlex, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, overflow: "hidden", position: "relative" }}>
+        <div style={{ flex: `0 0 ${splitPct}%`, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, overflow: "hidden", position: "relative" }}>
           {mainContent}
         </div>
         <div
@@ -142,7 +148,7 @@ export function MainArea({ mode, pipelineId, onPipelineBack, processLog, process
           onMouseEnter={(e) => { e.currentTarget.style.background = "var(--accent, #6366f1)"; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = "var(--border-subtle)"; }}
         />
-        <div style={{ flex: viewerFlex, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, overflow: "hidden" }}>
+        <div style={{ flex: `0 0 ${100 - splitPct}%`, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, overflow: "hidden" }}>
           {viewerEl}
         </div>
       </div>

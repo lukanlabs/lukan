@@ -187,10 +187,49 @@ export function useFileExplorer() {
     return () => window.removeEventListener("active-tab-changed", handler);
   }, [initTree, rootPath]);
 
-  // Poll git status every 3s
+  // Poll file tree + git status every 3s
   useEffect(() => {
     if (!rootPath) return;
-    const interval = setInterval(() => loadGitStatus(rootPath), 3000);
+    const interval = setInterval(async () => {
+      loadGitStatus(rootPath);
+      // Refresh root entries and expanded dirs without collapsing
+      try {
+        const result = await listDirectory(rootPath);
+        const rootEntries = [...result.entries].sort((a, b) => {
+          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+        setTree(prev => {
+          // Rebuild root level entries, preserving expanded children
+          const expanded = expandedRef.current;
+          const newRoot = rootEntries.map(e => ({
+            name: e.name,
+            path: `${rootPath}/${e.name}`,
+            isDir: e.isDir,
+            size: e.size,
+            depth: 0,
+            expanded: expanded.has(`${rootPath}/${e.name}`),
+          }));
+          // Merge: for each root entry, keep its existing children if expanded
+          const merged: TreeEntry[] = [];
+          for (const entry of newRoot) {
+            merged.push(entry);
+            if (entry.expanded) {
+              // Copy existing children from prev tree
+              const prevIdx = prev.findIndex(p => p.path === entry.path);
+              if (prevIdx >= 0) {
+                let j = prevIdx + 1;
+                while (j < prev.length && prev[j].depth > 0) {
+                  merged.push(prev[j]);
+                  j++;
+                }
+              }
+            }
+          }
+          return merged;
+        });
+      } catch {}
+    }, 3000);
     return () => clearInterval(interval);
   }, [rootPath, loadGitStatus]);
 

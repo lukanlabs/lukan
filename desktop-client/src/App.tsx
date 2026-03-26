@@ -63,9 +63,9 @@ export default function App() {
   const browser = useBrowser();
   const [currentSessionId, setCurrentSessionId] = useState("");
   const [processLog, setProcessLog] = useState<BgProcessInfo | null>(null);
-  const [filePreview, setFilePreview] = useState<string | null>(null);
-  const [filePreviewSize, setFilePreviewSize] = useState(0);
-  const [diffPreview, setDiffPreview] = useState<{ path: string; diff: string; sha: string } | null>(null);
+  // File viewer tabs
+  const [openTabs, setOpenTabs] = useState<Array<{ path: string; size?: number; diff?: string; sha?: string }>>([]);
+  const [activeTabIdx, setActiveTabIdx] = useState(0);
   const [terminalAttachedIds, setTerminalAttachedIds] = useState<string[]>([]);
   const [runningMonitors, setRunningMonitors] = useState<PluginInfo[]>([]);
   const [unreadSources, setUnreadSources] = useState<Set<string>>(new Set());
@@ -190,16 +190,24 @@ export default function App() {
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ path: string; diff: string; sha: string }>).detail;
-      if (detail) setDiffPreview(detail);
+      if (detail) {
+        const key = `diff:${detail.path}:${detail.sha}`;
+        setOpenTabs(prev => {
+          const existing = prev.findIndex(t => t.diff && t.path === detail.path && t.sha === detail.sha);
+          if (existing >= 0) { setActiveTabIdx(existing); return prev; }
+          setActiveTabIdx(prev.length);
+          return [...prev, { path: detail.path, diff: detail.diff, sha: detail.sha }];
+        });
+      }
     };
     window.addEventListener("open-diff-viewer", handler);
     return () => window.removeEventListener("open-diff-viewer", handler);
   }, []);
 
-  // Auto-close file preview when switching views
+  // Auto-close file tabs when switching views
   useEffect(() => {
-    setFilePreview(null);
-    setDiffPreview(null);
+    setOpenTabs([]);
+    setActiveTabIdx(0);
   }, [workspace.mode]);
 
   // Listen for pipeline open requests from PipelinesPanel
@@ -217,7 +225,7 @@ export default function App() {
 
   const handleSwitchToTerminal = useCallback(
     (sessionId: string) => {
-      setFilePreview(null);
+      setOpenTabs([]); setActiveTabIdx(0);
       workspace.setMode("terminal");
       window.dispatchEvent(
         new CustomEvent("terminal-attach-request", { detail: sessionId }),
@@ -238,14 +246,14 @@ export default function App() {
   }, []);
 
   const handleLoadSession = (id: string, name?: string) => {
-    setFilePreview(null);
+    setOpenTabs([]); setActiveTabIdx(0);
     setCurrentSessionId(id);
     workspace.setMode("agent");
     window.dispatchEvent(new CustomEvent("load-session", { detail: { id, name } }));
   };
 
   const handleNewSession = () => {
-    setFilePreview(null);
+    setOpenTabs([]); setActiveTabIdx(0);
     setCurrentSessionId("");
     workspace.setMode("agent");
     window.dispatchEvent(new CustomEvent("new-session"));
@@ -281,7 +289,14 @@ export default function App() {
             onLoadSession={handleLoadSession}
             onNewSession={handleNewSession}
             onOpenProcessLog={handleOpenProcessLog}
-            onPreviewFile={(path, size) => { setFilePreview(path); setFilePreviewSize(size); }}
+            onPreviewFile={(path, size) => {
+              setOpenTabs(prev => {
+                const existing = prev.findIndex(t => !t.diff && t.path === path);
+                if (existing >= 0) { setActiveTabIdx(existing); return prev; }
+                setActiveTabIdx(prev.length);
+                return [...prev, { path, size }];
+              });
+            }}
             terminalAttachedIds={terminalAttachedIds}
             onSwitchToTerminal={handleSwitchToTerminal}
             activePluginName={activePluginName}
@@ -298,11 +313,18 @@ export default function App() {
           processLog={processLog}
           processLogSessionId={currentSessionId}
           onCloseProcessLog={handleCloseProcessLog}
-          filePreview={filePreview}
-          filePreviewSize={filePreviewSize}
-          onCloseFilePreview={() => setFilePreview(null)}
-          diffPreview={diffPreview}
-          onCloseDiffPreview={() => setDiffPreview(null)}
+          openTabs={openTabs}
+          activeTabIdx={activeTabIdx}
+          onSetActiveTab={setActiveTabIdx}
+          onCloseTab={(idx) => {
+            setOpenTabs(prev => {
+              const next = prev.filter((_, i) => i !== idx);
+              if (activeTabIdx >= next.length) setActiveTabIdx(Math.max(0, next.length - 1));
+              else if (idx < activeTabIdx) setActiveTabIdx(activeTabIdx - 1);
+              return next;
+            });
+          }}
+          onCloseAllTabs={() => { setOpenTabs([]); setActiveTabIdx(0); }}
         />
 
         {workspace.showSettings && (

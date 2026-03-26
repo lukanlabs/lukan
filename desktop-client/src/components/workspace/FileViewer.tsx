@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
-import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw, GitCommit, Columns2, Rows2, Maximize2 } from "lucide-react";
+import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw, GitCommit, Columns2, Rows2, Maximize2, GitBranch } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { MarkdownRenderer } from "../chat/MarkdownRenderer";
@@ -459,9 +459,14 @@ interface FileViewerProps {
   splitDirection?: "horizontal" | "vertical";
   /** Callback to change split mode */
   onSplitChange?: (mode: "off" | "horizontal" | "vertical") => void;
+  /** Open tabs */
+  tabs?: Array<{ path: string; size?: number; diff?: string; sha?: string }>;
+  activeTabIdx?: number;
+  onTabClick?: (idx: number) => void;
+  onTabClose?: (idx: number) => void;
 }
 
-export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, splitDirection, onSplitChange }: FileViewerProps) {
+export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, splitDirection, onSplitChange, tabs, activeTabIdx = 0, onTabClick, onTabClose }: FileViewerProps) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -470,6 +475,9 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [initialLine, setInitialLine] = useState<number | undefined>(undefined);
+  const [showDiff, setShowDiff] = useState(false);
+  const [diffContent, setDiffContent] = useState<string | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
 
   const isDiffMode = diff != null;
 
@@ -545,10 +553,47 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
     }
   }, [file, editContent, dirty, path]);
 
+  const toggleDiff = useCallback(async () => {
+    if (showDiff) {
+      setShowDiff(false);
+      return;
+    }
+    setDiffLoading(true);
+    try {
+      const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
+      const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
+      // Get the directory from the file path
+      const dir = path.substring(0, path.lastIndexOf("/")) || ".";
+      const fileName = path.substring(path.lastIndexOf("/") + 1);
+      const r = await fetch(`${base}/api/git?cmd=diff-working&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(fileName)}`);
+      const data = await r.json();
+      if (data.ok && data.stdout) {
+        setDiffContent(data.stdout);
+        setShowDiff(true);
+      } else {
+        setDiffContent("No changes against HEAD");
+        setShowDiff(true);
+      }
+    } catch {
+      setDiffContent("Failed to load diff");
+      setShowDiff(true);
+    } finally {
+      setDiffLoading(false);
+    }
+  }, [showDiff, path]);
+
+  // Reset diff view when path changes
+  useEffect(() => {
+    setShowDiff(false);
+    setDiffContent(null);
+  }, [path]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (editing) {
+        if (showDiff) {
+          setShowDiff(false);
+        } else if (editing) {
           handleCancel();
         } else {
           onClose();
@@ -561,7 +606,7 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose, editing, handleCancel, handleSave]);
+  }, [onClose, editing, showDiff, handleCancel, handleSave]);
 
   const headerBtnStyle: React.CSSProperties = {
     border: "none",
@@ -585,6 +630,49 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
         ),
       }}
     >
+      {/* Tab bar */}
+      {tabs && tabs.length > 1 && (
+        <div style={{
+          display: "flex", alignItems: "center", background: "var(--bg-tertiary, #0f0f0f)",
+          borderBottom: "1px solid var(--border-subtle)", flexShrink: 0, overflow: "auto",
+          scrollbarWidth: "none",
+        }}>
+          {tabs.map((tab, i) => {
+            const name = tab.path.split("/").pop() ?? tab.path;
+            const isDiff = !!tab.diff;
+            const isActive = i === activeTabIdx;
+            return (
+              <div
+                key={`${tab.path}-${tab.sha ?? i}`}
+                onClick={() => onTabClick?.(i)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 4,
+                  padding: "4px 8px", fontSize: 11, cursor: "pointer",
+                  fontFamily: "var(--font-mono)",
+                  color: isActive ? "var(--text-primary)" : "var(--text-muted)",
+                  background: isActive ? "var(--bg-secondary)" : "transparent",
+                  borderBottom: isActive ? "2px solid var(--accent)" : "2px solid transparent",
+                  borderRight: "1px solid var(--border-subtle)",
+                  whiteSpace: "nowrap", flexShrink: 0,
+                }}
+              >
+                {isDiff && <GitCommit size={10} style={{ opacity: 0.5 }} />}
+                <span>{name}</span>
+                {isDiff && tab.sha && <span style={{ fontSize: 9, opacity: 0.4 }}>{tab.sha.slice(0, 7)}</span>}
+                <span
+                  onClick={(e) => { e.stopPropagation(); onTabClose?.(i); }}
+                  style={{ marginLeft: 2, opacity: 0.4, cursor: "pointer", lineHeight: 1 }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; }}
+                >
+                  ×
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Header */}
       <div
         style={{
@@ -658,6 +746,16 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {!isDiffMode && !editing && (
+            <button
+              onClick={toggleDiff}
+              style={{ ...headerBtnStyle, color: showDiff ? "var(--accent)" : "var(--text-muted)" }}
+              title={showDiff ? "View file" : "View diff vs HEAD"}
+              disabled={diffLoading}
+            >
+              {diffLoading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <GitBranch size={14} />}
+            </button>
+          )}
           {!isDiffMode && (editing ? (
             <>
               <button
@@ -731,6 +829,8 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
       {/* Body */}
       {isDiffMode ? (
         <DiffView diff={diff} fullHeight />
+      ) : showDiff && diffContent ? (
+        <DiffView diff={diffContent} fullHeight />
       ) : (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
           {loading && (

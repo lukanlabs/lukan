@@ -191,7 +191,7 @@ async function detectRepoFromRemote() {
     if (!output) return "";
     // Parse remote -v output: "origin  git@github.com:owner/repo.git (fetch)"
     for (const line of output.trim().split("\n")) {
-      if (!line.includes("github.com")) continue;
+      if (!/[:@/]github\.com[:/]/.test(line)) continue;
       const parsed = parseGitHubRepo(line);
       if (parsed) return parsed;
     }

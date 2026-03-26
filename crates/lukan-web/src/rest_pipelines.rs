@@ -384,36 +384,41 @@ pub async fn approval_page(
         }
     };
 
-    let pipeline_name = PipelineManager::get(&approval.pipeline_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|p| p.name)
-        .unwrap_or_else(|| approval.pipeline_id.clone());
+    fn html_escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#x27;")
+    }
 
-    let context_escaped = approval
-        .context
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\n', "<br>");
+    let pipeline_name = html_escape(
+        &PipelineManager::get(&approval.pipeline_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|p| p.name)
+            .unwrap_or_else(|| approval.pipeline_id.clone()),
+    );
 
-    let approved_msg = format!(
+    let context_escaped = html_escape(&approval.context).replace('\n', "<br>");
+
+    let approved_msg = html_escape(&format!(
         "Approved{}",
         approval
             .resolved_by
             .as_deref()
             .map(|r| format!(" by {r}"))
             .unwrap_or_default()
-    );
-    let rejected_msg = format!(
+    ));
+    let rejected_msg = html_escape(&format!(
         "Rejected{}",
         approval
             .resolved_by
             .as_deref()
             .map(|r| format!(" by {r}"))
             .unwrap_or_default()
-    );
+    ));
 
     let (status_class, status_msg, buttons) = match approval.status.as_str() {
         "pending" => (
@@ -429,6 +434,9 @@ pub async fn approval_page(
         "rejected" => ("rejected", rejected_msg.as_str(), String::new()),
         s => (s, s, String::new()),
     };
+
+    // Escape id for safe insertion into JavaScript string literal
+    let id_escaped = id.replace('\\', "\\\\").replace('"', "\\\"");
 
     let html = format!(
         r#"<!DOCTYPE html>
@@ -460,7 +468,7 @@ pub async fn approval_page(
         </div>
     </div>
     <script>
-        const approvalId = "{id}";
+        const approvalId = "{id_escaped}";
         const authRequired = {auth_required};
         let token = localStorage.getItem("lukan-token");
 

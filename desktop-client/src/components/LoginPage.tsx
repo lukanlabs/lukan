@@ -36,7 +36,8 @@ export default function LoginPage({ onAuthenticated, message, devices, onLogout 
   const origin = `${window.location.protocol}//${window.location.host}`;
 
   // Check if this is a CLI login flow (lukan login --remote <url>)
-  const cliPort = new URLSearchParams(window.location.search).get("cli_port");
+  const rawCliPort = new URLSearchParams(window.location.search).get("cli_port");
+  const cliPort = rawCliPort && /^\d+$/.test(rawCliPort) ? rawCliPort : null;
 
   useEffect(() => {
     fetch(`${origin}/auth/dev`)

@@ -204,11 +204,6 @@ export default function App() {
     return () => window.removeEventListener("open-diff-viewer", handler);
   }, []);
 
-  // Auto-close file tabs when switching views
-  useEffect(() => {
-    setOpenTabs([]);
-    setActiveTabIdx(0);
-  }, [workspace.mode]);
 
   // Listen for pipeline open requests from PipelinesPanel
   useEffect(() => {
@@ -225,7 +220,6 @@ export default function App() {
 
   const handleSwitchToTerminal = useCallback(
     (sessionId: string) => {
-      setOpenTabs([]); setActiveTabIdx(0);
       workspace.setMode("terminal");
       window.dispatchEvent(
         new CustomEvent("terminal-attach-request", { detail: sessionId }),

@@ -139,6 +139,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/files/read", get(rest_files::read_file))
         .route("/files/write", put(rest_files::write_file))
         .route("/cwd", get(rest_files::get_cwd))
+        .route("/terminal/{id}/cwd", get(rest_files::get_terminal_cwd))
         .route("/git", get(rest_files::git_command))
         .route(
             "/active-tab",

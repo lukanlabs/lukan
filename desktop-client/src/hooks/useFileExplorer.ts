@@ -179,12 +179,63 @@ export function useFileExplorer() {
   // Navigate to new cwd when agent tab changes
   useEffect(() => {
     const handler = () => {
-      setTimeout(() => getCwd().then((cwd) => {
-        if (cwd && cwd !== rootPath) initTree(cwd);
-      }), 300);
+      activeTerminalId.current = ""; // stop following terminal
+      let attempts = 0;
+      const check = () => {
+        getCwd().then((cwd) => {
+          if (cwd && cwd !== rootPath) {
+            initTree(cwd);
+          } else if (attempts < 3) {
+            attempts++;
+            setTimeout(check, 500);
+          }
+        }).catch(() => {});
+      };
+      setTimeout(check, 300);
     };
     window.addEventListener("active-tab-changed", handler);
     return () => window.removeEventListener("active-tab-changed", handler);
+  }, [initTree, rootPath]);
+
+  // Track active terminal session and its cwds
+  const activeTerminalId = useRef("");
+  const terminalCwds = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    // cwd changed for a terminal — always store, navigate if active
+    const onCwdChanged = (e: Event) => {
+      const { sessionId, cwd } = (e as CustomEvent<{ sessionId: string; cwd: string }>).detail;
+      terminalCwds.current.set(sessionId, cwd);
+      if (!activeTerminalId.current) activeTerminalId.current = sessionId;
+      if (sessionId === activeTerminalId.current && cwd && cwd !== rootPath) {
+        initTree(cwd);
+      }
+    };
+    // User switched terminal tab
+    const onSessionSwitch = async (e: Event) => {
+      const sessionId = (e as CustomEvent<string>).detail;
+      activeTerminalId.current = sessionId;
+      let cwd: string | undefined = terminalCwds.current.get(sessionId);
+      // If no stored cwd, fetch from backend
+      if (!cwd) {
+        try {
+          const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
+          const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
+          const r = await fetch(`${base}/api/terminal/${encodeURIComponent(sessionId)}/cwd`);
+          if (r.ok) {
+            const data = await r.json();
+            if (data.cwd) { cwd = data.cwd as string; terminalCwds.current.set(sessionId, cwd!); }
+          }
+        } catch {}
+      }
+      if (cwd && cwd !== rootPath) initTree(cwd);
+    };
+    window.addEventListener("terminal-cwd-changed", onCwdChanged);
+    window.addEventListener("terminal-session-switched", onSessionSwitch);
+    return () => {
+      window.removeEventListener("terminal-cwd-changed", onCwdChanged);
+      window.removeEventListener("terminal-session-switched", onSessionSwitch);
+    };
   }, [initTree, rootPath]);
 
   // Poll file tree + git status every 3s

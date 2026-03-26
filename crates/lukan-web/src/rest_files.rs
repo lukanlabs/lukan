@@ -574,7 +574,8 @@ pub async fn git_command(
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !stdout.is_empty() {
                     let branch = stdout.replace("refs/remotes/origin/", "");
-                    return Json(serde_json::json!({ "ok": true, "stdout": branch, "stderr": "" })).into_response();
+                    return Json(serde_json::json!({ "ok": true, "stdout": branch, "stderr": "" }))
+                        .into_response();
                 }
             }
             // Fallback: git remote show origin (slower, needs network)
@@ -585,14 +586,17 @@ pub async fn git_command(
             return match result {
                 Ok(output) => {
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                    let branch = stdout.lines()
+                    let branch = stdout
+                        .lines()
                         .find(|l| l.contains("HEAD branch:"))
                         .and_then(|l| l.split(':').nth(1))
                         .map(|s| s.trim().to_string())
                         .unwrap_or_default();
                     Json(serde_json::json!({ "ok": !branch.is_empty(), "stdout": branch, "stderr": "" })).into_response()
                 }
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
+                Err(e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response()
+                }
             };
         }
         "rev-list" => {
@@ -608,7 +612,9 @@ pub async fn git_command(
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                     Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
                 }
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
+                Err(e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response()
+                }
             };
         }
         "diff-file" => {
@@ -625,7 +631,9 @@ pub async fn git_command(
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                     Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
                 }
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
+                Err(e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response()
+                }
             };
         }
         "diff-working" => {
@@ -648,22 +656,33 @@ pub async fn git_command(
                         if let Ok(u) = unstaged {
                             let us = String::from_utf8_lossy(&u.stdout).to_string();
                             if !us.trim().is_empty() {
-                                return Json(serde_json::json!({ "ok": true, "stdout": us, "stderr": "" })).into_response();
+                                return Json(
+                                    serde_json::json!({ "ok": true, "stdout": us, "stderr": "" }),
+                                )
+                                .into_response();
                             }
                         }
                         // Try showing untracked file as all-additions
                         let file_path = std::path::Path::new(dir).join(file);
-                        if file_path.exists() {
-                            if let Ok(content) = std::fs::read_to_string(&file_path) {
-                                let lines: Vec<String> = content.lines().map(|l| format!("+{l}")).collect();
-                                let header = format!("--- /dev/null\n+++ b/{file}\n@@ -0,0 +1,{} @@\n{}", lines.len(), lines.join("\n"));
-                                return Json(serde_json::json!({ "ok": true, "stdout": header, "stderr": "" })).into_response();
-                            }
+                        if let Ok(content) = std::fs::read_to_string(&file_path) {
+                            let lines: Vec<String> =
+                                content.lines().map(|l| format!("+{l}")).collect();
+                            let header = format!(
+                                "--- /dev/null\n+++ b/{file}\n@@ -0,0 +1,{} @@\n{}",
+                                lines.len(),
+                                lines.join("\n")
+                            );
+                            return Json(
+                                serde_json::json!({ "ok": true, "stdout": header, "stderr": "" }),
+                            )
+                            .into_response();
                         }
                     }
                     Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
                 }
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
+                Err(e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response()
+                }
             };
         }
         "remote" => vec!["remote", "-v"],
@@ -750,6 +769,16 @@ pub async fn set_active_tab(
         tracing::warn!("set_active_tab called without tabId");
     }
     StatusCode::OK
+}
+
+pub async fn get_terminal_cwd(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::state::AppState>>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    match state.terminal_manager.get_session_cwd(&session_id).await {
+        Ok(cwd) => Json(serde_json::json!({ "cwd": cwd })).into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, format!("{e}")).into_response(),
+    }
 }
 
 pub async fn get_cwd(

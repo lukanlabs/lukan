@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import type { SidePanelId, BgProcessInfo, ViewDeclaration } from "../../lib/types";
 import { getCwd } from "../../lib/tauri";
@@ -60,17 +60,57 @@ export function SidePanel({
 }: SidePanelProps) {
   const [pluginCwd, setPluginCwd] = useState<string | undefined>();
   const [tabChangeCounter, setTabChangeCounter] = useState(0);
+  const followingTerminalRef = useRef(false);
 
   // Listen for tab changes from agent sessions
   useEffect(() => {
-    const handler = () => setTabChangeCounter((c) => c + 1);
+    const handler = () => {
+      followingTerminalRef.current = false;
+      setTabChangeCounter((c) => c + 1);
+    };
     window.addEventListener("active-tab-changed", handler);
     return () => window.removeEventListener("active-tab-changed", handler);
   }, []);
 
-  // Get cwd for plugin webview when tab changes
+  // Listen for terminal cwd changes + session switches
+  const terminalCwdsRef = useRef<Map<string, string>>(new Map());
+  const activeTerminalRef = useRef("");
   useEffect(() => {
-    if (activePanel === "plugin") {
+    const onCwdChanged = (e: Event) => {
+      const { sessionId, cwd } = (e as CustomEvent<{ sessionId: string; cwd: string }>).detail;
+      terminalCwdsRef.current.set(sessionId, cwd);
+      if (!activeTerminalRef.current) activeTerminalRef.current = sessionId;
+      // Only update plugin if from the active terminal
+      if (followingTerminalRef.current && sessionId === activeTerminalRef.current && cwd) {
+        setPluginCwd(cwd);
+      }
+    };
+    const onSessionSwitch = async (e: Event) => {
+      const sessionId = (e as CustomEvent<string>).detail;
+      activeTerminalRef.current = sessionId;
+      followingTerminalRef.current = true;
+      let cwd: string | undefined = terminalCwdsRef.current.get(sessionId);
+      if (!cwd) {
+        try {
+          const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
+          const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
+          const r = await fetch(`${base}/api/terminal/${encodeURIComponent(sessionId)}/cwd`);
+          if (r.ok) { const data = await r.json(); if (data.cwd) { cwd = data.cwd as string; terminalCwdsRef.current.set(sessionId, cwd); } }
+        } catch {}
+      }
+      if (cwd) setPluginCwd(cwd);
+    };
+    window.addEventListener("terminal-cwd-changed", onCwdChanged);
+    window.addEventListener("terminal-session-switched", onSessionSwitch);
+    return () => {
+      window.removeEventListener("terminal-cwd-changed", onCwdChanged);
+      window.removeEventListener("terminal-session-switched", onSessionSwitch);
+    };
+  }, []);
+
+  // Get cwd for plugin webview when agent tab changes (not when following terminal)
+  useEffect(() => {
+    if (activePanel === "plugin" && !followingTerminalRef.current) {
       const timer = setTimeout(() => {
         getCwd().then(setPluginCwd).catch(() => {});
       }, 300);

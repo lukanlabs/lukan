@@ -116,6 +116,7 @@ export function useTerminalSessions() {
         return [...prev, session];
       });
       setActiveSessionId(id);
+      window.dispatchEvent(new CustomEvent("terminal-session-switched", { detail: id }));
     } catch {
       // ignore
     }
@@ -123,6 +124,7 @@ export function useTerminalSessions() {
 
   const switchSession = useCallback((id: string) => {
     setActiveSessionId(id);
+    window.dispatchEvent(new CustomEvent("terminal-session-switched", { detail: id }));
   }, []);
 
   const renameSession = useCallback(async (id: string, label: string) => {

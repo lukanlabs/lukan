@@ -401,6 +401,10 @@ pub enum ServerMessage {
         session_id: String,
         data: String,
     },
+    TerminalCwd {
+        session_id: String,
+        cwd: String,
+    },
     TerminalExited {
         session_id: String,
     },

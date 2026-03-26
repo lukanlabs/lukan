@@ -272,17 +272,20 @@ function setGitDir(dir) {
   });
 }
 
-// Listen for cwd updates from parent (when user switches agent tabs)
+// Listen for cwd updates from parent (agent tabs + terminal cd)
 window.addEventListener("message", (e) => {
   if (e.data && e.data.type === "cwd" && e.data.path) {
+    hasPostMessageCwd = true;
     setGitDir(e.data.path);
     const gitTab = document.getElementById("tab-git");
     if (gitTab && gitTab.classList.contains("active")) { loadGitGraph(); loadChanges(); }
   }
 });
 
-// Poll cwd every 2s to detect tab changes (backup for when postMessage doesn't arrive)
+// Poll cwd as fallback (only if we never received a postMessage cwd)
+let hasPostMessageCwd = false;
 setInterval(async () => {
+  if (hasPostMessageCwd) return;
   try {
     const r = await fetch(window.location.origin + "/api/cwd");
     if (r.ok) {
@@ -294,7 +297,7 @@ setInterval(async () => {
       }
     }
   } catch {}
-}, 2000);
+}, 3000);
 
 async function gitCmd(cmd, args) {
   let url = window.location.origin + "/api/git?cmd=" + cmd + "&dir=" + encodeURIComponent(gitDir);

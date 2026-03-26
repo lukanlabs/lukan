@@ -560,6 +560,54 @@ pub async fn git_command(
         ],
         "status" => vec!["status", "--porcelain"],
         "head" => vec!["rev-parse", "--abbrev-ref", "HEAD"],
+        "default-branch" => {
+            // Detect the default branch of origin
+            // Try symbolic-ref first (fast, local), fallback to remote show
+            let result = std::process::Command::new("git")
+                .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
+                .current_dir(dir)
+                .output();
+            if let Ok(output) = &result {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !stdout.is_empty() {
+                    let branch = stdout.replace("refs/remotes/origin/", "");
+                    return Json(serde_json::json!({ "ok": true, "stdout": branch, "stderr": "" })).into_response();
+                }
+            }
+            // Fallback: git remote show origin (slower, needs network)
+            let result = std::process::Command::new("git")
+                .args(["remote", "show", "origin"])
+                .current_dir(dir)
+                .output();
+            return match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    let branch = stdout.lines()
+                        .find(|l| l.contains("HEAD branch:"))
+                        .and_then(|l| l.split(':').nth(1))
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_default();
+                    Json(serde_json::json!({ "ok": !branch.is_empty(), "stdout": branch, "stderr": "" })).into_response()
+                }
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
+            };
+        }
+        "rev-list" => {
+            // Count ahead/behind — args = "--count --left-right origin/branch...branch"
+            let args: Vec<&str> = extra_args.split_whitespace().collect();
+            let result = std::process::Command::new("git")
+                .arg("rev-list")
+                .args(&args)
+                .current_dir(dir)
+                .output();
+            return match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
+                }
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response(),
+            };
+        }
         "diff-file" => {
             // Diff for a specific file in a commit — args = "sha file_path"
             let mut parts = extra_args.splitn(2, ' ');

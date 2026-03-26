@@ -74,6 +74,10 @@
     transition: all 0.15s;
   }
   .branch-chip.active { color: #fafafa; border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.06); }
+  .graph-branch-tag.remote { opacity: 0.85; font-style: italic; border-style: dashed !important; font-size: 7px; }
+  .ahead-behind { font-size: 10px; color: #52525b; font-weight: 400; margin-left: 6px; letter-spacing: 0; text-transform: none; }
+  .ahead-behind .ahead { color: #4ade80; }
+  .ahead-behind .behind { color: #fb7185; }
 
   /* Working changes */
   .changes-section { margin-bottom: 10px; border-bottom: 1px solid rgba(60,60,60,0.3); padding-bottom: 8px; }
@@ -122,10 +126,10 @@
   <div id="app" style="display:none">
     <div class="tabs">
       <button class="active" data-tab="git">Git</button>
-      <button data-tab="graph">Graph</button>
-      <button data-tab="branches">Branches</button>
-      <button data-tab="prs">PRs</button>
-      <button data-tab="actions">Actions</button>
+      <button data-tab="graph" class="gh-tab" style="display:none">Graph</button>
+      <button data-tab="branches" class="gh-tab" style="display:none">Branches</button>
+      <button data-tab="prs" class="gh-tab" style="display:none">PRs</button>
+      <button data-tab="actions" class="gh-tab" style="display:none">Actions</button>
     </div>
     <div id="error" class="error-msg" style="display:none"></div>
 
@@ -166,6 +170,28 @@ let token = "", repo = "";
 const API = "https://api.github.com";
 const COLORS = ["#6366f1","#4ade80","#f59e0b","#fb7185","#8b5cf6","#06b6d4","#ec4899","#10b981","#ef4444","#3b82f6"];
 
+/** Parse owner/repo from a git remote URL */
+function parseGitHubRepo(url) {
+  // Matches: git@github.com:owner/repo.git or https://github.com/owner/repo.git
+  const m = url.match(/github\.com[:/]([^/\s]+\/[^\s.]+)/);
+  return m ? m[1] : "";
+}
+
+/** Detect repo from git remote -v */
+async function detectRepoFromRemote() {
+  try {
+    const output = await gitCmd("remote");
+    if (!output) return "";
+    // Parse remote -v output: "origin  git@github.com:owner/repo.git (fetch)"
+    for (const line of output.trim().split("\n")) {
+      if (!line.includes("github.com")) continue;
+      const parsed = parseGitHubRepo(line);
+      if (parsed) return parsed;
+    }
+  } catch {}
+  return "";
+}
+
 async function loadConfig() {
   try {
     const r = await fetch(window.location.origin + "/api/plugins/github/config");
@@ -173,8 +199,14 @@ async function loadConfig() {
     const cfg = await r.json();
     token = cfg.token || "";
     repo = cfg.defaultRepo || "";
-    return !!(token && repo);
-  } catch { return false; }
+  } catch {}
+
+  // Auto-detect repo from git remote if not configured
+  if (!repo) {
+    repo = await detectRepoFromRemote();
+  }
+
+  return !!(token && repo);
 }
 
 function gh(path) {
@@ -223,8 +255,14 @@ async function detectGitDir() {
 
 function setGitDir(dir) {
   gitDir = dir;
+  defaultBranch = ""; // reset — will re-detect on next loadGitGraph
   const name = dir.split("/").pop() || "Git";
   document.getElementById("git-dir-label").textContent = name;
+  // Re-detect repo when cwd changes (might be a different project)
+  detectRepoFromRemote().then(r => {
+    repo = r || "";
+    showGitHubTabs(!!(token && repo));
+  });
 }
 
 // Listen for cwd updates from parent (when user switches agent tabs)
@@ -262,6 +300,7 @@ async function gitCmd(cmd, args) {
 }
 
 let currentBranch = "";
+let defaultBranch = ""; // detected from origin (master, main, develop, etc.)
 
 async function loadGitGraph() {
   const el = document.getElementById("git-graph");
@@ -272,7 +311,6 @@ async function loadGitGraph() {
 
     // Get current branch
     try { currentBranch = (await gitCmd("head")).trim(); } catch { currentBranch = ""; }
-    // Always update branch label
     const branchLabel = document.getElementById("git-branch-label");
     if (branchLabel) branchLabel.textContent = currentBranch ? "⎋ " + currentBranch : "";
 
@@ -288,7 +326,8 @@ async function loadGitGraph() {
     // Parse: SHA|Parents|Author|Date|Message|Refs
     const lines = output.trim().split("\n");
     const commits = [];
-    const branchHeads = {}; // sha → [ref names]
+    const branchHeads = {}; // sha → [local ref names]
+    const remoteHeads = {}; // sha → [remote ref names like "origin/master"]
     const allBranches = new Set();
 
     lines.forEach(line => {
@@ -305,16 +344,64 @@ async function loadGitGraph() {
 
       // Parse refs for branch labels
       if (refs.trim()) {
-        const refNames = refs.split(",").map(r => r.trim())
-          .filter(r => !r.startsWith("tag:"))
-          .map(r => r.replace("HEAD -> ", "").replace("origin/", "").trim())
-          .filter(r => r);
-        if (refNames.length) {
-          branchHeads[sha] = refNames;
-          refNames.forEach(r => allBranches.add(r));
+        const local = [];
+        const remote = [];
+        refs.split(",").map(r => r.trim()).filter(r => r && !r.startsWith("tag:")).forEach(r => {
+          const clean = r.replace("HEAD -> ", "").trim();
+          if (!clean) return;
+          if (clean.startsWith("origin/")) {
+            remote.push(clean);
+          } else {
+            local.push(clean);
+            allBranches.add(clean);
+          }
+        });
+        if (local.length) branchHeads[sha] = local;
+        if (remote.length) {
+          if (!branchHeads[sha]) branchHeads[sha] = [];
+          // Store remote refs in separate map
+          if (!remoteHeads[sha]) remoteHeads[sha] = [];
+          remoteHeads[sha] = remote;
         }
+        local.forEach(r => allBranches.add(r));
       }
     });
+
+    // Detect default branch from GitHub API
+    if (!defaultBranch && token && repo) {
+      try {
+        const r = await gh("/repos/" + repo);
+        if (r.ok) {
+          const data = await r.json();
+          if (data.default_branch) defaultBranch = data.default_branch;
+        }
+      } catch {}
+    }
+
+    // Calculate ahead/behind from parsed commits
+    if (currentBranch && branchLabel) {
+      let headIdx = -1, originBranchIdx = -1, originMasterIdx = -1;
+      const originBranch = "origin/" + currentBranch;
+      commits.forEach((c, i) => {
+        // Check local refs
+        if ((branchHeads[c.sha] || []).includes(currentBranch) && headIdx < 0) headIdx = i;
+        // Check remote refs
+        const remotes = remoteHeads[c.sha] || [];
+        if (remotes.includes(originBranch) && originBranchIdx < 0) originBranchIdx = i;
+        if (defaultBranch && remotes.includes("origin/" + defaultBranch) && originMasterIdx < 0) originMasterIdx = i;
+      });
+
+      let abText = "";
+      // Ahead vs origin/branch (unpushed)
+      if (headIdx >= 0 && originBranchIdx >= 0 && originBranchIdx > headIdx) {
+        abText += ' <span class="ahead-behind"><span class="ahead">↑' + (originBranchIdx - headIdx) + ' unpushed</span></span>';
+      }
+      // Ahead vs origin/master (for PR)
+      if (headIdx >= 0 && originMasterIdx >= 0 && originMasterIdx > headIdx && defaultBranch && currentBranch !== defaultBranch) {
+        abText += ' <span class="ahead-behind"><span style="color:#60a5fa">+' + (originMasterIdx - headIdx) + ' vs ' + esc(defaultBranch) + '</span></span>';
+      }
+      if (abText) branchLabel.innerHTML = "⎋ " + esc(currentBranch) + abText;
+    }
 
     // Assign lanes: map each commit to a column based on branch
     const branchLane = {};
@@ -389,16 +476,24 @@ async function loadGitGraph() {
     html += svg;
     html += `<div style="margin-left:${railW}px">`;
     commits.forEach((c, i) => {
-      const tags = (branchHeads[c.sha] || []).map(ref => {
-        const lane = branchLane[ref] || 0;
+      // Only show badge for current branch and origin/master|main
+      let tags = "";
+      const locals = branchHeads[c.sha] || [];
+      if (locals.includes(currentBranch)) {
+        const lane = branchLane[currentBranch] || 0;
         const col = COLORS[lane % COLORS.length];
-        const isHead = ref === currentBranch;
-        return `<span class="graph-branch-tag${isHead ? ' head' : ''}" style="background:${col}${isHead ? '30' : '15'};color:${col};border:1px solid ${col}${isHead ? '80' : '30'}">${esc(ref)}</span>`;
-      }).join("");
+        tags += `<span class="graph-branch-tag head" style="background:${col}30;color:${col};border:1px solid ${col}80">${esc(currentBranch)}</span>`;
+      }
+      const remotes = remoteHeads[c.sha] || [];
+      const originDefault = defaultBranch ? "origin/" + defaultBranch : "";
+      if (originDefault && remotes.includes(originDefault)) {
+        tags += `<span class="graph-branch-tag remote" style="background:rgba(251,191,36,0.1);color:#fbbf24;border:1px dashed rgba(251,191,36,0.3)">${esc(originDefault)}</span>`;
+      }
 
       html += `<div class="commit-row" data-sha="${c.sha}" data-source="git" style="height:${ROW_H}px;display:flex;align-items:center">
-        <div class="graph-info">
-          <div class="graph-msg">${esc(c.message)}${tags}</div>
+        <div class="graph-info" style="display:flex;align-items:center;gap:4px;min-width:0">
+          <div class="graph-msg" style="flex:1">${esc(c.message)}</div>
+          ${tags ? '<div style="flex-shrink:0;display:flex;gap:2px">' + tags + '</div>' : ''}
         </div>
         <div class="graph-meta" style="flex-shrink:0;margin-left:6px"><span class="graph-sha">${c.sha.slice(0,7)}</span> ${timeAgo(c.date)}</div>
       </div>
@@ -408,7 +503,11 @@ async function loadGitGraph() {
     el.innerHTML = html;
     attachCommitClickHandlers(el);
 
-  } catch (e) { showError("Git: " + e.message); }
+  } catch (e) {
+    // Not a git repo or other git error — show inline, not as error banner
+    const el = document.getElementById("git-graph");
+    el.innerHTML = '<div class="empty" style="padding:30px 0"><div style="color:#52525b">Not a git repository</div><div style="font-size:10px;color:#3f3f46;margin-top:4px">' + esc(gitDir) + '</div></div>';
+  }
 }
 
 // ── Working tree changes ──
@@ -479,10 +578,11 @@ async function loadChanges() {
       list.appendChild(div);
     });
 
-  } catch (e) {
-    // Show error instead of silently hiding
-    section.style.display = "";
-    list.innerHTML = '<div class="changes-empty">Error: ' + esc(e.message) + '</div>';
+  } catch {
+    // Not a git repo or command failed — just hide the section
+    section.style.display = "none";
+    countEl.textContent = "";
+    list.innerHTML = "";
   }
 }
 
@@ -817,14 +917,18 @@ function showError(msg) {
   setTimeout(() => { el.style.display = "none"; }, 5000);
 }
 
+function showGitHubTabs(show) {
+  document.querySelectorAll(".gh-tab").forEach(t => { t.style.display = show ? "" : "none"; });
+}
+
 (async () => {
-  // Git tab works without GitHub config
   document.getElementById("app").style.display = "";
   await detectGitDir();
   loadGitGraph();
   loadChanges();
-  // Load GitHub config in background (for Graph/PRs/Actions tabs)
-  loadConfig();
+  // Load GitHub config — show GitHub tabs only if token + repo available
+  const ok = await loadConfig();
+  showGitHubTabs(ok);
 })();
 </script>
 </body>

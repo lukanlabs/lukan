@@ -645,6 +645,7 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
               <div
                 key={`${tab.path}-${tab.sha ?? i}`}
                 onClick={() => onTabClick?.(i)}
+                onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onTabClose?.(i); } }}
                 style={{
                   display: "flex", alignItems: "center", gap: 4,
                   padding: "4px 8px", fontSize: 11, cursor: "pointer",

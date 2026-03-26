@@ -78,6 +78,7 @@ export default function TerminalTabBar({
           <button
             key={s.id}
             onClick={() => onSwitch(s.id)}
+            onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(s.id); } }}
             onContextMenu={(e) => {
               e.preventDefault();
               startRename(s.id, label);

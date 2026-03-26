@@ -113,6 +113,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/plugins/{name}/views/{view_id}",
             get(rest_plugins::get_plugin_view_data),
         )
+        .route(
+            "/plugins/{name}/web/{*path}",
+            get(rest_plugins::serve_plugin_web),
+        )
         // Memory
         .route("/memory/global", get(rest_memory::get_global_memory))
         .route("/memory/global", put(rest_memory::save_global_memory))
@@ -135,6 +139,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/files/read", get(rest_files::read_file))
         .route("/files/write", put(rest_files::write_file))
         .route("/cwd", get(rest_files::get_cwd))
+        .route("/terminal/{id}/cwd", get(rest_files::get_terminal_cwd))
+        .route("/git", get(rest_files::git_command))
+        .route(
+            "/active-tab",
+            axum::routing::post(rest_files::set_active_tab),
+        )
         // Background processes
         .route("/processes", get(rest_processes::list_bg_processes))
         .route(

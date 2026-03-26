@@ -601,6 +601,12 @@ export class RelayTransport implements Transport {
       });
       return;
     }
+    if (type === "terminal_cwd") {
+      const sessionId = msg.sessionId as string;
+      const cwd = msg.cwd as string;
+      window.dispatchEvent(new CustomEvent("terminal-cwd-changed", { detail: { sessionId, cwd } }));
+      return;
+    }
     if (type === "terminal_exited") {
       const sessionId = msg.sessionId as string;
       this.dispatch(`terminal-output-${sessionId}`, { type: "exited" });
@@ -1041,6 +1047,8 @@ export class RelayTransport implements Transport {
         };
       case "get_cwd":
         return { method: "GET", url: "/api/cwd" };
+      case "set_active_tab":
+        return { method: "POST", url: "/api/active-tab", body: args };
       case "list_bg_processes": {
         const qs = args?.sessionId
           ? `?sessionId=${encodeURIComponent(args.sessionId as string)}`

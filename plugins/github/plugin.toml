@@ -1,0 +1,39 @@
+[plugin]
+name = "github"
+version = "0.1.0"
+description = "GitHub integration — branches, PRs, workflows, issues"
+plugin_type = "tools"
+protocol_version = 1
+alias = "gh"
+
+[plugin.activity_bar]
+icon = "github"
+label = "GitHub"
+
+[[plugin.views]]
+id = "dashboard"
+type = "webview"
+label = "Dashboard"
+
+[auth]
+type = "token"
+check_field = "token"
+
+[config.token]
+type = "string"
+label = "Personal Access Token"
+description = "GitHub PAT with repo scope (ghp_...)"
+format = "password"
+group = "Connection"
+order = 0
+
+[run]
+command = "node"
+args = ["bridge.js"]
+
+[config.defaultRepo]
+type = "string"
+label = "Default Repository"
+description = "owner/repo (e.g. lukanlabs/lukan)"
+group = "Connection"
+order = 1

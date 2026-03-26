@@ -134,6 +134,7 @@ export default function AgentTabBar({
             <button
               key={t.id}
               onClick={() => onSwitch(t.id)}
+              onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(t.id); } }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 startRename(t.id, label);

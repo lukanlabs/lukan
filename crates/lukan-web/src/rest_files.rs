@@ -532,7 +532,263 @@ mod tests {
 }
 
 /// GET /api/cwd
-pub async fn get_cwd() -> impl IntoResponse {
+/// GET /api/git — execute read-only git commands
+/// Query params: cmd (log|branch|status|diff|remote), dir (optional), args (optional)
+pub async fn git_command(
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let cmd = q.get("cmd").map(|s| s.as_str()).unwrap_or("");
+    let dir = q.get("dir").map(|s| s.as_str()).unwrap_or(".");
+    let extra_args = q.get("args").map(|s| s.as_str()).unwrap_or("");
+
+    // Whitelist: only read-only git commands
+    let args: Vec<&str> = match cmd {
+        "log" => vec![
+            "log",
+            "--all",
+            "--oneline",
+            "--graph",
+            "--parents",
+            "--decorate=short",
+            "-100",
+        ],
+        "log-full" => vec!["log", "--all", "--format=%H|%P|%an|%aI|%s|%D", "-200"],
+        "branch" => vec![
+            "branch",
+            "-a",
+            "--format=%(refname:short) %(objectname:short) %(upstream:short)",
+        ],
+        "status" => vec!["status", "--porcelain"],
+        "diff-staged" => vec!["diff", "--cached", "--name-status"],
+        "diff-unstaged" => vec!["diff", "--name-status"],
+        "untracked" => vec!["ls-files", "--others", "--exclude-standard"],
+        "head" => vec!["rev-parse", "--abbrev-ref", "HEAD"],
+        "default-branch" => {
+            // Detect the default branch of origin
+            // Try symbolic-ref first (fast, local), fallback to remote show
+            let result = std::process::Command::new("git")
+                .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
+                .current_dir(dir)
+                .output();
+            if let Ok(output) = &result {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !stdout.is_empty() {
+                    let branch = stdout.replace("refs/remotes/origin/", "");
+                    return Json(serde_json::json!({ "ok": true, "stdout": branch, "stderr": "" }))
+                        .into_response();
+                }
+            }
+            // Fallback: git remote show origin (slower, needs network)
+            let result = std::process::Command::new("git")
+                .args(["remote", "show", "origin"])
+                .current_dir(dir)
+                .output();
+            return match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    let branch = stdout
+                        .lines()
+                        .find(|l| l.contains("HEAD branch:"))
+                        .and_then(|l| l.split(':').nth(1))
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_default();
+                    Json(serde_json::json!({ "ok": !branch.is_empty(), "stdout": branch, "stderr": "" })).into_response()
+                }
+                Err(e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response()
+                }
+            };
+        }
+        "rev-list" => {
+            // Count ahead/behind — args = "--count --left-right origin/branch...branch"
+            let args: Vec<&str> = extra_args.split_whitespace().collect();
+            let result = std::process::Command::new("git")
+                .arg("rev-list")
+                .args(&args)
+                .current_dir(dir)
+                .output();
+            return match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
+                }
+                Err(e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response()
+                }
+            };
+        }
+        "diff-file" => {
+            // Diff for a specific file in a commit — args = "sha file_path"
+            let mut parts = extra_args.splitn(2, ' ');
+            let sha = parts.next().unwrap_or("HEAD");
+            let file = parts.next().unwrap_or("");
+            let result = std::process::Command::new("git")
+                .args(["diff", "-U99999", &format!("{sha}^"), sha, "--", file])
+                .current_dir(dir)
+                .output();
+            return match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
+                }
+                Err(e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response()
+                }
+            };
+        }
+        "diff-working" => {
+            // Diff for a working-tree file against HEAD — args = file_path
+            let file = extra_args.trim();
+            // Try HEAD diff first (tracked files)
+            let result = std::process::Command::new("git")
+                .args(["diff", "-U99999", "HEAD", "--", file])
+                .current_dir(dir)
+                .output();
+            return match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    if stdout.trim().is_empty() {
+                        // Might be untracked or only staged — try unstaged diff
+                        let unstaged = std::process::Command::new("git")
+                            .args(["diff", "-U99999", "--", file])
+                            .current_dir(dir)
+                            .output();
+                        if let Ok(u) = unstaged {
+                            let us = String::from_utf8_lossy(&u.stdout).to_string();
+                            if !us.trim().is_empty() {
+                                return Json(
+                                    serde_json::json!({ "ok": true, "stdout": us, "stderr": "" }),
+                                )
+                                .into_response();
+                            }
+                        }
+                        // Try showing untracked file as all-additions
+                        let file_path = std::path::Path::new(dir).join(file);
+                        if let Ok(content) = std::fs::read_to_string(&file_path) {
+                            let lines: Vec<String> =
+                                content.lines().map(|l| format!("+{l}")).collect();
+                            let header = format!(
+                                "--- /dev/null\n+++ b/{file}\n@@ -0,0 +1,{} @@\n{}",
+                                lines.len(),
+                                lines.join("\n")
+                            );
+                            return Json(
+                                serde_json::json!({ "ok": true, "stdout": header, "stderr": "" }),
+                            )
+                            .into_response();
+                        }
+                    }
+                    Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
+                }
+                Err(e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response()
+                }
+            };
+        }
+        "remote" => vec!["remote", "-v"],
+        "diff-stat" => vec!["diff", "--stat"],
+        "show" => {
+            // Show files for a specific commit — args = sha
+            let sha = extra_args.split_whitespace().next().unwrap_or("HEAD");
+            let result = std::process::Command::new("git")
+                .args(["show", "--numstat", "--format=%B", sha])
+                .current_dir(dir)
+                .output();
+            return match result {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    Json(serde_json::json!({ "ok": output.status.success(), "stdout": stdout, "stderr": "" })).into_response()
+                }
+                Err(e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed: {e}")).into_response()
+                }
+            };
+        }
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "Invalid git command. Allowed: log, log-full, branch, status, remote, diff-stat",
+            )
+                .into_response();
+        }
+    };
+
+    let result = std::process::Command::new("git")
+        .args(&args)
+        .current_dir(dir)
+        .output();
+
+    match result {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Json(serde_json::json!({
+                "ok": output.status.success(),
+                "stdout": stdout,
+                "stderr": stderr,
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to run git: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/active-tab — notify which tab is active (updates cwd for plugins)
+pub async fn set_active_tab(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::state::AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if let Some(tab_id) = body.get("tabId").and_then(|v| v.as_str()) {
+        // Extract cwd and session_id from in-memory session
+        let (mem_cwd, session_id) = {
+            let sessions = state.sessions.lock().await;
+            if let Some(session) = sessions.get(tab_id) {
+                (session.cwd.clone(), session.last_session_id.clone())
+            } else {
+                (None, None)
+            }
+        };
+
+        if let Some(ref cwd) = mem_cwd {
+            *state.active_cwd.lock().unwrap() = Some(cwd.clone());
+        } else if let Some(ref sid) = session_id {
+            // Fallback: read cwd from persisted session on disk
+            if let Ok(Some(saved)) = lukan_agent::SessionManager::load(sid).await
+                && let Some(ref cwd) = saved.cwd
+            {
+                *state.active_cwd.lock().unwrap() = Some(cwd.clone());
+            }
+        } else {
+            tracing::debug!(tab_id, "No cwd or session_id found for tab");
+        }
+    } else {
+        tracing::warn!("set_active_tab called without tabId");
+    }
+    StatusCode::OK
+}
+
+pub async fn get_terminal_cwd(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::state::AppState>>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    match state.terminal_manager.get_session_cwd(&session_id).await {
+        Ok(cwd) => Json(serde_json::json!({ "cwd": cwd })).into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, format!("{e}")).into_response(),
+    }
+}
+
+pub async fn get_cwd(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::state::AppState>>,
+) -> impl IntoResponse {
+    // Return active session cwd if available, otherwise process cwd
+    let active = state.active_cwd.lock().unwrap().clone();
+    if let Some(cwd) = active {
+        return Json(serde_json::json!(cwd)).into_response();
+    }
     match std::env::current_dir() {
         Ok(p) => Json(serde_json::json!(p.to_string_lossy())).into_response(),
         Err(e) => (

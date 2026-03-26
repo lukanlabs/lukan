@@ -183,6 +183,36 @@ impl TerminalManager {
     }
 
     /// Write input to a terminal session.
+    /// Get the current working directory of a terminal session
+    pub async fn get_session_cwd(&self, session_id: &str) -> anyhow::Result<String> {
+        let sessions = self.sessions.lock().await;
+        let session = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("session not found: {session_id}"))?;
+        match session {
+            Session::Pty(pty) => {
+                if let Some(pid) = pty.child.process_id() {
+                    let path = std::fs::read_link(format!("/proc/{pid}/cwd"))?;
+                    Ok(path.to_string_lossy().into_owned())
+                } else {
+                    anyhow::bail!("no PID for PTY session")
+                }
+            }
+            Session::Tmux(tmux) => {
+                let output = tmux_cmd()
+                    .args(["display-message", "-t", &tmux.id, "-p", "#{pane_pid}"])
+                    .output()
+                    .await?;
+                let pid: u32 = String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .parse()
+                    .context("failed to parse pane PID")?;
+                let path = tokio::fs::read_link(format!("/proc/{pid}/cwd")).await?;
+                Ok(path.to_string_lossy().into_owned())
+            }
+        }
+    }
+
     pub async fn write_input(&self, session_id: &str, data: &str) -> anyhow::Result<()> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data)
@@ -463,7 +493,7 @@ impl TerminalManager {
         let working_dir = cwd
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
-        cmd.cwd(working_dir);
+        cmd.cwd(&working_dir);
 
         let child = pair
             .slave
@@ -484,6 +514,34 @@ impl TerminalManager {
         // Spawn blocking reader thread
         let session_id = id.clone();
         let tx = output_tx;
+
+        // For PTY mode, poll /proc/PID/cwd to detect directory changes
+        let child_pid = child.process_id();
+        let tx_cwd = tx.clone();
+        if let Some(pid) = child_pid {
+            let cwd_sid = id.clone();
+            std::thread::spawn(move || {
+                let proc_path = format!("/proc/{pid}/cwd");
+                let mut last_cwd = String::new();
+                while let Ok(cwd) = std::fs::read_link(&proc_path) {
+                    let s = cwd.to_string_lossy().to_string();
+                    if !s.is_empty() && s != last_cwd {
+                        last_cwd = s.clone();
+                        if tx_cwd
+                            .send(ServerMessage::TerminalCwd {
+                                session_id: cwd_sid.clone(),
+                                cwd: s,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+            });
+        }
+
         std::thread::spawn(move || {
             let mut reader = reader;
             let mut buf = [0u8; 4096];
@@ -577,7 +635,50 @@ impl TerminalManager {
 
         let fifo_path = format!("/tmp/lukan-tmux-{session_name}");
         let reader_handle =
-            Self::spawn_output_reader(session_name.clone(), fifo_path.clone(), output_tx);
+            Self::spawn_output_reader(session_name.clone(), fifo_path.clone(), output_tx.clone());
+
+        // Poll cwd via pane PID + /proc/PID/cwd (works without shell integration)
+        let cwd_session = session_name.clone();
+        let tx_cwd = output_tx;
+        tokio::spawn(async move {
+            // Wait for tmux pane to start
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // Get pane PID
+            let pid_output = tmux_cmd()
+                .args(["display-message", "-t", &cwd_session, "-p", "#{pane_pid}"])
+                .output()
+                .await;
+            let pane_pid: Option<u32> = pid_output
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok());
+
+            if let Some(pid) = pane_pid {
+                let proc_path = format!("/proc/{pid}/cwd");
+                let mut last_cwd = String::new();
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    match tokio::fs::read_link(&proc_path).await {
+                        Ok(cwd) => {
+                            let cwd_str = cwd.to_string_lossy().to_string();
+                            if !cwd_str.is_empty() && cwd_str != last_cwd {
+                                last_cwd = cwd_str.clone();
+                                if tx_cwd
+                                    .send(ServerMessage::TerminalCwd {
+                                        session_id: cwd_session.clone(),
+                                        cwd: cwd_str,
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        });
 
         let mut sessions = self.sessions.lock().await;
         sessions.insert(

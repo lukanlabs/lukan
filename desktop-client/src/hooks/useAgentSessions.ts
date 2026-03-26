@@ -5,6 +5,7 @@ import {
   renameAgentTab,
   loadAgentTabs,
   saveAgentTabs,
+  setActiveTab,
 } from "../lib/tauri";
 import type { AgentTabState, AgentTabsFile } from "../lib/tauri";
 
@@ -96,6 +97,10 @@ export function useAgentSessions() {
     (id: string) => {
       setActiveTabId(id);
       persist(tabsRef.current, id);
+      // Notify backend of active tab (updates cwd for plugins)
+      setActiveTab(id).catch(() => {});
+      // Notify UI components (e.g. plugin webview)
+      window.dispatchEvent(new CustomEvent("active-tab-changed", { detail: id }));
     },
     [persist],
   );
@@ -181,6 +186,14 @@ export function useAgentSessions() {
         setActiveTabId(activeId);
         setInitialPendingLoads(pendingLoads);
         persistTabs(restoredTabs, activeId, _sessionMap);
+        // Notify backend of active tab
+        if (activeId) {
+          fetch("/api/active-tab", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tabId: activeId }),
+          }).catch(() => {});
+        }
       } else {
         // No stored tabs — create a fresh one
         const id = await createAgentTab();

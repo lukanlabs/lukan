@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { CheckCircle, AlertTriangle, AlertCircle, Info, Loader } from "lucide-react";
 import type { ViewDeclaration, PluginViewEnvelope, StatusViewItem } from "../../../lib/types";
-import { getPluginViewData } from "../../../lib/tauri";
+import { getPluginViewData, getCwd } from "../../../lib/tauri";
 import { EventsPanel } from "./EventsPanel";
 
 // ── StatusView sub-component ──────────────────────────────────────
@@ -76,15 +76,92 @@ function StatusView({ pluginName, viewId }: { pluginName: string; viewId: string
   );
 }
 
+// ── WebView sub-component ─────────────────────────────────────────
+
+function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
+  const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
+  const src = `${base}/api/plugins/${encodeURIComponent(pluginName)}/web/index.html`;
+
+  // Send cwd to iframe when it changes
+  useEffect(() => {
+    if (iframeRef.current?.contentWindow && cwd) {
+      iframeRef.current.contentWindow.postMessage({ type: "cwd", path: cwd }, "*");
+    }
+  }, [cwd]);
+
+  const handleLoad = () => {
+    if (iframeRef.current?.contentWindow && cwd) {
+      iframeRef.current.contentWindow.postMessage({ type: "cwd", path: cwd }, "*");
+    }
+  };
+
+  // Listen for postMessage from iframe (open-diff, open-diff-working) → fetch diff → open in FileViewer
+  useEffect(() => {
+    const handler = async (e: MessageEvent) => {
+      const dir = e.data?.dir || cwd || ".";
+
+      if (e.data?.type === "open-diff" && e.data.sha && e.data.file) {
+        try {
+          const r = await fetch(`${base}/api/git?cmd=diff-file&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.sha + " " + e.data.file)}`);
+          const data = await r.json();
+          const diff = data.ok && data.stdout ? data.stdout : `No diff available for ${e.data.file}`;
+          window.dispatchEvent(new CustomEvent("open-diff-viewer", {
+            detail: { path: e.data.file, diff, sha: e.data.sha },
+          }));
+        } catch {
+          window.dispatchEvent(new CustomEvent("open-diff-viewer", {
+            detail: { path: e.data.file, diff: "Failed to load diff", sha: e.data.sha },
+          }));
+        }
+      }
+
+      if (e.data?.type === "open-diff-working" && e.data.file) {
+        try {
+          const r = await fetch(`${base}/api/git?cmd=diff-working&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.file)}`);
+          const data = await r.json();
+          const diff = data.ok && data.stdout ? data.stdout : `No working changes for ${e.data.file}`;
+          window.dispatchEvent(new CustomEvent("open-diff-viewer", {
+            detail: { path: e.data.file, diff, sha: "working" },
+          }));
+        } catch {
+          window.dispatchEvent(new CustomEvent("open-diff-viewer", {
+            detail: { path: e.data.file, diff: "Failed to load diff", sha: "working" },
+          }));
+        }
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [base, cwd]);
+
+  return (
+    <iframe
+      ref={iframeRef}
+      src={src}
+      onLoad={handleLoad}
+      style={{
+        width: "100%",
+        height: "calc(100vh - 120px)",
+        border: "none",
+        background: "var(--bg-base)",
+      }}
+      sandbox="allow-scripts allow-same-origin allow-forms"
+    />
+  );
+}
+
 // ── Main PluginViewPanel ─────────────────────────────────────────
 
 interface PluginViewPanelProps {
   pluginName: string;
   views: ViewDeclaration[];
   running: boolean;
+  cwd?: string;
 }
 
-export function PluginViewPanel({ pluginName, views, running }: PluginViewPanelProps) {
+export function PluginViewPanel({ pluginName, views, running, cwd }: PluginViewPanelProps) {
   // Build effective tabs: declared views + auto-appended events tab
   const effectiveViews: ViewDeclaration[] = [
     ...views,
@@ -137,6 +214,9 @@ export function PluginViewPanel({ pluginName, views, running }: PluginViewPanelP
       {/* Render active view */}
       {active?.viewType === "status" && (
         <StatusView pluginName={pluginName} viewId={active.id} />
+      )}
+      {active?.viewType === "webview" && (
+        <WebView pluginName={pluginName} cwd={cwd} />
       )}
       {active?.viewType === "events" && (
         <EventsPanel sourceFilter={pluginName} />

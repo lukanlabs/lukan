@@ -498,7 +498,7 @@ export function DiffView({ diff, fullHeight }: DiffViewProps) {
   const showToolbar = fullHeight;
 
   return (
-    <div className={`${fullHeight ? "flex-1" : "my-1.5 mx-2 max-h-72"} rounded-md overflow-hidden bg-white/[0.02]`}
+    <div className={`${fullHeight ? "flex-1 min-h-0" : "my-1.5 mx-2 max-h-72"} rounded-md overflow-hidden bg-white/[0.02]`}
       style={{ display: "flex", flexDirection: "column" }}
     >
       {/* Toolbar — only in full-height (FileViewer) mode */}

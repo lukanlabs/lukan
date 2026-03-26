@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
-import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw, GitCommit } from "lucide-react";
+import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw, GitCommit, Columns2, Rows2, Maximize2 } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { MarkdownRenderer } from "../chat/MarkdownRenderer";
@@ -453,9 +453,15 @@ interface FileViewerProps {
   diff?: string;
   /** Short commit SHA shown in the header for diff mode */
   diffSha?: string;
+  /** When true, renders as a flex child instead of absolute overlay */
+  split?: boolean;
+  /** Current split direction */
+  splitDirection?: "horizontal" | "vertical";
+  /** Callback to change split mode */
+  onSplitChange?: (mode: "off" | "horizontal" | "vertical") => void;
 }
 
-export function FileViewer({ path, fileSize, onClose, diff, diffSha }: FileViewerProps) {
+export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, splitDirection, onSplitChange }: FileViewerProps) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -573,12 +579,10 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha }: FileViewe
   return (
     <div
       style={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 10,
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--bg-base)",
+        ...(split
+          ? { flex: 1, display: "flex", flexDirection: "column" as const, background: "var(--bg-base)", minHeight: 0, overflow: "hidden" }
+          : { position: "absolute" as const, inset: 0, zIndex: 10, display: "flex", flexDirection: "column" as const, background: "var(--bg-base)" }
+        ),
       }}
     >
       {/* Header */}
@@ -687,6 +691,33 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha }: FileViewe
               </button>
             )
           ))}
+          {onSplitChange && (
+            <>
+              <button
+                onClick={() => onSplitChange(split && splitDirection === "horizontal" ? "off" : "horizontal")}
+                style={{ ...headerBtnStyle, color: split && splitDirection === "horizontal" ? "var(--accent)" : "var(--text-muted)" }}
+                title="Split horizontal"
+              >
+                <Columns2 size={14} />
+              </button>
+              <button
+                onClick={() => onSplitChange(split && splitDirection === "vertical" ? "off" : "vertical")}
+                style={{ ...headerBtnStyle, color: split && splitDirection === "vertical" ? "var(--accent)" : "var(--text-muted)" }}
+                title="Split vertical"
+              >
+                <Rows2 size={14} />
+              </button>
+              {split && (
+                <button
+                  onClick={() => onSplitChange("off")}
+                  style={headerBtnStyle}
+                  title="Full screen"
+                >
+                  <Maximize2 size={14} />
+                </button>
+              )}
+            </>
+          )}
           <button
             onClick={onClose}
             style={headerBtnStyle}
@@ -701,7 +732,7 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha }: FileViewe
       {isDiffMode ? (
         <DiffView diff={diff} fullHeight />
       ) : (
-        <>
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
           {loading && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1 }}>
               <Loader2 size={24} style={{ color: "var(--text-muted)", animation: "spin 1s linear infinite" }} />
@@ -727,7 +758,7 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha }: FileViewe
               initialLine={initialLine}
             />
           )}
-        </>
+        </div>
       )}
     </div>
   );

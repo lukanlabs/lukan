@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { CheckCircle, AlertTriangle, AlertCircle, Info, Loader } from "lucide-react";
 import type { ViewDeclaration, PluginViewEnvelope, StatusViewItem } from "../../../lib/types";
 import { getPluginViewData, getCwd } from "../../../lib/tauri";
+import { fetchApi, getApiBase } from "../../../lib/transport";
 import { EventsPanel } from "./EventsPanel";
 
 // ── StatusView sub-component ──────────────────────────────────────
@@ -80,8 +81,7 @@ function StatusView({ pluginName, viewId }: { pluginName: string; viewId: string
 
 function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
-  const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
+  const base = getApiBase();
   const src = `${base}/api/plugins/${encodeURIComponent(pluginName)}/web/index.html`;
 
   // Send cwd to iframe when it changes
@@ -104,7 +104,7 @@ function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
 
       if (e.data?.type === "open-diff" && e.data.sha && e.data.file) {
         try {
-          const r = await fetch(`${base}/api/git?cmd=diff-file&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.sha + " " + e.data.file)}`);
+          const r = await fetchApi(`${base}/api/git?cmd=diff-file&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.sha + " " + e.data.file)}`);
           const data = await r.json();
           const diff = data.ok && data.stdout ? data.stdout : `No diff available for ${e.data.file}`;
           window.dispatchEvent(new CustomEvent("open-diff-viewer", {
@@ -119,7 +119,7 @@ function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
 
       if (e.data?.type === "open-diff-working" && e.data.file) {
         try {
-          const r = await fetch(`${base}/api/git?cmd=diff-working&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.file)}`);
+          const r = await fetchApi(`${base}/api/git?cmd=diff-working&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.file)}`);
           const data = await r.json();
           const diff = data.ok && data.stdout ? data.stdout : `No working changes for ${e.data.file}`;
           window.dispatchEvent(new CustomEvent("open-diff-viewer", {

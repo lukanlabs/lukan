@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { FileEntry } from "../lib/types";
 import { listDirectory, openInEditor, getCwd } from "../lib/tauri";
+import { fetchApi, getApiBase } from "../lib/transport";
 
 /** Map of relative path → git status letter (M, A, D, U, R) */
 export type GitStatusMap = Map<string, string>;
@@ -18,9 +19,8 @@ export interface TreeEntry {
 async function fetchGitStatus(dir: string): Promise<GitStatusMap> {
   const map: GitStatusMap = new Map();
   try {
-    const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
-    const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
-    const r = await fetch(`${base}/api/git?cmd=status&dir=${encodeURIComponent(dir)}`);
+    const base = getApiBase();
+    const r = await fetchApi(`${base}/api/git?cmd=status&dir=${encodeURIComponent(dir)}`);
     if (!r.ok) return map;
     const data = await r.json();
     if (!data.ok || !data.stdout) return map;
@@ -219,9 +219,8 @@ export function useFileExplorer() {
       // If no stored cwd, fetch from backend
       if (!cwd) {
         try {
-          const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
-          const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
-          const r = await fetch(`${base}/api/terminal/${encodeURIComponent(sessionId)}/cwd`);
+          const base = getApiBase();
+          const r = await fetchApi(`${base}/api/terminal/${encodeURIComponent(sessionId)}/cwd`);
           if (r.ok) {
             const data = await r.json();
             if (data.cwd) { cwd = data.cwd as string; terminalCwds.current.set(sessionId, cwd!); }

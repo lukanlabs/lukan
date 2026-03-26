@@ -5,6 +5,7 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { MarkdownRenderer } from "../chat/MarkdownRenderer";
 import { DiffView } from "../chat/DiffView";
 import { readFile, writeFile } from "../../lib/tauri";
+import { fetchApi, getApiBase } from "../../lib/transport";
 import type { FileContent } from "../../lib/types";
 
 function formatSize(bytes: number): string {
@@ -560,12 +561,11 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
     }
     setDiffLoading(true);
     try {
-      const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
-      const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
+      const base = getApiBase();
       // Get the directory from the file path
       const dir = path.substring(0, path.lastIndexOf("/")) || ".";
       const fileName = path.substring(path.lastIndexOf("/") + 1);
-      const r = await fetch(`${base}/api/git?cmd=diff-working&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(fileName)}`);
+      const r = await fetchApi(`${base}/api/git?cmd=diff-working&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(fileName)}`);
       const data = await r.json();
       if (data.ok && data.stdout) {
         setDiffContent(data.stdout);

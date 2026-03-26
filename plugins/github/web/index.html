@@ -138,6 +138,13 @@
         <h2><span id="git-dir-label">Git</span> <span id="git-branch-label" style="color:#4ade80;font-size:10px;font-weight:500;text-transform:none;letter-spacing:0"></span></h2>
         <button class="refresh-btn" onclick="loadGitGraph(); loadChanges()">↻</button>
       </div>
+      <!-- Staged changes -->
+      <div id="staged-section" class="changes-section" style="display:none">
+        <div class="header" style="margin-bottom:4px">
+          <h2 style="color:#4ade80">Staged <span id="staged-count" class="changes-count"></span></h2>
+        </div>
+        <div id="staged-list"></div>
+      </div>
       <!-- Working tree changes -->
       <div id="changes-section" class="changes-section" style="display:none">
         <div class="header" style="margin-bottom:4px">
@@ -510,79 +517,122 @@ async function loadGitGraph() {
   }
 }
 
-// ── Working tree changes ──
+// ── Working tree changes (staged + unstaged) ──
+
+function parseStatusLine(line) {
+  line = line.replace(/\r$/, "");
+  if (line.length < 4) return null;
+  const idx = line[0], wt = line[1];
+  let path = line.substring(2).trimStart();
+  if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
+  const arrow = path.indexOf(" -> ");
+  if (arrow >= 0) {
+    path = path.slice(arrow + 4);
+    if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
+  }
+  const lastSlash = path.lastIndexOf("/");
+  const dir = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "";
+  const name = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
+  return { idx, wt, path, dir, name };
+}
+
+function statusLetter(ch) {
+  if (ch === "M") return "M";
+  if (ch === "A") return "A";
+  if (ch === "D") return "D";
+  if (ch === "R") return "R";
+  if (ch === "C") return "C";
+  return "M";
+}
+
+function renderFileList(container, files) {
+  container.innerHTML = "";
+  files.forEach(f => {
+    const div = document.createElement("div");
+    div.className = "change-file";
+    div.innerHTML = '<span class="change-badge ' + f.status + '">' + f.status + '</span>'
+      + '<span class="change-name">' + (f.dir ? '<span class="change-dir">' + esc(f.dir) + '</span>' : '') + esc(f.name) + '</span>';
+    div.addEventListener("click", () => {
+      window.parent.postMessage({ type: "open-diff-working", file: f.path, dir: gitDir }, "*");
+    });
+    container.appendChild(div);
+  });
+}
+
+function parseNameStatus(output) {
+  // Parse "X\tpath" lines from git diff --name-status
+  return output.trim().split("\n").filter(l => l.trim()).map(line => {
+    const tab = line.indexOf("\t");
+    if (tab < 0) return null;
+    const status = line.slice(0, tab).trim();
+    let path = line.slice(tab + 1).trim();
+    if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
+    const lastSlash = path.lastIndexOf("/");
+    return {
+      status: status[0] || "M",
+      path,
+      dir: lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "",
+      name: lastSlash >= 0 ? path.slice(lastSlash + 1) : path,
+    };
+  }).filter(f => f && f.path);
+}
+
 async function loadChanges() {
-  const section = document.getElementById("changes-section");
-  const list = document.getElementById("changes-list");
-  const countEl = document.getElementById("changes-count");
+  const stagedSection = document.getElementById("staged-section");
+  const stagedList = document.getElementById("staged-list");
+  const stagedCount = document.getElementById("staged-count");
+  const changesSection = document.getElementById("changes-section");
+  const changesList = document.getElementById("changes-list");
+  const changesCount = document.getElementById("changes-count");
 
   try {
     if (!gitDir) await detectGitDir();
-    const output = await gitCmd("status");
-    if (!output.trim()) {
-      section.style.display = "none";
-      return;
-    }
 
-    // Parse porcelain v1: "XY path" or "XY old -> new" for renames
-    const files = output.trim().split("\n").map(line => {
-      line = line.replace(/\r$/, ""); // strip CR if present
-      if (line.length < 4) return null;
-      const idx = line[0], wt = line[1];
-      // Skip 2-char status and trim any whitespace between status and path
-      let path = line.substring(2).trimStart();
-      // Strip surrounding quotes (git quotes special chars)
-      if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
+    // Use separate commands — no ambiguous porcelain parsing
+    const [stagedOut, unstagedOut, untrackedOut] = await Promise.all([
+      gitCmd("diff-staged").catch(() => ""),
+      gitCmd("diff-unstaged").catch(() => ""),
+      gitCmd("untracked").catch(() => ""),
+    ]);
 
-      // Handle renames: "old -> new"
-      const arrow = path.indexOf(" -> ");
-      if (arrow >= 0) {
-        path = path.slice(arrow + 4);
-        if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
-      }
+    const staged = parseNameStatus(stagedOut);
+    const unstaged = parseNameStatus(unstagedOut);
 
-      // Determine display status
-      let status = "M";
-      if (idx === "?" && wt === "?") status = "U";
-      else if (idx === "A" || wt === "A") status = "A";
-      else if (idx === "D" || wt === "D") status = "D";
-      else if (idx === "R" || wt === "R") status = "R";
-
-      // Split path into dir + name for display
-      const lastSlash = path.lastIndexOf("/");
-      const dir = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "";
-      const name = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
-
-      return { status, path, dir, name };
-    }).filter(f => f && f.path);
-
-    if (files.length === 0) {
-      section.style.display = "none";
-      return;
-    }
-
-    section.style.display = "";
-    countEl.textContent = "(" + files.length + ")";
-
-    // Build DOM elements directly (avoid data-attribute issues)
-    list.innerHTML = "";
-    files.forEach(f => {
-      const div = document.createElement("div");
-      div.className = "change-file";
-      div.innerHTML = '<span class="change-badge ' + f.status + '">' + f.status + '</span>'
-        + '<span class="change-name">' + (f.dir ? '<span class="change-dir">' + esc(f.dir) + '</span>' : '') + esc(f.name) + '</span>';
-      // Use closure — no data-attributes needed
-      div.addEventListener("click", () => {
-        window.parent.postMessage({ type: "open-diff-working", file: f.path, dir: gitDir }, "*");
+    // Untracked files (just paths, all status "U")
+    if (untrackedOut.trim()) {
+      untrackedOut.trim().split("\n").forEach(line => {
+        const path = line.trim();
+        if (!path) return;
+        const lastSlash = path.lastIndexOf("/");
+        unstaged.push({
+          status: "U", path,
+          dir: lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "",
+          name: lastSlash >= 0 ? path.slice(lastSlash + 1) : path,
+        });
       });
-      list.appendChild(div);
-    });
+    }
+
+    // Staged section
+    if (staged.length > 0) {
+      stagedSection.style.display = "";
+      stagedCount.textContent = "(" + staged.length + ")";
+      renderFileList(stagedList, staged);
+    } else {
+      stagedSection.style.display = "none";
+    }
+
+    // Unstaged section
+    if (unstaged.length > 0) {
+      changesSection.style.display = "";
+      changesCount.textContent = "(" + unstaged.length + ")";
+      renderFileList(changesList, unstaged);
+    } else {
+      changesSection.style.display = "none";
+    }
 
   } catch {
-    // Not a git repo or command failed — just hide the section
-    section.style.display = "none";
-    countEl.textContent = "";
-    list.innerHTML = "";
+    stagedSection.style.display = "none";
+    changesSection.style.display = "none";
   }
 }
 
@@ -930,6 +980,12 @@ function showGitHubTabs(show) {
   const ok = await loadConfig();
   showGitHubTabs(ok);
 })();
+
+// Poll staged/changes every 2s for real-time updates
+setInterval(() => {
+  const gitTab = document.getElementById("tab-git");
+  if (gitTab && gitTab.classList.contains("active") && gitDir) loadChanges();
+}, 2000);
 </script>
 </body>
 </html>

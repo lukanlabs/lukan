@@ -559,6 +559,9 @@ pub async fn git_command(
             "--format=%(refname:short) %(objectname:short) %(upstream:short)",
         ],
         "status" => vec!["status", "--porcelain"],
+        "diff-staged" => vec!["diff", "--cached", "--name-status"],
+        "diff-unstaged" => vec!["diff", "--name-status"],
+        "untracked" => vec!["ls-files", "--others", "--exclude-standard"],
         "head" => vec!["rev-parse", "--abbrev-ref", "HEAD"],
         "default-branch" => {
             // Detect the default branch of origin

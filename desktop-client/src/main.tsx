@@ -37,7 +37,11 @@ function Root() {
     try {
       const r = await fetch("/auth/status");
       const data = await r.json();
-      if (!data.authenticated) {
+      if (data.error === "not_registered") {
+        await fetch("/auth/logout", { method: "POST" }).catch(() => {});
+        setAuthenticated(false);
+        setLoginMessage("Account not registered. Create an account at cloud.lukan.ai to use remote.");
+      } else if (!data.authenticated) {
         await fetch("/auth/logout", { method: "POST" }).catch(() => {});
         setAuthenticated(false);
       } else {

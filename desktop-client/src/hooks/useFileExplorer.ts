@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { FileEntry } from "../lib/types";
-import { listDirectory, openInEditor, getCwd } from "../lib/tauri";
+import { listDirectory, openInEditor, getCwd, gitCommand } from "../lib/tauri";
 import { fetchApi, getApiBase } from "../lib/transport";
 
 /** Map of relative path → git status letter (M, A, D, U, R) */
@@ -19,10 +19,7 @@ export interface TreeEntry {
 async function fetchGitStatus(dir: string): Promise<GitStatusMap> {
   const map: GitStatusMap = new Map();
   try {
-    const base = getApiBase();
-    const r = await fetchApi(`${base}/api/git?cmd=status&dir=${encodeURIComponent(dir)}`);
-    if (!r.ok) return map;
-    const data = await r.json();
+    const data = await gitCommand("status", dir);
     if (!data.ok || !data.stdout) return map;
 
     for (const line of data.stdout.trim().split("\n")) {

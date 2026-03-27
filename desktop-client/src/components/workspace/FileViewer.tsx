@@ -4,8 +4,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { MarkdownRenderer } from "../chat/MarkdownRenderer";
 import { DiffView } from "../chat/DiffView";
-import { readFile, writeFile } from "../../lib/tauri";
-import { fetchApi, getApiBase } from "../../lib/transport";
+import { readFile, writeFile, gitCommand } from "../../lib/tauri";
 import type { FileContent } from "../../lib/types";
 
 function formatSize(bytes: number): string {
@@ -561,12 +560,10 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
     }
     setDiffLoading(true);
     try {
-      const base = getApiBase();
       // Get the directory from the file path
       const dir = path.substring(0, path.lastIndexOf("/")) || ".";
       const fileName = path.substring(path.lastIndexOf("/") + 1);
-      const r = await fetchApi(`${base}/api/git?cmd=diff-working&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(fileName)}`);
-      const data = await r.json();
+      const data = await gitCommand("diff-working", dir, fileName);
       if (data.ok && data.stdout) {
         setDiffContent(data.stdout);
         setShowDiff(true);

@@ -172,9 +172,14 @@ export class RelayTransport implements Transport {
           if (!code) throw new Error("TOTP verification cancelled");
           this.totpCode = code;
         }
+      } else if (preflight.status === 403) {
+        const data = await preflight.json().catch(() => ({}));
+        if (data.error === "not_registered") {
+          throw new Error("Account not registered. Create an account at cloud.lukan.ai to use remote.");
+        }
       }
     } catch (e) {
-      if (e instanceof Error && e.message === "TOTP verification cancelled") throw e;
+      if (e instanceof Error && (e.message === "TOTP verification cancelled" || e.message.includes("not registered"))) throw e;
       // Preflight failed — try connecting anyway (relay might not support preflight)
     }
 
@@ -322,6 +327,9 @@ export class RelayTransport implements Transport {
           if (code) this.totpCode = code;
           else return; // User cancelled
         }
+      } else if (preflight.status === 403) {
+        const data = await preflight.json().catch(() => ({}));
+        if (data.error === "not_registered") return; // Stop reconnecting
       }
     } catch { /* continue without TOTP */ }
 
@@ -1027,6 +1035,12 @@ export class RelayTransport implements Transport {
           ? `?source=${encodeURIComponent(args.source as string)}`
           : "";
         return { method: "DELETE", url: `/api/events/history${qs}` };
+      }
+      case "git_command": {
+        let qs = `?cmd=${encodeURIComponent(args?.cmd as string)}`;
+        if (args?.dir) qs += `&dir=${encodeURIComponent(args.dir as string)}`;
+        if (args?.args) qs += `&args=${encodeURIComponent(args.args as string)}`;
+        return { method: "GET", url: `/api/git${qs}` };
       }
       case "list_directory": {
         const qs = args?.path

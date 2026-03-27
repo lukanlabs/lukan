@@ -1041,6 +1041,14 @@ export class WebTransport implements Transport {
       case "browser_close":
         return { method: "POST", url: "/api/browser/close" };
 
+      // ── Git ──
+      case "git_command": {
+        let qs = `?cmd=${encodeURIComponent(args?.cmd as string)}`;
+        if (args?.dir) qs += `&dir=${encodeURIComponent(args.dir as string)}`;
+        if (args?.args) qs += `&args=${encodeURIComponent(args.args as string)}`;
+        return { method: "GET", url: `/api/git${qs}` };
+      }
+
       // ── Files ──
       case "list_directory": {
         const qs = args?.path

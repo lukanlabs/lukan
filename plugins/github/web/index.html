@@ -299,14 +299,31 @@ setInterval(async () => {
   } catch {}
 }, 3000);
 
+// Git commands go through parent via postMessage (E2E encrypted in relay mode)
+let _gitReqId = 0;
+const _gitPending = new Map();
+window.addEventListener("message", (e) => {
+  if (e.data?.type === "git-result" && typeof e.data.reqId === "number") {
+    const reqId = e.data.reqId;
+    if (_gitPending.has(reqId)) {
+      const callback = _gitPending.get(reqId);
+      _gitPending.delete(reqId);
+      callback({ stdout: e.data.stdout || "", ok: !!e.data.ok, error: e.data.error || "" });
+    }
+  }
+});
 async function gitCmd(cmd, args) {
-  let url = window.location.origin + "/api/git?cmd=" + cmd + "&dir=" + encodeURIComponent(gitDir);
-  if (args) url += "&args=" + encodeURIComponent(args);
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(r.status);
-  const data = await r.json();
-  if (!data.ok) throw new Error(data.stderr || "git error");
-  return data.stdout;
+  const reqId = ++_gitReqId;
+  return new Promise((resolve, reject) => {
+    _gitPending.set(reqId, (data) => {
+      if (data.error) reject(new Error(data.error));
+      else resolve(data.stdout);
+    });
+    window.parent.postMessage({ type: "git-cmd", reqId, cmd, dir: gitDir, args }, "*");
+    setTimeout(() => {
+      if (_gitPending.has(reqId)) { _gitPending.delete(reqId); reject(new Error("timeout")); }
+    }, 15000);
+  });
 }
 
 let currentBranch = "";

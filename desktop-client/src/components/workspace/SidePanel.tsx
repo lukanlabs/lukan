@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import type { SidePanelId, BgProcessInfo, ViewDeclaration } from "../../lib/types";
 import { getCwd } from "../../lib/tauri";
+import { getApiBase } from "../../lib/transport";
 import { FilesPanel } from "./panels/FilesPanel";
 import { WorkersPanel } from "./panels/WorkersPanel";
 import { PipelinesPanel } from "./panels/PipelinesPanel";
@@ -92,8 +93,7 @@ export function SidePanel({
       let cwd: string | undefined = terminalCwdsRef.current.get(sessionId);
       if (!cwd) {
         try {
-          const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
-          const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
+          const base = getApiBase();
           const r = await fetch(`${base}/api/terminal/${encodeURIComponent(sessionId)}/cwd`);
           if (r.ok) { const data = await r.json(); if (data.cwd) { cwd = data.cwd as string; terminalCwdsRef.current.set(sessionId, cwd); } }
         } catch {}

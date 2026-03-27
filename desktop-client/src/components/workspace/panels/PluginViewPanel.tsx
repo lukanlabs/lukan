@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { CheckCircle, AlertTriangle, AlertCircle, Info, Loader } from "lucide-react";
 import type { ViewDeclaration, PluginViewEnvelope, StatusViewItem } from "../../../lib/types";
-import { getPluginViewData, getCwd } from "../../../lib/tauri";
+import { getPluginViewData, gitCommand } from "../../../lib/tauri";
+import { getApiBase } from "../../../lib/transport";
 import { EventsPanel } from "./EventsPanel";
 
 // ── StatusView sub-component ──────────────────────────────────────
@@ -80,8 +81,7 @@ function StatusView({ pluginName, viewId }: { pluginName: string; viewId: string
 
 function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
-  const base = `${window.location.protocol}//${window.location.hostname}:${port}`;
+  const base = getApiBase();
   const src = `${base}/api/plugins/${encodeURIComponent(pluginName)}/web/index.html`;
 
   // Send cwd to iframe when it changes
@@ -97,15 +97,31 @@ function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
     }
   };
 
-  // Listen for postMessage from iframe (open-diff, open-diff-working) → fetch diff → open in FileViewer
+  // Listen for postMessage from iframe (git-cmd, open-diff, open-diff-working)
   useEffect(() => {
     const handler = async (e: MessageEvent) => {
       const dir = e.data?.dir || cwd || ".";
 
+      // Proxy git commands from iframe through E2E transport
+      if (e.data?.type === "git-cmd" && e.data.cmd) {
+        try {
+          const data = await gitCommand(e.data.cmd, e.data.dir || dir, e.data.args);
+          iframeRef.current?.contentWindow?.postMessage({
+            type: "git-result", reqId: e.data.reqId,
+            stdout: data.stdout, ok: data.ok,
+          }, "*");
+        } catch (err) {
+          iframeRef.current?.contentWindow?.postMessage({
+            type: "git-result", reqId: e.data.reqId,
+            error: err instanceof Error ? err.message : "git error",
+          }, "*");
+        }
+        return;
+      }
+
       if (e.data?.type === "open-diff" && e.data.sha && e.data.file) {
         try {
-          const r = await fetch(`${base}/api/git?cmd=diff-file&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.sha + " " + e.data.file)}`);
-          const data = await r.json();
+          const data = await gitCommand("diff-file", dir, e.data.sha + " " + e.data.file);
           const diff = data.ok && data.stdout ? data.stdout : `No diff available for ${e.data.file}`;
           window.dispatchEvent(new CustomEvent("open-diff-viewer", {
             detail: { path: e.data.file, diff, sha: e.data.sha },
@@ -119,8 +135,7 @@ function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
 
       if (e.data?.type === "open-diff-working" && e.data.file) {
         try {
-          const r = await fetch(`${base}/api/git?cmd=diff-working&dir=${encodeURIComponent(dir)}&args=${encodeURIComponent(e.data.file)}`);
-          const data = await r.json();
+          const data = await gitCommand("diff-working", dir, e.data.file);
           const diff = data.ok && data.stdout ? data.stdout : `No working changes for ${e.data.file}`;
           window.dispatchEvent(new CustomEvent("open-diff-viewer", {
             detail: { path: e.data.file, diff, sha: "working" },

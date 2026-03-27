@@ -316,6 +316,8 @@ export const writeFile = (path: string, content: string) =>
 export const openInEditor = (path: string, editor?: string) =>
   getTransport().call<void>("open_in_editor", { path, editor });
 export const getCwd = () => getTransport().call<string>("get_cwd");
+export const gitCommand = (cmd: string, dir: string, args?: string) =>
+  getTransport().call<{ ok: boolean; stdout: string; stderr: string }>("git_command", { cmd, dir, args });
 export const setActiveTab = (tabId: string) =>
   getTransport().call<void>("set_active_tab", { tabId });
 export const openUrl = (url: string) =>

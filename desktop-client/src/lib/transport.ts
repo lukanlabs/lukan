@@ -77,3 +77,32 @@ export function resetTransport(): void {
   transport = null;
   initPromise = null;
 }
+
+/**
+ * Base URL for direct API calls (e.g. /api/git).
+ * In relay mode, uses the origin directly (no port suffix).
+ * In local/Tauri mode, uses __DAEMON_PORT__ or location.port.
+ */
+export function getApiBase(): string {
+  if (isRelayMode()) return window.location.origin;
+  const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
+  return `${window.location.protocol}//${window.location.hostname}:${port}`;
+}
+
+/**
+ * Authenticated fetch for direct API calls (e.g. /api/git).
+ * In relay mode, includes credentials and x-lukan-device header
+ * so the relay tunnel can route the request to the correct daemon.
+ */
+export function fetchApi(url: string, init?: RequestInit): Promise<Response> {
+  const headers: Record<string, string> = {};
+  if (isRelayMode()) {
+    const pathDevice = window.location.pathname.replace(/^\/+/, "").split("/")[0];
+    headers["x-lukan-device"] = pathDevice || "default";
+  }
+  return fetch(url, {
+    ...init,
+    credentials: "include",
+    headers: { ...headers, ...(init?.headers as Record<string, string>) },
+  });
+}

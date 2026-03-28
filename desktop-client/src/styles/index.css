@@ -692,71 +692,329 @@ select {
   to { opacity: 1; }
 }
 
-.settings-overlay {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 480px;
-  max-width: 90vw;
-  background: var(--bg-primary);
-  border-left: 1px solid var(--border);
-  z-index: 101;
+/* ── Settings panel (VSCode-style center layout) ─────────────── */
+
+.settings-panel {
+  grid-area: main;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-base);
+  animation: settingsFadeIn 0.15s ease-out;
+}
+
+@keyframes settingsFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.settings-sidebar {
+  width: 170px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  animation: settingsSlideIn 0.2s ease-out;
-  box-shadow: var(--shadow-lg);
 }
 
-@keyframes settingsSlideIn {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+.settings-sidebar-header {
+  padding: 12px 16px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
 }
 
-.settings-overlay-header {
+.settings-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 6px;
+}
+
+.settings-sidebar-nav button {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.settings-overlay-tabs {
-  display: flex;
-  gap: 0;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-}
-
-.settings-overlay-tabs button {
-  padding: 8px 12px;
-  font-size: 12px;
+  gap: 8px;
+  padding: 6px 10px;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-radius: 5px;
   background: transparent;
   color: var(--text-muted);
+  font-size: 12px;
   cursor: pointer;
   transition: all var(--transition-fast);
-  white-space: nowrap;
+  text-align: left;
 }
 
-.settings-overlay-tabs button:hover {
+.settings-sidebar-nav button:hover {
+  background: var(--bg-hover);
   color: var(--text-secondary);
 }
 
-.settings-overlay-tabs button.active {
+.settings-sidebar-nav button.active {
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text-primary);
-  border-bottom-color: var(--text-primary);
 }
 
-.settings-overlay-content {
+.settings-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.settings-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.settings-content-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-close-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.settings-close-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.settings-content-body {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 16px;
-  position: relative;
+  padding: 20px 28px;
 }
+
+/* ── Settings unified field styles ─────────────────────────────── */
+
+.settings-content-body .s-section {
+  margin-bottom: 20px;
+}
+
+.settings-content-body .s-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  padding-left: 1px;
+}
+
+.settings-content-body .s-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.settings-content-body .s-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.settings-content-body .s-row:last-child {
+  border-bottom: none;
+}
+
+.settings-content-body .s-row-label {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.settings-content-body .s-row-hint {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.settings-content-body .s-row-value {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.settings-content-body .s-input {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.settings-content-body .s-input:focus {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.settings-content-body .s-input option {
+  background: #18181b;
+  color: #fafafa;
+}
+
+.settings-content-body .s-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.settings-content-body .s-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.settings-content-body .s-btn-primary {
+  background: var(--text-primary);
+  color: var(--bg-base);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.settings-content-body .s-btn-primary:hover {
+  opacity: 0.9;
+}
+
+.settings-content-body .s-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.settings-content-body .s-badge-green {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+}
+
+.settings-content-body .s-badge-gray {
+  background: rgba(100, 100, 100, 0.15);
+  color: var(--text-muted);
+}
+
+.settings-content-body .s-badge-red {
+  background: rgba(239, 68, 68, 0.12);
+  color: #fb7185;
+}
+
+.settings-content-body .s-toggle {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: background 0.2s;
+  border: none;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.settings-content-body .s-toggle.active {
+  background: #22c55e;
+}
+
+.settings-content-body .s-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s;
+}
+
+.settings-content-body .s-toggle.active::after {
+  transform: translateX(14px);
+}
+
+/* ── Settings tab visual overrides (flatten & modernize) ───────── */
+
+/* Remove excessive rounding — make cards more squared */
+.settings-content-body .rounded-2xl { border-radius: 6px; }
+.settings-content-body .rounded-xl { border-radius: 6px; }
+.settings-content-body .rounded-lg { border-radius: 4px; }
+
+/* Reduce padding in cards */
+.settings-content-body .p-5 { padding: 14px; }
+.settings-content-body .p-6 { padding: 14px; }
+.settings-content-body .px-5 { padding-left: 14px; padding-right: 14px; }
+
+/* Tighter vertical spacing */
+.settings-content-body .mb-8 { margin-bottom: 16px; }
+.settings-content-body .mb-6 { margin-bottom: 12px; }
+.settings-content-body .mb-10 { margin-bottom: 16px; }
+.settings-content-body .gap-6 { gap: 14px; }
+.settings-content-body .gap-5 { gap: 12px; }
+.settings-content-body .gap-4 { gap: 10px; }
+
+/* Headers: smaller, tighter */
+.settings-content-body h2 { font-size: 13px !important; }
+.settings-content-body h3 { font-size: 12.5px !important; }
+
+/* Full width content */
+.settings-content-body .max-w-2xl,
+.settings-content-body .max-w-3xl {
+  max-width: 100%;
+}
+
+/* Keep 2-col grids on wider layout */
+.settings-content-body .grid-cols-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* Credentials layout: side-by-side with more space */
+.settings-content-body .creds-layout {
+  min-height: 0 !important;
+}
+
+/* Pill buttons: squared */
+.settings-content-body .rounded-full {
+  border-radius: 4px;
+}
+
+/* Page header: remove top padding */
+.settings-content-body .py-20 { padding-top: 0; padding-bottom: 16px; }
+.settings-content-body .py-16 { padding-top: 0; padding-bottom: 12px; }
 
 /* ── File browser entries ───────────────────────────────────────── */
 
@@ -875,121 +1133,6 @@ select {
   color: var(--text-muted);
 }
 
-/* ── Settings overlay tab overrides ──────────────────────────────── */
-/* ConfigTab, CredentialsTab, MemoryTab were designed for full-page — compact for 480px */
-
-.settings-overlay-content .max-w-2xl,
-.settings-overlay-content .max-w-3xl {
-  max-width: 100%;
-}
-
-/* Stack 2-col grids into single column (ConfigTab) */
-.settings-overlay-content .grid-cols-2 {
-  grid-template-columns: 1fr;
-}
-
-/* Tighter spacing */
-.settings-overlay-content h2.text-lg,
-.settings-overlay-content h2.text-xl {
-  font-size: 14px;
-  line-height: 1.3;
-}
-
-.settings-overlay-content .text-base {
-  font-size: 13px;
-}
-
-.settings-overlay-content .text-xl {
-  font-size: 14px;
-}
-
-.settings-overlay-content .text-lg {
-  font-size: 13px;
-}
-
-.settings-overlay-content .mb-8 {
-  margin-bottom: 16px;
-}
-
-.settings-overlay-content .mb-6 {
-  margin-bottom: 12px;
-}
-
-.settings-overlay-content .mb-10 {
-  margin-bottom: 16px;
-}
-
-.settings-overlay-content .gap-4 {
-  gap: 10px;
-}
-
-.settings-overlay-content .py-20 {
-  padding-top: 32px;
-  padding-bottom: 32px;
-}
-
-.settings-overlay-content .py-16 {
-  padding-top: 24px;
-  padding-bottom: 24px;
-}
-
-.settings-overlay-content .p-5 {
-  padding: 12px;
-}
-
-.settings-overlay-content .px-5 {
-  padding-left: 12px;
-  padding-right: 12px;
-}
-
-/* Credentials tab: stack provider list + detail vertically */
-.settings-overlay-content .creds-layout {
-  flex-direction: column;
-  min-height: auto !important;
-}
-
-.settings-overlay-content .creds-providers {
-  width: 100% !important;
-  flex-direction: row !important;
-  flex-wrap: wrap;
-  gap: 2px;
-}
-
-.settings-overlay-content .creds-providers > button {
-  flex: 0 0 auto;
-  padding: 4px 10px;
-  font-size: 12px;
-}
-
-/* Cards: tighter padding + radius */
-.settings-overlay-content .rounded-2xl {
-  border-radius: 10px;
-}
-
-.settings-overlay-content .rounded-2xl.p-5,
-.settings-overlay-content .rounded-2xl.p-6 {
-  padding: 12px;
-}
-
-/* Memory tab: smaller text areas */
-.settings-overlay-content .min-h-\[350px\] {
-  min-height: 200px;
-}
-
-/* Memory tab: project path input — allow wrapping */
-.settings-overlay-content .project-path-form {
-  flex-wrap: wrap;
-}
-
-/* Sub-navigation pills — compact (MemoryTab) */
-.settings-overlay-content .rounded-full.mb-6 {
-  margin-bottom: 12px;
-}
-
-.settings-overlay-content .rounded-full .text-sm {
-  font-size: 12px;
-  padding: 4px 10px;
-}
 
 /* ── xterm.js overrides ──────────────────────────────────────────── */
 

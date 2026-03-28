@@ -12,6 +12,7 @@ export interface AppConfig {
   openaiCompatibleBaseUrl?: string;
   openaiCompatibleProviderName?: string;
   openaiCompatibleProviderOptions?: Record<string, unknown>;
+  webPort?: number;
   webPassword?: string;
   webTokenTtl?: number;
   plugins?: PluginsConfig;

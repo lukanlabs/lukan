@@ -1,5 +1,14 @@
 import { useEffect, lazy, Suspense } from "react";
-import { X } from "lucide-react";
+import {
+  X,
+  Settings,
+  KeyRound,
+  Puzzle,
+  Cpu,
+  Wrench,
+  Brain,
+  Plug,
+} from "lucide-react";
 
 const ConfigTab = lazy(() => import("../tabs/ConfigTab"));
 const CredentialsTab = lazy(() => import("../tabs/CredentialsTab"));
@@ -7,14 +16,16 @@ const PluginsTab = lazy(() => import("../tabs/PluginsTab"));
 const ProvidersTab = lazy(() => import("../tabs/ProvidersTab"));
 const MemoryTab = lazy(() => import("../tabs/MemoryTab"));
 const ToolsTab = lazy(() => import("../tabs/ToolsTab"));
+const McpTab = lazy(() => import("../tabs/McpTab"));
 
 const TABS = [
-  { id: "config", label: "Config" },
-  { id: "credentials", label: "Credentials" },
-  { id: "plugins", label: "Plugins" },
-  { id: "providers", label: "Providers" },
-  { id: "tools", label: "Tools" },
-  { id: "memory", label: "Memory" },
+  { id: "config", label: "General", icon: Settings },
+  { id: "credentials", label: "Credentials", icon: KeyRound },
+  { id: "providers", label: "Providers", icon: Cpu },
+  { id: "plugins", label: "Plugins", icon: Puzzle },
+  { id: "tools", label: "Tools", icon: Wrench },
+  { id: "mcp", label: "MCP Servers", icon: Plug },
+  { id: "memory", label: "Memory", icon: Brain },
 ] as const;
 
 const TAB_COMPONENTS: Record<string, React.LazyExoticComponent<() => JSX.Element>> = {
@@ -23,6 +34,7 @@ const TAB_COMPONENTS: Record<string, React.LazyExoticComponent<() => JSX.Element
   plugins: PluginsTab,
   providers: ProvidersTab,
   tools: ToolsTab,
+  mcp: McpTab,
   memory: MemoryTab,
 };
 
@@ -33,7 +45,6 @@ interface SettingsOverlayProps {
 }
 
 export function SettingsOverlay({ activeTab, onTabChange, onClose }: SettingsOverlayProps) {
-  // Escape key to close
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -43,46 +54,39 @@ export function SettingsOverlay({ activeTab, onTabChange, onClose }: SettingsOve
   }, [onClose]);
 
   const TabComponent = TAB_COMPONENTS[activeTab];
+  const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Settings";
 
   return (
-    <>
-      <div className="settings-backdrop" onClick={onClose} />
-      <div className="settings-overlay">
-        {/* Header */}
-        <div className="settings-overlay-header">
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-            Settings
-          </span>
-          <button
-            onClick={onClose}
-            style={{
-              border: "none",
-              background: "transparent",
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              padding: 4,
-              borderRadius: 4,
-            }}
-          >
-            <X size={16} />
+    <div className="settings-panel">
+      <div className="settings-sidebar">
+        <div className="settings-sidebar-header">
+          <span>Settings</span>
+        </div>
+        <nav className="settings-sidebar-nav">
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                className={activeTab === tab.id ? "active" : ""}
+                onClick={() => onTabChange(tab.id)}
+              >
+                <Icon size={14} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+      <div className="settings-content">
+        <div className="settings-content-header">
+          <span className="settings-content-title">{activeLabel}</span>
+          <button onClick={onClose} className="settings-close-btn" title="Close (Esc)">
+            <X size={15} />
           </button>
         </div>
-
-        {/* Tabs */}
-        <div className="settings-overlay-tabs">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              className={activeTab === tab.id ? "active" : ""}
-              onClick={() => onTabChange(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Content */}
-        <div className="settings-overlay-content">
+        <div className="settings-content-body">
           {TabComponent && (
             <Suspense
               fallback={
@@ -96,6 +100,6 @@ export function SettingsOverlay({ activeTab, onTabChange, onClose }: SettingsOve
           )}
         </div>
       </div>
-    </>
+    </div>
   );
 }

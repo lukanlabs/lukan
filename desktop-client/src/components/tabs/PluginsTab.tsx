@@ -578,7 +578,7 @@ function DetailView({
             <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{
               background: plugin.running ? "rgba(74,222,128,0.12)" : "rgba(255,255,255,0.05)",
               color: plugin.running ? "#4ade80" : "var(--text-muted)",
-            }}>{plugin.running ? "Running" : "Stopped"}</span>
+            }}>{plugin.running ? "Active" : "Inactive"}</span>
           )}
         </div>
         {plugin.description && (
@@ -593,7 +593,7 @@ function DetailView({
             <>
               <ActionBtn
                 icon={actionLoading === "stop" ? <Loader2 size={11} className="animate-spin" /> : <Square size={11} />}
-                label={actionLoading === "stop" ? "Stopping..." : "Stop"}
+                label={actionLoading === "stop" ? "Deactivating..." : "Deactivate"}
                 onClick={() => onAction("stop", plugin.name)}
                 disabled={actionLoading !== null}
               />
@@ -608,7 +608,7 @@ function DetailView({
           ) : (
             <ActionBtn
               icon={actionLoading === "start" ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
-              label={actionLoading === "start" ? "Starting..." : "Start"}
+              label={actionLoading === "start" ? "Activating..." : "Activate"}
               onClick={() => onAction("start", plugin.name)}
               disabled={actionLoading !== null}
             />

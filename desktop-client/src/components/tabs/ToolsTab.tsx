@@ -4,7 +4,6 @@ import { getConfig, saveConfig, listTools } from "../../lib/tauri";
 import { useToast } from "../ui/Toast";
 import { Loader2, Save } from "lucide-react";
 
-/** Known core tool groups */
 const CORE_GROUPS: Record<string, string> = {
   ReadFiles: "File ops",
   WriteFile: "File ops",
@@ -32,18 +31,10 @@ const CORE_GROUPS: Record<string, string> = {
 
 const GROUP_ORDER = ["File ops", "Search", "Execution", "Web", "Browser", "Tasks", "Skills", "Planner"];
 
-interface ToolEntry {
-  name: string;
-  source: string | null;
-}
+interface ToolEntry { name: string; source: string | null; }
 
-/** Pretty-print plugin name: "google-workspace" → "Google Workspace" */
 function formatPluginName(raw: string): string {
-  return raw
-    .replace(/^lukan-plugin-/, "")
-    .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  return raw.replace(/^lukan-plugin-/, "").split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 
 export default function ToolsTab() {
@@ -53,7 +44,7 @@ export default function ToolsTab() {
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [tab, setTab] = useState<"core" | "plugins">("core");
+  const [mainTab, setMainTab] = useState<"core" | "plugins">("core");
 
   useEffect(() => {
     (async () => {
@@ -70,11 +61,10 @@ export default function ToolsTab() {
     })();
   }, []);
 
-  /** Core tools grouped */
   const coreGroups: [string, string[]][] = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const t of allTools) {
-      if (t.source) continue; // skip plugin tools
+      if (t.source) continue;
       const group = CORE_GROUPS[t.name] ?? "Other";
       if (!map.has(group)) map.set(group, []);
       map.get(group)!.push(t.name);
@@ -89,7 +79,6 @@ export default function ToolsTab() {
     });
   }, [allTools]);
 
-  /** Plugin tools grouped by plugin name */
   const pluginGroups: [string, string[]][] = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const t of allTools) {
@@ -104,8 +93,7 @@ export default function ToolsTab() {
   const toggle = (name: string) => {
     setDisabled((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+      if (next.has(name)) next.delete(name); else next.add(name);
       return next;
     });
   };
@@ -113,13 +101,19 @@ export default function ToolsTab() {
   const setGroup = (tools: string[], enable: boolean) => {
     setDisabled((prev) => {
       const next = new Set(prev);
-      for (const t of tools) {
-        if (enable) next.delete(t);
-        else next.add(t);
-      }
+      for (const t of tools) { if (enable) next.delete(t); else next.add(t); }
       return next;
     });
   };
+
+  const [activePlugin, setActivePlugin] = useState<string | null>(null);
+
+  // Set default active plugin tab
+  useEffect(() => {
+    if (pluginGroups.length > 0 && !activePlugin) {
+      setActivePlugin(pluginGroups[0][0]);
+    }
+  }, [pluginGroups, activePlugin]);
 
   const handleSave = async () => {
     if (!config) return;
@@ -137,60 +131,43 @@ export default function ToolsTab() {
 
   if (loading || !config) {
     return (
-      <div className="flex items-center justify-center h-64 gap-2" style={{ color: "#52525b" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, gap: 8, color: "#52525b" }}>
         <Loader2 size={16} className="animate-spin" />
-        <span className="text-sm">Loading tools...</span>
+        <span style={{ fontSize: 13 }}>Loading...</span>
       </div>
     );
   }
 
   const totalTools = allTools.length;
   const enabledCount = totalTools - disabled.size;
-  const groups = tab === "core" ? coreGroups : pluginGroups;
+  const activePluginTools = pluginGroups.find(([name]) => name === activePlugin)?.[1] ?? [];
+  const activePluginEnabled = activePluginTools.filter((t) => !disabled.has(t)).length;
+  const activePluginAllEnabled = activePluginEnabled === activePluginTools.length;
 
   return (
-    <div className="flex flex-col gap-4 pb-4">
+    <div style={{ animation: "fadeIn 0.2s ease-out" }}>
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#71717a" }}>
-            Tools
-          </span>
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-            style={{ background: "rgba(63,63,70,0.5)", color: "#a1a1aa" }}
-          >
-            {enabledCount}/{totalTools} enabled
-          </span>
-        </div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-          style={{
-            background: saving ? "rgba(63,63,70,0.3)" : "rgba(59,130,246,0.15)",
-            color: saving ? "#52525b" : "#60a5fa",
-            border: "1px solid rgba(59,130,246,0.2)",
-            cursor: saving ? "not-allowed" : "pointer",
-          }}
-        >
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <p style={{ fontSize: 12, color: "#71717a", margin: 0 }}>
+          {enabledCount}/{totalTools} tools enabled
+        </p>
+        <button onClick={handleSave} disabled={saving} className="s-btn s-btn-primary">
+          <Save size={11} />
           {saving ? "Saving..." : "Save"}
         </button>
       </div>
 
-      {/* Core / Plugins tabs */}
-      <div className="flex gap-1 rounded-lg p-0.5" style={{ background: "rgba(63,63,70,0.2)" }}>
+      {/* Core / Plugins tab selector */}
+      <div style={{ display: "flex", gap: 2, marginBottom: 16 }}>
         {(["core", "plugins"] as const).map((t) => (
           <button
             key={t}
-            onClick={() => setTab(t)}
-            className="flex-1 py-1.5 rounded-md text-xs font-medium transition-colors"
+            onClick={() => setMainTab(t)}
+            className="s-btn"
             style={{
-              background: tab === t ? "rgba(63,63,70,0.5)" : "transparent",
-              color: tab === t ? "#e4e4e7" : "#71717a",
-              border: "none",
-              cursor: "pointer",
+              background: mainTab === t ? "rgba(255,255,255,0.08)" : "transparent",
+              color: mainTab === t ? "var(--text-primary)" : "var(--text-muted)",
+              borderColor: mainTab === t ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
             }}
           >
             {t === "core" ? `Core (${coreGroups.reduce((n, [, ts]) => n + ts.length, 0)})` : `Plugins (${pluginGroups.reduce((n, [, ts]) => n + ts.length, 0)})`}
@@ -198,84 +175,35 @@ export default function ToolsTab() {
         ))}
       </div>
 
-      {/* Groups */}
-      {groups.length === 0 && (
-        <p className="text-xs text-center py-8" style={{ color: "#52525b" }}>
-          {tab === "plugins" ? "No plugin tools installed." : "No tools found."}
-        </p>
-      )}
-
-      {groups.map(([group, tools]) => {
+      {/* Core tools */}
+      {mainTab === "core" && coreGroups.map(([group, tools]) => {
         const groupEnabled = tools.filter((t) => !disabled.has(t)).length;
         const allEnabled = groupEnabled === tools.length;
-        const allDisabled = groupEnabled === 0;
         return (
-          <div key={group}>
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold" style={{ color: "#d4d4d8" }}>
-                  {group}
-                </span>
-                <span
-                  className="text-[10px] px-1.5 py-0.5 rounded-full"
-                  style={{
-                    background: allDisabled ? "rgba(239,68,68,0.1)" : "rgba(63,63,70,0.4)",
-                    color: allDisabled ? "#f87171" : "#71717a",
-                  }}
-                >
+          <div key={group} className="s-section">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div className="s-section-title" style={{ marginBottom: 0 }}>{group}</div>
+                <span className={`s-badge ${groupEnabled === 0 ? "s-badge-red" : "s-badge-gray"}`}>
                   {groupEnabled}/{tools.length}
                 </span>
               </div>
-              <button
-                onClick={() => setGroup(tools, !allEnabled)}
-                className="text-[10px] px-2 py-0.5 rounded transition-colors"
-                style={{
-                  background: "rgba(63,63,70,0.3)",
-                  color: "#71717a",
-                  border: "none",
-                  cursor: "pointer",
-                }}
-              >
+              <button className="s-btn" onClick={() => setGroup(tools, !allEnabled)} style={{ fontSize: 10 }}>
                 {allEnabled ? "Disable all" : "Enable all"}
               </button>
             </div>
-
-            <div
-              className="flex flex-col rounded-lg overflow-hidden"
-              style={{ border: "1px solid rgba(63,63,70,0.3)" }}
-            >
-              {tools.map((tool, i) => {
+            <div className="s-card">
+              {tools.map((tool) => {
                 const enabled = !disabled.has(tool);
                 return (
-                  <div
-                    key={tool}
-                    className="flex items-center justify-between px-3 py-2"
-                    style={{
-                      background: "rgba(24,24,27,0.5)",
-                      borderTop: i > 0 ? "1px solid rgba(63,63,70,0.2)" : undefined,
-                    }}
-                  >
-                    <span className="text-xs font-mono" style={{ color: enabled ? "#e4e4e7" : "#52525b" }}>
+                  <div key={tool} className="s-row">
+                    <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: enabled ? "var(--text-primary)" : "var(--text-muted)" }}>
                       {tool}
                     </span>
                     <button
                       onClick={() => toggle(tool)}
-                      className="relative w-8 h-[18px] rounded-full transition-colors"
-                      style={{
-                        background: enabled ? "rgba(34,197,94,0.35)" : "rgba(63,63,70,0.4)",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: 0,
-                      }}
-                    >
-                      <span
-                        className="absolute top-[2px] w-[14px] h-[14px] rounded-full transition-all"
-                        style={{
-                          background: enabled ? "#22c55e" : "#52525b",
-                          left: enabled ? 14 : 2,
-                        }}
-                      />
-                    </button>
+                      className={`s-toggle${enabled ? " active" : ""}`}
+                    />
                   </div>
                 );
               })}
@@ -283,6 +211,68 @@ export default function ToolsTab() {
           </div>
         );
       })}
+
+      {/* Plugin tools with tabs */}
+      {mainTab === "plugins" && pluginGroups.length === 0 && (
+        <div style={{ textAlign: "center", padding: "32px 0", color: "#52525b", fontSize: 12 }}>
+          No plugin tools installed. Install plugins to see their tools here.
+        </div>
+      )}
+      {mainTab === "plugins" && pluginGroups.length > 0 && (
+        <div className="s-section">
+          {/* Plugin tabs */}
+          <div style={{ display: "flex", gap: 2, marginBottom: 8, overflowX: "auto" }}>
+            {pluginGroups.map(([pluginName, tools]) => {
+              const isActive = pluginName === activePlugin;
+              const count = tools.filter((t) => !disabled.has(t)).length;
+              return (
+                <button
+                  key={pluginName}
+                  onClick={() => setActivePlugin(pluginName)}
+                  className="s-btn"
+                  style={{
+                    background: isActive ? "rgba(255,255,255,0.08)" : "transparent",
+                    color: isActive ? "var(--text-primary)" : "var(--text-muted)",
+                    borderColor: isActive ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
+                    whiteSpace: "nowrap",
+                    fontSize: 11,
+                  }}
+                >
+                  {pluginName}
+                  <span style={{ fontSize: 9.5, opacity: 0.6, marginLeft: 4 }}>{count}/{tools.length}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Active plugin tools */}
+          {activePlugin && activePluginTools.length > 0 && (
+            <>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+                <button className="s-btn" onClick={() => setGroup(activePluginTools, !activePluginAllEnabled)} style={{ fontSize: 10 }}>
+                  {activePluginAllEnabled ? "Disable all" : "Enable all"}
+                </button>
+              </div>
+              <div className="s-card">
+                {activePluginTools.map((tool) => {
+                  const enabled = !disabled.has(tool);
+                  return (
+                    <div key={tool} className="s-row">
+                      <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: enabled ? "var(--text-primary)" : "var(--text-muted)" }}>
+                        {tool}
+                      </span>
+                      <button
+                        onClick={() => toggle(tool)}
+                        className={`s-toggle${enabled ? " active" : ""}`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

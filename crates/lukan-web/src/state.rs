@@ -154,7 +154,7 @@ impl AppState {
 
     /// Check if authentication is required
     pub fn auth_required(&self) -> bool {
-        self.web_password.is_some()
+        self.web_password.as_ref().is_some_and(|p| !p.is_empty())
     }
 
     /// Validate a password and return a token if correct

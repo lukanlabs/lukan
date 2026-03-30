@@ -64,6 +64,9 @@ pub struct AppConfig {
     pub openai_compatible_provider_options: Option<HashMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zai_base_url: Option<String>,
+    /// Web UI port (None = default 3000, or --port CLI arg)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_port: Option<u16>,
     /// Password for web UI authentication (None = no auth required)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_password: Option<String>,
@@ -117,6 +120,7 @@ impl Default for AppConfig {
             openai_compatible_base_url: None,
             openai_compatible_provider_name: None,
             openai_compatible_provider_options: None,
+            web_port: None,
             web_password: None,
             web_token_ttl: None,
             plugins: None,

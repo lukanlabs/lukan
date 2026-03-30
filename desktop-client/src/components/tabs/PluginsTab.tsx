@@ -4,6 +4,7 @@ import {
   listPlugins,
   installPlugin,
   installRemotePlugin,
+  listRemotePlugins,
   removePlugin,
   startPlugin,
   stopPlugin,
@@ -11,7 +12,6 @@ import {
   getPluginConfig,
   setPluginConfigField,
   getPluginLogs,
-  listRemotePlugins,
   getPluginAuthQr,
   checkPluginAuth,
   getPluginManifestInfo,
@@ -39,6 +39,7 @@ import {
   Loader2,
   RotateCw,
   QrCode,
+  Search,
   ChevronRight,
   Eye,
   EyeOff,
@@ -74,7 +75,11 @@ export default function PluginsTab() {
 
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [selectedPlugin, setSelectedPlugin] = useState<string | null>(null);
-  const [showRegistry, setShowRegistry] = useState(false);
+  const [mainTab, setMainTab] = useState<"installed" | "addons">("installed");
+  const [remotePlugins, setRemotePlugins] = useState<RemotePlugin[]>([]);
+  const [addonsLoading, setAddonsLoading] = useState(false);
+  const [installingRemote, setInstallingRemote] = useState<string | null>(null);
+  const [addonsSearch, setAddonsSearch] = useState("");
 
   const [localPath, setLocalPath] = useState("");
   const [installingLocal, setInstallingLocal] = useState(false);
@@ -123,9 +128,6 @@ export default function PluginsTab() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [showQr, qrDataUrl, qrLinked, qrPluginName, toast]);
 
-  const [remotePlugins, setRemotePlugins] = useState<RemotePlugin[]>([]);
-  const [registryLoading, setRegistryLoading] = useState(false);
-  const [installingRemote, setInstallingRemote] = useState<string | null>(null);
 
   // ── Data fetching ──
 
@@ -269,29 +271,27 @@ export default function PluginsTab() {
     }
   };
 
-  const openRegistry = async () => {
-    setShowRegistry(true);
-    setRegistryLoading(true);
+  const loadAddons = async () => {
+    setAddonsLoading(true);
     try {
-      const remotes = await listRemotePlugins();
-      setRemotePlugins(remotes);
+      const remote = await listRemotePlugins();
+      setRemotePlugins(remote);
     } catch (e) {
-      toast("error", `Failed to fetch registry: ${e}`);
+      toast("error", `Failed to load add-ons: ${e}`);
     } finally {
-      setRegistryLoading(false);
+      setAddonsLoading(false);
     }
   };
 
   const handleInstallRemote = async (name: string) => {
     setInstallingRemote(name);
     try {
-      const installed = await installRemotePlugin(name);
-      toast("success", `Plugin '${installed}' installed`);
+      await installRemotePlugin(name);
+      toast("success", `${name} installed`);
       await refreshPlugins();
-      const remotes = await listRemotePlugins();
-      setRemotePlugins(remotes);
+      await loadAddons();
     } catch (e) {
-      toast("error", `${e}`);
+      toast("error", `Failed to install: ${e}`);
     } finally {
       setInstallingRemote(null);
     }
@@ -324,6 +324,22 @@ export default function PluginsTab() {
           onRunCommand={handleRunCommand}
         />
       ) : (
+        <>
+        {/* Installed / Add-ons tabs */}
+        <div style={{ display: "flex", gap: 2, marginBottom: 16 }}>
+          <button className="s-btn" onClick={() => setMainTab("installed")} style={{
+            background: mainTab === "installed" ? "rgba(255,255,255,0.08)" : "transparent",
+            color: mainTab === "installed" ? "var(--text-primary)" : "var(--text-muted)",
+            borderColor: mainTab === "installed" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
+          }}>Installed ({plugins.length})</button>
+          <button className="s-btn" onClick={() => { setMainTab("addons"); if (remotePlugins.length === 0) loadAddons(); }} style={{
+            background: mainTab === "addons" ? "rgba(255,255,255,0.08)" : "transparent",
+            color: mainTab === "addons" ? "var(--text-primary)" : "var(--text-muted)",
+            borderColor: mainTab === "addons" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
+          }}>Add-ons</button>
+        </div>
+
+        {mainTab === "installed" ? (
         <MasterView
           plugins={plugins}
           localPath={localPath}
@@ -331,8 +347,19 @@ export default function PluginsTab() {
           onLocalPathChange={setLocalPath}
           onInstallLocal={handleInstallLocal}
           onSelectPlugin={selectPlugin}
-          onOpenRegistry={openRegistry}
         />
+        ) : (
+          <AddonsView
+            remotePlugins={remotePlugins}
+            installedNames={new Set(plugins.map((p) => p.name))}
+            loading={addonsLoading}
+            installing={installingRemote}
+            search={addonsSearch}
+            onSearchChange={setAddonsSearch}
+            onInstall={handleInstallRemote}
+          />
+        )}
+        </>
       )}
 
       {/* QR Modal */}
@@ -346,16 +373,6 @@ export default function PluginsTab() {
         />
       )}
 
-      {/* Registry Modal */}
-      {showRegistry && (
-        <RegistryModal
-          remotePlugins={remotePlugins}
-          loading={registryLoading}
-          installingRemote={installingRemote}
-          onInstall={handleInstallRemote}
-          onClose={() => setShowRegistry(false)}
-        />
-      )}
     </div>
   );
 }
@@ -371,34 +388,19 @@ interface MasterViewProps {
   onLocalPathChange: (v: string) => void;
   onInstallLocal: () => void;
   onSelectPlugin: (name: string) => void;
-  onOpenRegistry: () => void;
 }
 
 function MasterView({
   plugins, localPath, installingLocal,
-  onLocalPathChange, onInstallLocal, onSelectPlugin, onOpenRegistry,
+  onLocalPathChange, onInstallLocal, onSelectPlugin,
 }: MasterViewProps) {
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-            Plugins
-          </span>
-          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{
-            background: "rgba(255,255,255,0.05)", color: "var(--text-muted)",
-            border: "1px solid var(--border)",
-          }}>{plugins.length}</span>
-        </div>
-        <button
-          onClick={onOpenRegistry}
-          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
-          style={{ background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border)" }}
-        >
-          <Download size={11} />
-          Registry
-        </button>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <p style={{ fontSize: 12, color: "#71717a", margin: 0 }}>
+          {plugins.length} installed
+        </p>
       </div>
 
       {/* Install local */}
@@ -523,159 +525,122 @@ function DetailView({
 
   return (
     <div style={{ animation: "fadeIn 0.15s ease-out" }}>
-      {/* Header with back + uninstall */}
-      <div className="flex items-center justify-between mb-1">
+      {/* Header: back + plugin name + status + actions inline */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
         <button
           onClick={onBack}
-          className="inline-flex items-center gap-1 text-xs cursor-pointer border-none bg-transparent"
-          style={{ color: "var(--text-muted)", padding: 0 }}
+          style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 2 }}
         >
-          <ArrowLeft size={12} />
-          Back
+          <ArrowLeft size={14} />
         </button>
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => onAction("update", plugin.name)}
-            disabled={actionLoading !== null}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none"
-            style={{
-              background: "rgba(59,130,246,0.12)", color: "#60a5fa", border: "1px solid rgba(96,165,250,0.15)",
-              opacity: actionLoading !== null ? 0.4 : 1, pointerEvents: actionLoading !== null ? "none" : "auto",
-            }}
-          >
-            {actionLoading === "update" ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
-            Update
-          </button>
-          <button
-            onClick={() => onAction("remove", plugin.name)}
-            disabled={actionLoading !== null}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none"
-            style={{
-              background: "rgba(220,38,38,0.12)", color: "#fb7185", border: "1px solid rgba(251,113,133,0.15)",
-              opacity: actionLoading !== null ? 0.4 : 1, pointerEvents: actionLoading !== null ? "none" : "auto",
-            }}
-          >
-            {actionLoading === "remove" ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
-            Uninstall
-          </button>
-        </div>
-      </div>
-
-      {/* Plugin info */}
-      <div className="mb-4">
-        <div className="flex items-center gap-2 flex-wrap mb-1">
-          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-            {plugin.name}
+        <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{plugin.name}</span>
+        <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>v{plugin.version}</span>
+        <span className="s-badge s-badge-gray">{plugin.pluginType}</span>
+        {(plugin.pluginType === "channel" || plugin.activityBar) && (
+          <span className={`s-badge ${plugin.running ? "s-badge-green" : "s-badge-gray"}`}>
+            {plugin.running ? "Active" : "Inactive"}
           </span>
-          <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
-            v{plugin.version}
-          </span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{
-            background: "rgba(255,255,255,0.05)", color: "var(--text-muted)",
-            border: "1px solid var(--border)",
-          }}>{plugin.pluginType}</span>
-          {plugin.pluginType === "channel" || plugin.activityBar && (
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{
-              background: plugin.running ? "rgba(74,222,128,0.12)" : "rgba(255,255,255,0.05)",
-              color: plugin.running ? "#4ade80" : "var(--text-muted)",
-            }}>{plugin.running ? "Running" : "Stopped"}</span>
-          )}
-        </div>
-        {plugin.description && (
-          <p className="text-[11px]" style={{ color: "var(--text-secondary)" }}>{plugin.description}</p>
         )}
-      </div>
-
-      {/* Action buttons (only for channel plugins) */}
-      {plugin.pluginType === "channel" || plugin.activityBar && (
-        <div className="flex gap-1.5 flex-wrap mb-4">
-          {plugin.running ? (
+        <div style={{ flex: 1 }} />
+        {/* Inline action buttons */}
+        {(plugin.pluginType === "channel" || plugin.activityBar) && (
+          plugin.running ? (
             <>
-              <ActionBtn
-                icon={actionLoading === "stop" ? <Loader2 size={11} className="animate-spin" /> : <Square size={11} />}
-                label={actionLoading === "stop" ? "Stopping..." : "Stop"}
-                onClick={() => onAction("stop", plugin.name)}
-                disabled={actionLoading !== null}
-              />
-              <ActionBtn
-                icon={actionLoading === "restart" ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
-                label={actionLoading === "restart" ? "Restarting..." : "Restart"}
-                onClick={() => onAction("restart", plugin.name)}
-                disabled={actionLoading !== null}
-                variant="secondary"
-              />
+              <button className="s-btn" onClick={() => onAction("stop", plugin.name)} disabled={actionLoading !== null}
+                style={{ opacity: actionLoading !== null ? 0.4 : 1 }}>
+                {actionLoading === "stop" ? <Loader2 size={10} className="animate-spin" /> : <Square size={10} />}
+                Deactivate
+              </button>
+              <button className="s-btn" onClick={() => onAction("restart", plugin.name)} disabled={actionLoading !== null}
+                style={{ opacity: actionLoading !== null ? 0.4 : 1 }}>
+                {actionLoading === "restart" ? <Loader2 size={10} className="animate-spin" /> : <RotateCw size={10} />}
+                Restart
+              </button>
             </>
           ) : (
-            <ActionBtn
-              icon={actionLoading === "start" ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
-              label={actionLoading === "start" ? "Starting..." : "Start"}
-              onClick={() => onAction("start", plugin.name)}
-              disabled={actionLoading !== null}
-            />
-          )}
-        </div>
+            <button className="s-btn" onClick={() => onAction("start", plugin.name)} disabled={actionLoading !== null}
+              style={{ opacity: actionLoading !== null ? 0.4 : 1 }}>
+              {actionLoading === "start" ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
+              Activate
+            </button>
+          )
+        )}
+        <button className="s-btn" onClick={() => onAction("update", plugin.name)} disabled={actionLoading !== null}
+          style={{ opacity: actionLoading !== null ? 0.4 : 1 }}>
+          {actionLoading === "update" ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
+          Update
+        </button>
+        <button className="s-btn" onClick={() => onAction("remove", plugin.name)} disabled={actionLoading !== null}
+          style={{ color: "#fb7185", borderColor: "rgba(251,113,133,0.2)", opacity: actionLoading !== null ? 0.4 : 1 }}>
+          {actionLoading === "remove" ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
+          Uninstall
+        </button>
+      </div>
+
+      {plugin.description && (
+        <p style={{ fontSize: 11.5, color: "var(--text-secondary)", marginBottom: 16, marginTop: -8 }}>{plugin.description}</p>
       )}
 
       {/* Commands */}
       {commands.length > 0 && (
-        <Section icon={<Settings2 size={12} />} title="Commands">
-          <div className="flex flex-col gap-2">
+        <div className="s-section">
+          <div className="s-section-title">Commands</div>
+          <div className="s-card">
             {commands.map((cmd) => {
               const isAuth = cmd.name === "auth";
               const btnLabel = isAuth
-                ? (commandRunning === cmd.name ? "..." : pluginAuthed ? "Re-authenticate" : "Authenticate")
+                ? (commandRunning === cmd.name ? "..." : pluginAuthed ? "Re-auth" : "Authenticate")
                 : (commandRunning === cmd.name ? "..." : "Run");
               return (
-                <div key={cmd.name} className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+                <div key={cmd.name} className="s-row">
+                  <div style={{ minWidth: 0 }}>
+                    <div className="s-row-label">
                       {cmd.name}
-                    </span>
-                    {isAuth && (
-                      <span className="text-[10px] ml-1.5 font-medium" style={{
-                        color: pluginAuthed ? "#4ade80" : "var(--text-muted)",
-                      }}>{pluginAuthed ? "authenticated" : "not authenticated"}</span>
-                    )}
-                    {cmd.description && (
-                      <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>{cmd.description}</p>
-                    )}
+                      {isAuth && (
+                        <span style={{ marginLeft: 8, fontSize: 10, color: pluginAuthed ? "#4ade80" : "var(--text-muted)" }}>
+                          {pluginAuthed ? "authenticated" : "not authenticated"}
+                        </span>
+                      )}
+                    </div>
+                    {cmd.description && <div className="s-row-hint">{cmd.description}</div>}
                   </div>
-                  <ActionBtn
-                    icon={commandRunning === cmd.name ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
-                    label={btnLabel}
-                    onClick={() => isAuth && hasQrAuth ? onShowQr(plugin.name) : onRunCommand(plugin.name, cmd.name)}
-                    disabled={commandRunning !== null}
-                    small
-                  />
+                  <button className="s-btn" onClick={() => isAuth && hasQrAuth ? onShowQr(plugin.name) : onRunCommand(plugin.name, cmd.name)}
+                    disabled={commandRunning !== null} style={{ opacity: commandRunning !== null ? 0.4 : 1 }}>
+                    {commandRunning === cmd.name ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
+                    {btnLabel}
+                  </button>
                 </div>
               );
             })}
           </div>
           {commandOutput && (
-            <pre className="text-[10px] mt-2 p-2 rounded-lg overflow-auto" style={{
-              background: "var(--bg-base)", color: "var(--text-secondary)",
-              border: "1px solid var(--border)", maxHeight: 120,
-              whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0,
-              fontFamily: "'JetBrains Mono', monospace",
+            <pre style={{
+              fontSize: 10, padding: "8px 10px", marginTop: 6, borderRadius: 4, overflow: "auto",
+              background: "rgba(0,0,0,0.2)", color: "var(--text-secondary)", maxHeight: 120,
+              whiteSpace: "pre-wrap", wordBreak: "break-word", margin: "6px 0 0",
+              fontFamily: "var(--font-mono)", border: "1px solid rgba(255,255,255,0.04)",
             }}>{commandOutput}</pre>
           )}
-        </Section>
+        </div>
       )}
 
-      {/* QR Auth section (for any plugin with QR-based auth) */}
+      {/* QR Auth */}
       {hasQrAuth && (
-        <Section icon={<QrCode size={12} />} title="Auth">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
-              Start plugin, then scan QR.
-            </span>
-            <ActionBtn icon={<QrCode size={11} />} label="View QR" onClick={() => onShowQr(plugin.name)} />
+        <div className="s-section">
+          <div className="s-section-title">Authentication</div>
+          <div className="s-card">
+            <div className="s-row">
+              <div className="s-row-label">Scan QR code to authenticate</div>
+              <button className="s-btn" onClick={() => onShowQr(plugin.name)}>
+                <QrCode size={11} /> View QR
+              </button>
+            </div>
           </div>
-        </Section>
+        </div>
       )}
 
       {/* Tools */}
-      {plugin.pluginType === "channel" || plugin.activityBar && (
+      {(plugin.pluginType === "channel" || plugin.activityBar) && (
         <PluginToolsSection pluginName={plugin.name} config={config} onConfigSave={onConfigSave} />
       )}
 
@@ -691,34 +656,26 @@ function DetailView({
       )}
 
       {/* Logs */}
-      {plugin.pluginType === "channel" || plugin.activityBar && (
-        <Section
-          icon={<ScrollText size={12} />}
-          title="Logs"
-          action={
-            <button
-              onClick={() => onRefreshLogs(plugin.name)}
-              disabled={logsRefreshing}
-              className="inline-flex items-center gap-1 text-[10px] cursor-pointer border-none bg-transparent"
-              style={{ color: "var(--text-muted)", opacity: logsRefreshing ? 0.5 : 1 }}
-            >
-              <RefreshCw size={10} className={logsRefreshing ? "animate-spin" : ""} />
-              Refresh
+      {(plugin.pluginType === "channel" || plugin.activityBar) && (
+        <div className="s-section">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <div className="s-section-title" style={{ marginBottom: 0 }}>Logs</div>
+            <button className="s-btn" onClick={() => onRefreshLogs(plugin.name)} disabled={logsRefreshing}
+              style={{ opacity: logsRefreshing ? 0.4 : 1 }}>
+              <RefreshCw size={10} className={logsRefreshing ? "animate-spin" : ""} /> Refresh
             </button>
-          }
-        >
+          </div>
           <pre
             ref={logsEndRef}
-            className="text-[10px] p-3 rounded-lg overflow-auto"
             style={{
-              fontFamily: "'JetBrains Mono', monospace",
-              minHeight: 120, maxHeight: 250, width: "100%",
-              background: "var(--bg-base)", color: "var(--text-secondary)",
-              border: "1px solid var(--border)",
+              fontFamily: "var(--font-mono)", fontSize: 10, padding: "10px 12px", borderRadius: 4,
+              minHeight: 100, maxHeight: 220, width: "100%", overflow: "auto",
+              background: "rgba(0,0,0,0.2)", color: "var(--text-secondary)",
+              border: "1px solid rgba(255,255,255,0.04)",
               lineHeight: 1.5, whiteSpace: "pre", margin: 0,
             }}
           >{logs || "No logs available"}</pre>
-        </Section>
+        </div>
       )}
     </div>
   );
@@ -1662,104 +1619,101 @@ function QrModal({ qrDataUrl, qrLoading, qrLinked, onClose, onDone }: {
 }
 
 // ===========================================================================
-// Registry Modal
+// Add-ons View (inline, not modal)
 // ===========================================================================
 
-function RegistryModal({ remotePlugins, loading, installingRemote, onInstall, onClose }: {
-  remotePlugins: RemotePlugin[]; loading: boolean; installingRemote: string | null;
-  onInstall: (name: string) => void; onClose: () => void;
+function AddonsView({ remotePlugins, installedNames, loading, installing, search, onSearchChange, onInstall }: {
+  remotePlugins: RemotePlugin[];
+  installedNames: Set<string>;
+  loading: boolean;
+  installing: string | null;
+  search: string;
+  onSearchChange: (v: string) => void;
+  onInstall: (name: string) => void;
 }) {
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+  const filtered = search
+    ? remotePlugins.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()) || p.description?.toLowerCase().includes(search.toLowerCase()))
+    : remotePlugins;
+
+  const available = filtered.filter((p) => !installedNames.has(p.name) && p.available);
+  const installed = filtered.filter((p) => installedNames.has(p.name));
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, gap: 8, color: "#52525b" }}>
+        <Loader2 size={16} className="animate-spin" />
+        <span style={{ fontSize: 13 }}>Loading add-ons...</span>
+      </div>
+    );
+  }
 
   return (
-    <div
-      className="fixed inset-0 flex items-center justify-center z-40"
-      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)" }}
-      onClick={onClose}
-    >
-      <div
-        className="rounded-xl p-4 flex flex-col"
-        style={{
-          background: "rgba(20,20,20,0.98)", border: "1px solid var(--border)",
-          width: "min(440px, 90vw)", maxHeight: "70vh",
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-3 shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-              Plugin Registry
-            </span>
-            {!loading && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded" style={{
-                background: "rgba(255,255,255,0.05)", color: "var(--text-muted)",
-              }}>{remotePlugins.length}</span>
-            )}
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded cursor-pointer border-none"
-            style={{ background: "transparent", color: "var(--text-muted)" }}
-          >
-            <X size={14} />
-          </button>
-        </div>
+    <div>
+      {/* Search */}
+      <div style={{ position: "relative", marginBottom: 14 }}>
+        <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#52525b" }} />
+        <input
+          className="s-input"
+          style={{ width: "100%", paddingLeft: 30 }}
+          placeholder="Search add-ons..."
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+        />
+      </div>
 
-        <div className="overflow-y-auto flex-1">
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-8" style={{ color: "var(--text-muted)" }}>
-              <Loader2 size={14} className="animate-spin" />
-              <span className="text-xs">Loading...</span>
-            </div>
-          ) : remotePlugins.length === 0 ? (
-            <div className="py-8 text-center text-xs" style={{ color: "var(--text-muted)" }}>
-              No plugins available.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1">
-              {remotePlugins.map((rp) => (
-                <div
-                  key={rp.name}
-                  className="flex items-center justify-between px-3 py-2.5 rounded-lg"
-                  style={{ background: "var(--bg-secondary)", transition: "background 120ms" }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-secondary)"; }}
-                >
-                  <div className="min-w-0 flex-1 mr-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{rp.name}</span>
-                      <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>v{rp.version}</span>
-                      {rp.installed && <Check size={10} style={{ color: "#4ade80" }} />}
-                    </div>
-                    {rp.description && (
-                      <p className="text-[10px] truncate" style={{ color: "var(--text-muted)" }}>{rp.description}</p>
-                    )}
+      {/* Available */}
+      {available.length > 0 && (
+        <div className="s-section">
+          <div className="s-section-title">Available</div>
+          <div className="s-card">
+            {available.map((p) => (
+              <div key={p.name} className="s-row">
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-primary)" }}>{p.name}</span>
+                    <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>v{p.version}</span>
+                    <span className="s-badge s-badge-gray">{p.pluginType}</span>
                   </div>
-                  {!rp.installed && rp.available && (
-                    <button
-                      onClick={() => onInstall(rp.name)}
-                      disabled={installingRemote !== null}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium cursor-pointer border-none shrink-0"
-                      style={{
-                        background: "#fafafa", color: "#09090b",
-                        opacity: installingRemote !== null ? 0.4 : 1,
-                        pointerEvents: installingRemote !== null ? "none" : "auto",
-                      }}
-                    >
-                      {installingRemote === rp.name ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
-                      Install
-                    </button>
+                  {p.description && (
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {p.description}
+                    </div>
                   )}
                 </div>
-              ))}
-            </div>
-          )}
+                <button className="s-btn" onClick={() => onInstall(p.name)} disabled={installing !== null}
+                  style={{ opacity: installing !== null ? 0.4 : 1, flexShrink: 0 }}>
+                  {installing === p.name ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+                  Install
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Already installed */}
+      {installed.length > 0 && (
+        <div className="s-section">
+          <div className="s-section-title">Already Installed</div>
+          <div className="s-card">
+            {installed.map((p) => (
+              <div key={p.name} className="s-row">
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 12.5, color: "var(--text-primary)" }}>{p.name}</span>
+                  <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>v{p.version}</span>
+                </div>
+                <span className="s-badge s-badge-green">Installed</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {filtered.length === 0 && (
+        <div style={{ textAlign: "center", padding: "32px 0", color: "#52525b", fontSize: 12 }}>
+          {search ? "No add-ons match your search." : "No add-ons available."}
+        </div>
+      )}
     </div>
   );
 }

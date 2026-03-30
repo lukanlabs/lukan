@@ -20,3 +20,4 @@ plugins/*/package-lock.json
 *.profraw
 crates/*/target/
 examples/audios/
+examples/bugs/

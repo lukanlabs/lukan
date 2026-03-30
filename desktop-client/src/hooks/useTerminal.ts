@@ -89,9 +89,9 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
 
     const term = new Terminal({
       theme: THEME,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+      fontFamily: "'Fira Code', 'Consolas', 'Menlo', monospace",
       fontSize: 13,
-      lineHeight: 1.3,
+      lineHeight: 1.0,
       cursorBlink: true,
       cursorStyle: "bar",
       allowTransparency: true,

@@ -98,6 +98,7 @@ async fn run_daemon_with_opts(local_only: bool) -> Result<()> {
     let preferred_port = std::env::var("LUKAN_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
+        .or(resolved.config.web_port)
         .unwrap_or(3000u16);
 
     // Try preferred port first, then fall back to nearby ports

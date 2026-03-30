@@ -300,32 +300,32 @@ export default function App() {
           />
         )}
 
-        <MainArea
-          mode={workspace.mode}
-          pipelineId={activePipelineId}
-          onPipelineBack={() => { workspace.setMode("agent"); setActivePipelineId(null); }}
-          processLog={processLog}
-          processLogSessionId={currentSessionId}
-          onCloseProcessLog={handleCloseProcessLog}
-          openTabs={openTabs}
-          activeTabIdx={activeTabIdx}
-          onSetActiveTab={setActiveTabIdx}
-          onCloseTab={(idx) => {
-            setOpenTabs(prev => {
-              const next = prev.filter((_, i) => i !== idx);
-              if (activeTabIdx >= next.length) setActiveTabIdx(Math.max(0, next.length - 1));
-              else if (idx < activeTabIdx) setActiveTabIdx(activeTabIdx - 1);
-              return next;
-            });
-          }}
-          onCloseAllTabs={() => { setOpenTabs([]); setActiveTabIdx(0); }}
-        />
-
-        {workspace.showSettings && (
+        {workspace.showSettings ? (
           <SettingsOverlay
             activeTab={workspace.settingsTab}
             onTabChange={workspace.setSettingsTab}
             onClose={workspace.closeSettings}
+          />
+        ) : (
+          <MainArea
+            mode={workspace.mode}
+            pipelineId={activePipelineId}
+            onPipelineBack={() => { workspace.setMode("agent"); setActivePipelineId(null); }}
+            processLog={processLog}
+            processLogSessionId={currentSessionId}
+            onCloseProcessLog={handleCloseProcessLog}
+            openTabs={openTabs}
+            activeTabIdx={activeTabIdx}
+            onSetActiveTab={setActiveTabIdx}
+            onCloseTab={(idx) => {
+              setOpenTabs(prev => {
+                const next = prev.filter((_, i) => i !== idx);
+                if (activeTabIdx >= next.length) setActiveTabIdx(Math.max(0, next.length - 1));
+                else if (idx < activeTabIdx) setActiveTabIdx(activeTabIdx - 1);
+                return next;
+              });
+            }}
+            onCloseAllTabs={() => { setOpenTabs([]); setActiveTabIdx(0); }}
           />
         )}
       </div>

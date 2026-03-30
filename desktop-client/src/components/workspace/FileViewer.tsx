@@ -1,11 +1,17 @@
-import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw, GitCommit, Columns2, Rows2, Maximize2, GitBranch } from "lucide-react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { MarkdownRenderer } from "../chat/MarkdownRenderer";
 import { DiffView } from "../chat/DiffView";
 import { readFile, writeFile, gitCommand } from "../../lib/tauri";
 import type { FileContent } from "../../lib/types";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection } from "@codemirror/view";
+import { EditorState, Compartment } from "@codemirror/state";
+import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
+import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, foldKeymap, indentOnInput, LanguageDescription } from "@codemirror/language";
+import { languages } from "@codemirror/language-data";
+import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
+import { highlightSelectionMatches } from "@codemirror/search";
+import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -117,6 +123,27 @@ function isEditable(fileType: ReturnType<typeof getFileType>): boolean {
   return fileType === "code" || fileType === "json" || fileType === "markdown" || fileType === "csv";
 }
 
+// ── CodeMirror 6 language resolver ───────────────────────────────────
+
+function resolveLanguage(lang?: string): LanguageDescription | undefined {
+  if (!lang) return undefined;
+  return LanguageDescription.matchLanguageName(languages, lang, true) ?? undefined;
+}
+
+// ── Shared CM6 theme to match app styling ───────────────────────────
+
+const cmTheme = EditorView.theme({
+  "&": { fontSize: "13px", fontFamily: "var(--font-mono)", height: "100%", background: "var(--bg-base, #0a0a0a)" },
+  ".cm-scroller": { overflow: "auto" },
+  ".cm-gutters": { background: "var(--bg-base, #0a0a0a)", borderRight: "1px solid var(--border-subtle, rgba(60,60,60,0.3))" },
+  ".cm-activeLineGutter": { background: "rgba(255,255,255,0.04)" },
+  ".cm-activeLine": { background: "rgba(255,255,255,0.03)" },
+  ".cm-foldGutter": { width: "12px" },
+  ".cm-content": { caretColor: "#fff" },
+}, { dark: true });
+
+// ── CodeMirror Editor (editable) ────────────────────────────────────
+
 function CodeEditor({
   value,
   onChange,
@@ -128,193 +155,166 @@ function CodeEditor({
   language?: string;
   initialLine?: number;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const backdropRef = useRef<HTMLDivElement>(null);
-  const lineNumRef = useRef<HTMLDivElement>(null);
-  const didFocus = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
-  // On mount (or when initialLine changes), place cursor at the target line
   useEffect(() => {
-    if (didFocus.current) return;
-    didFocus.current = true;
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.focus();
+    if (!containerRef.current) return;
+
+    const langCompartment = new Compartment();
+    const langDesc = resolveLanguage(language);
+
+    // Load language async if support not yet loaded
+    if (langDesc && !langDesc.support) {
+      langDesc.load().then((support) => {
+        if (viewRef.current) {
+          viewRef.current.dispatch({
+            effects: langCompartment.reconfigure(support),
+          });
+        }
+      });
+    }
+
+    const state = EditorState.create({
+      doc: value,
+      extensions: [
+        lineNumbers(),
+        highlightActiveLineGutter(),
+        highlightActiveLine(),
+        drawSelection(),
+        rectangularSelection(),
+        bracketMatching(),
+        foldGutter(),
+        indentOnInput(),
+        closeBrackets(),
+        history(),
+        autocompletion(),
+        highlightSelectionMatches(),
+        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        syntaxHighlighting(oneDarkHighlightStyle),
+        cmTheme,
+        keymap.of([
+          ...closeBracketsKeymap,
+          ...defaultKeymap,
+          ...historyKeymap,
+          ...foldKeymap,
+
+          ...completionKeymap,
+          indentWithTab,
+        ]),
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            onChangeRef.current(update.state.doc.toString());
+          }
+        }),
+        langCompartment.of(langDesc?.support ?? []),
+      ],
+    });
+
+    const view = new EditorView({ state, parent: containerRef.current });
+    viewRef.current = view;
+
+    // Scroll to initial line
     if (initialLine != null && initialLine > 0) {
-      const lines = value.split("\n");
-      let offset = 0;
-      for (let i = 0; i < Math.min(initialLine - 1, lines.length); i++) {
-        offset += lines[i].length + 1;
-      }
-      ta.selectionStart = ta.selectionEnd = offset;
-      // Scroll to the line
-      const lineHeight = 13 * 1.5; // fontSize * lineHeight
-      const scrollTarget = (initialLine - 1) * lineHeight - ta.clientHeight / 2;
-      ta.scrollTop = Math.max(0, scrollTarget);
-    }
-  }, [initialLine, value]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Tab") {
-        e.preventDefault();
-        const ta = e.currentTarget;
-        const start = ta.selectionStart;
-        const end = ta.selectionEnd;
-        const newVal = value.substring(0, start) + "  " + value.substring(end);
-        onChange(newVal);
-        requestAnimationFrame(() => {
-          ta.selectionStart = ta.selectionEnd = start + 2;
+      requestAnimationFrame(() => {
+        const line = view.state.doc.line(Math.min(initialLine, view.state.doc.lines));
+        view.dispatch({
+          selection: { anchor: line.from },
+          effects: EditorView.scrollIntoView(line.from, { y: "center" }),
         });
-      }
-    },
-    [value, onChange],
-  );
-
-  const syncScroll = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    if (backdropRef.current) {
-      backdropRef.current.scrollTop = ta.scrollTop;
-      backdropRef.current.scrollLeft = ta.scrollLeft;
+        view.focus();
+      });
+    } else {
+      view.focus();
     }
-    if (lineNumRef.current) {
-      lineNumRef.current.scrollTop = ta.scrollTop;
-    }
-  }, []);
 
-  // Defer the highlighted value so SyntaxHighlighter doesn't block the textarea on every keystroke
-  const deferredValue = useDeferredValue(value);
-  const lineCount = value.split("\n").length;
+    return () => { view.destroy(); viewRef.current = null; };
+  }, [language]); // Only recreate on language change, not on every value change
 
-  const sharedStyle: React.CSSProperties = {
-    fontSize: 13,
-    fontFamily: "var(--font-mono)",
-    lineHeight: "1.5",
-    padding: "12px 16px",
-    margin: 0,
-    whiteSpace: "pre",
-    tabSize: 2,
-    wordWrap: "normal",
-    overflowWrap: "normal",
-  };
-
-  // Re-focus textarea when clicking anywhere in the editor (line numbers, gaps, etc.)
-  const handleContainerClick = useCallback(() => {
-    textareaRef.current?.focus();
-  }, []);
-
-  return (
-    <div style={{ display: "flex", flex: 1, overflow: "hidden" }} onClick={handleContainerClick}>
-      {/* Line numbers */}
-      <div
-        ref={lineNumRef}
-        style={{
-          padding: "12px 0",
-          textAlign: "right",
-          userSelect: "none",
-          color: "var(--text-muted)",
-          fontSize: 13,
-          fontFamily: "var(--font-mono)",
-          lineHeight: "1.5",
-          minWidth: 48,
-          paddingRight: 12,
-          paddingLeft: 12,
-          borderRight: "1px solid var(--border-subtle)",
-          flexShrink: 0,
-          overflow: "hidden",
-          cursor: "default",
-        }}
-      >
-        {Array.from({ length: lineCount }, (_, i) => (
-          <div key={i}>{i + 1}</div>
-        ))}
-      </div>
-      {/* Code area with overlay */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-        {/* Syntax highlighted backdrop */}
-        <div
-          ref={backdropRef}
-          style={{
-            position: "absolute",
-            inset: 0,
-            overflow: "hidden",
-            pointerEvents: "none",
-          }}
-        >
-          <SyntaxHighlighter
-            language={language ?? "text"}
-            style={oneDark}
-            customStyle={{
-              ...sharedStyle,
-              background: "transparent",
-              border: "none",
-              overflow: "visible",
-            }}
-            codeTagProps={{ style: { background: "transparent" } }}
-          >
-            {deferredValue + "\n"}
-          </SyntaxHighlighter>
-        </div>
-        {/* Transparent textarea for input */}
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onScroll={syncScroll}
-          spellCheck={false}
-          style={{
-            ...sharedStyle,
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            resize: "none",
-            border: "none",
-            outline: "none",
-            background: "transparent",
-            color: "rgba(200,200,200,0.4)",
-            caretColor: "#fff",
-            overflow: "auto",
-            zIndex: 1,
-          }}
-        />
-      </div>
-    </div>
-  );
+  return <div ref={containerRef} style={{ flex: 1, overflow: "hidden" }} />;
 }
 
-function editorLanguage(file: FileContent, fileType: ReturnType<typeof getFileType>): string | undefined {
+// ── CodeMirror Viewer (read-only) ───────────────────────────────────
+
+function CodeViewer({
+  value,
+  language,
+  onDoubleClickLine,
+}: {
+  value: string;
+  language?: string;
+  onDoubleClickLine?: (line: number) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const langCompartment = new Compartment();
+    const langDesc = resolveLanguage(language);
+
+    if (langDesc && !langDesc.support) {
+      langDesc.load().then((support) => {
+        if (viewRef.current) {
+          viewRef.current.dispatch({
+            effects: langCompartment.reconfigure(support),
+          });
+        }
+      });
+    }
+
+    const extensions = [
+      lineNumbers(),
+      highlightActiveLine(),
+      highlightActiveLineGutter(),
+      bracketMatching(),
+      foldGutter(),
+      highlightSelectionMatches(),
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      syntaxHighlighting(oneDarkHighlightStyle),
+      cmTheme,
+      EditorState.readOnly.of(true),
+      keymap.of([...defaultKeymap, ...foldKeymap]),
+      langCompartment.of(langDesc?.support ?? []),
+    ];
+
+    if (onDoubleClickLine) {
+      extensions.push(
+        EditorView.domEventHandlers({
+          dblclick: (_event, view) => {
+            const pos = view.state.selection.main.head;
+            const line = view.state.doc.lineAt(pos).number;
+            onDoubleClickLine(line);
+            return false;
+          },
+        }),
+      );
+    }
+
+    const state = EditorState.create({
+      doc: value,
+      extensions,
+    });
+
+    const view = new EditorView({ state, parent: containerRef.current });
+    viewRef.current = view;
+
+    return () => { view.destroy(); viewRef.current = null; };
+  }, [value, language]);
+
+  return <div ref={containerRef} style={{ flex: 1, overflow: "hidden" }} />;
+}
+
+function fileLang(file: FileContent, fileType: ReturnType<typeof getFileType>): string | undefined {
   switch (fileType) {
     case "json": return "json";
     case "markdown": return "markdown";
     case "csv": return undefined;
     default: return file.language ?? undefined;
   }
-}
-
-/** Detect which line was double-clicked inside a SyntaxHighlighter container. */
-function getLineFromDblClick(e: React.MouseEvent): number {
-  // With wrapLines, each line is a direct child <span> of <code>.
-  // Walk up from the click target to find the line span.
-  let el = e.target as HTMLElement | null;
-  while (el) {
-    const parent = el.parentElement;
-    if (parent?.tagName === "CODE") {
-      const idx = Array.from(parent.children).indexOf(el);
-      if (idx >= 0) return idx + 1;
-    }
-    // Stop if we hit the container
-    if (el.tagName === "PRE") break;
-    el = parent;
-  }
-  // Fallback: estimate from Y offset using line height
-  const container = e.currentTarget;
-  const rect = container.getBoundingClientRect();
-  const y = e.clientY - rect.top + container.scrollTop;
-  const lineHeight = 13 * 1.5; // matches our fontSize * lineHeight
-  return Math.max(1, Math.ceil(y / lineHeight));
 }
 
 function FileContentView({
@@ -339,18 +339,13 @@ function FileContentView({
       <CodeEditor
         value={editContent}
         onChange={onEditChange}
-        language={editorLanguage(file, fileType)}
+        language={fileLang(file, fileType)}
         initialLine={initialLine}
       />
     );
   }
 
-  const handleDblClick = isEditable(fileType) && onDoubleClickLine
-    ? (e: React.MouseEvent) => {
-        const line = getLineFromDblClick(e);
-        onDoubleClickLine(line ?? 1);
-      }
-    : undefined;
+  const dblClickHandler = isEditable(fileType) && onDoubleClickLine ? onDoubleClickLine : undefined;
 
   switch (fileType) {
     case "image":
@@ -371,7 +366,7 @@ function FileContentView({
       return (
         <div
           style={{ padding: "16px 24px", overflow: "auto", flex: 1, cursor: "default" }}
-          onDoubleClick={handleDblClick ? () => onDoubleClickLine!(1) : undefined}
+          onDoubleClick={dblClickHandler ? () => onDoubleClickLine!(1) : undefined}
         >
           <MarkdownRenderer content={file.content} />
         </div>
@@ -384,44 +379,18 @@ function FileContentView({
       } catch {
         formatted = file.content;
       }
-      return (
-        <div style={{ overflow: "auto", flex: 1 }} onDoubleClick={handleDblClick}>
-          <SyntaxHighlighter
-            language="json"
-            style={oneDark}
-            showLineNumbers
-            wrapLines
-            customStyle={{ margin: 0, background: "transparent", fontSize: 13, border: "none" }}
-            codeTagProps={{ style: { background: "transparent" } }}
-          >
-            {formatted}
-          </SyntaxHighlighter>
-        </div>
-      );
+      return <CodeViewer value={formatted} language="json" onDoubleClickLine={dblClickHandler} />;
     }
 
     case "csv":
       return (
-        <div onDoubleClick={handleDblClick ? () => onDoubleClickLine!(1) : undefined}>
+        <div onDoubleClick={dblClickHandler ? () => onDoubleClickLine!(1) : undefined}>
           <CsvTable content={file.content} />
         </div>
       );
 
     case "code":
-      return (
-        <div style={{ overflow: "auto", flex: 1 }} onDoubleClick={handleDblClick}>
-          <SyntaxHighlighter
-            language={file.language ?? "text"}
-            style={oneDark}
-            showLineNumbers
-            wrapLines
-            customStyle={{ margin: 0, background: "transparent", fontSize: 13, border: "none" }}
-            codeTagProps={{ style: { background: "transparent" } }}
-          >
-            {file.content}
-          </SyntaxHighlighter>
-        </div>
-      );
+      return <CodeViewer value={file.content} language={file.language ?? undefined} onDoubleClickLine={dblClickHandler} />;
 
     case "binary":
       return (

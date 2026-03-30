@@ -65,9 +65,13 @@ interface UseTerminalOptions {
   /** Fixed session ID — does not change for this panel's lifetime. */
   sessionId: string;
   containerRef: React.RefObject<HTMLDivElement | null>;
+  /** Font size override (default: 13) */
+  fontSize?: number;
 }
 
-export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
+const DEFAULT_FONT_SIZE = typeof window !== "undefined" && window.innerWidth < 768 ? 10 : 13;
+
+export function useTerminal({ sessionId, containerRef, fontSize = DEFAULT_FONT_SIZE }: UseTerminalOptions) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
 
@@ -81,6 +85,18 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
     }
   }, []);
 
+  // Update font size dynamically without recreating the terminal
+  useEffect(() => {
+    const term = termRef.current;
+    if (term && term.options.fontSize !== fontSize) {
+      term.options.fontSize = fontSize;
+      requestAnimationFrame(() => {
+        fit();
+        terminalResize(sessionId, term.cols, term.rows).catch(() => {});
+      });
+    }
+  }, [fontSize, fit, sessionId]);
+
   // Create terminal once on mount, tear down on unmount
   useEffect(() => {
     if (!containerRef.current) return;
@@ -90,7 +106,7 @@ export function useTerminal({ sessionId, containerRef }: UseTerminalOptions) {
     const term = new Terminal({
       theme: THEME,
       fontFamily: "'Fira Code', 'Consolas', 'Menlo', monospace",
-      fontSize: 13,
+      fontSize,
       lineHeight: 1.0,
       cursorBlink: true,
       cursorStyle: "bar",

@@ -6,31 +6,45 @@ import "@xterm/xterm/css/xterm.css";
 interface XTermPanelProps {
   sessionId: string;
   isActive: boolean;
+  /** When true, the terminal should receive keyboard focus. */
+  focused?: boolean;
   /** Base64-encoded scrollback to replay (from session recovery). */
   scrollback?: string;
   /** Called after scrollback has been written to xterm. */
   onScrollbackReplayed?: () => void;
   /** When true, renders in a grid cell instead of absolute overlay. */
   splitMode?: boolean;
+  /** Font size (default: 13) */
+  fontSize?: number;
 }
 
 export default function XTermPanel({
   sessionId,
   isActive,
+  focused,
   scrollback,
   onScrollbackReplayed,
   splitMode,
+  fontSize,
 }: XTermPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { termRef, fit } = useTerminal({ sessionId, containerRef });
+  const { termRef, fit } = useTerminal({ sessionId, containerRef, fontSize });
   const scrollbackReplayed = useRef(false);
 
-  // Re-fit when becoming visible (tab switch)
+  // Re-fit when becoming visible
   useEffect(() => {
     if (isActive) {
       requestAnimationFrame(fit);
     }
   }, [isActive, fit]);
+
+  // Focus terminal when it becomes the focused panel
+  const isFocused = focused ?? isActive;
+  useEffect(() => {
+    if (isFocused) {
+      requestAnimationFrame(() => termRef.current?.focus());
+    }
+  }, [isFocused, termRef]);
 
   // Replay scrollback once after recovery
   useEffect(() => {

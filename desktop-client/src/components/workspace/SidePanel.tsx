@@ -61,7 +61,7 @@ export function SidePanel({
 }: SidePanelProps) {
   const [pluginCwd, setPluginCwd] = useState<string | undefined>();
   const [tabChangeCounter, setTabChangeCounter] = useState(0);
-  const followingTerminalRef = useRef(false);
+  const followingTerminalRef = useRef(true);
 
   // Listen for tab changes from agent sessions
   useEffect(() => {
@@ -81,8 +81,8 @@ export function SidePanel({
       const { sessionId, cwd } = (e as CustomEvent<{ sessionId: string; cwd: string }>).detail;
       terminalCwdsRef.current.set(sessionId, cwd);
       if (!activeTerminalRef.current) activeTerminalRef.current = sessionId;
-      // Only update plugin if from the active terminal
-      if (followingTerminalRef.current && sessionId === activeTerminalRef.current && cwd) {
+      // Always update plugin cwd from the active terminal
+      if (sessionId === activeTerminalRef.current && cwd) {
         setPluginCwd(cwd);
       }
     };

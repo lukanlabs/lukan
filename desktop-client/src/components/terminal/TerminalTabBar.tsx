@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Plus, X, LayoutGrid, Layers } from "lucide-react";
+import { Plus, X, LayoutGrid, Layers, ZoomIn, ZoomOut } from "lucide-react";
 import type { TerminalSession } from "../../hooks/useTerminalSessions";
 
 interface TerminalTabBarProps {
@@ -11,6 +11,8 @@ interface TerminalTabBarProps {
   onRename: (id: string, label: string) => void;
   viewMode?: "tabs" | "split";
   onToggleViewMode?: () => void;
+  splitFontSize?: number;
+  onSplitFontSizeChange?: (size: number) => void;
 }
 
 export default function TerminalTabBar({
@@ -22,6 +24,8 @@ export default function TerminalTabBar({
   onRename,
   viewMode = "tabs",
   onToggleViewMode,
+  splitFontSize = 10,
+  onSplitFontSizeChange,
 }: TerminalTabBarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -155,6 +159,31 @@ export default function TerminalTabBar({
           >
             {viewMode === "split" ? <Layers size={14} /> : <LayoutGrid size={14} />}
           </button>
+          {viewMode === "split" && onSplitFontSizeChange && (
+            <>
+              <button
+                onClick={() => onSplitFontSizeChange(Math.max(6, splitFontSize - 1))}
+                className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
+                style={{ color: "#71717a", background: "transparent" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(50,50,50,0.3)"; e.currentTarget.style.color = "#fafafa"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#71717a"; }}
+                title="Zoom out"
+              >
+                <ZoomOut size={13} />
+              </button>
+              <span style={{ fontSize: 10, color: "#52525b", fontFamily: "var(--font-mono)", minWidth: 20, textAlign: "center" }}>{splitFontSize}</span>
+              <button
+                onClick={() => onSplitFontSizeChange(Math.min(16, splitFontSize + 1))}
+                className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
+                style={{ color: "#71717a", background: "transparent" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(50,50,50,0.3)"; e.currentTarget.style.color = "#fafafa"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#71717a"; }}
+                title="Zoom in"
+              >
+                <ZoomIn size={13} />
+              </button>
+            </>
+          )}
         </>
       )}
     </div>

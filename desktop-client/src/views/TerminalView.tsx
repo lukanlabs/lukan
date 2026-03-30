@@ -2,7 +2,9 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
 import TerminalTabBar from "../components/terminal/TerminalTabBar";
 import XTermPanel from "../components/terminal/XTermPanel";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, LayoutGrid, Rows2 } from "lucide-react";
+
+type ViewMode = "tabs" | "split";
 
 function ConfirmDialog({
   onConfirm,
@@ -106,6 +108,7 @@ export default function TerminalView() {
   } = useTerminalSessions();
   const initialized = useRef(false);
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("tabs");
 
   // Initialize: list existing tmux sessions or create first one
   useEffect(() => {
@@ -179,6 +182,10 @@ export default function TerminalView() {
     [clearScrollback],
   );
 
+  // Calculate grid dimensions for split mode
+  const splitCols = sessions.length <= 1 ? 1 : sessions.length <= 4 ? 2 : 3;
+  const splitRows = Math.ceil(sessions.length / splitCols);
+
   return (
     <div className="flex flex-col h-full min-h-0">
       <TerminalTabBar
@@ -188,19 +195,58 @@ export default function TerminalView() {
         onClose={handleClose}
         onCreate={createSession}
         onRename={renameSession}
+        viewMode={viewMode}
+        onToggleViewMode={() => setViewMode(viewMode === "tabs" ? "split" : "tabs")}
       />
-      {/* Render ALL sessions, show/hide with CSS to preserve xterm buffers */}
-      <div className="flex-1 min-h-0 relative">
-        {sessions.map((s) => (
-          <XTermPanel
-            key={s.id}
-            sessionId={s.id}
-            isActive={s.id === activeSessionId}
-            scrollback={s.scrollback}
-            onScrollbackReplayed={() => handleScrollbackReplayed(s.id)}
-          />
-        ))}
-      </div>
+
+      {viewMode === "tabs" ? (
+        /* Tab mode: overlapping panels, only active visible */
+        <div className="flex-1 min-h-0 relative">
+          {sessions.map((s) => (
+            <XTermPanel
+              key={s.id}
+              sessionId={s.id}
+              isActive={s.id === activeSessionId}
+              scrollback={s.scrollback}
+              onScrollbackReplayed={() => handleScrollbackReplayed(s.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        /* Split mode: CSS grid with all terminals visible */
+        <div
+          className="flex-1 min-h-0"
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${splitCols}, 1fr)`,
+            gridTemplateRows: `repeat(${splitRows}, 1fr)`,
+            gap: 1,
+            background: "rgba(60,60,60,0.4)",
+          }}
+        >
+          {sessions.map((s) => (
+            <div
+              key={s.id}
+              onClick={() => switchSession(s.id)}
+              style={{
+                position: "relative",
+                minHeight: 0,
+                outline: s.id === activeSessionId ? "1px solid rgba(99,102,241,0.5)" : "none",
+                outlineOffset: -1,
+              }}
+            >
+              <XTermPanel
+                sessionId={s.id}
+                isActive={true}
+                scrollback={s.scrollback}
+                onScrollbackReplayed={() => handleScrollbackReplayed(s.id)}
+                splitMode
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
       {pendingCloseId && (
         <ConfirmDialog onConfirm={confirmClose} onCancel={cancelClose} />
       )}

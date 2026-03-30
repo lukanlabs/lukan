@@ -10,6 +10,8 @@ interface XTermPanelProps {
   scrollback?: string;
   /** Called after scrollback has been written to xterm. */
   onScrollbackReplayed?: () => void;
+  /** When true, renders in a grid cell instead of absolute overlay. */
+  splitMode?: boolean;
 }
 
 export default function XTermPanel({
@@ -17,6 +19,7 @@ export default function XTermPanel({
   isActive,
   scrollback,
   onScrollbackReplayed,
+  splitMode,
 }: XTermPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { termRef, fit } = useTerminal({ sessionId, containerRef });
@@ -49,8 +52,8 @@ export default function XTermPanel({
 
   return (
     <div
-      className="absolute inset-0 flex flex-col min-h-0"
-      style={{ visibility: isActive ? "visible" : "hidden" }}
+      className={splitMode ? "flex flex-col min-h-0 h-full" : "absolute inset-0 flex flex-col min-h-0"}
+      style={splitMode ? undefined : { visibility: isActive ? "visible" : "hidden" }}
     >
       <div
         ref={containerRef}

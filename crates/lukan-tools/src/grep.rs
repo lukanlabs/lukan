@@ -1,12 +1,18 @@
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+
 use async_trait::async_trait;
+use grep_regex::RegexMatcherBuilder;
+use grep_searcher::{Searcher, SearcherBuilder, Sink, SinkMatch};
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
-use tokio::process::Command;
 
-use crate::{Tool, ToolContext, run_command_cancellable, sandbox};
+use crate::{Tool, ToolContext, sandbox};
 
 const MAX_OUTPUT_BYTES: usize = 30_000;
-const GREP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const MAX_LINE_LEN: usize = 500;
 
 pub struct GrepTool;
 
@@ -17,7 +23,7 @@ impl Tool for GrepTool {
     }
 
     fn description(&self) -> &str {
-        "Search file contents using regex patterns. Uses ripgrep (rg) with grep fallback."
+        "Search file contents using regex patterns. Fast, respects .gitignore."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -40,12 +46,12 @@ impl Tool for GrepTool {
                 "output_mode": {
                     "type": "string",
                     "enum": ["content", "files_with_matches", "count"],
-                    "description": "Output format: \"content\" shows matching lines, \"files_with_matches\" shows file paths, \"count\" shows match counts (default: \"files_with_matches\")",
+                    "description": "Output format (default: \"files_with_matches\")",
                     "default": "files_with_matches"
                 },
                 "type": {
                     "type": "string",
-                    "description": "File type filter (e.g. \"js\", \"py\", \"rust\"). Maps to rg --type."
+                    "description": "File type filter (e.g. \"js\", \"py\", \"rust\")"
                 },
                 "case_insensitive": {
                     "type": "boolean",
@@ -54,7 +60,7 @@ impl Tool for GrepTool {
                 },
                 "multiline": {
                     "type": "boolean",
-                    "description": "Enable multiline matching where patterns can span lines (default: false)",
+                    "description": "Enable multiline matching (default: false)",
                     "default": false
                 },
                 "max_results": {
@@ -64,19 +70,19 @@ impl Tool for GrepTool {
                 },
                 "context_lines": {
                     "type": "integer",
-                    "description": "Number of context lines around each match (content mode only)"
+                    "description": "Context lines around each match"
                 },
                 "before_context": {
                     "type": "integer",
-                    "description": "Number of lines to show before each match (content mode only)"
+                    "description": "Lines before each match"
                 },
                 "after_context": {
                     "type": "integer",
-                    "description": "Number of lines to show after each match (content mode only)"
+                    "description": "Lines after each match"
                 },
                 "head_limit": {
                     "type": "integer",
-                    "description": "Limit output to first N lines/entries. 0 = unlimited (default: 0)",
+                    "description": "Limit output to first N lines (0 = unlimited)",
                     "default": 0
                 }
             },
@@ -93,42 +99,7 @@ impl Tool for GrepTool {
             .get("pattern")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing required field: pattern"))?;
-
         let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-
-        // Check path restrictions
-        let resolved_path = {
-            let p = std::path::PathBuf::from(path);
-            if p.is_absolute() { p } else { ctx.cwd.join(&p) }
-        };
-        if let Err(msg) = ctx.check_path_allowed(&resolved_path) {
-            return Ok(ToolResult::error(msg));
-        }
-
-        // If targeting a single file, check sensitive patterns
-        if resolved_path.is_file()
-            && let Err(msg) = ctx.check_sensitive(&resolved_path)
-        {
-            return Ok(ToolResult::error(msg));
-        }
-
-        // Build sensitive patterns for exclusion in rg/grep
-        let sensitive_patterns: Vec<String> = if let Some(ref sb) = ctx.sandbox {
-            if sb.sensitive_patterns.is_empty() {
-                sandbox::DEFAULT_SENSITIVE_PATTERNS
-                    .iter()
-                    .map(|s| (*s).to_string())
-                    .collect()
-            } else {
-                sb.sensitive_patterns.clone()
-            }
-        } else {
-            sandbox::DEFAULT_SENSITIVE_PATTERNS
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect()
-        };
-
         let glob_pattern = input.get("glob").and_then(|v| v.as_str());
         let output_mode = input
             .get("output_mode")
@@ -146,54 +117,221 @@ impl Tool for GrepTool {
         let max_results = input
             .get("max_results")
             .and_then(|v| v.as_u64())
-            .unwrap_or(50);
-        let context_lines = input.get("context_lines").and_then(|v| v.as_u64());
-        let before_context = input.get("before_context").and_then(|v| v.as_u64());
-        let after_context = input.get("after_context").and_then(|v| v.as_u64());
+            .unwrap_or(50) as usize;
+        let context_before = input
+            .get("before_context")
+            .and_then(|v| v.as_u64())
+            .or_else(|| input.get("context_lines").and_then(|v| v.as_u64()))
+            .unwrap_or(0) as usize;
+        let context_after = input
+            .get("after_context")
+            .and_then(|v| v.as_u64())
+            .or_else(|| input.get("context_lines").and_then(|v| v.as_u64()))
+            .unwrap_or(0) as usize;
         let head_limit = input
             .get("head_limit")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
 
-        let opts = GrepOpts {
-            pattern,
-            path,
-            glob_pattern,
-            output_mode,
-            file_type,
-            case_insensitive,
-            multiline,
-            max_results,
-            context_lines,
-            before_context,
-            after_context,
-            sensitive_patterns: &sensitive_patterns,
+        // Resolve path
+        let resolved_path = {
+            let p = std::path::PathBuf::from(path);
+            if p.is_absolute() { p } else { ctx.cwd.join(&p) }
         };
+        if let Err(msg) = ctx.check_path_allowed(&resolved_path) {
+            return Ok(ToolResult::error(msg));
+        }
+        if resolved_path.is_file()
+            && let Err(msg) = ctx.check_sensitive(&resolved_path)
+        {
+            return Ok(ToolResult::error(msg));
+        }
 
-        // Try rg first, fallback to grep
-        let output = try_rg(&opts, &ctx.cwd, &ctx.cancel)
-            .await
-            .map_err(|_| anyhow::anyhow!("rg not available"));
-
-        let output = match output {
-            Ok(o) => o,
-            Err(_) => try_grep(&opts, &ctx.cwd, &ctx.cancel).await?,
-        };
-
-        let mut text = String::from_utf8_lossy(&output.stdout).to_string();
-
-        // Apply head_limit by truncating to first N lines
-        if head_limit > 0 {
-            let truncated: String = text.lines().take(head_limit).collect::<Vec<_>>().join("\n");
-            let was_truncated = text.lines().count() > head_limit;
-            text = truncated;
-            if was_truncated {
-                text.push_str("\n... (head_limit reached)");
+        // Sensitive patterns
+        let sensitive_patterns: Vec<String> = if let Some(ref sb) = ctx.sandbox {
+            if sb.sensitive_patterns.is_empty() {
+                sandbox::DEFAULT_SENSITIVE_PATTERNS
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect()
+            } else {
+                sb.sensitive_patterns.clone()
             }
+        } else {
+            sandbox::DEFAULT_SENSITIVE_PATTERNS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
+        };
+
+        // Build matcher (ripgrep's regex engine)
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(case_insensitive)
+            .multi_line(multiline)
+            .dot_matches_new_line(multiline)
+            .build(pattern)
+            .map_err(|e| anyhow::anyhow!("Invalid regex: {e}"))?;
+
+        let search_path = resolved_path.clone();
+        let output_mode_owned = output_mode.to_string();
+        let file_type_owned = file_type.map(|s| s.to_string());
+        let glob_owned = glob_pattern.map(|s| s.to_string());
+        let cancel = ctx.cancel.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            // Build walker (respects .gitignore, parallel)
+            let mut builder = ignore::WalkBuilder::new(&search_path);
+            builder
+                .hidden(false)
+                .git_ignore(true)
+                .git_global(true)
+                .git_exclude(true);
+
+            if let Some(ref ft) = file_type_owned {
+                let mut tb = ignore::types::TypesBuilder::new();
+                tb.add_defaults();
+                tb.select(ft);
+                if let Ok(types) = tb.build() {
+                    builder.types(types);
+                }
+            }
+
+            if let Some(ref glob) = glob_owned {
+                let mut ob = ignore::overrides::OverrideBuilder::new(&search_path);
+                let _ = ob.add(glob);
+                if let Ok(ov) = ob.build() {
+                    builder.overrides(ov);
+                }
+            }
+
+            let results: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+            let count = Arc::new(AtomicUsize::new(0));
+
+            // Use parallel walker for speed
+            let walker = builder.build_parallel();
+            walker.run(|| {
+                let matcher = matcher.clone();
+                let results = Arc::clone(&results);
+                let count = Arc::clone(&count);
+                let sensitive = sensitive_patterns.clone();
+                let mode = output_mode_owned.clone();
+                let cancel = cancel.clone();
+
+                Box::new(move |entry| {
+                    // Check cancellation
+                    if let Some(ref token) = cancel
+                        && token.is_cancelled()
+                    {
+                        return ignore::WalkState::Quit;
+                    }
+
+                    // Check limit
+                    if count.load(Ordering::Relaxed) >= max_results {
+                        return ignore::WalkState::Quit;
+                    }
+
+                    let entry = match entry {
+                        Ok(e) => e,
+                        Err(_) => return ignore::WalkState::Continue,
+                    };
+
+                    let path = entry.path();
+                    if !path.is_file() {
+                        return ignore::WalkState::Continue;
+                    }
+
+                    // Skip sensitive
+                    let pat_refs: Vec<&str> = sensitive.iter().map(|s| s.as_str()).collect();
+                    if sandbox::match_sensitive_pattern(path, &pat_refs).is_some() {
+                        return ignore::WalkState::Continue;
+                    }
+
+                    let display_path = path.to_string_lossy().to_string();
+
+                    match mode.as_str() {
+                        "files_with_matches" => {
+                            // Just check if file matches — no need to collect lines
+                            let mut found = false;
+                            let mut searcher = SearcherBuilder::new().build();
+                            let _ = searcher.search_path(&matcher, path, MatchSink(&mut found));
+                            if found {
+                                count.fetch_add(1, Ordering::Relaxed);
+                                results.lock().unwrap().push(display_path);
+                            }
+                        }
+                        "count" => {
+                            let mut file_count = 0usize;
+                            let mut searcher = SearcherBuilder::new().build();
+                            let _ =
+                                searcher.search_path(&matcher, path, CountSink(&mut file_count));
+                            if file_count > 0 {
+                                count.fetch_add(1, Ordering::Relaxed);
+                                results
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("{display_path}:{file_count}"));
+                            }
+                        }
+                        _ => {
+                            // Content mode
+                            let mut lines = Vec::new();
+                            let mut searcher = SearcherBuilder::new()
+                                .before_context(context_before)
+                                .after_context(context_after)
+                                .build();
+                            let _ = searcher.search_path(
+                                &matcher,
+                                path,
+                                ContentSink {
+                                    path: &display_path,
+                                    lines: &mut lines,
+                                },
+                            );
+                            if !lines.is_empty() {
+                                let n = lines.len();
+                                count.fetch_add(n, Ordering::Relaxed);
+                                results.lock().unwrap().extend(lines);
+                            }
+                        }
+                    }
+
+                    ignore::WalkState::Continue
+                })
+            });
+
+            Arc::try_unwrap(results).unwrap().into_inner().unwrap()
+        })
+        .await?;
+
+        let mut text = result.join("\n");
+
+        // Truncate long lines
+        text = text
+            .lines()
+            .map(|l| {
+                if l.len() > MAX_LINE_LEN {
+                    format!("{}...", &l[..l.floor_char_boundary(MAX_LINE_LEN)])
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Limit total lines
+        let limit = if head_limit > 0 {
+            head_limit
+        } else {
+            max_results
+        };
+        let total = text.lines().count();
+        if total > limit {
+            text = text.lines().take(limit).collect::<Vec<_>>().join("\n");
+            text.push_str(&format!("\n... ({} more results)", total - limit));
         }
 
         if text.len() > MAX_OUTPUT_BYTES {
-            text.truncate(MAX_OUTPUT_BYTES);
+            text.truncate(text.floor_char_boundary(MAX_OUTPUT_BYTES));
             text.push_str("\n... (output truncated)");
         }
 
@@ -205,124 +343,55 @@ impl Tool for GrepTool {
     }
 }
 
-struct GrepOpts<'a> {
-    pattern: &'a str,
+// ── Sinks for grep-searcher ─────────────────────────────────────────
+
+/// Sink that just checks if there's any match (for files_with_matches mode).
+struct MatchSink<'a>(&'a mut bool);
+
+impl Sink for MatchSink<'_> {
+    type Error = std::io::Error;
+    fn matched(&mut self, _: &Searcher, _: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        *self.0 = true;
+        Ok(false) // stop after first match
+    }
+}
+
+/// Sink that counts matches.
+struct CountSink<'a>(&'a mut usize);
+
+impl Sink for CountSink<'_> {
+    type Error = std::io::Error;
+    fn matched(&mut self, _: &Searcher, _: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        *self.0 += 1;
+        Ok(true)
+    }
+}
+
+/// Sink that collects matching lines with path and line number.
+struct ContentSink<'a> {
     path: &'a str,
-    glob_pattern: Option<&'a str>,
-    output_mode: &'a str,
-    file_type: Option<&'a str>,
-    case_insensitive: bool,
-    multiline: bool,
-    max_results: u64,
-    context_lines: Option<u64>,
-    before_context: Option<u64>,
-    after_context: Option<u64>,
-    sensitive_patterns: &'a [String],
+    lines: &'a mut Vec<String>,
 }
 
-async fn try_rg(
-    opts: &GrepOpts<'_>,
-    cwd: &std::path::Path,
-    cancel: &Option<tokio_util::sync::CancellationToken>,
-) -> anyhow::Result<std::process::Output> {
-    let mut cmd = Command::new("rg");
-
-    match opts.output_mode {
-        "files_with_matches" => {
-            cmd.arg("-l");
-        }
-        "count" => {
-            cmd.arg("-c");
-        }
-        _ => {
-            // "content" mode — show line numbers and respect max-count
-            cmd.arg("-n");
-            cmd.arg("--max-count").arg(opts.max_results.to_string());
-            if let Some(b) = opts.before_context {
-                cmd.arg("-B").arg(b.to_string());
-            }
-            if let Some(a) = opts.after_context {
-                cmd.arg("-A").arg(a.to_string());
-            }
-            if let Some(ctx) = opts.context_lines {
-                cmd.arg("-C").arg(ctx.to_string());
-            }
-        }
+impl Sink for ContentSink<'_> {
+    type Error = std::io::Error;
+    fn matched(&mut self, _: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        let line_num = mat.line_number().unwrap_or(0);
+        let text = String::from_utf8_lossy(mat.bytes()).trim_end().to_string();
+        self.lines
+            .push(format!("{}:{}:{}", self.path, line_num, text));
+        Ok(true)
     }
 
-    if opts.case_insensitive {
-        cmd.arg("-i");
+    fn context(
+        &mut self,
+        _: &Searcher,
+        ctx: &grep_searcher::SinkContext<'_>,
+    ) -> Result<bool, Self::Error> {
+        let line_num = ctx.line_number().unwrap_or(0);
+        let text = String::from_utf8_lossy(ctx.bytes()).trim_end().to_string();
+        self.lines
+            .push(format!("{}:{}-{}", self.path, line_num, text));
+        Ok(true)
     }
-    if opts.multiline {
-        cmd.arg("-U").arg("--multiline-dotall");
-    }
-    if let Some(ft) = opts.file_type {
-        cmd.arg("--type").arg(ft);
-    }
-    if let Some(glob) = opts.glob_pattern {
-        cmd.arg("--glob").arg(glob);
-    }
-
-    // Exclude sensitive patterns (gitignore-style)
-    for sp in opts.sensitive_patterns {
-        if let Some(dir) = sp.strip_suffix('/') {
-            // Directory pattern: exclude dir/**
-            cmd.arg("--glob").arg(format!("!{dir}/**"));
-        } else {
-            cmd.arg("--glob").arg(format!("!{sp}"));
-        }
-    }
-
-    cmd.arg(opts.pattern).arg(opts.path).current_dir(cwd);
-
-    run_command_cancellable(cmd, cancel, GREP_TIMEOUT).await
-}
-
-async fn try_grep(
-    opts: &GrepOpts<'_>,
-    cwd: &std::path::Path,
-    cancel: &Option<tokio_util::sync::CancellationToken>,
-) -> anyhow::Result<std::process::Output> {
-    let mut cmd = Command::new("grep");
-
-    match opts.output_mode {
-        "files_with_matches" => {
-            cmd.arg("-rl");
-        }
-        "count" => {
-            cmd.arg("-rc");
-        }
-        _ => {
-            // "content" mode
-            cmd.arg("-rn");
-            cmd.arg("--max-count").arg(opts.max_results.to_string());
-            if let Some(b) = opts.before_context {
-                cmd.arg("-B").arg(b.to_string());
-            }
-            if let Some(a) = opts.after_context {
-                cmd.arg("-A").arg(a.to_string());
-            }
-            if let Some(ctx) = opts.context_lines {
-                cmd.arg("-C").arg(ctx.to_string());
-            }
-        }
-    }
-
-    if opts.case_insensitive {
-        cmd.arg("-i");
-    }
-
-    // Exclude sensitive patterns (gitignore-style)
-    // Note: --type and --multiline are not supported in grep fallback
-    for sp in opts.sensitive_patterns {
-        if let Some(dir) = sp.strip_suffix('/') {
-            cmd.arg("--exclude-dir").arg(dir);
-        } else {
-            cmd.arg("--exclude").arg(sp);
-        }
-    }
-
-    cmd.arg(opts.pattern).arg(opts.path).current_dir(cwd);
-
-    run_command_cancellable(cmd, cancel, GREP_TIMEOUT).await
 }

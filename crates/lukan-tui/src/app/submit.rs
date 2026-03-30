@@ -24,6 +24,12 @@ impl App {
             return;
         }
 
+        // Handle /refresh — re-render current session without losing history
+        if text == "/refresh" {
+            self.refresh_session().await;
+            return;
+        }
+
         // Handle /model command
         if text == "/model" || text.starts_with("/model ") {
             self.open_model_picker().await;

@@ -90,6 +90,15 @@ export function getApiBase(): string {
 }
 
 /**
+ * Device name extracted from the URL path (relay mode).
+ * Returns empty string in non-relay mode.
+ */
+export function getDeviceName(): string {
+  if (!isRelayMode()) return "";
+  return window.location.pathname.replace(/^\/+/, "").split("/")[0] || "default";
+}
+
+/**
  * Authenticated fetch for direct API calls (e.g. /api/git).
  * In relay mode, includes credentials and x-lukan-device header
  * so the relay tunnel can route the request to the correct daemon.

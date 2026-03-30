@@ -50,7 +50,7 @@ export default function XTermPanel({
   return (
     <div
       className="absolute inset-0 flex flex-col min-h-0"
-      style={{ display: isActive ? "flex" : "none" }}
+      style={{ visibility: isActive ? "visible" : "hidden" }}
     >
       <div
         ref={containerRef}

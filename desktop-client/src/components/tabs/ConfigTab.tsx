@@ -109,7 +109,6 @@ export default function ConfigTab() {
       return { value: name, label: name };
     }),
   ];
-  const providerOptions = providers.map((p) => ({ value: p.name, label: p.name }));
   const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   return (

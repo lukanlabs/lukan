@@ -154,6 +154,7 @@ pub(super) fn build_welcome_banner(provider: &str, model: &str) -> String {
 pub(super) const COMMANDS: &[(&str, &str)] = &[
     ("/model", "choose model to use"),
     ("/resume", "resume a saved session"),
+    ("/refresh", "re-render the current session"),
     ("/bg", "view and manage background processes"),
     ("/clear", "clear chat and start fresh"),
     ("/compact", "compact conversation history"),

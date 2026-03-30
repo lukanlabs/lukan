@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { CheckCircle, AlertTriangle, AlertCircle, Info, Loader } from "lucide-react";
 import type { ViewDeclaration, PluginViewEnvelope, StatusViewItem } from "../../../lib/types";
 import { getPluginViewData, gitCommand } from "../../../lib/tauri";
-import { getApiBase } from "../../../lib/transport";
+import { getApiBase, getDeviceName } from "../../../lib/transport";
 import { EventsPanel } from "./EventsPanel";
 
 // ── StatusView sub-component ──────────────────────────────────────
@@ -82,7 +82,9 @@ function StatusView({ pluginName, viewId }: { pluginName: string; viewId: string
 function WebView({ pluginName, cwd }: { pluginName: string; cwd?: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const base = getApiBase();
-  const src = `${base}/api/plugins/${encodeURIComponent(pluginName)}/web/index.html`;
+  const device = getDeviceName();
+  const deviceQs = device ? `?device=${encodeURIComponent(device)}` : "";
+  const src = `${base}/api/plugins/${encodeURIComponent(pluginName)}/web/index.html${deviceQs}`;
 
   // Send cwd to iframe when it changes
   useEffect(() => {

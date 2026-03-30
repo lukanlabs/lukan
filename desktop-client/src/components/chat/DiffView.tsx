@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useCallback, useEffect, type ReactNode } from "react";
+import { useMemo, useRef, useState, useCallback, useEffect, useTransition, type ReactNode } from "react";
 import { refractor } from "refractor";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Columns2, Rows2 } from "lucide-react";
@@ -238,17 +238,45 @@ const MINIMAP_COLORS: Record<LineType, string> = {
 
 // ── Minimap ──────────────────────────────────────────────────────────
 
-function Minimap({ lines, scrollRef }: { lines: DiffLine[]; scrollRef: React.RefObject<HTMLDivElement | null> }) {
+type MinimapLine = { type: LineType };
+
+/** Build minimap lines from split rows so positions match the rendered content. */
+function splitRowsToMinimapLines(rows: SplitRow[]): MinimapLine[] {
+  return rows.map((row) => {
+    const left = row.left?.type ?? "context";
+    const right = row.right?.type ?? "context";
+    // Prioritize: if either side has a change, show that color
+    if (left === "remove" || right === "add") {
+      // If both sides have changes (paired remove+add), prefer add (green)
+      if (left === "remove" && right === "add") return { type: "add" };
+      return { type: left !== "context" ? left : right };
+    }
+    if (left === "hunk") return { type: "hunk" };
+    return { type: "context" };
+  });
+}
+
+function Minimap({ lines, scrollRef }: { lines: MinimapLine[]; scrollRef: React.RefObject<HTMLDivElement | null> }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [viewport, setViewport] = useState({ top: 0, height: 0 });
   const totalLines = lines.length;
 
-  // Draw minimap
+  // Draw minimap — redraws when lines change OR canvas resizes
+  const [canvasSize, setCanvasSize] = useState(0);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ro = new ResizeObserver(() => setCanvasSize(canvas.clientHeight));
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const el = scrollRef.current;
 
     const dpr = window.devicePixelRatio || 1;
     const h = canvas.clientHeight;
@@ -259,17 +287,24 @@ function Minimap({ lines, scrollRef }: { lines: DiffLine[]; scrollRef: React.Ref
     ctx.clearRect(0, 0, w, h);
 
     if (totalLines === 0) return;
-    const lineH = Math.max(1, h / totalLines);
+
+    // Scale the minimap to match the content's actual proportion of the container.
+    // el.scrollHeight === el.clientHeight when content is short (flex stretch),
+    // so we measure the inner <pre> element's height directly.
+    const contentH = el?.firstElementChild?.getBoundingClientRect().height ?? h;
+    const containerH = el?.clientHeight ?? h;
+    const usableH = contentH >= containerH ? h : Math.max(1, (contentH / containerH) * h);
+    const lineH = usableH / totalLines;
 
     for (let i = 0; i < totalLines; i++) {
       const color = MINIMAP_COLORS[lines[i].type];
       if (color === "transparent") continue;
       ctx.fillStyle = color;
-      ctx.fillRect(0, Math.round(i * lineH), w, Math.max(1, Math.ceil(lineH)));
+      ctx.fillRect(0, i * lineH, w, Math.max(1, lineH));
     }
-  }, [lines, totalLines]);
+  }, [lines, totalLines, canvasSize, scrollRef]);
 
-  // Track scroll position
+  // Track scroll position — re-syncs when content or canvas size changes
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -287,10 +322,13 @@ function Minimap({ lines, scrollRef }: { lines: DiffLine[]; scrollRef: React.Ref
     };
     update();
     el.addEventListener("scroll", update, { passive: true });
+    // Observe both the scroll container AND its first child (the <pre> content)
+    // so we detect when content height changes (diff fully rendered)
     const ro = new ResizeObserver(update);
     ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
     return () => { el.removeEventListener("scroll", update); ro.disconnect(); };
-  }, [scrollRef]);
+  }, [scrollRef, totalLines, canvasSize]);
 
   // Click + drag to scroll
   const scrollToY = useCallback((clientY: number) => {
@@ -316,11 +354,11 @@ function Minimap({ lines, scrollRef }: { lines: DiffLine[]; scrollRef: React.Ref
   }, [scrollToY]);
 
   return (
-    <div style={{ width: MINIMAP_W, flexShrink: 0, position: "relative", borderLeft: "1px solid rgba(60,60,60,0.3)" }}>
+    <div style={{ width: MINIMAP_W, flexShrink: 0, position: "relative", borderLeft: "1px solid rgba(60,60,60,0.3)", overflow: "hidden" }}>
       <canvas
         ref={canvasRef}
         onMouseDown={handleMouseDown}
-        style={{ width: "100%", height: "100%", cursor: "pointer", display: "block" }}
+        style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", cursor: "pointer" }}
       />
       {/* Viewport indicator */}
       <div
@@ -340,14 +378,29 @@ function Minimap({ lines, scrollRef }: { lines: DiffLine[]; scrollRef: React.Ref
   );
 }
 
+// ── Row height for virtualization ────────────────────────────────────
+
+const ROW_H = 18; // fontSize 12 * lineHeight 1.5
+const V_BUFFER = 30; // extra rows rendered above/below viewport
+
 // ── Unified View ─────────────────────────────────────────────────────
 
-function UnifiedView({ diffLines, syntaxLines }: { diffLines: DiffLine[]; syntaxLines: ReactNode[][] }) {
-  let codeIdx = 0;
+function UnifiedView({ diffLines, syntaxLines, startIdx, endIdx, codeIdxMap }: {
+  diffLines: DiffLine[];
+  syntaxLines: ReactNode[][];
+  startIdx: number;
+  endIdx: number;
+  codeIdxMap: number[];
+}) {
+  const total = diffLines.length;
+  const padTop = startIdx * ROW_H;
+  const padBot = Math.max(0, (total - endIdx) * ROW_H);
 
   return (
     <pre style={{ fontSize: 12, fontFamily: "var(--font-mono)", lineHeight: "1.5", margin: 0, padding: 0 }}>
-      {diffLines.map((line, i) => {
+      {padTop > 0 && <div style={{ height: padTop }} />}
+      {diffLines.slice(startIdx, endIdx).map((line, j) => {
+        const i = startIdx + j;
         if (line.type === "hunk") {
           return (
             <span key={i} style={{
@@ -360,7 +413,8 @@ function UnifiedView({ diffLines, syntaxLines }: { diffLines: DiffLine[]; syntax
           );
         }
 
-        const tokens = syntaxLines[codeIdx++];
+        const codeIdx = codeIdxMap[i];
+        const tokens = syntaxLines[codeIdx];
         const content = line.highlights && HL_COLOR[line.type]
           ? renderInline(line.content, line.highlights, HL_COLOR[line.type])
           : <>{tokens}</>;
@@ -376,26 +430,34 @@ function UnifiedView({ diffLines, syntaxLines }: { diffLines: DiffLine[]; syntax
           </span>
         );
       })}
+      {padBot > 0 && <div style={{ height: padBot }} />}
     </pre>
   );
 }
 
 // ── Split View ───────────────────────────────────────────────────────
 
-function SplitView({ rows, leftSyntax, rightSyntax }: {
+function SplitView({ rows, leftSyntax, rightSyntax, startIdx, endIdx, leftIdxMap, rightIdxMap }: {
   rows: SplitRow[];
   leftSyntax: ReactNode[][];
   rightSyntax: ReactNode[][];
+  startIdx: number;
+  endIdx: number;
+  leftIdxMap: number[];
+  rightIdxMap: number[];
 }) {
-  let leftIdx = 0;
-  let rightIdx = 0;
+  const total = rows.length;
+  const padTop = startIdx * ROW_H;
+  const padBot = Math.max(0, (total - endIdx) * ROW_H);
 
   const splitNumCss: React.CSSProperties = { ...numCss, width: 34 };
 
   return (
     <pre style={{ fontSize: 12, fontFamily: "var(--font-mono)", lineHeight: "1.5", margin: 0, padding: 0 }}>
-      {rows.map((row, i) => {
-        // Hunk row
+      {padTop > 0 && <div style={{ height: padTop }} />}
+      {rows.slice(startIdx, endIdx).map((row, j) => {
+        const i = startIdx + j;
+
         if (row.left?.type === "hunk") {
           return (
             <span key={i} style={{
@@ -408,13 +470,12 @@ function SplitView({ rows, leftSyntax, rightSyntax }: {
           );
         }
 
-        // Left side
         const leftLine = row.left;
         const rightLine = row.right;
 
         let leftContent: ReactNode = "";
         if (leftLine) {
-          const tokens = leftSyntax[leftIdx++];
+          const tokens = leftSyntax[leftIdxMap[i]];
           leftContent = leftLine.highlights && HL_COLOR[leftLine.type]
             ? renderInline(leftLine.content, leftLine.highlights, HL_COLOR[leftLine.type])
             : <>{tokens}</>;
@@ -422,7 +483,7 @@ function SplitView({ rows, leftSyntax, rightSyntax }: {
 
         let rightContent: ReactNode = "";
         if (rightLine) {
-          const tokens = rightSyntax[rightIdx++];
+          const tokens = rightSyntax[rightIdxMap[i]];
           rightContent = rightLine.highlights && HL_COLOR[rightLine.type]
             ? renderInline(rightLine.content, rightLine.highlights, HL_COLOR[rightLine.type])
             : <>{tokens}</>;
@@ -433,7 +494,6 @@ function SplitView({ rows, leftSyntax, rightSyntax }: {
 
         return (
           <span key={i} style={{ display: "flex", minHeight: "1.4em" }}>
-            {/* Left panel */}
             <span style={{
               display: "flex", flex: 1, backgroundColor: leftBg,
               borderLeft: leftLine ? BORDER[leftLine.type] : "3px solid transparent",
@@ -442,9 +502,7 @@ function SplitView({ rows, leftSyntax, rightSyntax }: {
               <span style={splitNumCss}>{leftLine?.num ?? ""}</span>
               <span style={{ whiteSpace: "pre", flex: 1, paddingRight: 4 }}>{leftContent}</span>
             </span>
-            {/* Divider */}
             <span style={{ width: 1, backgroundColor: "rgba(60,60,60,0.4)", flexShrink: 0 }} />
-            {/* Right panel */}
             <span style={{
               display: "flex", flex: 1, backgroundColor: rightBg,
               borderLeft: rightLine ? BORDER[rightLine.type] : "3px solid transparent",
@@ -456,6 +514,7 @@ function SplitView({ rows, leftSyntax, rightSyntax }: {
           </span>
         );
       })}
+      {padBot > 0 && <div style={{ height: padBot }} />}
     </pre>
   );
 }
@@ -465,35 +524,77 @@ function SplitView({ rows, leftSyntax, rightSyntax }: {
 export function DiffView({ diff, fullHeight }: DiffViewProps) {
   const [mode, setMode] = useState<"unified" | "split">("unified");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: 200 });
 
   const lang = useMemo(() => detectLanguage(diff), [diff]);
   const diffLines = useMemo(() => parseDiff(diff), [diff]);
 
-  // Syntax lines for unified view
+  const [, startTransition] = useTransition();
+
+  // Precompute code index map for unified view (maps diffLine index → syntaxLines index, -1 for hunks)
+  const codeIdxMap = useMemo(() => {
+    let idx = 0;
+    return diffLines.map(l => l.type === "hunk" ? -1 : idx++);
+  }, [diffLines]);
+
+  // All code lines (no hunks) — used for syntax highlighting
+  const allCodeLines = useMemo(() =>
+    diffLines.filter(l => l.type !== "hunk").map(l => l.content),
+  [diffLines]);
+
+  // Lazy syntax highlighting — only highlight visible range (unified)
   const syntaxLines = useMemo(() => {
-    const code = diffLines.filter(l => l.type !== "hunk").map(l => l.content).join("\n");
+    const code = allCodeLines.join("\n");
     return highlightToLines(code, lang);
-  }, [diffLines, lang]);
+  }, [allCodeLines, lang]);
 
-  // Split rows + separate syntax highlighting for each side
-  const { splitRows, leftSyntax, rightSyntax } = useMemo(() => {
+  // Split rows + index maps (cheap, no syntax highlighting)
+  const { splitRows, leftIdxMap, rightIdxMap, leftCode, rightCode } = useMemo(() => {
     const rows = buildSplitRows(diffLines);
-
-    // Collect left and right code for separate highlighting
-    const leftCode: string[] = [];
-    const rightCode: string[] = [];
+    const lCode: string[] = [];
+    const rCode: string[] = [];
+    const lMap: number[] = [];
+    const rMap: number[] = [];
+    let li = 0, ri = 0;
     for (const row of rows) {
-      if (row.left?.type === "hunk") continue;
-      if (row.left) leftCode.push(row.left.content);
-      if (row.right) rightCode.push(row.right.content);
+      if (row.left?.type === "hunk") {
+        lMap.push(-1);
+        rMap.push(-1);
+        continue;
+      }
+      lMap.push(row.left ? li : -1);
+      rMap.push(row.right ? ri : -1);
+      if (row.left) { lCode.push(row.left.content); li++; }
+      if (row.right) { rCode.push(row.right.content); ri++; }
     }
+    return { splitRows: rows, leftIdxMap: lMap, rightIdxMap: rMap, leftCode: lCode, rightCode: rCode };
+  }, [diffLines]);
 
+  // Lazy split syntax — only computed when in split mode
+  const { leftSyntax, rightSyntax } = useMemo(() => {
+    if (mode !== "split") return { leftSyntax: [] as ReactNode[][], rightSyntax: [] as ReactNode[][] };
     return {
-      splitRows: rows,
       leftSyntax: highlightToLines(leftCode.join("\n"), lang),
       rightSyntax: highlightToLines(rightCode.join("\n"), lang),
     };
-  }, [diffLines, lang]);
+  }, [mode, leftCode, rightCode, lang]);
+
+  // Virtualization: track scroll to render only visible rows
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const total = mode === "split" ? splitRows.length : diffLines.length;
+      const start = Math.max(0, Math.floor(el.scrollTop / ROW_H) - V_BUFFER);
+      const end = Math.min(total, Math.ceil((el.scrollTop + el.clientHeight) / ROW_H) + V_BUFFER);
+      setVisibleRange({ start, end });
+    };
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(onScroll);
+    ro.observe(el);
+    return () => { el.removeEventListener("scroll", onScroll); ro.disconnect(); };
+  }, [mode, diffLines.length, splitRows.length]);
 
   const showToolbar = fullHeight;
 
@@ -508,7 +609,7 @@ export function DiffView({ diff, fullHeight }: DiffViewProps) {
           borderBottom: "1px solid rgba(60,60,60,0.3)", flexShrink: 0,
         }}>
           <button
-            onClick={() => setMode("unified")}
+            onClick={() => startTransition(() => setMode("unified"))}
             title="Unified view"
             style={{
               background: mode === "unified" ? "rgba(255,255,255,0.08)" : "transparent",
@@ -523,7 +624,7 @@ export function DiffView({ diff, fullHeight }: DiffViewProps) {
             Unified
           </button>
           <button
-            onClick={() => setMode("split")}
+            onClick={() => startTransition(() => setMode("split"))}
             title="Split view"
             style={{
               background: mode === "split" ? "rgba(255,255,255,0.08)" : "transparent",
@@ -544,11 +645,11 @@ export function DiffView({ diff, fullHeight }: DiffViewProps) {
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <div ref={scrollRef} style={{ flex: 1, overflow: "auto" }}>
           {mode === "unified"
-            ? <UnifiedView diffLines={diffLines} syntaxLines={syntaxLines} />
-            : <SplitView rows={splitRows} leftSyntax={leftSyntax} rightSyntax={rightSyntax} />
+            ? <UnifiedView diffLines={diffLines} syntaxLines={syntaxLines} startIdx={visibleRange.start} endIdx={visibleRange.end} codeIdxMap={codeIdxMap} />
+            : <SplitView rows={splitRows} leftSyntax={leftSyntax} rightSyntax={rightSyntax} startIdx={visibleRange.start} endIdx={visibleRange.end} leftIdxMap={leftIdxMap} rightIdxMap={rightIdxMap} />
           }
         </div>
-        {fullHeight && <Minimap lines={diffLines} scrollRef={scrollRef} />}
+        {fullHeight && <Minimap lines={mode === "split" ? splitRowsToMinimapLines(splitRows) : diffLines} scrollRef={scrollRef} />}
       </div>
     </div>
   );

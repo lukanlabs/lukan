@@ -108,11 +108,12 @@
   .commit-detail {
     margin: 2px 0 6px; padding: 6px 10px; border-radius: 6px;
     background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05);
-    font-size: 11px;
+    font-size: 11px; overflow: hidden;
   }
-  .commit-detail .full-msg { color: #a1a1aa; margin-bottom: 6px; white-space: pre-wrap; }
+  .commit-detail .full-msg { color: #a1a1aa; margin-bottom: 6px; white-space: pre-wrap; word-break: break-word; }
   .commit-files { list-style: none; }
-  .commit-files li { padding: 2px 0; font-family: "JetBrains Mono", monospace; font-size: 10px; display: flex; gap: 6px; }
+  .commit-files li { padding: 2px 0; font-family: "JetBrains Mono", monospace; font-size: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .commit-files .file-name { word-break: break-all; min-width: 0; }
   .file-add { color: #4ade80; }
   .file-mod { color: #fbbf24; }
   .file-del { color: #fb7185; }
@@ -173,6 +174,19 @@
     </div>
   </div>
 <script>
+// Relay-aware fetch for local daemon API calls
+function fetchLocal(url, init) {
+  const host = window.location.hostname;
+  const isRelay = host === "app.lukan.ai" || host === "remote.lukan.ai" || host.endsWith(".kiteploy.com");
+  const headers = init?.headers ? { ...init.headers } : {};
+  if (isRelay) {
+    // Device name passed from parent via ?device= query param
+    const device = new URLSearchParams(window.location.search).get("device") || "default";
+    headers["x-lukan-device"] = device;
+  }
+  return fetch(url, { ...init, credentials: "include", headers });
+}
+
 let token = "", repo = "";
 const API = "https://api.github.com";
 const COLORS = ["#6366f1","#4ade80","#f59e0b","#fb7185","#8b5cf6","#06b6d4","#ec4899","#10b981","#ef4444","#3b82f6"];
@@ -201,7 +215,7 @@ async function detectRepoFromRemote() {
 
 async function loadConfig() {
   try {
-    const r = await fetch(window.location.origin + "/api/plugins/github/config");
+    const r = await fetchLocal(window.location.origin + "/api/plugins/github/config");
     if (!r.ok) return false;
     const cfg = await r.json();
     token = cfg.token || "";
@@ -252,7 +266,7 @@ let gitDir = "";
 
 async function detectGitDir() {
   try {
-    const r = await fetch(window.location.origin + "/api/cwd");
+    const r = await fetchLocal(window.location.origin + "/api/cwd");
     if (r.ok) {
       const cwd = await r.json();
       setGitDir(cwd);
@@ -287,7 +301,7 @@ let hasPostMessageCwd = false;
 setInterval(async () => {
   if (hasPostMessageCwd) return;
   try {
-    const r = await fetch(window.location.origin + "/api/cwd");
+    const r = await fetchLocal(window.location.origin + "/api/cwd");
     if (r.ok) {
       const cwd = await r.json();
       if (cwd && cwd !== gitDir) {
@@ -677,7 +691,7 @@ function attachCommitClickHandlers(container) {
       try {
         if (source === "git") {
           // Local git show
-          const r = await fetch(window.location.origin + "/api/git?cmd=show&dir=" + encodeURIComponent(gitDir) + "&args=" + encodeURIComponent(sha));
+          const r = await fetchLocal(window.location.origin + "/api/git?cmd=show&dir=" + encodeURIComponent(gitDir) + "&args=" + encodeURIComponent(sha));
           const data = await r.json();
           if (!data.ok) throw new Error(data.stderr);
           const out = data.stdout;
@@ -721,7 +735,7 @@ function attachCommitClickHandlers(container) {
           const files = data.files || [];
           const filesHtml = files.map(f => {
             const status = f.status === "added" ? "file-add" : f.status === "removed" ? "file-del" : "file-mod";
-            return `<li data-diff-file="${esc(f.filename)}" data-diff-sha="${sha}" style="cursor:pointer" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''"><span class="file-add">+${f.additions}</span><span class="file-del">-${f.deletions}</span><span class="${status}">${esc(f.filename)}</span></li>`;
+            return `<li data-diff-file="${esc(f.filename)}" data-diff-sha="${sha}" style="cursor:pointer" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''"><span class="file-add">+${f.additions}</span><span class="file-del">-${f.deletions}</span><span class="${status} file-name">${esc(f.filename)}</span></li>`;
           }).join("");
 
           detail.innerHTML = `<div class="full-msg">${esc(msg)}</div><ul class="commit-files">${filesHtml || '<li class="meta">No file changes</li>'}</ul>`;

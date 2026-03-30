@@ -15,12 +15,26 @@ use crate::state::{PendingRestRequest, SharedState};
 /// Timeout for REST tunnel requests (seconds).
 const TUNNEL_TIMEOUT_SECS: u64 = 60;
 
-/// Extract device name from request header.
+/// Extract device name from `x-lukan-device` header, falling back to the
+/// first path segment of the `Referer` URL (covers iframe loads where the
+/// browser cannot send custom headers).
 fn extract_device(headers: &axum::http::HeaderMap) -> Option<String> {
-    headers
-        .get("x-lukan-device")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
+    // 1. Explicit header (set by JS fetchLocal / transport-relay)
+    if let Some(v) = headers.get("x-lukan-device").and_then(|v| v.to_str().ok())
+        && !v.is_empty()
+    {
+        return Some(v.to_string());
+    }
+    // 2. Referer fallback — extract first path segment (the device name)
+    if let Some(referer) = headers.get("referer").and_then(|v| v.to_str().ok())
+        && let Some(path) = referer.split("//").nth(1).and_then(|s| s.split_once('/'))
+    {
+        let first_seg = path.1.split('/').next().unwrap_or("");
+        if !first_seg.is_empty() && first_seg != "api" && first_seg != "auth" {
+            return Some(first_seg.to_string());
+        }
+    }
+    None
 }
 
 /// E2E encrypted REST tunnel: passes encrypted blobs to/from the daemon.
@@ -163,7 +177,11 @@ pub async fn rest_tunnel_handler(
     }
 
     let method = request.method().to_string();
-    let path = request.uri().path().to_string();
+    let path = request
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| request.uri().path().to_string());
 
     // Collect headers
     let mut headers = HashMap::new();

@@ -32,7 +32,7 @@ interface MainAreaProps {
 export function MainArea({ mode, pipelineId, onPipelineBack, processLog, processLogSessionId, onCloseProcessLog, openTabs = [], activeTabIdx = 0, onSetActiveTab, onCloseTab, onCloseAllTabs }: MainAreaProps) {
   const hasViewer = openTabs.length > 0;
   const activeTab = openTabs[activeTabIdx] ?? null;
-  const [splitMode, setSplitMode] = useState<SplitMode>("horizontal");
+  const [splitMode, setSplitMode] = useState<SplitMode>("off");
   const [splitPct, setSplitPct] = useState(50);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -113,14 +113,37 @@ export function MainArea({ mode, pipelineId, onPipelineBack, processLog, process
     </div>
   );
 
-  // Overlay mode (no split)
+  // Overlay mode (no split) — floating panel over content
   if (hasViewer && !isSplit) {
     return (
       <div ref={containerRef} className="main-area" style={{ position: "relative" }}>
         {mainContent}
         {viewerEl && (
-          <div style={{ position: "absolute", inset: 0, zIndex: 10, display: "flex", flexDirection: "column", background: "var(--bg-base)" }}>
-            {viewerEl}
+          <div style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 10,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(0,0,0,0.4)",
+            backdropFilter: "blur(2px)",
+          }}>
+            <div style={{
+              width: "95%",
+              height: "92%",
+              maxWidth: 1200,
+              borderRadius: 10,
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              position: "relative",
+              background: "var(--bg-base)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
+            }}>
+              {viewerEl}
+            </div>
           </div>
         )}
       </div>

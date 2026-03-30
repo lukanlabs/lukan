@@ -139,14 +139,18 @@ export function Toolbar({
           <button
             className={mode === "agent" ? "active" : ""}
             onClick={() => onModeChange("agent")}
+            title="Agent"
           >
-            Agent
+            <MessageSquare size={13} className="sm:hidden" />
+            <span className="hidden sm:inline">Agent</span>
           </button>
           <button
             className={mode === "terminal" ? "active" : ""}
             onClick={() => onModeChange("terminal")}
+            title="Terminal"
           >
-            Terminal
+            <Terminal size={13} className="sm:hidden" />
+            <span className="hidden sm:inline">Terminal</span>
           </button>
         </div>
 
@@ -226,11 +230,10 @@ export function Toolbar({
             />
             <div
               style={{
-                position: "absolute",
-                top: "100%",
+                position: "fixed",
+                top: 44,
                 left: "50%",
                 transform: "translateX(-50%)",
-                marginTop: 4,
                 background: "var(--bg-secondary)",
                 border: "1px solid var(--border)",
                 borderRadius: 8,
@@ -239,7 +242,7 @@ export function Toolbar({
                 maxWidth: "90vw",
                 maxHeight: 320,
                 overflowY: "auto",
-                zIndex: 51,
+                zIndex: 100,
                 boxShadow: "var(--shadow-lg)",
               }}
             >

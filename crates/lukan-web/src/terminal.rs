@@ -398,6 +398,9 @@ impl TerminalManager {
             let reader_handle =
                 Self::spawn_output_reader(name.to_string(), fifo_path.clone(), output_tx.clone());
 
+            // Start cwd polling for recovered session
+            Self::spawn_cwd_poller(name.to_string(), output_tx.clone());
+
             let id = name.to_string();
             let saved_name = saved_names.get(&id).cloned();
             sessions.insert(
@@ -421,6 +424,47 @@ impl TerminalManager {
         }
 
         recovered
+    }
+
+    /// Spawn a background task that polls /proc/PID/cwd for a tmux session.
+    fn spawn_cwd_poller(session_name: String, tx: broadcast::Sender<ServerMessage>) {
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let pid_output = tmux_cmd()
+                .args(["display-message", "-t", &session_name, "-p", "#{pane_pid}"])
+                .output()
+                .await;
+            let pane_pid: Option<u32> = pid_output
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok());
+
+            if let Some(pid) = pane_pid {
+                let proc_path = format!("/proc/{pid}/cwd");
+                let mut last_cwd = String::new();
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    match tokio::fs::read_link(&proc_path).await {
+                        Ok(cwd) => {
+                            let cwd_str = cwd.to_string_lossy().to_string();
+                            if !cwd_str.is_empty() && cwd_str != last_cwd {
+                                last_cwd = cwd_str.clone();
+                                if tx
+                                    .send(ServerMessage::TerminalCwd {
+                                        session_id: session_name.clone(),
+                                        cwd: cwd_str,
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        });
     }
 
     /// Reset the pipe-pane output reader (tmux backend only).
@@ -638,47 +682,7 @@ impl TerminalManager {
             Self::spawn_output_reader(session_name.clone(), fifo_path.clone(), output_tx.clone());
 
         // Poll cwd via pane PID + /proc/PID/cwd (works without shell integration)
-        let cwd_session = session_name.clone();
-        let tx_cwd = output_tx;
-        tokio::spawn(async move {
-            // Wait for tmux pane to start
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            // Get pane PID
-            let pid_output = tmux_cmd()
-                .args(["display-message", "-t", &cwd_session, "-p", "#{pane_pid}"])
-                .output()
-                .await;
-            let pane_pid: Option<u32> = pid_output
-                .ok()
-                .filter(|o| o.status.success())
-                .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok());
-
-            if let Some(pid) = pane_pid {
-                let proc_path = format!("/proc/{pid}/cwd");
-                let mut last_cwd = String::new();
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    match tokio::fs::read_link(&proc_path).await {
-                        Ok(cwd) => {
-                            let cwd_str = cwd.to_string_lossy().to_string();
-                            if !cwd_str.is_empty() && cwd_str != last_cwd {
-                                last_cwd = cwd_str.clone();
-                                if tx_cwd
-                                    .send(ServerMessage::TerminalCwd {
-                                        session_id: cwd_session.clone(),
-                                        cwd: cwd_str,
-                                    })
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            }
-        });
+        Self::spawn_cwd_poller(session_name.clone(), output_tx);
 
         let mut sessions = self.sessions.lock().await;
         sessions.insert(

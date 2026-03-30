@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X, LayoutGrid, Layers, ZoomIn, ZoomOut } from "lucide-react";
 import type { TerminalSession } from "../../hooks/useTerminalSessions";
 
 interface TerminalTabBarProps {
@@ -9,6 +9,10 @@ interface TerminalTabBarProps {
   onClose: (id: string) => void;
   onCreate: () => void;
   onRename: (id: string, label: string) => void;
+  viewMode?: "tabs" | "split";
+  onToggleViewMode?: () => void;
+  splitFontSize?: number;
+  onSplitFontSizeChange?: (size: number) => void;
 }
 
 export default function TerminalTabBar({
@@ -18,6 +22,10 @@ export default function TerminalTabBar({
   onClose,
   onCreate,
   onRename,
+  viewMode = "tabs",
+  onToggleViewMode,
+  splitFontSize = 10,
+  onSplitFontSizeChange,
 }: TerminalTabBarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -128,6 +136,56 @@ export default function TerminalTabBar({
       >
         <Plus size={14} />
       </button>
+
+      {sessions.length > 1 && onToggleViewMode && (
+        <>
+          <div style={{ width: 1, height: 16, background: "rgba(60,60,60,0.4)", margin: "0 4px" }} />
+          <button
+            onClick={onToggleViewMode}
+            className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
+            style={{
+              color: viewMode === "split" ? "#6366f1" : "#71717a",
+              background: viewMode === "split" ? "rgba(99,102,241,0.1)" : "transparent",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = viewMode === "split" ? "rgba(99,102,241,0.15)" : "rgba(50, 50, 50, 0.3)";
+              e.currentTarget.style.color = viewMode === "split" ? "#818cf8" : "#fafafa";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = viewMode === "split" ? "rgba(99,102,241,0.1)" : "transparent";
+              e.currentTarget.style.color = viewMode === "split" ? "#6366f1" : "#71717a";
+            }}
+            title={viewMode === "split" ? "Tab view" : "Split view"}
+          >
+            {viewMode === "split" ? <Layers size={14} /> : <LayoutGrid size={14} />}
+          </button>
+          {viewMode === "split" && onSplitFontSizeChange && (
+            <>
+              <button
+                onClick={() => onSplitFontSizeChange(Math.max(6, splitFontSize - 1))}
+                className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
+                style={{ color: "#71717a", background: "transparent" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(50,50,50,0.3)"; e.currentTarget.style.color = "#fafafa"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#71717a"; }}
+                title="Zoom out"
+              >
+                <ZoomOut size={13} />
+              </button>
+              <span style={{ fontSize: 10, color: "#52525b", fontFamily: "var(--font-mono)", minWidth: 20, textAlign: "center" }}>{splitFontSize}</span>
+              <button
+                onClick={() => onSplitFontSizeChange(Math.min(16, splitFontSize + 1))}
+                className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
+                style={{ color: "#71717a", background: "transparent" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(50,50,50,0.3)"; e.currentTarget.style.color = "#fafafa"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#71717a"; }}
+                title="Zoom in"
+              >
+                <ZoomIn size={13} />
+              </button>
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }

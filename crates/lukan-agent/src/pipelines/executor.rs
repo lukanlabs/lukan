@@ -1645,17 +1645,33 @@ async fn send_gmail_notification(
         access_token.to_string()
     };
 
-    // Build approval link
+    // Build approval link — use relay URL if connected, otherwise localhost
     let lock_path = lukan_core::config::LukanPaths::daemon_lock_file();
-    let base_url = tokio::fs::read_to_string(&lock_path)
+    let lock_data = tokio::fs::read_to_string(&lock_path)
         .await
         .ok()
-        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
-        .and_then(|v| v.get("port").and_then(|p| p.as_u64()))
-        .map(|port| format!("http://localhost:{port}"))
-        .unwrap_or_else(|| "http://localhost:3000".to_string());
+        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok());
 
-    let approval_link = format!("{base_url}/approve/{approval_id}");
+    let relay_config = lukan_core::relay::RelayConfig::load_if_enabled().await;
+    let device_name = std::fs::read_to_string("/etc/hostname")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let approval_link = if let Some(ref cfg) = relay_config
+        && !device_name.is_empty()
+    {
+        let relay_base = cfg
+            .relay_url
+            .replace("wss://", "https://")
+            .replace("ws://", "http://");
+        let relay_base = relay_base.trim_end_matches('/');
+        format!("{relay_base}/api/pipelines/approvals/{approval_id}/page?device={device_name}")
+    } else {
+        let port = lock_data
+            .and_then(|v| v.get("port").and_then(|p| p.as_u64()))
+            .unwrap_or(3000);
+        format!("http://localhost:{port}/approve/{approval_id}")
+    };
 
     // Truncate context for email
     let context = if text.len() > 3000 {

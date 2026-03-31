@@ -374,7 +374,7 @@ pub async fn approval_page(
                 r#"<!DOCTYPE html><html><head><title>Approval Not Found</title>
                 <meta name="viewport" content="width=device-width,initial-scale=1">
                 <style>{}</style></head>
-                <body><div class="card"><h2>Approval not found</h2><p>This approval may have expired or already been resolved.</p></div></body></html>"#,
+                <body><div class="brand">LUKAN</div><div class="card"><h2 style="font-size:16px;margin-bottom:8px">Approval not found</h2><p style="font-size:13px;color:#a1a1aa">This approval may have expired or already been resolved.</p></div></body></html>"#,
                 APPROVAL_CSS
             ))
             .into_response();
@@ -447,6 +447,7 @@ pub async fn approval_page(
     <style>{APPROVAL_CSS}</style>
 </head>
 <body>
+    <div class="brand">LUKAN</div>
     <div id="login-gate" style="display:none">
         <div class="card">
             <h2>Login Required</h2>
@@ -520,8 +521,10 @@ pub async fn approval_page(
             try {{
                 const headers = {{ "Content-Type": "application/json" }};
                 if (token) headers["Authorization"] = "Bearer " + token;
+                const device = new URLSearchParams(window.location.search).get("device") || "";
+                if (device) headers["x-lukan-device"] = device;
                 const r = await fetch("/api/pipelines/approvals/" + approvalId + "/" + action, {{
-                    method: "POST", headers, body: "{{}}"
+                    method: "POST", headers, credentials: "include", body: "{{}}"
                 }});
                 const el = document.getElementById("result");
                 if (r.ok) {{
@@ -552,24 +555,68 @@ pub async fn approval_page(
 
 const APPROVAL_CSS: &str = r#"
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 16px; }
-    .card { background: #141414; border: 1px solid #2a2a2a; border-radius: 12px; padding: 24px; max-width: 540px; width: 100%; }
-    .header { margin-bottom: 16px; }
-    .pipeline-name { font-size: 18px; font-weight: 600; color: #e0e0e0; margin-bottom: 4px; }
-    .status { font-size: 13px; padding: 4px 10px; border-radius: 6px; display: inline-block; }
-    .status.pending { background: rgba(139,92,246,0.15); color: #a78bfa; }
-    .status.approved { background: rgba(34,197,94,0.15); color: #22c55e; }
-    .status.rejected { background: rgba(239,68,68,0.15); color: #ef4444; }
-    .context { font-size: 13px; color: #aaa; line-height: 1.6; padding: 16px; background: #0e0e0e; border: 1px solid #1e1e1e; border-radius: 8px; margin-bottom: 16px; max-height: 300px; overflow-y: auto; word-break: break-word; }
+    body {
+        background: #0a0a0a; color: #fafafa;
+        font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        min-height: 100vh; padding: 24px;
+    }
+    .brand {
+        font-size: 11px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase;
+        color: rgba(255,255,255,0.25); margin-bottom: 24px;
+    }
+    .card {
+        background: rgba(20,20,20,0.8); border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 16px; padding: 28px; max-width: 520px; width: 100%;
+        backdrop-filter: blur(12px); box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    .header { margin-bottom: 20px; }
+    .pipeline-name {
+        font-size: 16px; font-weight: 600; color: #fafafa; margin-bottom: 6px;
+        font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    }
+    .status {
+        font-size: 11px; padding: 3px 10px; border-radius: 20px; display: inline-block;
+        font-weight: 500; letter-spacing: 0.3px;
+    }
+    .status.pending { background: rgba(99,102,241,0.12); color: #818cf8; border: 1px solid rgba(99,102,241,0.2); }
+    .status.approved { background: rgba(74,222,128,0.1); color: #4ade80; border: 1px solid rgba(74,222,128,0.2); }
+    .status.rejected { background: rgba(251,113,133,0.1); color: #fb7185; border: 1px solid rgba(251,113,133,0.2); }
+    .context {
+        font-size: 12px; color: #a1a1aa; line-height: 1.7; padding: 16px;
+        background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.05);
+        border-radius: 10px; margin-bottom: 20px; max-height: 280px;
+        overflow-y: auto; word-break: break-word;
+        font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    }
+    .context::-webkit-scrollbar { width: 4px; }
+    .context::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
     .buttons { display: flex; gap: 10px; }
-    .btn { flex: 1; padding: 10px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
-    .btn:hover { opacity: 0.85; }
-    .btn.approve { background: #22c55e; color: #fff; }
-    .btn.reject { background: #ef4444; color: #fff; }
-    .result { margin-top: 12px; padding: 10px; border-radius: 8px; font-size: 14px; font-weight: 500; text-align: center; }
-    .result.approved { background: rgba(34,197,94,0.15); color: #22c55e; }
-    .result.rejected { background: rgba(239,68,68,0.15); color: #ef4444; }
-    .error { color: #ef4444; font-size: 12px; margin-top: 8px; }
-    input { width: 100%; padding: 10px; background: #0e0e0e; border: 1px solid #2a2a2a; border-radius: 8px; color: #e0e0e0; font-size: 14px; outline: none; }
-    input:focus { border-color: #8b5cf6; }
+    .btn {
+        flex: 1; padding: 10px 16px; border: none; border-radius: 10px;
+        font-size: 13px; font-weight: 600; cursor: pointer;
+        transition: all 0.15s ease; letter-spacing: 0.2px;
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+    .btn:active { transform: translateY(0); }
+    .btn:disabled { transform: none; box-shadow: none; cursor: not-allowed; }
+    .btn.approve { background: #4ade80; color: #0a0a0a; }
+    .btn.approve:hover { background: #86efac; }
+    .btn.reject { background: rgba(251,113,133,0.15); color: #fb7185; border: 1px solid rgba(251,113,133,0.2); }
+    .btn.reject:hover { background: rgba(251,113,133,0.25); }
+    .result {
+        margin-top: 16px; padding: 12px; border-radius: 10px;
+        font-size: 13px; font-weight: 500; text-align: center;
+    }
+    .result.approved { background: rgba(74,222,128,0.1); color: #4ade80; border: 1px solid rgba(74,222,128,0.15); }
+    .result.rejected { background: rgba(251,113,133,0.1); color: #fb7185; border: 1px solid rgba(251,113,133,0.15); }
+    .error { color: #fb7185; font-size: 11px; margin-top: 8px; }
+    input {
+        width: 100%; padding: 10px 12px;
+        background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 10px; color: #fafafa; font-size: 13px; outline: none;
+        transition: border-color 0.15s;
+    }
+    input:focus { border-color: rgba(99,102,241,0.5); }
+    input::placeholder { color: rgba(255,255,255,0.2); }
 "#;

@@ -142,7 +142,19 @@ pub async fn rest_tunnel_handler(
             .map(|s| s.to_string())
     });
 
-    let device = match extract_device(request.headers()) {
+    let device = extract_device(request.headers()).or_else(|| {
+        // Query param fallback (for approval links from email)
+        request
+            .uri()
+            .query()
+            .and_then(|q| {
+                q.split('&')
+                    .find_map(|pair| pair.strip_prefix("device="))
+                    .map(|v| v.to_string())
+            })
+            .filter(|d| !d.is_empty())
+    });
+    let device = match device {
         Some(d) => d,
         None => return (StatusCode::BAD_REQUEST, "Missing x-lukan-device header").into_response(),
     };

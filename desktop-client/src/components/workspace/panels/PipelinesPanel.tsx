@@ -509,7 +509,7 @@ export function PipelinesPanel() {
               >
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text)" }}>
+                    <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text-primary)" }}>
                       {sr.stepName}
                     </span>
                     <StatusBadge status={sr.status} />
@@ -578,7 +578,7 @@ export function PipelinesPanel() {
             <ArrowLeft size={14} />
           </button>
           <Workflow size={14} style={{ color: "var(--accent, #fbbf24)" }} />
-          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{detail.name}</span>
+          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{detail.name}</span>
           <span
             style={{
               fontSize: 10,
@@ -824,7 +824,7 @@ function CreateForm({
     width: "100%",
     border: "1px solid var(--border)",
     background: "var(--bg-secondary, #1a1a2e)",
-    color: "var(--text)",
+    color: "var(--text-primary)",
     borderRadius: 4,
     padding: "6px 8px",
     fontSize: 12,
@@ -858,7 +858,7 @@ function CreateForm({
           <ArrowLeft size={14} />
         </button>
         <Plus size={14} style={{ color: "var(--accent, #fbbf24)" }} />
-        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>New Pipeline</span>
+        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>New Pipeline</span>
       </div>
 
       {/* Name */}
@@ -1015,9 +1015,9 @@ function CreateForm({
           type="submit"
           disabled={!name.trim() || !triggerValid}
           style={{
-            border: "1px solid var(--accent, #a78bfa)",
-            background: !name.trim() || !triggerValid ? "transparent" : "var(--accent, #a78bfa)",
-            color: !name.trim() || !triggerValid ? "var(--text-muted)" : "#fff",
+            border: !name.trim() || !triggerValid ? "1px solid rgba(255,255,255,0.1)" : "1px solid rgba(255,255,255,0.2)",
+            background: !name.trim() || !triggerValid ? "transparent" : "#fafafa",
+            color: !name.trim() || !triggerValid ? "rgba(255,255,255,0.3)" : "#0a0a0a",
             cursor: !name.trim() || !triggerValid ? "not-allowed" : "pointer",
             padding: "4px 10px",
             borderRadius: 4,

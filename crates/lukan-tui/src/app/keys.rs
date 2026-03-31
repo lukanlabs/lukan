@@ -350,10 +350,38 @@ impl App {
                 _ => {}
             }
         } else if self.memory_viewer.is_some() {
-            // Memory viewer overlay — ESC closes
-            if key.code == KeyCode::Esc {
-                self.memory_viewer = None;
-                self.force_redraw = true;
+            // Memory viewer overlay — scroll with arrow keys, PgUp/PgDown, Home/End, ESC closes
+            let scroll_step: u16 = 3;
+            let page_step: u16 = 15;
+            match key.code {
+                KeyCode::Esc => {
+                    self.memory_viewer = None;
+                    self.memory_viewer_scroll = 0;
+                    self.force_redraw = true;
+                }
+                KeyCode::Up => {
+                    self.memory_viewer_scroll =
+                        self.memory_viewer_scroll.saturating_sub(scroll_step);
+                    self.force_redraw = true;
+                }
+                KeyCode::Down => {
+                    self.memory_viewer_scroll =
+                        self.memory_viewer_scroll.saturating_add(scroll_step);
+                    self.force_redraw = true;
+                }
+                KeyCode::PageUp => {
+                    self.memory_viewer_scroll = self.memory_viewer_scroll.saturating_sub(page_step);
+                    self.force_redraw = true;
+                }
+                KeyCode::PageDown => {
+                    self.memory_viewer_scroll = self.memory_viewer_scroll.saturating_add(page_step);
+                    self.force_redraw = true;
+                }
+                KeyCode::Home => {
+                    self.memory_viewer_scroll = 0;
+                    self.force_redraw = true;
+                }
+                _ => {}
             }
         } else if self.rewind_picker.is_some() {
             // Rewind picker overlay
@@ -974,6 +1002,8 @@ impl App {
                         .to_string();
             }
             self.memory_viewer = Some(content);
+            self.memory_viewer_scroll = 0;
+            self.force_redraw = true;
         } else if key.code == KeyCode::Char('t')
             && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
         {

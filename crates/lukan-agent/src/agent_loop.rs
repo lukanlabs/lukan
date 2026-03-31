@@ -33,7 +33,7 @@ use crate::vision_preprocessor::extract_image_urls;
 // ── Thresholds ────────────────────────────────────────────────────────────
 
 /// When context tokens reach this, trigger MEMORY.md update
-const MEMORY_UPDATE_THRESHOLD: u64 = 10_000; // TODO: restore to 50_000 after testing
+const MEMORY_UPDATE_THRESHOLD: u64 = 20_000;
 /// When context tokens reach this, trigger auto-compaction
 const COMPACTION_THRESHOLD: u64 = 150_000;
 /// Keep last N messages during compaction; summarize everything before

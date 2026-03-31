@@ -145,6 +145,8 @@ pub struct App {
     rewind_picker: Option<RewindPicker>,
     /// Memory viewer overlay content (shown via Alt+M)
     memory_viewer: Option<String>,
+    /// Scroll offset for memory viewer
+    memory_viewer_scroll: u16,
     /// Trust prompt overlay (shown on first launch in an untrusted directory)
     trust_prompt: Option<TrustPrompt>,
     /// Sender to signal Alt+B (send running Bash to background)
@@ -391,6 +393,7 @@ impl App {
             subagent_picker: None,
             rewind_picker: None,
             memory_viewer: None,
+            memory_viewer_scroll: 0,
             trust_prompt: None,
             bg_signal_tx,
             bg_signal_rx,

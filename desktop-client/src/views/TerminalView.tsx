@@ -267,8 +267,9 @@ export default function TerminalView() {
             display: "grid",
             gridTemplateColumns: `repeat(${splitCols}, 1fr)`,
             gridTemplateRows: `repeat(${splitRows}, 1fr)`,
-            gap: 1,
-            background: "rgba(60,60,60,0.4)",
+            gap: 4,
+            background: "#1a1a1e",
+            boxSizing: "border-box",
           }}
         >
           {sessions.map((s, i) => (
@@ -278,8 +279,13 @@ export default function TerminalView() {
               style={{
                 position: "relative",
                 minHeight: 0,
-                outline: s.id === activeSessionId ? "1px solid rgba(99,102,241,0.5)" : "none",
-                outlineOffset: -1,
+                minWidth: 0,
+                border: s.id === activeSessionId
+                  ? "2px solid rgba(99,102,241,0.6)"
+                  : "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 6,
+                overflow: "hidden",
+                boxSizing: "border-box",
               }}
             >
               <span style={{

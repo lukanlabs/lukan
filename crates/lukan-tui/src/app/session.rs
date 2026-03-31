@@ -39,7 +39,9 @@ impl App {
         });
     }
 
-    /// Re-render the current session without reloading the agent
+    /// Refresh the UI display of the current session.
+    /// In daemon mode: just re-renders the TUI without touching the agent.
+    /// In-process mode: saves and reconstructs from disk.
     pub(super) async fn refresh_session(&mut self) {
         let session_id = match self.session_id.clone() {
             Some(id) => id,
@@ -50,16 +52,18 @@ impl App {
             }
         };
 
-        // ── Daemon mode: just force a UI redraw, don't reload the agent ──
+        // ── Daemon mode: re-render only, don't reload the agent ──
         if self.daemon_tx.is_some() {
-            self.force_redraw = true;
+            // Reconstruct UI messages from the saved session on disk
+            // without destroying the live agent in the daemon
+            self.reconstruct_messages_from_session(&session_id).await;
             self.messages
                 .push(ChatMessage::new("system", "Session refreshed."));
+            self.force_redraw = true;
             return;
         }
 
-        // ── In-process mode ──
-        // Save current session to disk first
+        // ── In-process mode: save then reconstruct UI from disk ──
         if let Some(ref mut agent) = self.agent
             && let Err(e) = agent.save_session_public().await
         {
@@ -70,7 +74,6 @@ impl App {
             return;
         }
 
-        // Reconstruct UI messages from the saved session
         self.reconstruct_messages_from_session(&session_id).await;
         self.messages
             .push(ChatMessage::new("system", "Session refreshed."));
@@ -83,12 +86,8 @@ impl App {
             picker.sessions[idx].id.clone()
         };
 
-        // Don't reload the current session
-        if self.session_id.as_deref() == Some(&session_id) {
-            self.messages
-                .push(ChatMessage::new("system", "Already in this session."));
-            return;
-        }
+        // If selecting the current session, treat it as a refresh
+        let _is_refresh = self.session_id.as_deref() == Some(&session_id);
 
         // ── Daemon mode: send LoadSession to daemon ──
         if let Some(ref daemon) = self.daemon_tx {

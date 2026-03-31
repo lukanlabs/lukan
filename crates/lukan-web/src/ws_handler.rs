@@ -62,6 +62,8 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<String>(512);
     let (done_tx, mut done_rx) = mpsc::channel::<String>(16);
     let mut cancel_tokens: HashMap<String, CancellationToken> = HashMap::new();
+    // Track which session this connection is viewing (for broadcast filtering)
+    let mut active_session_id: Option<String> = None;
 
     // If auth required, send auth_required message
     if !authenticated {
@@ -114,9 +116,15 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
                 continue;
             }
             Ok(broadcast) = stream_rx.recv() => {
-                // Forward stream events from other clients' agent turns.
+                // Forward stream events only if this connection is viewing the same session.
                 if authenticated && broadcast.origin_conn_id != conn_id {
-                    let _ = ws_tx.send(Message::Text(broadcast.json.into())).await;
+                    let should_forward = match (&broadcast.session_id, &active_session_id) {
+                        (Some(b), Some(a)) => b == a,
+                        _ => false,
+                    };
+                    if should_forward {
+                        let _ = ws_tx.send(Message::Text(broadcast.json.into())).await;
+                    }
                 }
                 continue;
             }
@@ -216,6 +224,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
             &outbound_tx,
             &mut cancel_tokens,
             &done_tx,
+            &mut active_session_id,
         )
         .await;
     }
@@ -258,6 +267,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
 }
 
 /// Dispatch an authenticated client message
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_message(
     msg: ClientMessage,
     conn_id: usize,
@@ -266,6 +276,7 @@ async fn dispatch_message(
     outbound_tx: &mpsc::Sender<String>,
     cancel_tokens: &mut HashMap<String, CancellationToken>,
     done_tx: &mpsc::Sender<String>,
+    active_session_id: &mut Option<String>,
 ) {
     match msg {
         ClientMessage::SendMessage {
@@ -309,6 +320,16 @@ async fn dispatch_message(
                     && let Some(ref cwd) = session.cwd
                 {
                     *state.active_cwd.lock().unwrap() = Some(cwd.clone());
+                }
+            }
+
+            // Track which session this connection is using (for broadcast filtering)
+            {
+                let sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get(&tab)
+                    && let Some(ref agent) = session.agent
+                {
+                    *active_session_id = Some(agent.session_id().to_string());
                 }
             }
 
@@ -386,6 +407,8 @@ async fn dispatch_message(
                 None
             };
             handle_load_session(saved_session, tab_id, conn_id, state, ws_tx).await;
+            // Update active session for broadcast filtering
+            *active_session_id = Some(saved_session.to_string());
         }
 
         ClientMessage::NewSession {
@@ -1463,6 +1486,7 @@ async fn handle_send_message(
         let _ = state.stream_tx.send(StreamBroadcast {
             json: user_event.to_string(),
             origin_conn_id: conn_id,
+            session_id: Some(broadcast_session_id.clone()),
         });
     }
 
@@ -1497,6 +1521,7 @@ async fn handle_send_message(
                         let _ = state.stream_tx.send(StreamBroadcast {
                             json: broadcast_json,
                             origin_conn_id: conn_id,
+                            session_id: Some(broadcast_session_id.clone()),
                         });
                         if outbound_tx.send(json).await.is_err() {
                             warn!(conn_id, "Outbound channel closed, client disconnected");
@@ -1577,6 +1602,7 @@ async fn handle_send_message(
                 let _ = state.stream_tx.send(StreamBroadcast {
                     json: broadcast_json,
                     origin_conn_id: conn_id,
+                    session_id: Some(broadcast_sid.clone()),
                 });
             }
 

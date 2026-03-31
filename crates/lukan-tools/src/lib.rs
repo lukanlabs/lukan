@@ -9,6 +9,7 @@ pub mod mcp_tools;
 pub mod planner_tools;
 pub mod plugin_tools;
 mod read_file;
+pub mod remember;
 pub mod sandbox;
 pub mod skills;
 pub mod tasks;
@@ -759,6 +760,8 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(Box::new(grep::GrepTool));
     registry.register(Box::new(glob_tool::GlobTool));
     registry.register(Box::new(web_fetch::WebFetchTool));
+    // Memory retrieval
+    registry.register(Box::new(remember::RememberTool));
     // Task tools
     registry.register(Box::new(tasks::TaskAddTool));
     registry.register(Box::new(tasks::TaskListTool));

@@ -130,7 +130,7 @@ impl App {
             if sub == "activate" {
                 let _ = tokio::fs::create_dir_all(&memory_dir).await;
                 if !memory_path.exists() {
-                    let _ = tokio::fs::write(&memory_path, "# Project Memory\n\n").await;
+                    let _ = tokio::fs::write(&memory_path, "# Behavior Profile\n\n").await;
                 }
                 let _ = tokio::fs::write(&active_path, "").await;
                 self.messages.push(ChatMessage::new(

@@ -12,11 +12,13 @@ use tokio_util::sync::CancellationToken;
 use crate::protocol::ServerMessage;
 use crate::terminal::TerminalManager;
 
-/// A stream event broadcast entry sent to all connected clients.
+/// A stream event broadcast entry sent to clients watching the same session.
 #[derive(Clone, Debug)]
 pub struct StreamBroadcast {
     pub json: String,
     pub origin_conn_id: usize,
+    /// Session ID to scope the broadcast — only clients viewing this session receive it.
+    pub session_id: Option<String>,
 }
 
 /// Per-session agent state (one per tab/agent instance).

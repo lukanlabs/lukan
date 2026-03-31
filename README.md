@@ -90,13 +90,17 @@ Built in Rust. Single binary. No runtime dependencies.
 | **Single Binary** | Rust, no runtime dependencies, instant startup |
 | **License** | MIT — Free, bring your own keys |
 
-## Install
+## Quick Start
+
+Get up and running in 5 steps:
+
+### 1. Install Lukan
 
 ```bash
-# CLI only (single binary — includes TUI + Web UI)
+# CLI only (includes TUI + Web UI)
 curl -fsSL https://get.lukan.ai/install.sh | bash
 
-# CLI + Desktop app (Tauri)
+# Or with Desktop app
 curl -fsSL https://get.lukan.ai/install.sh | bash -s -- --desktop
 ```
 
@@ -104,118 +108,104 @@ curl -fsSL https://get.lukan.ai/install.sh | bash -s -- --desktop
 <img src="examples/img/install.gif" alt="Install" width="700">
 </p>
 
-Or build from source:
-
-```bash
-git clone https://github.com/lukanlabs/lukan.git
-cd lukan
-cargo build --release
-```
-
-### Docker
-
+**Or use Docker:**
 ```bash
 docker pull lukanlabs/lukan
 docker run -d -p 3000:3000 --name lukan lukanlabs/lukan
 
-# Configure and start chatting inside the container
+# Enter the container and follow steps 2-5 below
 docker exec -it lukan bash
-lukan setup       # configure provider and API keys
-lukan             # start TUI
 ```
 
 The web UI is accessible at `http://localhost:3000`. You can also build the image locally with `docker build -t lukan .`.
 
-## Uninstall
+### 2. Authenticate or configure your provider
 
-**curl install:**
+**For OAuth providers (no API key needed):**
 ```bash
-rm ~/.local/bin/lukan ~/.local/bin/lukan-desktop ~/.local/bin/lukan-relay
-```
-
-**AppImage:**
-```bash
-rm Lukan_Desktop.AppImage
-rm ~/.local/bin/lukan
-```
-
-**deb package:**
-```bash
-sudo dpkg -r lukan-desktop
-rm ~/.local/bin/lukan
-```
-
-**Config & data** (optional, shared across all install methods):
-```bash
-rm -rf ~/.config/lukan ~/.local/share/lukan
-```
-
-## Quick Start
-
-```bash
-# First time: configure your provider and API keys
-lukan setup
-
-# Start chatting (TUI mode)
-lukan chat
-
-# Continue your last session
-lukan chat -c
-```
-
-<p align="center">
-<img src="examples/img/setup.gif" alt="Setup" width="700">
-</p>
-
-### Choose your interface
-
-```bash
-# Terminal UI (default)
-lukan chat
-
-# Web UI — opens in your browser
-lukan chat --ui web
-
-# Desktop app — native Tauri window with terminal, browser panel, and plugins
-lukan chat --desktop
-```
-
-### Choose your provider and model
-
-Use `lukan setup` to configure your provider and API key, then switch models at any time with `/model` inside the TUI or Web UI. You can also configure providers and API keys directly from the Web or Desktop UI under **Settings → Credentials** and **Settings → Providers**.
-
-For providers that use OAuth, authenticate first:
-
-```bash
-# OpenAI Codex — OAuth device flow (no API key needed)
+# OpenAI Codex
 lukan codex-auth
 
-# GitHub Copilot — OAuth device flow
+# GitHub Copilot  
 lukan copilot-auth
-
-# All other providers (Anthropic, Fireworks, Gemini, etc.)
-lukan setup
 ```
 
 <p align="center">
 <img src="examples/img/codex-auth.gif" alt="Codex Auth" width="700">
 </p>
 
-To browse and select which models appear in `/model` inside the TUI:
+**For API key providers:**
+```bash
+lukan setup
+```
+Enter your API key when prompted (Anthropic, Fireworks, Gemini, Nebius, etc.).
+
+<p align="center">
+<img src="examples/img/setup.gif" alt="Setup" width="700">
+</p>
+
+### 3. Select which models you want available
+
+Choose which models from your provider will appear in the `/model` selector:
 
 ```bash
+# Example: Select models from OpenAI Codex
 lukan models openai-codex
+
+# Or from Anthropic
 lukan models anthropic
-lukan models fireworks
+
+# Or any other provider you configured
+lukan models <provider>
 ```
 
 <p align="center">
 <img src="examples/img/codex-models.gif" alt="Model Selection" width="700">
 </p>
 
-This lets you choose which models are available when using `/model` during a chat session.
+This opens an interactive selector where you pick which models to make available.
 
-For more details see [docs.lukan.ai](https://docs.lukan.ai).
+### 4. Start the agent
+
+**Terminal UI (default)**
+```bash
+lukan
+# or
+lukan chat
+```
+
+**Web UI** — Opens your browser at http://localhost:3000
+```bash
+lukan chat --ui web
+```
+
+**Desktop app**
+```bash
+lukan chat --desktop
+```
+
+### 5. Select your model inside the chat
+
+Once inside the chat, type:
+
+```
+/model
+```
+
+This shows the models you selected in step 3. Pick one and start chatting!
+
+---
+
+**Summary:** `install` → `auth/setup` → `select models` → `chat` → `/model`
+
+Run `lukan doctor` anytime to check your configuration and troubleshoot issues.
+
+### Continue your last session
+
+```bash
+# Resume your previous chat
+lukan chat -c
+```
 
 ### Browser automation
 
@@ -506,6 +496,30 @@ cargo run -- chat
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Uninstall
+
+**curl install:**
+```bash
+rm ~/.local/bin/lukan ~/.local/bin/lukan-desktop ~/.local/bin/lukan-relay
+```
+
+**AppImage:**
+```bash
+rm Lukan_Desktop.AppImage
+rm ~/.local/bin/lukan
+```
+
+**deb package:**
+```bash
+sudo dpkg -r lukan-desktop
+rm ~/.local/bin/lukan
+```
+
+**Config & data** (optional, shared across all install methods):
+```bash
+rm -rf ~/.config/lukan ~/.local/share/lukan
+```
 
 ## License
 

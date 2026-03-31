@@ -25,9 +25,7 @@ use tokio::sync::{Mutex, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::memory_helpers::{
-    active_memory_path, extract_section, format_messages_for_context, write_memory_file_to,
-};
+use crate::memory_helpers::{active_memory_path, extract_section, format_messages_for_context};
 use crate::message_history::MessageHistory;
 use crate::session_manager::SessionManager;
 use crate::vision_preprocessor::extract_image_urls;
@@ -35,7 +33,7 @@ use crate::vision_preprocessor::extract_image_urls;
 // ── Thresholds ────────────────────────────────────────────────────────────
 
 /// When context tokens reach this, trigger MEMORY.md update
-const MEMORY_UPDATE_THRESHOLD: u64 = 50_000;
+const MEMORY_UPDATE_THRESHOLD: u64 = 20_000;
 /// When context tokens reach this, trigger auto-compaction
 const COMPACTION_THRESHOLD: u64 = 150_000;
 /// Keep last N messages during compaction; summarize everything before
@@ -46,7 +44,12 @@ const COMPACTION_KEEP_MESSAGES: usize = 10;
 const COMPACTION_SIMPLE_PROMPT: &str = include_str!("../../../prompts/compaction-simple.txt");
 const COMPACTION_WITH_MEMORY_PROMPT: &str =
     include_str!("../../../prompts/compaction-with-memory.txt");
+#[allow(dead_code)] // kept for behavior profile MEMORY.md fallback
 const MEMORY_UPDATE_PROMPT: &str = include_str!("../../../prompts/memory_update.txt");
+const STRUCTURED_MEMORY_UPDATE_PROMPT: &str =
+    include_str!("../../../prompts/structured_memory_update.txt");
+const BEHAVIOR_MEMORY_UPDATE_PROMPT: &str =
+    include_str!("../../../prompts/behavior_memory_update.txt");
 const PLANNER_PROMPT: &str = include_str!("../../../prompts/planner.txt");
 const TASK_TRACKING_PROMPT: &str = include_str!("../../../prompts/task-tracking.txt");
 
@@ -1759,17 +1762,23 @@ impl AgentLoop {
             if let Err(e) = self.compact_history(event_tx).await {
                 error!("Compaction failed: {e}");
             }
+            // Also trigger memory update after compaction
+            if let Err(e) = self.update_memory().await {
+                error!("Memory update after compaction failed: {e}");
+            }
             return;
         }
 
-        // Memory update at 50k context tokens
-        if ctx >= MEMORY_UPDATE_THRESHOLD {
-            let total_used = self.input_tokens + self.output_tokens;
-            if total_used - self.last_memory_update_tokens >= MEMORY_UPDATE_THRESHOLD
-                && let Err(e) = self.update_memory().await
-            {
-                error!("Memory update failed: {e}");
-            }
+        // Memory update when context window reaches threshold
+        // Reset stale tracker if it's from old system (was tracking total tokens, not ctx)
+        if self.last_memory_update_tokens > ctx {
+            self.last_memory_update_tokens = 0;
+        }
+        if ctx >= MEMORY_UPDATE_THRESHOLD
+            && ctx.saturating_sub(self.last_memory_update_tokens) >= MEMORY_UPDATE_THRESHOLD
+            && let Err(e) = self.update_memory().await
+        {
+            error!("Memory update failed: {e}");
         }
     }
 
@@ -1863,9 +1872,8 @@ impl AgentLoop {
             summary = summary_match
                 .unwrap_or_else(|| "Previous conversation context was compacted.".to_string());
 
-            if let Some(updated_memory) = memory_match {
-                write_memory_file_to(mem_path, &updated_memory).await;
-            }
+            // Memory update is handled separately by update_memory() after compaction
+            let _ = memory_match;
         } else {
             summary = self
                 .call_llm_for_memory(COMPACTION_SIMPLE_PROMPT, &full_context)
@@ -1917,44 +1925,46 @@ impl AgentLoop {
 
     // ── Memory Update ─────────────────────────────────────────────────────
 
-    /// Update MEMORY.md with insights from the conversation
+    /// Update project memories with insights from the conversation.
+    /// Uses structured memory files when available, falls back to behavior profile MEMORY.md.
     async fn update_memory(&mut self) -> Result<()> {
-        let mem_path = match active_memory_path() {
-            Some(p) => p,
-            None => {
-                // No active memory file, nothing to update
-                self.last_memory_update_tokens = self.input_tokens + self.output_tokens;
-                return Ok(());
-            }
-        };
+        let _active = active_memory_path();
+        let cwd = self.cwd.clone();
 
-        let messages = self.history.messages();
-        let context = format_messages_for_context(messages);
+        // Check for structured memory files
+        let memory_files = lukan_tools::remember::discover_memory_files(&cwd).await;
+        let has_profile = lukan_tools::remember::has_behavior_profile(&cwd).await;
 
-        let current_memory = tokio::fs::read_to_string(&mem_path)
-            .await
-            .unwrap_or_else(|_| "# Memory\n\n".to_string());
+        // Always run memory update — create .lukan/memories/ if needed
+        {
+            let messages = self.history.messages().to_vec();
+            let context = format_messages_for_context(&messages);
+            let frontmatter_listing =
+                lukan_tools::remember::format_frontmatters_for_llm(&memory_files);
+            let profile_content = if has_profile {
+                lukan_tools::remember::read_behavior_profile(&cwd).await
+            } else {
+                None
+            };
+            let provider = std::sync::Arc::clone(&self.provider);
 
-        let user_prompt = format!(
-            "Current MEMORY.md:\n```\n{current_memory}\n```\n\n\
-             Conversation:\n{context}\n\n\
-             Analyze the conversation and update MEMORY.md. \
-             Preserve existing useful information, add new patterns/decisions/solutions \
-             discovered in the conversation. Remove outdated information. \
-             Output only the updated markdown content."
-        );
-
-        let updated = self
-            .call_llm_for_memory(MEMORY_UPDATE_PROMPT, &user_prompt)
-            .await?;
-
-        if !updated.is_empty() {
-            write_memory_file_to(&mem_path, &updated).await;
+            // Fire-and-forget background task
+            tokio::spawn(async move {
+                if let Err(e) = run_structured_memory_update(
+                    provider,
+                    &cwd,
+                    &context,
+                    &frontmatter_listing,
+                    profile_content.as_deref(),
+                )
+                .await
+                {
+                    tracing::error!("Background memory update failed: {e}");
+                }
+            });
         }
 
-        self.last_memory_update_tokens = self.input_tokens + self.output_tokens;
-        info!("Updated MEMORY.md");
-
+        self.last_memory_update_tokens = self.last_context_size;
         Ok(())
     }
 
@@ -2081,4 +2091,314 @@ impl AgentLoop {
         }
         results
     }
+}
+
+// ── Structured Memory Update (runs in background) ────────────────────────
+
+async fn run_structured_memory_update(
+    provider: Arc<dyn lukan_providers::Provider>,
+    cwd: &std::path::Path,
+    conversation_context: &str,
+    frontmatter_listing: &str,
+    profile_content: Option<&str>,
+) -> Result<()> {
+    use lukan_core::models::events::StreamEvent;
+    use lukan_core::models::messages::Message;
+    use lukan_providers::{StreamParams, SystemPrompt};
+
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    let user_prompt = if let Some(profile) = profile_content {
+        format!(
+            "Today: {today}\n\n\
+             Existing structured memory files:\n{frontmatter_listing}\n\n\
+             Behavior profile MEMORY.md (migrate useful content into structured files):\n```\n{profile}\n```\n\n\
+             Recent conversation:\n{conversation_context}"
+        )
+    } else {
+        format!(
+            "Today: {today}\n\n\
+             Existing structured memory files:\n{frontmatter_listing}\n\n\
+             Recent conversation:\n{conversation_context}"
+        )
+    };
+
+    let params = StreamParams {
+        system_prompt: SystemPrompt::Text(STRUCTURED_MEMORY_UPDATE_PROMPT.to_string()),
+        messages: vec![Message::user(&user_prompt)],
+        tools: vec![],
+    };
+
+    let (tx, mut rx) = mpsc::channel::<StreamEvent>(256);
+    let prov = Arc::clone(&provider);
+    tokio::spawn(async move {
+        if let Err(e) = prov.stream(params, tx).await {
+            tracing::error!("Structured memory LLM call error: {e}");
+        }
+    });
+
+    let mut response = String::new();
+    while let Some(event) = rx.recv().await {
+        if let StreamEvent::TextDelta { text } = event {
+            response.push_str(&text);
+        }
+    }
+
+    // Parse action blocks from response
+    let memories_dir = cwd.join(".lukan").join("memories");
+    tokio::fs::create_dir_all(&memories_dir).await.ok();
+
+    let mut pos = 0;
+    while let Some(action_start) = response[pos..].find("---ACTION:") {
+        let abs_start = pos + action_start;
+        let action_line_end = response[abs_start..]
+            .find("---\n")
+            .map(|i| abs_start + i + 4);
+        let Some(action_line_end) = action_line_end else {
+            break;
+        };
+
+        let action_line = response[abs_start..action_line_end].trim().to_string();
+
+        if action_line.contains("NOTHING") {
+            tracing::info!("Structured memory update: no changes needed");
+            break;
+        }
+
+        // Find content between ---CONTENT--- and ---END---
+        let content_start = response[action_line_end..]
+            .find("---CONTENT---")
+            .map(|i| action_line_end + i + "---CONTENT---".len());
+        let content_end = response[action_line_end..]
+            .find("---END---")
+            .map(|i| action_line_end + i);
+
+        if let (Some(cs), Some(ce)) = (content_start, content_end) {
+            let content = response[cs..ce].trim();
+
+            // Extract filename
+            let filename = if let Some(fname_line) = response[abs_start..action_line_end]
+                .lines()
+                .chain(response[action_line_end..cs].lines())
+                .find(|l| l.starts_with("filename:"))
+            {
+                fname_line
+                    .strip_prefix("filename:")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            } else {
+                // Try next line after action
+                response[action_line_end..cs]
+                    .lines()
+                    .find(|l| l.starts_with("filename:"))
+                    .and_then(|l| l.strip_prefix("filename:"))
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default()
+            };
+
+            if !filename.is_empty() && !content.is_empty() {
+                let file_path = memories_dir.join(&filename);
+                if action_line.contains("CREATE") {
+                    tracing::info!(filename, "Creating structured memory file");
+                    tokio::fs::write(&file_path, content).await.ok();
+                } else if action_line.contains("UPDATE") {
+                    tracing::info!(filename, "Updating structured memory file");
+                    tokio::fs::write(&file_path, content).await.ok();
+                }
+            }
+
+            pos = ce + "---END---".len();
+        } else {
+            break;
+        }
+    }
+
+    // If behavior profile was provided and we created structured files, back it up
+    if profile_content.is_some() && response.contains("CREATE") {
+        let profile_path = memories_dir.join("MEMORY.md");
+        let backup_path = memories_dir.join("MEMORY.md.bak");
+        // Read current content before renaming (we'll use it as seed for behavior profile)
+        let old_content = tokio::fs::read_to_string(&profile_path)
+            .await
+            .unwrap_or_default();
+        tokio::fs::rename(&profile_path, &backup_path).await.ok();
+        tracing::info!("Behavior profile MEMORY.md migrated to MEMORY.md.bak");
+        // Write a fresh behavior profile seeded from old content
+        if !old_content.trim().is_empty() {
+            let header = "# Behavior Profile\n\n";
+            tokio::fs::write(&profile_path, format!("{header}{old_content}"))
+                .await
+                .ok();
+        }
+    }
+
+    // Update MEMORY.md as behavior profile
+    if let Err(e) = update_behavior_profile(Arc::clone(&provider), cwd, conversation_context).await
+    {
+        tracing::error!("Behavior profile update failed: {e}");
+    }
+
+    Ok(())
+}
+
+/// Update MEMORY.md as a behavior profile using a full agent turn with tool access.
+async fn update_behavior_profile(
+    provider: Arc<dyn lukan_providers::Provider>,
+    cwd: &std::path::Path,
+    conversation_context: &str,
+) -> Result<()> {
+    use lukan_core::models::events::StreamEvent;
+    use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
+    use lukan_providers::{StreamParams, SystemPrompt};
+
+    let memory_path = cwd.join(".lukan").join("memories").join("MEMORY.md");
+    let current = tokio::fs::read_to_string(&memory_path)
+        .await
+        .unwrap_or_else(|_| "# Behavior Profile\n\n(empty)\n".to_string());
+
+    // Build tools registry for the sub-agent
+    let tools = lukan_tools::create_default_registry();
+    let tool_defs = tools.definitions();
+
+    let read_files: std::sync::Arc<
+        tokio::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
+    > = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
+
+    let system_prompt = format!(
+        "{}\n\nYou have access to tools (Glob, ReadFiles, Bash, Grep, Remember) to explore the project.\n\
+         The project is at: {}\n\
+         Write the updated MEMORY.md content using the WriteFile tool at: {}\n\
+         If the current profile is empty or outdated, explore the project structure first.\n\n\
+         MANDATORY: The MEMORY.md MUST end with a '## Project Structure' section containing the project's \
+         directory tree (2 levels deep, excluding node_modules, target, .git, dist, build, __pycache__, .venv). \
+         Use Bash with 'find' or 'ls -R' to get the real tree. This section prevents path errors.",
+        BEHAVIOR_MEMORY_UPDATE_PROMPT,
+        cwd.display(),
+        memory_path.display(),
+    );
+
+    let user_message = format!(
+        "Current behavior profile (MEMORY.md):\n```\n{current}\n```\n\n\
+         Recent conversation:\n{conversation_context}\n\n\
+         Analyze the project and conversation. Update the behavior profile at {}",
+        memory_path.display(),
+    );
+
+    let mut messages = vec![Message::user(&user_message)];
+    let max_turns = 10;
+
+    for _turn in 0..max_turns {
+        let params = StreamParams {
+            system_prompt: SystemPrompt::Text(system_prompt.clone()),
+            messages: messages.clone(),
+            tools: tool_defs.clone(),
+        };
+
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(256);
+        let prov = Arc::clone(&provider);
+        tokio::spawn(async move {
+            if let Err(e) = prov.stream(params, tx).await {
+                tracing::error!("Behavior sub-agent LLM error: {e}");
+            }
+        });
+
+        let mut text = String::new();
+        let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
+        let mut current_tool_id = String::new();
+        let mut current_tool_name = String::new();
+        let mut current_tool_input = String::new();
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::TextDelta { text: t } => text.push_str(&t),
+                StreamEvent::ToolUseStart { id, name } => {
+                    current_tool_id = id;
+                    current_tool_name = name;
+                    current_tool_input.clear();
+                }
+                StreamEvent::ToolUseDelta { input } => {
+                    current_tool_input.push_str(&input);
+                }
+                StreamEvent::ToolUseEnd { .. } => {
+                    let input: serde_json::Value =
+                        serde_json::from_str(&current_tool_input).unwrap_or_default();
+                    tool_calls.push((current_tool_id.clone(), current_tool_name.clone(), input));
+                }
+                StreamEvent::MessageEnd { .. } => break,
+                _ => {}
+            }
+        }
+
+        if tool_calls.is_empty() {
+            // No tool calls — agent is done
+            tracing::info!("Behavior sub-agent completed");
+            break;
+        }
+
+        // Build assistant message with tool use blocks
+        let mut blocks: Vec<ContentBlock> = Vec::new();
+        if !text.is_empty() {
+            blocks.push(ContentBlock::Text { text: text.clone() });
+        }
+        for (id, name, input) in &tool_calls {
+            blocks.push(ContentBlock::ToolUse {
+                id: id.clone(),
+                name: name.clone(),
+                input: input.clone(),
+            });
+        }
+        messages.push(Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(blocks),
+            tool_call_id: None,
+            name: None,
+        });
+
+        // Execute tools and collect results
+        let mut result_blocks: Vec<ContentBlock> = Vec::new();
+        for (id, name, input) in &tool_calls {
+            let ctx = lukan_tools::ToolContext {
+                progress_tx: None,
+                event_tx: None,
+                tool_call_id: Some(id.clone()),
+                read_files: std::sync::Arc::clone(&read_files),
+                cwd: cwd.to_path_buf(),
+                bg_signal: None,
+                sandbox: None,
+                allowed_paths: Some(vec![cwd.to_path_buf()]),
+                cancel: None,
+                session_id: Some(String::new()),
+                extra_env: std::collections::HashMap::new(),
+                agent_label: None,
+                tab_id: None,
+                blocked_env_vars: vec![],
+            };
+            let result = if let Some(tool) = tools.get(name) {
+                match tool.execute(input.clone(), &ctx).await {
+                    Ok(r) => r,
+                    Err(e) => lukan_core::models::tools::ToolResult::error(e.to_string()),
+                }
+            } else {
+                lukan_core::models::tools::ToolResult::error(format!("Tool '{name}' not found"))
+            };
+
+            result_blocks.push(ContentBlock::ToolResult {
+                tool_use_id: id.clone(),
+                content: result.content,
+                is_error: Some(result.is_error),
+                diff: None,
+                image: None,
+            });
+        }
+        messages.push(Message {
+            role: Role::User,
+            content: MessageContent::Blocks(result_blocks),
+            tool_call_id: None,
+            name: None,
+        });
+    }
+
+    tracing::info!("Behavior profile update completed");
+    Ok(())
 }

@@ -224,14 +224,20 @@ pub(super) async fn build_system_prompt_with_opts(browser_tools: bool) -> System
         }
     }
 
-    // Load project memory only if .active marker exists
-    let active_path = LukanPaths::project_memory_active_file();
-    if tokio::fs::metadata(&active_path).await.is_ok() {
-        let project_path = LukanPaths::project_memory_file();
-        if let Ok(memory) = tokio::fs::read_to_string(&project_path).await {
-            let trimmed = memory.trim();
-            if !trimmed.is_empty() {
-                cached.push(format!("## Project Memory\n\n{trimmed}"));
+    // Load project memories — prefer structured files, fallback to legacy MEMORY.md
+    let cwd = std::env::current_dir().unwrap_or_default();
+    if let Some(summaries) = lukan_tools::remember::get_memory_summaries_for_prompt(&cwd).await {
+        cached.push(summaries);
+    } else {
+        // Legacy fallback: load full MEMORY.md
+        let active_path = LukanPaths::project_memory_active_file();
+        if tokio::fs::metadata(&active_path).await.is_ok() {
+            let project_path = LukanPaths::project_memory_file();
+            if let Ok(memory) = tokio::fs::read_to_string(&project_path).await {
+                let trimmed = memory.trim();
+                if !trimmed.is_empty() {
+                    cached.push(format!("## Project Memory\n\n{trimmed}"));
+                }
             }
         }
     }

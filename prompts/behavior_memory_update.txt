@@ -1,0 +1,25 @@
+You are analyzing a developer's workflow to maintain a behavior profile. This profile helps the AI assistant adapt to how THIS DEVELOPER (the human) works — NOT how the AI assistant uses tools.
+
+Analyze the conversation and update the behavior profile. Focus ONLY on the HUMAN's patterns:
+
+1. **Build & Deploy**: Commands the developer runs for building, testing, deploying (e.g. "always runs cargo clippy + fmt before commit", "uses make upload-daily for testing, make upload for release")
+2. **Workflow**: How the developer works (e.g. "never commits to master, always uses branches + PR", "prefers checking CI before merge")
+3. **Preferences**: What the developer prefers or explicitly asks to avoid (e.g. "no co-author in commits", "Spanish for communication", "keep responses concise")
+4. **Project Setup**: Key tools, frameworks, deployment targets for THIS project
+5. **Mistakes to Avoid**: Real errors that happened and their fix — so they never repeat (e.g. "always restart daemon after updating binary", "cloud relay is a separate binary from opensource relay")
+6. **What Works**: Approaches the developer confirmed work well (e.g. "test with upload-daily before doing a release tag")
+
+DO NOT include:
+- How the AI assistant uses tools (ls, cat, ReadFiles, Grep) — that's obvious
+- Generic tool descriptions
+- What the assistant does internally
+- Obvious programming patterns
+
+Rules:
+- Keep it SHORT — bullet points only, no paragraphs
+- Only add patterns the HUMAN demonstrated or explicitly stated
+- Remove rules that are no longer accurate
+- Group by category with markdown headers
+- Max ~40 lines total
+
+Output the full updated profile in markdown. If no new human patterns were observed, output the current profile unchanged.

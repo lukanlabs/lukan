@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 use lukan_core::config::LukanPaths;
 use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
-use tracing::error;
 
 /// Format messages into a text representation for compaction/memory LLM calls
 pub(crate) fn format_messages_for_context(messages: &[Message]) -> String {
@@ -96,12 +95,4 @@ pub(crate) fn active_memory_path() -> Option<PathBuf> {
     None
 }
 
-/// Write memory content to a specific path
-pub(crate) async fn write_memory_file_to(path: &std::path::Path, content: &str) {
-    if let Some(parent) = path.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
-    }
-    if let Err(e) = tokio::fs::write(path, content).await {
-        error!("Failed to write MEMORY.md: {e}");
-    }
-}
+// write_memory_file_to removed — structured memory system writes files directly

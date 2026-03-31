@@ -93,11 +93,12 @@ impl App {
             use ratatui::widgets::{Block, Borders, Wrap};
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title(" Memory (ESC to close) ")
+                .title(" Memory (↑↓ PgUp PgDown Home End to scroll, ESC to close) ")
                 .border_style(Style::default().fg(Color::Cyan));
             let paragraph = ratatui::widgets::Paragraph::new(content.as_str())
                 .block(block)
                 .wrap(Wrap { trim: false })
+                .scroll((self.memory_viewer_scroll, 0))
                 .style(Style::default().fg(Color::White));
             frame.render_widget(paragraph, chat_area);
         } else if let Some(ref picker) = self.rewind_picker {
@@ -261,7 +262,7 @@ impl App {
         } else if self.trust_prompt.is_some() {
             InputWidget::new("↑↓ select · Enter confirm · ESC exit", 0, false)
         } else if self.memory_viewer.is_some() {
-            InputWidget::new("ESC close", 0, false)
+            InputWidget::new("↑↓ PgUp PgDown Home End · ESC close", 0, false)
         } else if self.rewind_picker.is_some() {
             let hint = match self.rewind_picker.as_ref().map(|p| p.view) {
                 Some(RewindView::List) => "↑↓ navigate · Enter restore · ESC close",

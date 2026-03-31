@@ -350,10 +350,38 @@ impl App {
                 _ => {}
             }
         } else if self.memory_viewer.is_some() {
-            // Memory viewer overlay — ESC closes
-            if key.code == KeyCode::Esc {
-                self.memory_viewer = None;
-                self.force_redraw = true;
+            // Memory viewer overlay — scroll with arrow keys, PgUp/PgDown, Home/End, ESC closes
+            let scroll_step: u16 = 3;
+            let page_step: u16 = 15;
+            match key.code {
+                KeyCode::Esc => {
+                    self.memory_viewer = None;
+                    self.memory_viewer_scroll = 0;
+                    self.force_redraw = true;
+                }
+                KeyCode::Up => {
+                    self.memory_viewer_scroll =
+                        self.memory_viewer_scroll.saturating_sub(scroll_step);
+                    self.force_redraw = true;
+                }
+                KeyCode::Down => {
+                    self.memory_viewer_scroll =
+                        self.memory_viewer_scroll.saturating_add(scroll_step);
+                    self.force_redraw = true;
+                }
+                KeyCode::PageUp => {
+                    self.memory_viewer_scroll = self.memory_viewer_scroll.saturating_sub(page_step);
+                    self.force_redraw = true;
+                }
+                KeyCode::PageDown => {
+                    self.memory_viewer_scroll = self.memory_viewer_scroll.saturating_add(page_step);
+                    self.force_redraw = true;
+                }
+                KeyCode::Home => {
+                    self.memory_viewer_scroll = 0;
+                    self.force_redraw = true;
+                }
+                _ => {}
             }
         } else if self.rewind_picker.is_some() {
             // Rewind picker overlay
@@ -416,19 +444,60 @@ impl App {
             // Background process picker mode
             match key.code {
                 KeyCode::Up => {
-                    if let Some(ref mut picker) = self.bg_picker
-                        && picker.view == BgPickerView::List
-                        && picker.selected > 0
-                    {
-                        picker.selected -= 1;
+                    if let Some(ref mut picker) = self.bg_picker {
+                        match picker.view {
+                            BgPickerView::List => {
+                                if picker.selected > 0 {
+                                    picker.selected -= 1;
+                                }
+                            }
+                            BgPickerView::Log => {
+                                picker.log_scroll = picker.log_scroll.saturating_sub(3);
+                            }
+                        }
                     }
                 }
                 KeyCode::Down => {
+                    if let Some(ref mut picker) = self.bg_picker {
+                        match picker.view {
+                            BgPickerView::List => {
+                                if picker.selected + 1 < picker.entries.len() {
+                                    picker.selected += 1;
+                                }
+                            }
+                            BgPickerView::Log => {
+                                picker.log_scroll = picker.log_scroll.saturating_add(3);
+                            }
+                        }
+                    }
+                }
+                KeyCode::PageUp => {
                     if let Some(ref mut picker) = self.bg_picker
-                        && picker.view == BgPickerView::List
-                        && picker.selected + 1 < picker.entries.len()
+                        && picker.view == BgPickerView::Log
                     {
-                        picker.selected += 1;
+                        picker.log_scroll = picker.log_scroll.saturating_sub(15);
+                    }
+                }
+                KeyCode::PageDown => {
+                    if let Some(ref mut picker) = self.bg_picker
+                        && picker.view == BgPickerView::Log
+                    {
+                        picker.log_scroll = picker.log_scroll.saturating_add(15);
+                    }
+                }
+                KeyCode::Home => {
+                    if let Some(ref mut picker) = self.bg_picker
+                        && picker.view == BgPickerView::Log
+                    {
+                        picker.log_scroll = 0;
+                    }
+                }
+                KeyCode::End => {
+                    if let Some(ref mut picker) = self.bg_picker
+                        && picker.view == BgPickerView::Log
+                    {
+                        // Jump to end: set scroll to a large value, render will clamp
+                        picker.log_scroll = u16::MAX;
                     }
                 }
                 KeyCode::Char('l') | KeyCode::Enter => {
@@ -503,6 +572,7 @@ impl App {
                     if let Some(ref mut picker) = self.bg_picker {
                         if picker.view == BgPickerView::Log {
                             picker.view = BgPickerView::List;
+                            picker.log_scroll = 0;
                         } else {
                             self.bg_picker = None;
                             self.force_redraw = true;
@@ -974,6 +1044,8 @@ impl App {
                         .to_string();
             }
             self.memory_viewer = Some(content);
+            self.memory_viewer_scroll = 0;
+            self.force_redraw = true;
         } else if key.code == KeyCode::Char('t')
             && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
         {

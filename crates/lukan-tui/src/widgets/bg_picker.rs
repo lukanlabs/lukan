@@ -46,6 +46,8 @@ pub struct BgPicker {
     pub log_pid: u32,
     /// Last time the log was refreshed (throttle to avoid reading every tick)
     last_log_refresh: std::time::Instant,
+    /// Scroll offset for log view
+    pub log_scroll: u16,
 }
 
 impl BgPicker {
@@ -57,6 +59,7 @@ impl BgPicker {
             log_content: String::new(),
             log_pid: 0,
             last_log_refresh: std::time::Instant::now(),
+            log_scroll: 0,
         }
     }
 
@@ -81,6 +84,7 @@ impl BgPicker {
             self.log_content = lukan_tools::bg_processes::get_bg_log(pid, 200)
                 .unwrap_or_else(|| "(no log output yet)".to_string());
             self.view = BgPickerView::Log;
+            self.log_scroll = 0;
         }
     }
 
@@ -250,7 +254,10 @@ fn render_log(picker: &BgPicker, area: Rect, buf: &mut Buffer) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(status, Style::default().fg(status_color)),
-        Span::styled("  (ESC=back  k=kill)", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "  (↑↓ PgUp PgDown scroll · ESC=back · k=kill)",
+            Style::default().fg(Color::DarkGray),
+        ),
     ]));
     lines.push(Line::from(""));
 
@@ -261,17 +268,25 @@ fn render_log(picker: &BgPicker, area: Rect, buf: &mut Buffer) {
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        let available_rows = area.height.saturating_sub(3) as usize;
         let log_lines: Vec<&str> = picker.log_content.lines().collect();
-        let start = if log_lines.len() > available_rows {
-            log_lines.len() - available_rows
-        } else {
-            0
-        };
-        for line in &log_lines[start..] {
+        let scroll = picker.log_scroll as usize;
+        let start = scroll.min(log_lines.len().saturating_sub(1));
+        let end = (start + area.height.saturating_sub(3) as usize).min(log_lines.len());
+
+        for line in &log_lines[start..end] {
             lines.push(Line::from(Span::styled(
                 format!("  {line}"),
                 Style::default().fg(Color::Gray),
+            )));
+        }
+
+        // Show scroll indicator if there are more lines
+        let total = log_lines.len();
+        let visible = end.saturating_sub(start);
+        if total > visible {
+            lines.push(Line::from(Span::styled(
+                format!("  ── {}/{} lines ──", start + visible, total),
+                Style::default().fg(Color::DarkGray),
             )));
         }
     }

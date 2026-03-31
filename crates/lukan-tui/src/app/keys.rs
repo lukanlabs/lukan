@@ -444,19 +444,60 @@ impl App {
             // Background process picker mode
             match key.code {
                 KeyCode::Up => {
-                    if let Some(ref mut picker) = self.bg_picker
-                        && picker.view == BgPickerView::List
-                        && picker.selected > 0
-                    {
-                        picker.selected -= 1;
+                    if let Some(ref mut picker) = self.bg_picker {
+                        match picker.view {
+                            BgPickerView::List => {
+                                if picker.selected > 0 {
+                                    picker.selected -= 1;
+                                }
+                            }
+                            BgPickerView::Log => {
+                                picker.log_scroll = picker.log_scroll.saturating_sub(3);
+                            }
+                        }
                     }
                 }
                 KeyCode::Down => {
+                    if let Some(ref mut picker) = self.bg_picker {
+                        match picker.view {
+                            BgPickerView::List => {
+                                if picker.selected + 1 < picker.entries.len() {
+                                    picker.selected += 1;
+                                }
+                            }
+                            BgPickerView::Log => {
+                                picker.log_scroll = picker.log_scroll.saturating_add(3);
+                            }
+                        }
+                    }
+                }
+                KeyCode::PageUp => {
                     if let Some(ref mut picker) = self.bg_picker
-                        && picker.view == BgPickerView::List
-                        && picker.selected + 1 < picker.entries.len()
+                        && picker.view == BgPickerView::Log
                     {
-                        picker.selected += 1;
+                        picker.log_scroll = picker.log_scroll.saturating_sub(15);
+                    }
+                }
+                KeyCode::PageDown => {
+                    if let Some(ref mut picker) = self.bg_picker
+                        && picker.view == BgPickerView::Log
+                    {
+                        picker.log_scroll = picker.log_scroll.saturating_add(15);
+                    }
+                }
+                KeyCode::Home => {
+                    if let Some(ref mut picker) = self.bg_picker
+                        && picker.view == BgPickerView::Log
+                    {
+                        picker.log_scroll = 0;
+                    }
+                }
+                KeyCode::End => {
+                    if let Some(ref mut picker) = self.bg_picker
+                        && picker.view == BgPickerView::Log
+                    {
+                        // Jump to end: set scroll to a large value, render will clamp
+                        picker.log_scroll = u16::MAX;
                     }
                 }
                 KeyCode::Char('l') | KeyCode::Enter => {
@@ -531,6 +572,7 @@ impl App {
                     if let Some(ref mut picker) = self.bg_picker {
                         if picker.view == BgPickerView::Log {
                             picker.view = BgPickerView::List;
+                            picker.log_scroll = 0;
                         } else {
                             self.bg_picker = None;
                             self.force_redraw = true;

@@ -1,4 +1,4 @@
-import { useEffect, lazy, Suspense } from "react";
+import { useEffect, useCallback, lazy, Suspense } from "react";
 import {
   X,
   Settings,
@@ -42,9 +42,11 @@ interface SettingsOverlayProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
   onClose: () => void;
+  isClosing?: boolean;
+  onExited?: () => void;
 }
 
-export function SettingsOverlay({ activeTab, onTabChange, onClose }: SettingsOverlayProps) {
+export function SettingsOverlay({ activeTab, onTabChange, onClose, isClosing = false, onExited }: SettingsOverlayProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -53,11 +55,17 @@ export function SettingsOverlay({ activeTab, onTabChange, onClose }: SettingsOve
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
+  const handleAnimationEnd = useCallback((e: React.AnimationEvent) => {
+    if (isClosing && e.currentTarget === e.target) {
+      onExited?.();
+    }
+  }, [isClosing, onExited]);
+
   const TabComponent = TAB_COMPONENTS[activeTab];
   const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Settings";
 
   return (
-    <div className="settings-panel">
+    <div className={`settings-panel ${isClosing ? 'settings-closing' : ''}`} onAnimationEnd={handleAnimationEnd}>
       <div className="settings-sidebar">
         <div className="settings-sidebar-header">
           <span>Settings</span>

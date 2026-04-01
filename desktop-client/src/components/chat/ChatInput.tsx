@@ -45,6 +45,18 @@ export function ChatInput({
     if (!isProcessing && recorder.state === "idle") textareaRef.current?.focus();
   }, [isProcessing, recorder.state]);
 
+  // Refocus when settings closes
+  useEffect(() => {
+    const onRestoreFocus = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.mode === "agent" || !detail) {
+        setTimeout(() => textareaRef.current?.focus(), 50);
+      }
+    };
+    window.addEventListener("restore-focus", onRestoreFocus);
+    return () => window.removeEventListener("restore-focus", onRestoreFocus);
+  }, []);
+
   useEffect(() => {
     const el = textareaRef.current;
     if (el) {

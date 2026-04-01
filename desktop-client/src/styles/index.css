@@ -737,6 +737,7 @@ select {
 
 .settings-panel {
   grid-area: main;
+  z-index: 20;
   display: flex;
   min-height: 0;
   min-width: 0;
@@ -745,9 +746,18 @@ select {
   animation: settingsFadeIn 0.15s ease-out;
 }
 
+.settings-panel.settings-closing {
+  animation: settingsFadeOut 0.15s ease-out forwards;
+}
+
 @keyframes settingsFadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes settingsFadeOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(4px); }
 }
 
 .settings-sidebar {

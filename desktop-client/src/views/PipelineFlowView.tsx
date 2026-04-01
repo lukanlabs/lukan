@@ -645,9 +645,7 @@ function EditStepSheet({
   const [notifyChannel, setNotifyChannel] = useState(
     step.approval?.notifyChannel ?? "",
   );
-  const [approvalMessage, setApprovalMessage] = useState(
-    step.approval?.message ?? "",
-  );
+  const [approvalMessage] = useState(step.approval?.message ?? "");
   const [approvalTimeout, setApprovalTimeout] = useState(
     String(step.approval?.timeoutSecs ?? 3600),
   );

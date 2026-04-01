@@ -1385,55 +1385,6 @@ function Section({
 }
 
 // ===========================================================================
-// Action button
-// ===========================================================================
-
-function ActionBtn({
-  icon,
-  label,
-  onClick,
-  disabled,
-  variant,
-  small,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  variant?: "secondary" | "danger";
-  small?: boolean;
-}) {
-  const base: React.CSSProperties =
-    variant === "danger"
-      ? {
-          background: "rgba(220,38,38,0.12)",
-          color: "#fb7185",
-          border: "1px solid rgba(251,113,133,0.15)",
-        }
-      : variant === "secondary"
-        ? {
-            background: "var(--bg-tertiary)",
-            color: "var(--text-primary)",
-            border: "1px solid var(--border)",
-          }
-        : { background: "#fafafa", color: "#09090b" };
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`inline-flex items-center gap-1 ${small ? "px-1.5 py-0.5 text-[10px]" : "px-2.5 py-1.5 text-xs"} rounded-lg font-medium cursor-pointer border-none`}
-      style={{
-        ...base,
-        opacity: disabled ? 0.4 : 1,
-        pointerEvents: disabled ? "none" : "auto",
-      }}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
 // ===========================================================================
 // Config Field
 // ===========================================================================

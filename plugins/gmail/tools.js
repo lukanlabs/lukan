@@ -196,8 +196,12 @@ function stripHtml(html) {
     .replace(/<\/li>/gi, "\n")
     .replace(/<li[^>]*>/gi, "- ");
 
-  // Strip all remaining tags
-  text = text.replace(/<[^>]*>/g, "");
+  // Strip all remaining tags — iterate until stable to handle malformed nesting
+  let prev;
+  do {
+    prev = text;
+    text = text.replace(/<[^>]*>/g, "");
+  } while (text !== prev);
 
   // Decode entities (&amp; last to prevent double-decode)
   text = text

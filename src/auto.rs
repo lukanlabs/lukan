@@ -8,7 +8,6 @@ use lukan_core::config::{CredentialsManager, ConfigManager, ResolvedConfig};
 use lukan_core::models::events::StreamEvent;
 use lukan_providers::{Provider, StreamParams, SystemPrompt, create_provider};
 
-const DEFAULT_MAX_TURNS: usize = 0; // 0 = unlimited
 const TURN_TIMEOUT_SECS: u64 = 600; // 10 minutes per turn
 
 /// Run autonomous agent: takes a goal, runs an agent in skip mode, and uses
@@ -66,16 +65,28 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
     };
 
     let mut agent = lukan_agent::AgentLoop::new(agent_config).await?;
+
+    // Disable planning tools — autonomous mode works directly without planning phases
+    agent.set_disabled_tools(
+        ["PlannerQuestion", "SubmitPlan"]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+    );
+
     let session_id = agent.session_id().to_string();
     eprintln!("  Session: {session_id}");
     eprintln!();
 
     // Build initial prompt
     let initial_prompt = format!(
-        "You are running in autonomous mode. Complete the following goal without asking questions.\n\
-         If you need to make decisions, use your best judgment.\n\
-         When you are completely done, say: GOAL_COMPLETE\n\
-         If the goal is impossible, say: GOAL_FAILED followed by the reason.\n\n\
+        "You are running in autonomous mode. Complete the following goal.\n\n\
+         IMPORTANT RULES:\n\
+         - Do NOT use PlannerQuestion or SubmitPlan tools. Work directly without planning phases.\n\
+         - Do NOT ask the user questions. Make decisions using your best judgment.\n\
+         - If you need clarification, make reasonable assumptions and proceed.\n\
+         - When you are completely done, say: GOAL_COMPLETE\n\
+         - If the goal is impossible, say: GOAL_FAILED followed by the reason.\n\n\
          ## Goal\n\n{goal}"
     );
 

@@ -230,18 +230,19 @@ fn snapshot_process(p: &mut BgProcess) -> (BgProcessSnapshot, bool) {
 }
 
 /// Merge processes from disk into the in-memory tracker.
-/// Picks up processes registered by other lukan instances (subagents, CLI).
+/// Only imports processes that are still alive — dead ones on disk but not
+/// in memory were likely cleared by the user and should stay removed.
 fn merge_from_disk(t: &mut BgTracker) {
     let on_disk = load_persisted();
     let mut added = 0;
     for (pid, process) in on_disk {
-        if !t.processes.contains_key(&pid) {
+        if !t.processes.contains_key(&pid) && is_process_alive(pid) {
             t.processes.insert(pid, process);
             added += 1;
         }
     }
     if added > 0 {
-        debug!(added, "Merged processes from disk into tracker");
+        debug!(added, "Merged live processes from disk into tracker");
     }
 }
 

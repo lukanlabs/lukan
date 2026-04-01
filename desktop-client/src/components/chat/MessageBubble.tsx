@@ -25,7 +25,9 @@ function extractTextContent(content: string | ContentBlock[]): string {
     .join("\n");
 }
 
-function extractThinkingContent(content: string | ContentBlock[]): string | null {
+function extractThinkingContent(
+  content: string | ContentBlock[],
+): string | null {
   if (typeof content === "string") return null;
   const blocks = content.filter(
     (b): b is { type: "thinking"; text: string } => b.type === "thinking",
@@ -36,14 +38,22 @@ function extractThinkingContent(content: string | ContentBlock[]): string | null
 function extractToolUses(content: string | ContentBlock[]) {
   if (typeof content === "string") return [];
   return content.filter(
-    (b): b is { type: "tool_use"; id: string; name: string; input: Record<string, unknown> } =>
-      b.type === "tool_use",
+    (
+      b,
+    ): b is {
+      type: "tool_use";
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+    } => b.type === "tool_use",
   );
 }
 
 function isToolResultMessage(msg: Message): boolean {
   if (typeof msg.content === "string") return false;
-  return msg.content.length > 0 && msg.content.every((b) => b.type === "tool_result");
+  return (
+    msg.content.length > 0 && msg.content.every((b) => b.type === "tool_result")
+  );
 }
 
 export function MessageBubble({ message, toolResultsMap }: MessageBubbleProps) {
@@ -51,7 +61,11 @@ export function MessageBubble({ message, toolResultsMap }: MessageBubbleProps) {
   const [showThinking, setShowThinking] = useState(false);
 
   // Skip tool-result-only messages — shown inline with tool_use blocks
-  if (isUser && Array.isArray(message.content) && isToolResultMessage(message)) {
+  if (
+    isUser &&
+    Array.isArray(message.content) &&
+    isToolResultMessage(message)
+  ) {
     return null;
   }
   if (message.role === "tool") return null;
@@ -68,11 +82,18 @@ export function MessageBubble({ message, toolResultsMap }: MessageBubbleProps) {
     <div
       className={`mb-4 animate-message-in ${isUser ? "flex justify-end" : "flex justify-start"}`}
     >
-      <div className={`flex gap-3 w-full max-w-4xl ${isUser ? "flex-row-reverse" : ""}`}>
+      <div
+        className={`flex gap-3 w-full max-w-4xl ${isUser ? "flex-row-reverse" : ""}`}
+      >
         {/* Avatar — only for assistant */}
         {!isUser && (
           <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center">
-            <img src={logoUrl} alt="" className="h-5 w-5" style={{ imageRendering: "auto" }} />
+            <img
+              src={logoUrl}
+              alt=""
+              className="h-5 w-5"
+              style={{ imageRendering: "auto" }}
+            />
           </div>
         )}
 
@@ -83,7 +104,10 @@ export function MessageBubble({ message, toolResultsMap }: MessageBubbleProps) {
               onClick={() => setShowThinking((v) => !v)}
               className="mt-[7px] mb-1 inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-md border-none cursor-pointer transition-colors bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
             >
-              <ChevronRight size={10} className={`transition-transform ${showThinking ? "rotate-90" : ""}`} />
+              <ChevronRight
+                size={10}
+                className={`transition-transform ${showThinking ? "rotate-90" : ""}`}
+              />
               Reasoning
             </button>
           )}

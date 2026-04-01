@@ -5,7 +5,12 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   options: { value: string; label: string }[];
 }
 
-export default function Select({ label, options, className = "", ...props }: SelectProps) {
+export default function Select({
+  label,
+  options,
+  className = "",
+  ...props
+}: SelectProps) {
   return (
     <div className="flex flex-col gap-2">
       {label && (
@@ -31,7 +36,8 @@ export default function Select({ label, options, className = "", ...props }: Sel
         }}
         onFocus={(e) => {
           e.currentTarget.style.borderColor = "rgba(100, 100, 100, 0.6)";
-          e.currentTarget.style.boxShadow = "0 0 0 2px rgba(100, 100, 100, 0.15)";
+          e.currentTarget.style.boxShadow =
+            "0 0 0 2px rgba(100, 100, 100, 0.15)";
         }}
         onBlur={(e) => {
           e.currentTarget.style.borderColor = "var(--border)";

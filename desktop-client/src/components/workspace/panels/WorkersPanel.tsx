@@ -75,9 +75,14 @@ function StatusBadge({ status }: { status?: string }) {
   const cfg: Record<string, { color: string; icon: React.ReactNode }> = {
     running: {
       color: "var(--warning, #f59e0b)",
-      icon: <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />,
+      icon: (
+        <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
+      ),
     },
-    success: { color: "var(--success, #22c55e)", icon: <CheckCircle2 size={10} /> },
+    success: {
+      color: "var(--success, #22c55e)",
+      icon: <CheckCircle2 size={10} />,
+    },
     error: { color: "var(--danger, #ef4444)", icon: <XCircle size={10} /> },
   };
   const c = cfg[status] ?? cfg.error!;
@@ -134,17 +139,23 @@ export function WorkersPanel() {
     let unlisten: (() => void) | undefined;
     onWorkerNotification(() => {
       loadWorkers();
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
   }, [loadWorkers]);
 
   // Load detail when navigating to detail view
   useEffect(() => {
     if (view.kind === "detail") {
-      getWorkerDetail(view.id).then(setDetail).catch((e) => {
-        console.error("Failed to load worker detail:", e);
-        setDetail(null);
-      });
+      getWorkerDetail(view.id)
+        .then(setDetail)
+        .catch((e) => {
+          console.error("Failed to load worker detail:", e);
+          setDetail(null);
+        });
     }
   }, [view]);
 
@@ -175,7 +186,7 @@ export function WorkersPanel() {
   const handleToggle = async (id: string, enabled: boolean) => {
     // Optimistic UI update
     setWorkers((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, enabled } : w))
+      prev.map((w) => (w.id === id ? { ...w, enabled } : w)),
     );
     if (detail && detail.id === id) {
       setDetail({ ...detail, enabled });
@@ -183,7 +194,12 @@ export function WorkersPanel() {
     try {
       setError(null);
       const result = await toggleWorker(id, enabled);
-      console.log("toggle_worker result:", result.id, "enabled:", result.enabled);
+      console.log(
+        "toggle_worker result:",
+        result.id,
+        "enabled:",
+        result.enabled,
+      );
       // Reload from server to confirm
       await loadWorkers();
       if (view.kind === "detail" && view.id === id) {
@@ -217,7 +233,14 @@ export function WorkersPanel() {
   if (view.kind === "list") {
     if (loading) {
       return (
-        <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: 24,
+            color: "var(--text-muted)",
+            fontSize: 12,
+          }}
+        >
           Loading...
         </div>
       );
@@ -227,15 +250,40 @@ export function WorkersPanel() {
       return (
         <div style={{ textAlign: "center", padding: 24 }}>
           {error && (
-            <div style={{ fontSize: 10, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)", borderRadius: 4, padding: "4px 8px", marginBottom: 8, textAlign: "left" }}>
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--danger, #ef4444)",
+                background: "rgba(239,68,68,0.08)",
+                borderRadius: 4,
+                padding: "4px 8px",
+                marginBottom: 8,
+                textAlign: "left",
+              }}
+            >
               {error}
             </div>
           )}
-          <Timer size={20} style={{ color: "var(--text-muted)", marginBottom: 8 }} />
-          <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 4 }}>
+          <Timer
+            size={20}
+            style={{ color: "var(--text-muted)", marginBottom: 8 }}
+          />
+          <div
+            style={{
+              color: "var(--text-muted)",
+              fontSize: 12,
+              marginBottom: 4,
+            }}
+          >
             No workers configured
           </div>
-          <div style={{ color: "var(--text-faint)", fontSize: 11, marginBottom: 12 }}>
+          <div
+            style={{
+              color: "var(--text-faint)",
+              fontSize: 11,
+              marginBottom: 12,
+            }}
+          >
             Workers run tasks on a schedule
           </div>
           <button
@@ -263,12 +311,27 @@ export function WorkersPanel() {
       <div>
         {/* Error banner */}
         {error && (
-          <div style={{ fontSize: 10, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)", borderRadius: 4, padding: "4px 8px", margin: "4px 8px" }}>
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--danger, #ef4444)",
+              background: "rgba(239,68,68,0.08)",
+              borderRadius: 4,
+              padding: "4px 8px",
+              margin: "4px 8px",
+            }}
+          >
             {error}
           </div>
         )}
         {/* Header with add button */}
-        <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 8px" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            padding: "4px 8px",
+          }}
+        >
           <button
             onClick={() => setView({ kind: "create" })}
             title="New worker"
@@ -292,13 +355,35 @@ export function WorkersPanel() {
             style={{ cursor: "pointer" }}
           >
             <div className="worker-info">
-              <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  minWidth: 0,
+                }}
+              >
                 <StatusDot status={w.recentRunStatus ?? w.lastRunStatus} />
-                <span className="worker-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span
+                  className="worker-name"
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {w.name}
                 </span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--text-muted)" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontSize: 10,
+                  color: "var(--text-muted)",
+                }}
+              >
                 <Clock size={10} />
                 <span>{w.schedule}</span>
               </div>
@@ -311,7 +396,9 @@ export function WorkersPanel() {
               style={{
                 border: "none",
                 background: "transparent",
-                color: w.enabled ? "var(--success, #22c55e)" : "var(--text-muted)",
+                color: w.enabled
+                  ? "var(--success, #22c55e)"
+                  : "var(--text-muted)",
                 cursor: "pointer",
                 padding: 4,
                 borderRadius: 4,
@@ -331,7 +418,12 @@ export function WorkersPanel() {
   // ── Create View ──────────────────────────────────────────────────
 
   if (view.kind === "create") {
-    return <CreateForm onSubmit={handleCreate} onCancel={() => setView({ kind: "list" })} />;
+    return (
+      <CreateForm
+        onSubmit={handleCreate}
+        onCancel={() => setView({ kind: "list" })}
+      />
+    );
   }
 
   // ── Run Detail View ──────────────────────────────────────────────
@@ -339,17 +431,33 @@ export function WorkersPanel() {
   if (view.kind === "run") {
     if (!runDetail) {
       return (
-        <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: 24,
+            color: "var(--text-muted)",
+            fontSize: 12,
+          }}
+        >
           Loading run...
         </div>
       );
     }
 
-    const totalTokens = runDetail.tokenUsage.input + runDetail.tokenUsage.output;
+    const totalTokens =
+      runDetail.tokenUsage.input + runDetail.tokenUsage.output;
     return (
       <div style={{ padding: "0 8px" }}>
         {/* Back button */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "4px 0" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginBottom: 8,
+            padding: "4px 0",
+          }}
+        >
           <button
             onClick={() => setView({ kind: "detail", id: view.workerId })}
             style={{
@@ -364,7 +472,13 @@ export function WorkersPanel() {
           >
             <ArrowLeft size={14} />
           </button>
-          <span style={{ fontSize: 10, fontFamily: "monospace", color: "var(--text-muted)" }}>
+          <span
+            style={{
+              fontSize: 10,
+              fontFamily: "monospace",
+              color: "var(--text-muted)",
+            }}
+          >
             {runDetail.id}
           </span>
           <StatusBadge status={runDetail.status} />
@@ -436,7 +550,14 @@ export function WorkersPanel() {
   if (view.kind === "detail") {
     if (!detail) {
       return (
-        <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: 24,
+            color: "var(--text-muted)",
+            fontSize: 12,
+          }}
+        >
           Loading...
         </div>
       );
@@ -445,7 +566,15 @@ export function WorkersPanel() {
     return (
       <div style={{ padding: "0 8px" }}>
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "4px 0" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginBottom: 8,
+            padding: "4px 0",
+          }}
+        >
           <button
             onClick={() => {
               setDetail(null);
@@ -464,11 +593,15 @@ export function WorkersPanel() {
             <ArrowLeft size={14} />
           </button>
           <Timer size={14} style={{ color: "var(--accent, #fbbf24)" }} />
-          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{detail.name}</span>
+          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>
+            {detail.name}
+          </span>
           <span
             style={{
               fontSize: 10,
-              color: detail.enabled ? "var(--success, #22c55e)" : "var(--text-muted)",
+              color: detail.enabled
+                ? "var(--success, #22c55e)"
+                : "var(--text-muted)",
             }}
           >
             {detail.enabled ? "enabled" : "paused"}
@@ -517,7 +650,9 @@ export function WorkersPanel() {
             style={{
               border: "1px solid var(--border)",
               background: "transparent",
-              color: detail.enabled ? "var(--text-muted)" : "var(--success, #22c55e)",
+              color: detail.enabled
+                ? "var(--text-muted)"
+                : "var(--success, #22c55e)",
               cursor: "pointer",
               padding: "3px 8px",
               borderRadius: 4,
@@ -551,23 +686,47 @@ export function WorkersPanel() {
         </div>
 
         {/* Recent Runs */}
-        <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)", marginBottom: 6 }}>
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 500,
+            color: "var(--text-muted)",
+            marginBottom: 6,
+          }}
+        >
           Recent Runs ({detail.recentRuns.length})
         </div>
 
         {detail.recentRuns.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 16, color: "var(--text-muted)", fontSize: 11 }}>
+          <div
+            style={{
+              textAlign: "center",
+              padding: 16,
+              color: "var(--text-muted)",
+              fontSize: 11,
+            }}
+          >
             <Clock size={16} style={{ opacity: 0.4, marginBottom: 4 }} />
             <div>No runs yet</div>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: "calc(100vh - 340px)", overflowY: "auto" }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              maxHeight: "calc(100vh - 340px)",
+              overflowY: "auto",
+            }}
+          >
             {detail.recentRuns.map((run) => {
               const totalTokens = run.tokenUsage.input + run.tokenUsage.output;
               return (
                 <button
                   key={run.id}
-                  onClick={() => setView({ kind: "run", workerId: detail.id, runId: run.id })}
+                  onClick={() =>
+                    setView({ kind: "run", workerId: detail.id, runId: run.id })
+                  }
                   style={{
                     display: "block",
                     width: "100%",
@@ -581,9 +740,24 @@ export function WorkersPanel() {
                   }}
                   className="worker-entry-hover"
                 >
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 10, fontFamily: "monospace", color: "var(--text-muted)" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: 2,
+                    }}
+                  >
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 6 }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontFamily: "monospace",
+                          color: "var(--text-muted)",
+                        }}
+                      >
                         {run.id}
                       </span>
                       <StatusBadge status={run.status} />
@@ -592,15 +766,30 @@ export function WorkersPanel() {
                       {new Date(run.startedAt).toLocaleString()}
                     </span>
                   </div>
-                  <div style={{ display: "flex", gap: 8, fontSize: 10, color: "var(--text-muted)" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      fontSize: 10,
+                      color: "var(--text-muted)",
+                    }}
+                  >
                     {run.completedAt && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                      <span
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 2,
+                        }}
+                      >
                         <Clock size={9} />
                         {formatElapsed(run.startedAt, run.completedAt)}
                       </span>
                     )}
                     <span>turns: {run.turns}</span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <span
+                      style={{ display: "flex", alignItems: "center", gap: 2 }}
+                    >
                       <Coins size={9} />
                       {formatTokens(totalTokens)}
                     </span>
@@ -655,7 +844,11 @@ function CreateForm({
         return false;
       }
       const ms =
-        everyMatch[2] === "s" ? n * 1000 : everyMatch[2] === "m" ? n * 60000 : n * 3600000;
+        everyMatch[2] === "s"
+          ? n * 1000
+          : everyMatch[2] === "m"
+            ? n * 60000
+            : n * 3600000;
       if (ms < 10000) {
         setScheduleError("Minimum interval is 10 seconds");
         return false;
@@ -667,7 +860,9 @@ function CreateForm({
       setScheduleError(null);
       return true;
     }
-    setScheduleError('Use "every:Nm", "every:Nh", "every:Ns", or "*/N * * * *"');
+    setScheduleError(
+      'Use "every:Nm", "every:Nh", "every:Ns", or "*/N * * * *"',
+    );
     return false;
   };
 
@@ -699,7 +894,15 @@ function CreateForm({
   return (
     <form onSubmit={handleSubmit} style={{ padding: "0 8px" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, padding: "4px 0" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 10,
+          padding: "4px 0",
+        }}
+      >
         <button
           type="button"
           onClick={onCancel}
@@ -716,12 +919,21 @@ function CreateForm({
           <ArrowLeft size={14} />
         </button>
         <Plus size={14} style={{ color: "var(--accent, #fbbf24)" }} />
-        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>New Worker</span>
+        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>
+          New Worker
+        </span>
       </div>
 
       {/* Name */}
       <div style={{ marginBottom: 10 }}>
-        <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: 11,
+            color: "var(--text-muted)",
+            marginBottom: 3,
+          }}
+        >
           Name
         </label>
         <input
@@ -735,7 +947,14 @@ function CreateForm({
 
       {/* Schedule */}
       <div style={{ marginBottom: 10 }}>
-        <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: 11,
+            color: "var(--text-muted)",
+            marginBottom: 3,
+          }}
+        >
           Schedule
         </label>
         <input
@@ -748,15 +967,25 @@ function CreateForm({
           placeholder="every:5m or */5 * * * *"
           style={{
             ...inputStyle,
-            borderColor: scheduleError ? "var(--danger, #ef4444)" : "var(--border)",
+            borderColor: scheduleError
+              ? "var(--danger, #ef4444)"
+              : "var(--border)",
           }}
         />
         {scheduleError ? (
-          <div style={{ fontSize: 10, color: "var(--danger, #ef4444)", marginTop: 2 }}>
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--danger, #ef4444)",
+              marginTop: 2,
+            }}
+          >
             {scheduleError}
           </div>
         ) : (
-          <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}>
+          <div
+            style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}
+          >
             every:5m, every:1h, every:30s, */10 * * * *
           </div>
         )}
@@ -764,7 +993,14 @@ function CreateForm({
 
       {/* Prompt */}
       <div style={{ marginBottom: 10 }}>
-        <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: 11,
+            color: "var(--text-muted)",
+            marginBottom: 3,
+          }}
+        >
           Prompt
         </label>
         <textarea

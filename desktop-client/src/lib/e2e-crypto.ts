@@ -11,9 +11,7 @@ const E2E_HKDF_INFO = new TextEncoder().encode("aes-256-gcm");
 /** Check if the browser supports X25519 (Chrome 113+, Firefox 130+, Safari 17.2+). */
 export async function isE2ESupported(): Promise<boolean> {
   try {
-    await crypto.subtle.generateKey({ name: "X25519" }, false, [
-      "deriveBits",
-    ]);
+    await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
     return true;
   } catch {
     return false;
@@ -194,7 +192,9 @@ export async function performHandshake(
   const daemonPkBytes = fromBase64(ack.pk);
 
   if (daemonPkBytes.length !== 32) {
-    throw new Error(`Invalid daemon public key length: ${daemonPkBytes.length}`);
+    throw new Error(
+      `Invalid daemon public key length: ${daemonPkBytes.length}`,
+    );
   }
 
   // Derive AES key

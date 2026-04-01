@@ -29,12 +29,28 @@ const CORE_GROUPS: Record<string, string> = {
   BrowserSwitchTab: "Browser",
 };
 
-const GROUP_ORDER = ["File ops", "Search", "Execution", "Web", "Browser", "Tasks", "Skills", "Planner"];
+const GROUP_ORDER = [
+  "File ops",
+  "Search",
+  "Execution",
+  "Web",
+  "Browser",
+  "Tasks",
+  "Skills",
+  "Planner",
+];
 
-interface ToolEntry { name: string; source: string | null; }
+interface ToolEntry {
+  name: string;
+  source: string | null;
+}
 
 function formatPluginName(raw: string): string {
-  return raw.replace(/^lukan-plugin-/, "").split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  return raw
+    .replace(/^lukan-plugin-/, "")
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 export default function ToolsTab() {
@@ -93,7 +109,8 @@ export default function ToolsTab() {
   const toggle = (name: string) => {
     setDisabled((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name); else next.add(name);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
       return next;
     });
   };
@@ -101,7 +118,10 @@ export default function ToolsTab() {
   const setGroup = (tools: string[], enable: boolean) => {
     setDisabled((prev) => {
       const next = new Set(prev);
-      for (const t of tools) { if (enable) next.delete(t); else next.add(t); }
+      for (const t of tools) {
+        if (enable) next.delete(t);
+        else next.add(t);
+      }
       return next;
     });
   };
@@ -131,7 +151,16 @@ export default function ToolsTab() {
 
   if (loading || !config) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, gap: 8, color: "#52525b" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: 200,
+          gap: 8,
+          color: "#52525b",
+        }}
+      >
         <Loader2 size={16} className="animate-spin" />
         <span style={{ fontSize: 13 }}>Loading...</span>
       </div>
@@ -140,18 +169,33 @@ export default function ToolsTab() {
 
   const totalTools = allTools.length;
   const enabledCount = totalTools - disabled.size;
-  const activePluginTools = pluginGroups.find(([name]) => name === activePlugin)?.[1] ?? [];
-  const activePluginEnabled = activePluginTools.filter((t) => !disabled.has(t)).length;
-  const activePluginAllEnabled = activePluginEnabled === activePluginTools.length;
+  const activePluginTools =
+    pluginGroups.find(([name]) => name === activePlugin)?.[1] ?? [];
+  const activePluginEnabled = activePluginTools.filter(
+    (t) => !disabled.has(t),
+  ).length;
+  const activePluginAllEnabled =
+    activePluginEnabled === activePluginTools.length;
 
   return (
     <div style={{ animation: "fadeIn 0.2s ease-out" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 16,
+        }}
+      >
         <p style={{ fontSize: 12, color: "#71717a", margin: 0 }}>
           {enabledCount}/{totalTools} tools enabled
         </p>
-        <button onClick={handleSave} disabled={saving} className="s-btn s-btn-primary">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="s-btn s-btn-primary"
+        >
           <Save size={11} />
           {saving ? "Saving..." : "Save"}
         </button>
@@ -165,63 +209,108 @@ export default function ToolsTab() {
             onClick={() => setMainTab(t)}
             className="s-btn"
             style={{
-              background: mainTab === t ? "rgba(255,255,255,0.08)" : "transparent",
-              color: mainTab === t ? "var(--text-primary)" : "var(--text-muted)",
-              borderColor: mainTab === t ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
+              background:
+                mainTab === t ? "rgba(255,255,255,0.08)" : "transparent",
+              color:
+                mainTab === t ? "var(--text-primary)" : "var(--text-muted)",
+              borderColor:
+                mainTab === t
+                  ? "rgba(255,255,255,0.12)"
+                  : "rgba(255,255,255,0.06)",
             }}
           >
-            {t === "core" ? `Core (${coreGroups.reduce((n, [, ts]) => n + ts.length, 0)})` : `Plugins (${pluginGroups.reduce((n, [, ts]) => n + ts.length, 0)})`}
+            {t === "core"
+              ? `Core (${coreGroups.reduce((n, [, ts]) => n + ts.length, 0)})`
+              : `Plugins (${pluginGroups.reduce((n, [, ts]) => n + ts.length, 0)})`}
           </button>
         ))}
       </div>
 
       {/* Core tools */}
-      {mainTab === "core" && coreGroups.map(([group, tools]) => {
-        const groupEnabled = tools.filter((t) => !disabled.has(t)).length;
-        const allEnabled = groupEnabled === tools.length;
-        return (
-          <div key={group} className="s-section">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div className="s-section-title" style={{ marginBottom: 0 }}>{group}</div>
-                <span className={`s-badge ${groupEnabled === 0 ? "s-badge-red" : "s-badge-gray"}`}>
-                  {groupEnabled}/{tools.length}
-                </span>
-              </div>
-              <button className="s-btn" onClick={() => setGroup(tools, !allEnabled)} style={{ fontSize: 10 }}>
-                {allEnabled ? "Disable all" : "Enable all"}
-              </button>
-            </div>
-            <div className="s-card">
-              {tools.map((tool) => {
-                const enabled = !disabled.has(tool);
-                return (
-                  <div key={tool} className="s-row">
-                    <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: enabled ? "var(--text-primary)" : "var(--text-muted)" }}>
-                      {tool}
-                    </span>
-                    <button
-                      onClick={() => toggle(tool)}
-                      className={`s-toggle${enabled ? " active" : ""}`}
-                    />
+      {mainTab === "core" &&
+        coreGroups.map(([group, tools]) => {
+          const groupEnabled = tools.filter((t) => !disabled.has(t)).length;
+          const allEnabled = groupEnabled === tools.length;
+          return (
+            <div key={group} className="s-section">
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 6,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div className="s-section-title" style={{ marginBottom: 0 }}>
+                    {group}
                   </div>
-                );
-              })}
+                  <span
+                    className={`s-badge ${groupEnabled === 0 ? "s-badge-red" : "s-badge-gray"}`}
+                  >
+                    {groupEnabled}/{tools.length}
+                  </span>
+                </div>
+                <button
+                  className="s-btn"
+                  onClick={() => setGroup(tools, !allEnabled)}
+                  style={{ fontSize: 10 }}
+                >
+                  {allEnabled ? "Disable all" : "Enable all"}
+                </button>
+              </div>
+              <div className="s-card">
+                {tools.map((tool) => {
+                  const enabled = !disabled.has(tool);
+                  return (
+                    <div key={tool} className="s-row">
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontFamily: "var(--font-mono)",
+                          color: enabled
+                            ? "var(--text-primary)"
+                            : "var(--text-muted)",
+                        }}
+                      >
+                        {tool}
+                      </span>
+                      <button
+                        onClick={() => toggle(tool)}
+                        className={`s-toggle${enabled ? " active" : ""}`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
 
       {/* Plugin tools with tabs */}
       {mainTab === "plugins" && pluginGroups.length === 0 && (
-        <div style={{ textAlign: "center", padding: "32px 0", color: "#52525b", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: "32px 0",
+            color: "#52525b",
+            fontSize: 12,
+          }}
+        >
           No plugin tools installed. Install plugins to see their tools here.
         </div>
       )}
       {mainTab === "plugins" && pluginGroups.length > 0 && (
         <div className="s-section">
           {/* Plugin tabs */}
-          <div style={{ display: "flex", gap: 2, marginBottom: 8, overflowX: "auto" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 2,
+              marginBottom: 8,
+              overflowX: "auto",
+            }}
+          >
             {pluginGroups.map(([pluginName, tools]) => {
               const isActive = pluginName === activePlugin;
               const count = tools.filter((t) => !disabled.has(t)).length;
@@ -231,15 +320,23 @@ export default function ToolsTab() {
                   onClick={() => setActivePlugin(pluginName)}
                   className="s-btn"
                   style={{
-                    background: isActive ? "rgba(255,255,255,0.08)" : "transparent",
-                    color: isActive ? "var(--text-primary)" : "var(--text-muted)",
-                    borderColor: isActive ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
+                    background: isActive
+                      ? "rgba(255,255,255,0.08)"
+                      : "transparent",
+                    color: isActive
+                      ? "var(--text-primary)"
+                      : "var(--text-muted)",
+                    borderColor: isActive
+                      ? "rgba(255,255,255,0.12)"
+                      : "rgba(255,255,255,0.06)",
                     whiteSpace: "nowrap",
                     fontSize: 11,
                   }}
                 >
                   {pluginName}
-                  <span style={{ fontSize: 9.5, opacity: 0.6, marginLeft: 4 }}>{count}/{tools.length}</span>
+                  <span style={{ fontSize: 9.5, opacity: 0.6, marginLeft: 4 }}>
+                    {count}/{tools.length}
+                  </span>
                 </button>
               );
             })}
@@ -248,8 +345,20 @@ export default function ToolsTab() {
           {/* Active plugin tools */}
           {activePlugin && activePluginTools.length > 0 && (
             <>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
-                <button className="s-btn" onClick={() => setGroup(activePluginTools, !activePluginAllEnabled)} style={{ fontSize: 10 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  marginBottom: 6,
+                }}
+              >
+                <button
+                  className="s-btn"
+                  onClick={() =>
+                    setGroup(activePluginTools, !activePluginAllEnabled)
+                  }
+                  style={{ fontSize: 10 }}
+                >
                   {activePluginAllEnabled ? "Disable all" : "Enable all"}
                 </button>
               </div>
@@ -258,7 +367,15 @@ export default function ToolsTab() {
                   const enabled = !disabled.has(tool);
                   return (
                     <div key={tool} className="s-row">
-                      <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: enabled ? "var(--text-primary)" : "var(--text-muted)" }}>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontFamily: "var(--font-mono)",
+                          color: enabled
+                            ? "var(--text-primary)"
+                            : "var(--text-muted)",
+                        }}
+                      >
                         {tool}
                       </span>
                       <button

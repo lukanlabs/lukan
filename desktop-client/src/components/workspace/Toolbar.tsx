@@ -25,7 +25,11 @@ import {
   stopWebUi,
 } from "../../lib/tauri";
 
-const MOBILE_MENU_ITEMS: { id: SidePanelId; icon: typeof FolderOpen; label: string }[] = [
+const MOBILE_MENU_ITEMS: {
+  id: SidePanelId;
+  icon: typeof FolderOpen;
+  label: string;
+}[] = [
   { id: "files", icon: FolderOpen, label: "Files" },
   { id: "workers", icon: Puzzle, label: "Workers" },
   { id: "processes", icon: Terminal, label: "Processes" },
@@ -76,7 +80,9 @@ export function Toolbar({
       .then((s) => setWebUiRunning(s.running))
       .catch(() => {});
     // Reload when provider/model changes from settings or elsewhere
-    const onChanged = () => { loadProviders(); };
+    const onChanged = () => {
+      loadProviders();
+    };
     window.addEventListener("provider-changed", onChanged);
     return () => window.removeEventListener("provider-changed", onChanged);
   }, [loadProviders]);
@@ -85,7 +91,9 @@ export function Toolbar({
     try {
       // Models from getModels() are stored as "provider:model_id" — strip only the known prefix
       const prefix = `${provider}:`;
-      const modelId = model.startsWith(prefix) ? model.substring(prefix.length) : model;
+      const modelId = model.startsWith(prefix)
+        ? model.substring(prefix.length)
+        : model;
       await setActiveProvider(provider, modelId);
       setShowModelMenu(false);
       await loadProviders();
@@ -127,14 +135,23 @@ export function Toolbar({
   return (
     <div className="workspace-toolbar" {...dragProps}>
       {/* Left: logo (menu on mobile) + mode toggle */}
-      <div className="toolbar-section" style={{ position: "relative", flexShrink: 0, overflow: "visible" }} {...dragProps}>
+      <div
+        className="toolbar-section"
+        style={{ position: "relative", flexShrink: 0, overflow: "visible" }}
+        {...dragProps}
+      >
         <img
           src={logoUrl}
           alt="lukan"
           className="toolbar-logo"
           onClick={() => setShowMobileMenu((v) => !v)}
         />
-        <img src={logoTextUrl} alt="lukan" className="hidden sm:block" style={{ height: 16, objectFit: "contain" }} />
+        <img
+          src={logoTextUrl}
+          alt="lukan"
+          className="hidden sm:block"
+          style={{ height: 16, objectFit: "contain" }}
+        />
         <div className="mode-toggle" {...dragProps}>
           <button
             className={mode === "agent" ? "active" : ""}
@@ -191,8 +208,12 @@ export function Toolbar({
                     width: "100%",
                     padding: "8px 12px",
                     fontSize: 13,
-                    color: activePanel === id ? "var(--text-primary)" : "var(--text-secondary)",
-                    background: activePanel === id ? "var(--bg-active)" : "transparent",
+                    color:
+                      activePanel === id
+                        ? "var(--text-primary)"
+                        : "var(--text-secondary)",
+                    background:
+                      activePanel === id ? "var(--bg-active)" : "transparent",
                     border: "none",
                     borderRadius: 6,
                     textAlign: "left",
@@ -209,12 +230,26 @@ export function Toolbar({
       </div>
 
       {/* Center: model selector */}
-      <div className="toolbar-section" style={{ position: "relative", flex: "1 1 0", justifyContent: "center" }} {...dragProps}>
+      <div
+        className="toolbar-section"
+        style={{
+          position: "relative",
+          flex: "1 1 0",
+          justifyContent: "center",
+        }}
+        {...dragProps}
+      >
         <button
           className="model-selector"
           onClick={() => setShowModelMenu((v) => !v)}
         >
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
             {activeProvider
               ? `${activeProvider.name}:${activeProvider.currentModel || activeProvider.defaultModel}`
               : "No provider"}
@@ -248,7 +283,9 @@ export function Toolbar({
             >
               {providers.map((p) => {
                 const prefix = `${p.name}:`;
-                const providerModels = models.filter((m) => m.startsWith(prefix));
+                const providerModels = models.filter((m) =>
+                  m.startsWith(prefix),
+                );
                 const currentModel = p.currentModel || p.defaultModel;
                 // Skip providers with no models unless they're active
                 if (providerModels.length === 0 && !p.active) return null;
@@ -278,8 +315,12 @@ export function Toolbar({
                             padding: "6px 12px",
                             fontSize: 12,
                             fontFamily: "var(--font-mono)",
-                            color: isSelected ? "var(--text-primary)" : "var(--text-secondary)",
-                            background: isSelected ? "var(--bg-active)" : "transparent",
+                            color: isSelected
+                              ? "var(--text-primary)"
+                              : "var(--text-secondary)",
+                            background: isSelected
+                              ? "var(--bg-active)"
+                              : "transparent",
                             border: "none",
                             borderRadius: 4,
                             textAlign: "left",
@@ -292,7 +333,9 @@ export function Toolbar({
                     })}
                     {providerModels.length === 0 && (
                       <button
-                        onClick={() => handleSelectModel(p.name, p.defaultModel)}
+                        onClick={() =>
+                          handleSelectModel(p.name, p.defaultModel)
+                        }
                         style={{
                           display: "block",
                           width: "100%",
@@ -318,8 +361,16 @@ export function Toolbar({
       </div>
 
       {/* Right: browser, web UI, settings, window controls */}
-      <div className="toolbar-section" style={{ flexShrink: 0, overflow: "visible" }} {...dragProps}>
-        <button className="toolbar-btn" onClick={onBrowserClick} title="Browser">
+      <div
+        className="toolbar-section"
+        style={{ flexShrink: 0, overflow: "visible" }}
+        {...dragProps}
+      >
+        <button
+          className="toolbar-btn"
+          onClick={onBrowserClick}
+          title="Browser"
+        >
           <Globe size={14} />
           <span className={`status-dot ${browserRunning ? "active" : ""}`} />
         </button>
@@ -340,7 +391,11 @@ export function Toolbar({
           </button>
         )}
 
-        <button className="toolbar-btn" onClick={onSettingsClick} title="Settings">
+        <button
+          className="toolbar-btn"
+          onClick={onSettingsClick}
+          title="Settings"
+        >
           <Settings size={14} />
         </button>
 
@@ -361,10 +416,18 @@ export function Toolbar({
           <>
             <div className="toolbar-divider" />
 
-            <button className="toolbar-btn window-ctrl" onClick={handleMinimize} title="Minimize">
+            <button
+              className="toolbar-btn window-ctrl"
+              onClick={handleMinimize}
+              title="Minimize"
+            >
               <Minus size={14} />
             </button>
-            <button className="toolbar-btn window-ctrl window-close" onClick={handleClose} title="Close">
+            <button
+              className="toolbar-btn window-ctrl window-close"
+              onClick={handleClose}
+              title="Close"
+            >
               <X size={14} />
             </button>
           </>

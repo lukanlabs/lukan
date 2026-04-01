@@ -1,25 +1,45 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { AlertCircle, AlertTriangle, Info, Send, Trash2 } from "lucide-react";
 import type { SystemEvent } from "../../../lib/types";
-import { getEventHistory, consumePendingEvents, clearEventHistory } from "../../../lib/tauri";
+import {
+  getEventHistory,
+  consumePendingEvents,
+  clearEventHistory,
+} from "../../../lib/tauri";
 
 function SeverityIcon({ level }: { level: string }) {
   switch (level) {
     case "error":
     case "critical":
-      return <AlertCircle size={13} style={{ color: "var(--danger)", flexShrink: 0 }} />;
+      return (
+        <AlertCircle
+          size={13}
+          style={{ color: "var(--danger)", flexShrink: 0 }}
+        />
+      );
     case "warning":
     case "warn":
-      return <AlertTriangle size={13} style={{ color: "var(--warning)", flexShrink: 0 }} />;
+      return (
+        <AlertTriangle
+          size={13}
+          style={{ color: "var(--warning)", flexShrink: 0 }}
+        />
+      );
     default:
-      return <Info size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />;
+      return (
+        <Info size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+      );
   }
 }
 
 function formatTimestamp(ts: string): string {
   try {
     const d = new Date(ts);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    return d.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
   } catch {
     return ts;
   }
@@ -33,7 +53,12 @@ interface ContextMenuState {
   event: SystemEvent;
 }
 
-function ContextMenu({ x, y, event, onClose }: ContextMenuState & { onClose: () => void }) {
+function ContextMenu({
+  x,
+  y,
+  event,
+  onClose,
+}: ContextMenuState & { onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -82,7 +107,9 @@ function ContextMenu({ x, y, event, onClose }: ContextMenuState & { onClose: () 
           cursor: "pointer",
           textAlign: "left",
         }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+        onMouseEnter={(e) =>
+          (e.currentTarget.style.background = "var(--bg-hover)")
+        }
         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
       >
         <Send size={12} />
@@ -153,7 +180,9 @@ export function EventsPanel({ sourceFilter, onNewEvents }: EventsPanelProps) {
   if (events.length === 0) {
     return (
       <div style={{ textAlign: "center", padding: 24 }}>
-        <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 4 }}>
+        <div
+          style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 4 }}
+        >
           No system events
         </div>
         <div style={{ color: "var(--text-muted)", fontSize: 11, opacity: 0.6 }}>
@@ -165,15 +194,19 @@ export function EventsPanel({ sourceFilter, onNewEvents }: EventsPanelProps) {
 
   return (
     <div>
-      <div style={{
-        display: "flex",
-        justifyContent: "flex-end",
-        padding: "4px 8px",
-        borderBottom: "1px solid var(--border)",
-      }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          padding: "4px 8px",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
         <button
           onClick={handleClear}
-          title={sourceFilter ? `Clear ${sourceFilter} events` : "Clear all events"}
+          title={
+            sourceFilter ? `Clear ${sourceFilter} events` : "Clear all events"
+          }
           style={{
             display: "flex",
             alignItems: "center",
@@ -186,8 +219,14 @@ export function EventsPanel({ sourceFilter, onNewEvents }: EventsPanelProps) {
             fontSize: 11,
             cursor: "pointer",
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--danger)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-muted)"; }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--bg-hover)";
+            e.currentTarget.style.color = "var(--danger)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = "var(--text-muted)";
+          }}
         >
           <Trash2 size={12} />
           Clear
@@ -222,10 +261,7 @@ export function EventsPanel({ sourceFilter, onNewEvents }: EventsPanelProps) {
                 marginTop: 1,
               }}
             >
-              <span
-                className="worker-badge stopped"
-                style={{ fontSize: 9 }}
-              >
+              <span className="worker-badge stopped" style={{ fontSize: 9 }}>
                 {ev.source}
               </span>
               <span>{formatTimestamp(ev.ts)}</span>
@@ -234,9 +270,7 @@ export function EventsPanel({ sourceFilter, onNewEvents }: EventsPanelProps) {
         </div>
       ))}
 
-      {ctxMenu && (
-        <ContextMenu {...ctxMenu} onClose={() => setCtxMenu(null)} />
-      )}
+      {ctxMenu && <ContextMenu {...ctxMenu} onClose={() => setCtxMenu(null)} />}
     </div>
   );
 }

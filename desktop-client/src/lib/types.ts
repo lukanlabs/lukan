@@ -171,13 +171,29 @@ export interface TranscriptionStatus {
   port: number;
 }
 
-export type TabId = "chat" | "terminal" | "config" | "credentials" | "plugins" | "providers" | "memory";
+export type TabId =
+  | "chat"
+  | "terminal"
+  | "config"
+  | "credentials"
+  | "plugins"
+  | "providers"
+  | "memory";
 
 // ── Workspace types ──────────────────────────────────────────────────
 
 export type WorkspaceMode = "agent" | "terminal" | "pipeline";
 
-export type SidePanelId = "files" | "workers" | "pipelines" | "sessions" | "browser" | "processes" | "events" | "plugin" | "terminals";
+export type SidePanelId =
+  | "files"
+  | "workers"
+  | "pipelines"
+  | "sessions"
+  | "browser"
+  | "processes"
+  | "events"
+  | "plugin"
+  | "terminals";
 
 export interface SystemEvent {
   ts: string;
@@ -514,14 +530,47 @@ export type StreamEvent =
   | { type: "thinking_delta"; text: string }
   | { type: "tool_use_start"; id: string; name: string }
   | { type: "tool_use_delta"; input: string }
-  | { type: "tool_use_end"; id: string; name: string; input: Record<string, unknown> }
+  | {
+      type: "tool_use_end";
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+    }
   | { type: "tool_progress"; id: string; name: string; content: string }
-  | { type: "explore_progress"; id: string; task: string; toolCalls: number; tokens: number; elapsedSecs: number; activity: string }
-  | { type: "tool_result"; id: string; name: string; content: string; isError?: boolean; diff?: string; image?: string }
+  | {
+      type: "explore_progress";
+      id: string;
+      task: string;
+      toolCalls: number;
+      tokens: number;
+      elapsedSecs: number;
+      activity: string;
+    }
+  | {
+      type: "tool_result";
+      id: string;
+      name: string;
+      content: string;
+      isError?: boolean;
+      diff?: string;
+      image?: string;
+    }
   | { type: "approval_required"; tools: ToolApprovalRequest[] }
   | { type: "planner_question"; id: string; questions: PlannerQuestion[] }
-  | { type: "plan_review"; id: string; title: string; plan: string; tasks: PlanTask[] }
-  | { type: "usage"; inputTokens: number; outputTokens: number; cacheCreationTokens?: number; cacheReadTokens?: number }
+  | {
+      type: "plan_review";
+      id: string;
+      title: string;
+      plan: string;
+      tasks: PlanTask[];
+    }
+  | {
+      type: "usage";
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationTokens?: number;
+      cacheReadTokens?: number;
+    }
   | { type: "message_end"; stopReason: StopReason }
   | { type: "mode_changed"; mode: string }
   | { type: "tasks_update"; tasks: TaskInfo[] }

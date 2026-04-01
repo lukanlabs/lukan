@@ -38,10 +38,15 @@ function StatusDot({ status }: { status: BgProcessInfo["status"] }) {
 }
 
 function StatusBadge({ status }: { status: BgProcessInfo["status"] }) {
-  const cfg: Record<string, { color: string; icon: React.ReactNode; label: string }> = {
+  const cfg: Record<
+    string,
+    { color: string; icon: React.ReactNode; label: string }
+  > = {
     running: {
       color: "var(--success, #22c55e)",
-      icon: <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />,
+      icon: (
+        <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
+      ),
       label: "running",
     },
     completed: {
@@ -120,7 +125,9 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
   if (processes.length === 0) {
     return (
       <div style={{ textAlign: "center", padding: 24 }}>
-        <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 4 }}>
+        <div
+          style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 4 }}
+        >
           No background processes
         </div>
         <div style={{ color: "var(--text-faint)", fontSize: 11 }}>
@@ -141,7 +148,14 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
             style={{ cursor: "pointer" }}
           >
             <div className="worker-info">
-              <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  minWidth: 0,
+                }}
+              >
                 <StatusDot status={p.status} />
                 <span
                   style={{
@@ -152,12 +166,23 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
                     color: "var(--text)",
                   }}
                 >
-                  {p.command.length > 50 ? p.command.slice(0, 50) + "..." : p.command}
+                  {p.command.length > 50
+                    ? p.command.slice(0, 50) + "..."
+                    : p.command}
                 </span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "var(--text-muted)" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 10,
+                  color: "var(--text-muted)",
+                }}
+              >
                 {(() => {
-                  const displayLabel = (p.tabId && tabLabels[p.tabId]) || p.label;
+                  const displayLabel =
+                    (p.tabId && tabLabels[p.tabId]) || p.label;
                   return displayLabel ? (
                     <span
                       style={{
@@ -179,7 +204,6 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
           </div>
         ))}
       </div>
-
     </>
   );
 }

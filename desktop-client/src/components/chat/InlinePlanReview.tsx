@@ -15,11 +15,18 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface InlinePlanReviewProps {
   plan: PendingPlanReview;
-  onAccept: (tasks?: Array<{ title: string; detail: string }>, mode?: PermissionMode) => void;
+  onAccept: (
+    tasks?: Array<{ title: string; detail: string }>,
+    mode?: PermissionMode,
+  ) => void;
   onReject: (feedback: string) => void;
 }
 
-export function InlinePlanReview({ plan, onAccept, onReject }: InlinePlanReviewProps) {
+export function InlinePlanReview({
+  plan,
+  onAccept,
+  onReject,
+}: InlinePlanReviewProps) {
   const [open, setOpen] = useState(true);
   const [acted, setActed] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
@@ -46,7 +53,11 @@ export function InlinePlanReview({ plan, onAccept, onReject }: InlinePlanReviewP
         className="flex items-center gap-2 w-full text-left cursor-pointer rounded-md px-2 py-1.5 hover:bg-white/5 transition-colors"
       >
         <span className="text-zinc-600 shrink-0">
-          {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          {open ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
         </span>
         <span className="shrink-0 text-blue-400/70">
           <ListChecks className="h-3.5 w-3.5" />
@@ -115,7 +126,11 @@ export function InlinePlanReview({ plan, onAccept, onReject }: InlinePlanReviewP
                 autoFocus
                 className="w-full rounded-md border border-white/5 bg-white/[0.02] px-3 py-2 text-sm sm:text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 resize-y"
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && feedback.trim()) {
+                  if (
+                    e.key === "Enter" &&
+                    (e.metaKey || e.ctrlKey) &&
+                    feedback.trim()
+                  ) {
                     handleReject();
                   }
                 }}

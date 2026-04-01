@@ -4,7 +4,11 @@ interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
 }
 
-export default function Textarea({ label, className = "", ...props }: TextareaProps) {
+export default function Textarea({
+  label,
+  className = "",
+  ...props
+}: TextareaProps) {
   return (
     <div className="flex flex-col gap-2">
       {label && (
@@ -25,7 +29,8 @@ export default function Textarea({ label, className = "", ...props }: TextareaPr
         }}
         onFocus={(e) => {
           e.currentTarget.style.borderColor = "rgba(100, 100, 100, 0.6)";
-          e.currentTarget.style.boxShadow = "0 0 0 2px rgba(100, 100, 100, 0.15)";
+          e.currentTarget.style.boxShadow =
+            "0 0 0 2px rgba(100, 100, 100, 0.15)";
         }}
         onBlur={(e) => {
           e.currentTarget.style.borderColor = "var(--border)";

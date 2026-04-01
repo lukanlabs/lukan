@@ -28,10 +28,7 @@ const TAURI_ONLY_COMMANDS = new Set([
 ]);
 
 // Events that come from Tauri (not from WebSocket)
-const TAURI_EVENTS = new Set([
-  "audio-data",
-  "audio-error",
-]);
+const TAURI_EVENTS = new Set(["audio-data", "audio-error"]);
 
 /**
  * Hybrid transport for the desktop app.

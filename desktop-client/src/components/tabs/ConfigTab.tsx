@@ -30,18 +30,45 @@ const TIMEZONES = [
   { value: "UTC", label: "UTC" },
 ];
 
-function Select({ value, options, onChange }: { value: string; options: { value: string; label: string }[]; onChange: (v: string) => void }) {
+function Select({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (v: string) => void;
+}) {
   return (
     <div style={{ position: "relative" }}>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="s-input"
-        style={{ width: "100%", appearance: "none", paddingRight: 28, cursor: "pointer" }}
+        style={{
+          width: "100%",
+          appearance: "none",
+          paddingRight: 28,
+          cursor: "pointer",
+        }}
       >
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
       </select>
-      <ChevronDown size={13} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#52525b" }} />
+      <ChevronDown
+        size={13}
+        style={{
+          position: "absolute",
+          right: 8,
+          top: "50%",
+          transform: "translateY(-50%)",
+          pointerEvents: "none",
+          color: "#52525b",
+        }}
+      />
     </div>
   );
 }
@@ -92,18 +119,33 @@ export default function ConfigTab() {
 
   if (loading || !config) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, gap: 8, color: "#52525b" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: 200,
+          gap: 8,
+          color: "#52525b",
+        }}
+      >
         <Loader2 size={16} className="animate-spin" />
         <span style={{ fontSize: 13 }}>Loading...</span>
       </div>
     );
   }
 
-  const update = (patch: Partial<AppConfig>) => setConfig({ ...config, ...patch });
+  const update = (patch: Partial<AppConfig>) =>
+    setConfig({ ...config, ...patch });
   const selectedProvider = providers.find((p) => p.name === config.provider);
-  const filteredModels = allModels.filter((entry) => entry.startsWith(`${config.provider}:`));
+  const filteredModels = allModels.filter((entry) =>
+    entry.startsWith(`${config.provider}:`),
+  );
   const modelOptions = [
-    { value: "", label: `Default (${selectedProvider?.defaultModel ?? "auto"})` },
+    {
+      value: "",
+      label: `Default (${selectedProvider?.defaultModel ?? "auto"})`,
+    },
     ...filteredModels.map((entry) => {
       const name = entry.substring(entry.indexOf(":") + 1);
       return { value: name, label: name };
@@ -114,9 +156,22 @@ export default function ConfigTab() {
   return (
     <div style={{ animation: "fadeIn 0.2s ease-out" }}>
       {/* Header with save */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-        <p style={{ fontSize: 12, color: "#71717a", margin: 0 }}>Model, preferences, and connection settings.</p>
-        <button onClick={handleSave} disabled={saving} className="s-btn s-btn-primary">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 20,
+        }}
+      >
+        <p style={{ fontSize: 12, color: "#71717a", margin: 0 }}>
+          Model, preferences, and connection settings.
+        </p>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="s-btn s-btn-primary"
+        >
           <Save size={11} />
           {saving ? "Saving..." : "Save"}
         </button>
@@ -131,13 +186,17 @@ export default function ConfigTab() {
               <div className="s-row-label">Provider</div>
               <div className="s-row-hint">Change in Providers tab</div>
             </div>
-            <div className="s-row-value">{selectedProvider?.active ? config.provider : "Not configured"}</div>
+            <div className="s-row-value">
+              {selectedProvider?.active ? config.provider : "Not configured"}
+            </div>
           </div>
           <div className="s-row">
             <div>
               <div className="s-row-label">Model</div>
             </div>
-            <div className="s-row-value">{config.model || selectedProvider?.defaultModel || "auto"}</div>
+            <div className="s-row-value">
+              {config.model || selectedProvider?.defaultModel || "auto"}
+            </div>
           </div>
           <div className="s-row">
             <div>
@@ -149,7 +208,9 @@ export default function ConfigTab() {
               type="number"
               style={{ width: 100, textAlign: "right" }}
               value={config.maxTokens}
-              onChange={(e) => update({ maxTokens: parseInt(e.target.value) || 8192 })}
+              onChange={(e) =>
+                update({ maxTokens: parseInt(e.target.value) || 8192 })
+              }
             />
           </div>
         </div>
@@ -183,7 +244,9 @@ export default function ConfigTab() {
             <div>
               <div className="s-row-label">Mode</div>
             </div>
-            <div className="s-row-value">{isRelayMode() ? "Remote (relay)" : "Local"}</div>
+            <div className="s-row-value">
+              {isRelayMode() ? "Remote (relay)" : "Local"}
+            </div>
           </div>
           <div className="s-row">
             <div>
@@ -196,7 +259,9 @@ export default function ConfigTab() {
               <div className="s-row">
                 <div>
                   <div className="s-row-label">Port</div>
-                  <div className="s-row-hint">Currently running on port {currentPort}</div>
+                  <div className="s-row-hint">
+                    Currently running on port {currentPort}
+                  </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input
@@ -215,35 +280,62 @@ export default function ConfigTab() {
                 </div>
               </div>
               {portChanged && (
-                <div style={{
-                  padding: "10px 14px",
-                  background: "rgba(234, 179, 8, 0.06)",
-                  borderBottom: "1px solid rgba(255,255,255,0.04)",
-                }}>
-                  <div style={{ fontSize: 12, color: "#eab308", marginBottom: 4 }}>Port change requires daemon restart</div>
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    background: "rgba(234, 179, 8, 0.06)",
+                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                  }}
+                >
+                  <div
+                    style={{ fontSize: 12, color: "#eab308", marginBottom: 4 }}
+                  >
+                    Port change requires daemon restart
+                  </div>
                   <div style={{ fontSize: 11, color: "#71717a" }}>
                     After saving, run in your terminal:
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
-                    <code style={{
-                      flex: 1, padding: "6px 10px", borderRadius: 4,
-                      background: "rgba(0,0,0,0.3)", fontFamily: "var(--font-mono)", fontSize: 11, color: "#fafafa",
-                    }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      marginTop: 6,
+                    }}
+                  >
+                    <code
+                      style={{
+                        flex: 1,
+                        padding: "6px 10px",
+                        borderRadius: 4,
+                        background: "rgba(0,0,0,0.3)",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 11,
+                        color: "#fafafa",
+                      }}
+                    >
                       lukan daemon stop && lukan daemon start -d
                     </code>
                     <button
                       className="s-btn"
                       style={{ flexShrink: 0, fontSize: 10.5 }}
                       onClick={() => {
-                        navigator.clipboard.writeText("lukan daemon stop && lukan daemon start -d");
+                        navigator.clipboard.writeText(
+                          "lukan daemon stop && lukan daemon start -d",
+                        );
                         toast("success", "Copied to clipboard");
                       }}
                     >
                       Copy
                     </button>
                   </div>
-                  <div style={{ fontSize: 10.5, color: "#71717a", marginTop: 6 }}>
-                    Then access: <span style={{ color: "#eab308" }}>http://localhost:{config.webPort ?? currentPort}</span>
+                  <div
+                    style={{ fontSize: 10.5, color: "#71717a", marginTop: 6 }}
+                  >
+                    Then access:{" "}
+                    <span style={{ color: "#eab308" }}>
+                      http://localhost:{config.webPort ?? currentPort}
+                    </span>
                   </div>
                 </div>
               )}
@@ -258,7 +350,9 @@ export default function ConfigTab() {
                   style={{ width: 180 }}
                   value={config?.webPassword ?? ""}
                   placeholder="No password"
-                  onChange={(e) => update({ webPassword: e.target.value || undefined })}
+                  onChange={(e) =>
+                    update({ webPassword: e.target.value || undefined })
+                  }
                 />
               </div>
             </>
@@ -280,7 +374,11 @@ export default function ConfigTab() {
                 style={{ width: 280 }}
                 value={config.openaiCompatibleBaseUrl ?? ""}
                 placeholder="http://localhost:8080/v1"
-                onChange={(e) => update({ openaiCompatibleBaseUrl: e.target.value || undefined })}
+                onChange={(e) =>
+                  update({
+                    openaiCompatibleBaseUrl: e.target.value || undefined,
+                  })
+                }
               />
             </div>
           </div>

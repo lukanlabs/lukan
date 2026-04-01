@@ -48,14 +48,32 @@ function ConfirmDialog({
           boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <AlertTriangle size={18} style={{ color: "#fbbf24", flexShrink: 0 }} />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            marginBottom: 12,
+          }}
+        >
+          <AlertTriangle
+            size={18}
+            style={{ color: "#fbbf24", flexShrink: 0 }}
+          />
           <span style={{ fontSize: 14, fontWeight: 600, color: "#fafafa" }}>
             Close terminal?
           </span>
         </div>
-        <p style={{ fontSize: 13, color: "#a1a1aa", margin: "0 0 20px", lineHeight: 1.5 }}>
-          This will kill the running process and destroy the session. This action cannot be undone.
+        <p
+          style={{
+            fontSize: 13,
+            color: "#a1a1aa",
+            margin: "0 0 20px",
+            lineHeight: 1.5,
+          }}
+        >
+          This will kill the running process and destroy the session. This
+          action cannot be undone.
         </p>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <button
@@ -118,14 +136,18 @@ export default function TerminalView() {
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
   }, []);
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    const dx = e.changedTouches[0].clientX - touchStartX.current;
-    if (Math.abs(dx) < 60) return;
-    const idx = sessions.findIndex((s) => s.id === activeSessionId);
-    if (idx < 0) return;
-    if (dx < 0 && idx < sessions.length - 1) switchSession(sessions[idx + 1].id);
-    if (dx > 0 && idx > 0) switchSession(sessions[idx - 1].id);
-  }, [sessions, activeSessionId, switchSession]);
+  const handleTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      const dx = e.changedTouches[0].clientX - touchStartX.current;
+      if (Math.abs(dx) < 60) return;
+      const idx = sessions.findIndex((s) => s.id === activeSessionId);
+      if (idx < 0) return;
+      if (dx < 0 && idx < sessions.length - 1)
+        switchSession(sessions[idx + 1].id);
+      if (dx > 0 && idx > 0) switchSession(sessions[idx - 1].id);
+    },
+    [sessions, activeSessionId, switchSession],
+  );
 
   // Initialize: list existing tmux sessions or create first one
   useEffect(() => {
@@ -207,14 +229,19 @@ export default function TerminalView() {
   useEffect(() => {
     if (effectiveViewMode !== "split" || sessions.length <= 1) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
+      if (
+        !e.altKey ||
+        !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
+      )
+        return;
       e.preventDefault();
       e.stopImmediatePropagation();
       const idx = sessions.findIndex((s) => s.id === activeSessionId);
       if (idx < 0) return;
       const row = Math.floor(idx / splitCols);
       const col = idx % splitCols;
-      let newRow = row, newCol = col;
+      let newRow = row,
+        newCol = col;
       if (e.key === "ArrowUp") newRow = Math.max(0, row - 1);
       if (e.key === "ArrowDown") newRow = Math.min(splitRows - 1, row + 1);
       if (e.key === "ArrowLeft") newCol = Math.max(0, col - 1);
@@ -224,7 +251,14 @@ export default function TerminalView() {
     };
     window.addEventListener("keydown", onKey, true); // capture phase to intercept before xterm
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [effectiveViewMode, sessions, activeSessionId, splitCols, splitRows, switchSession]);
+  }, [
+    effectiveViewMode,
+    sessions,
+    activeSessionId,
+    splitCols,
+    splitRows,
+    switchSession,
+  ]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -236,7 +270,11 @@ export default function TerminalView() {
         onCreate={createSession}
         onRename={renameSession}
         viewMode={effectiveViewMode}
-        onToggleViewMode={isMobile ? undefined : () => setViewMode(viewMode === "tabs" ? "split" : "tabs")}
+        onToggleViewMode={
+          isMobile
+            ? undefined
+            : () => setViewMode(viewMode === "tabs" ? "split" : "tabs")
+        }
         splitFontSize={splitFontSize}
         onSplitFontSizeChange={setSplitFontSize}
       />
@@ -280,27 +318,33 @@ export default function TerminalView() {
                 position: "relative",
                 minHeight: 0,
                 minWidth: 0,
-                border: s.id === activeSessionId
-                  ? "2px solid rgba(99,102,241,0.6)"
-                  : "1px solid rgba(255,255,255,0.08)",
+                border:
+                  s.id === activeSessionId
+                    ? "2px solid rgba(99,102,241,0.6)"
+                    : "1px solid rgba(255,255,255,0.08)",
                 borderRadius: 6,
                 overflow: "hidden",
                 boxSizing: "border-box",
               }}
             >
-              <span style={{
-                position: "absolute",
-                top: 4,
-                right: 8,
-                zIndex: 1,
-                fontSize: 10,
-                fontFamily: "var(--font-mono)",
-                color: s.id === activeSessionId ? "rgba(99,102,241,0.7)" : "rgba(255,255,255,0.25)",
-                background: "rgba(0,0,0,0.6)",
-                padding: "1px 6px",
-                borderRadius: 4,
-                pointerEvents: "none",
-              }}>
+              <span
+                style={{
+                  position: "absolute",
+                  top: 4,
+                  right: 8,
+                  zIndex: 1,
+                  fontSize: 10,
+                  fontFamily: "var(--font-mono)",
+                  color:
+                    s.id === activeSessionId
+                      ? "rgba(99,102,241,0.7)"
+                      : "rgba(255,255,255,0.25)",
+                  background: "rgba(0,0,0,0.6)",
+                  padding: "1px 6px",
+                  borderRadius: 4,
+                  pointerEvents: "none",
+                }}
+              >
                 {s.label || s.name || `shell-${i + 1}`}
               </span>
               <XTermPanel

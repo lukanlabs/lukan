@@ -56,14 +56,17 @@ export function useBrowser() {
     }
   }, []);
 
-  const navigate = useCallback(async (url: string) => {
-    try {
-      await browserNavigate(url);
-      await refreshStatus();
-    } catch (e) {
-      console.error("Browser navigate failed:", e);
-    }
-  }, [refreshStatus]);
+  const navigate = useCallback(
+    async (url: string) => {
+      try {
+        await browserNavigate(url);
+        await refreshStatus();
+      } catch (e) {
+        console.error("Browser navigate failed:", e);
+      }
+    },
+    [refreshStatus],
+  );
 
   const takeScreenshot = useCallback(async () => {
     try {

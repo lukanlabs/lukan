@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { Circle, CheckCircle2, Loader2, ChevronRight, ChevronDown } from "lucide-react";
+import {
+  Circle,
+  CheckCircle2,
+  Loader2,
+  ChevronRight,
+  ChevronDown,
+} from "lucide-react";
 import type { TaskInfo } from "../../lib/types";
 
 interface TaskPanelProps {
@@ -27,7 +33,11 @@ export function TaskPanel({ tasks }: TaskPanelProps) {
         className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-zinc-400 hover:text-zinc-300 transition-colors"
         onClick={() => setCollapsed((c) => !c)}
       >
-        {collapsed ? <ChevronRight className="h-3 w-3 shrink-0" /> : <ChevronDown className="h-3 w-3 shrink-0" />}
+        {collapsed ? (
+          <ChevronRight className="h-3 w-3 shrink-0" />
+        ) : (
+          <ChevronDown className="h-3 w-3 shrink-0" />
+        )}
         <span>Tasks</span>
         <span className="ml-auto tabular-nums text-zinc-500 shrink-0">
           {doneCount}/{tasks.length}
@@ -66,9 +76,13 @@ export function TaskPanel({ tasks }: TaskPanelProps) {
 function TaskIcon({ status }: { status: string }) {
   switch (status) {
     case "done":
-      return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5 text-emerald-500" />;
+      return (
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5 text-emerald-500" />
+      );
     case "in_progress":
-      return <Loader2 className="h-3.5 w-3.5 shrink-0 mt-0.5 text-blue-400 animate-spin" />;
+      return (
+        <Loader2 className="h-3.5 w-3.5 shrink-0 mt-0.5 text-blue-400 animate-spin" />
+      );
     default:
       return <Circle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-zinc-600" />;
   }

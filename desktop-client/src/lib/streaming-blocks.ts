@@ -64,10 +64,13 @@ export function setToolInput<T extends StreamingLikeBlock>(
   toolId: string,
   input: Record<string, unknown>,
 ): void {
-  const block = blocks.find((b): b is Extract<T, { type: "tool" }> => b.type === "tool");
+  const block = blocks.find(
+    (b): b is Extract<T, { type: "tool" }> => b.type === "tool",
+  );
   if (!block || block.tool.id !== toolId) {
     const exact = blocks.find(
-      (b): b is Extract<T, { type: "tool" }> => b.type === "tool" && b.tool.id === toolId,
+      (b): b is Extract<T, { type: "tool" }> =>
+        b.type === "tool" && b.tool.id === toolId,
     );
     if (exact) {
       exact.tool = { ...exact.tool, rawInput: input };
@@ -83,7 +86,8 @@ export function setToolResult<T extends StreamingLikeBlock>(
   payload: Pick<StreamingToolData, "content" | "isError" | "diff" | "image">,
 ): void {
   const block = blocks.find(
-    (b): b is Extract<T, { type: "tool" }> => b.type === "tool" && b.tool.id === toolId,
+    (b): b is Extract<T, { type: "tool" }> =>
+      b.type === "tool" && b.tool.id === toolId,
   );
   if (!block) return;
   block.tool = {
@@ -102,9 +106,12 @@ export function setToolProgress<T extends StreamingLikeBlock>(
   content: string,
 ): void {
   const block = blocks.find(
-    (b): b is Extract<T, { type: "tool" }> => b.type === "tool" && b.tool.id === toolId,
+    (b): b is Extract<T, { type: "tool" }> =>
+      b.type === "tool" && b.tool.id === toolId,
   );
   if (!block || !content.trim()) return;
-  const next = block.tool.content ? `${block.tool.content}\n${content}` : content;
+  const next = block.tool.content
+    ? `${block.tool.content}\n${content}`
+    : content;
   block.tool = { ...block.tool, content: next };
 }

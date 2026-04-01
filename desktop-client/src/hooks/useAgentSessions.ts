@@ -49,7 +49,9 @@ export function deleteSessionMapEntry(tabId: string) {
 export function useAgentSessions() {
   const [tabs, setTabs] = useState<AgentTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [initialPendingLoads, setInitialPendingLoads] = useState<Record<string, string>>({});
+  const [initialPendingLoads, setInitialPendingLoads] = useState<
+    Record<string, string>
+  >({});
   const initializedRef = useRef(false);
   const tabsRef = useRef<AgentTab[]>([]);
   const activeRef = useRef<string | null>(null);
@@ -62,17 +64,20 @@ export function useAgentSessions() {
     persistTabs(t, active, _sessionMap);
   }, []);
 
-  const createTab = useCallback(async (cwd?: string) => {
-    const id = await createAgentTab(cwd);
-    const tab: AgentTab = { id };
-    setTabs((prev) => {
-      const next = [...prev, tab];
-      persist(next, id);
-      return next;
-    });
-    setActiveTabId(id);
-    return tab;
-  }, [persist]);
+  const createTab = useCallback(
+    async (cwd?: string) => {
+      const id = await createAgentTab(cwd);
+      const tab: AgentTab = { id };
+      setTabs((prev) => {
+        const next = [...prev, tab];
+        persist(next, id);
+        return next;
+      });
+      setActiveTabId(id);
+      return tab;
+    },
+    [persist],
+  );
 
   const destroyTab = useCallback(
     async (id: string) => {
@@ -100,7 +105,9 @@ export function useAgentSessions() {
       // Notify backend of active tab (updates cwd for plugins)
       setActiveTab(id).catch(() => {});
       // Notify UI components (e.g. plugin webview)
-      window.dispatchEvent(new CustomEvent("active-tab-changed", { detail: id }));
+      window.dispatchEvent(
+        new CustomEvent("active-tab-changed", { detail: id }),
+      );
     },
     [persist],
   );
@@ -114,7 +121,9 @@ export function useAgentSessions() {
       });
       renameAgentTab(id, label)
         .then(() => {
-          window.dispatchEvent(new CustomEvent("session-changed", { detail: id }));
+          window.dispatchEvent(
+            new CustomEvent("session-changed", { detail: id }),
+          );
         })
         .catch(() => {});
     },

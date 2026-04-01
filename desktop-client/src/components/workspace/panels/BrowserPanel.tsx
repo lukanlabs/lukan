@@ -3,8 +3,16 @@ import { Camera, ExternalLink, Copy } from "lucide-react";
 import { useBrowser } from "../../../hooks/useBrowser";
 
 export function BrowserPanel() {
-  const { status, tabs, screenshot, loading, launch, close, navigate, takeScreenshot } =
-    useBrowser();
+  const {
+    status,
+    tabs,
+    screenshot,
+    loading,
+    launch,
+    close,
+    navigate,
+    takeScreenshot,
+  } = useBrowser();
   const [urlInput, setUrlInput] = useState("");
 
   const handleNavigate = (e: React.FormEvent) => {
@@ -27,7 +35,9 @@ export function BrowserPanel() {
   if (!status.running) {
     return (
       <div style={{ padding: 16, textAlign: "center" }}>
-        <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 12 }}>
+        <div
+          style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 12 }}
+        >
           Chrome is not running
         </div>
         <button
@@ -67,7 +77,13 @@ export function BrowserPanel() {
           </span>
           <button
             onClick={handleCopy}
-            style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", padding: 0 }}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              padding: 0,
+            }}
             title="Copy URL"
           >
             <Copy size={11} />
@@ -76,7 +92,11 @@ export function BrowserPanel() {
       )}
 
       {/* Navigate input */}
-      <form onSubmit={handleNavigate} className="browser-url-bar" style={{ margin: "4px 8px 0" }}>
+      <form
+        onSubmit={handleNavigate}
+        className="browser-url-bar"
+        style={{ margin: "4px 8px 0" }}
+      >
         <input
           type="text"
           placeholder="Navigate to URL..."

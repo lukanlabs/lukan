@@ -1,5 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useAgentSessions, getSessionMap, setSessionMapEntry, deleteSessionMapEntry } from "../hooks/useAgentSessions";
+import {
+  useAgentSessions,
+  getSessionMap,
+  setSessionMapEntry,
+  deleteSessionMapEntry,
+} from "../hooks/useAgentSessions";
 import { ChatPanel } from "./ChatView";
 import AgentTabBar from "../components/chat/AgentTabBar";
 import FolderPicker from "../components/chat/FolderPicker";
@@ -12,8 +17,16 @@ interface TabStats {
 }
 
 export default function AgentView() {
-  const { tabs, activeTabId, initialPendingLoads, createTab, destroyTab, switchTab, renameTab, persistNow } =
-    useAgentSessions();
+  const {
+    tabs,
+    activeTabId,
+    initialPendingLoads,
+    createTab,
+    destroyTab,
+    switchTab,
+    renameTab,
+    persistNow,
+  } = useAgentSessions();
 
   // Pending session loads keyed by tab ID — seeded with initial restores
   const [pendingLoads, setPendingLoads] = useState<Record<string, string>>({});
@@ -22,17 +35,20 @@ export default function AgentView() {
   // Track which session each tab has loaded: tabId → sessionId
   const tabSessionMapRef = useRef<Map<string, string>>(getSessionMap());
 
-  const handleSessionIdChange = useCallback((tabId: string, sessionId: string) => {
-    if (sessionId) {
-      tabSessionMapRef.current.set(tabId, sessionId);
-      setSessionMapEntry(tabId, sessionId);
-    } else {
-      tabSessionMapRef.current.delete(tabId);
-      deleteSessionMapEntry(tabId);
-    }
-    // Persist tab→session mapping to disk so it survives restarts
-    persistNow();
-  }, [persistNow]);
+  const handleSessionIdChange = useCallback(
+    (tabId: string, sessionId: string) => {
+      if (sessionId) {
+        tabSessionMapRef.current.set(tabId, sessionId);
+        setSessionMapEntry(tabId, sessionId);
+      } else {
+        tabSessionMapRef.current.delete(tabId);
+        deleteSessionMapEntry(tabId);
+      }
+      // Persist tab→session mapping to disk so it survives restarts
+      persistNow();
+    },
+    [persistNow],
+  );
 
   // Apply initial pending loads from tab restoration (runs after tabs are rendered)
   useEffect(() => {
@@ -53,7 +69,9 @@ export default function AgentView() {
     tabs.forEach((t, i) => {
       labels[t.id] = t.label || `Agent ${i + 1}`;
     });
-    window.dispatchEvent(new CustomEvent("agent-tab-labels", { detail: labels }));
+    window.dispatchEvent(
+      new CustomEvent("agent-tab-labels", { detail: labels }),
+    );
   }, [tabs]);
 
   // Intercept load-session: switch to existing tab if session is already open,
@@ -85,11 +103,14 @@ export default function AgentView() {
   }, [createTab, switchTab, renameTab]);
 
   // Wrap destroyTab to also clean up the session map
-  const handleDestroyTab = useCallback(async (id: string) => {
-    tabSessionMapRef.current.delete(id);
-    deleteSessionMapEntry(id);
-    await destroyTab(id);
-  }, [destroyTab]);
+  const handleDestroyTab = useCallback(
+    async (id: string) => {
+      tabSessionMapRef.current.delete(id);
+      deleteSessionMapEntry(id);
+      await destroyTab(id);
+    },
+    [destroyTab],
+  );
 
   // When sessions are deleted, close affected tabs (create a new one only if none remain)
   useEffect(() => {
@@ -138,7 +159,9 @@ export default function AgentView() {
     [activeTabId],
   );
 
-  const activeStats = activeTabId ? statsRef.current.get(activeTabId) : undefined;
+  const activeStats = activeTabId
+    ? statsRef.current.get(activeTabId)
+    : undefined;
 
   const [showEmptyFolderPicker, setShowEmptyFolderPicker] = useState(false);
 
@@ -146,7 +169,9 @@ export default function AgentView() {
   if (tabs.length === 0) {
     return (
       <div className="flex flex-1 flex-col min-h-0 min-w-0 w-full overflow-hidden items-center justify-center gap-4">
-        <div style={{ color: "var(--text-secondary)", fontSize: 14, opacity: 0.7 }}>
+        <div
+          style={{ color: "var(--text-secondary)", fontSize: 14, opacity: 0.7 }}
+        >
           No agents running
         </div>
         <div className="flex gap-3">

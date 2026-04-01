@@ -1,7 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, SquareTerminal, Loader2, X } from "lucide-react";
 import type { TerminalSessionInfo } from "../../../lib/types";
-import { terminalList, terminalCreate, terminalDestroy, terminalRename } from "../../../lib/tauri";
+import {
+  terminalList,
+  terminalCreate,
+  terminalDestroy,
+  terminalRename,
+} from "../../../lib/tauri";
 
 interface TerminalsPanelProps {
   /** IDs of sessions currently open in TerminalView tabs. */
@@ -9,7 +14,10 @@ interface TerminalsPanelProps {
   onSwitchToTerminal?: (sessionId: string) => void;
 }
 
-export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPanelProps) {
+export function TerminalsPanel({
+  attachedIds,
+  onSwitchToTerminal,
+}: TerminalsPanelProps) {
   const attachedSet = new Set(attachedIds);
   const [sessions, setSessions] = useState<TerminalSessionInfo[] | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -26,9 +34,12 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
 
   useEffect(() => {
     load();
-    const onChanged = () => { load(); };
+    const onChanged = () => {
+      load();
+    };
     window.addEventListener("terminal-sessions-changed", onChanged);
-    return () => window.removeEventListener("terminal-sessions-changed", onChanged);
+    return () =>
+      window.removeEventListener("terminal-sessions-changed", onChanged);
   }, [load]);
 
   // Focus input when editing starts
@@ -40,14 +51,18 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
   }, [editingId]);
 
   const handleAttach = (session: TerminalSessionInfo) => {
-    window.dispatchEvent(new CustomEvent("terminal-attach-request", { detail: session.id }));
+    window.dispatchEvent(
+      new CustomEvent("terminal-attach-request", { detail: session.id }),
+    );
     onSwitchToTerminal?.(session.id);
   };
 
   const handleCreate = async () => {
     try {
       const info = await terminalCreate(undefined, 80, 24);
-      window.dispatchEvent(new CustomEvent("terminal-attach-request", { detail: info.id }));
+      window.dispatchEvent(
+        new CustomEvent("terminal-attach-request", { detail: info.id }),
+      );
       onSwitchToTerminal?.(info.id);
       load();
     } catch {
@@ -58,7 +73,9 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
   const handleDestroy = async (id: string) => {
     try {
       await terminalDestroy(id);
-      window.dispatchEvent(new CustomEvent("terminal-destroyed-external", { detail: id }));
+      window.dispatchEvent(
+        new CustomEvent("terminal-destroyed-external", { detail: id }),
+      );
       load();
     } catch {
       // ignore
@@ -71,7 +88,11 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
     if (trimmed) {
       try {
         await terminalRename(id, trimmed);
-        window.dispatchEvent(new CustomEvent("terminal-renamed", { detail: { id, name: trimmed } }));
+        window.dispatchEvent(
+          new CustomEvent("terminal-renamed", {
+            detail: { id, name: trimmed },
+          }),
+        );
         load();
       } catch {
         // ignore
@@ -86,7 +107,14 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
 
   return (
     <div>
-      <div style={{ padding: "4px 8px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+      <div
+        style={{
+          padding: "4px 8px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+        }}
+      >
         <button
           onClick={handleCreate}
           title="New terminal"
@@ -106,10 +134,21 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
 
       {sessions === null ? (
         <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
-          <Loader2 size={18} style={{ color: "var(--text-muted)" }} className="animate-spin" />
+          <Loader2
+            size={18}
+            style={{ color: "var(--text-muted)" }}
+            className="animate-spin"
+          />
         </div>
       ) : sessions.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: 24,
+            color: "var(--text-muted)",
+            fontSize: 12,
+          }}
+        >
           No terminal sessions
         </div>
       ) : (
@@ -137,7 +176,9 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
               <SquareTerminal
                 size={13}
                 style={{
-                  color: isAttached ? "var(--accent, #60a5fa)" : "var(--text-muted)",
+                  color: isAttached
+                    ? "var(--accent, #60a5fa)"
+                    : "var(--text-muted)",
                   flexShrink: 0,
                 }}
               />
@@ -147,7 +188,8 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
                   defaultValue={displayName}
                   onBlur={(e) => handleRename(session.id, e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") handleRename(session.id, e.currentTarget.value);
+                    if (e.key === "Enter")
+                      handleRename(session.id, e.currentTarget.value);
                     if (e.key === "Escape") setEditingId(null);
                   }}
                   style={{
@@ -174,7 +216,9 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
                     flex: 1,
                     border: "none",
                     background: "transparent",
-                    color: isAttached ? "var(--text-primary, #e4e4e7)" : "var(--text-secondary)",
+                    color: isAttached
+                      ? "var(--text-primary, #e4e4e7)"
+                      : "var(--text-secondary)",
                     fontSize: 12,
                     fontFamily: "var(--font-mono)",
                     cursor: "pointer",
@@ -184,13 +228,23 @@ export function TerminalsPanel({ attachedIds, onSwitchToTerminal }: TerminalsPan
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
                   }}
-                  title={isAttached ? "Switch to terminal (double-click to rename)" : "Attach terminal (double-click to rename)"}
+                  title={
+                    isAttached
+                      ? "Switch to terminal (double-click to rename)"
+                      : "Attach terminal (double-click to rename)"
+                  }
                 >
                   {displayName}
                 </button>
               )}
               {isAttached ? (
-                <span style={{ fontSize: 9, color: "var(--accent, #60a5fa)", flexShrink: 0 }}>
+                <span
+                  style={{
+                    fontSize: 9,
+                    color: "var(--accent, #60a5fa)",
+                    flexShrink: 0,
+                  }}
+                >
                   open
                 </span>
               ) : (

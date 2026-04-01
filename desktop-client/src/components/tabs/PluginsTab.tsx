@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import type { PluginInfo, RemotePlugin, PluginCommand, PluginToolsInfo, ConfigFieldSchemaDto, AuthDeclarationDto } from "../../lib/types";
+import type {
+  PluginInfo,
+  RemotePlugin,
+  PluginCommand,
+  PluginToolsInfo,
+  ConfigFieldSchemaDto,
+  AuthDeclarationDto,
+} from "../../lib/types";
 import {
   listPlugins,
   installPlugin,
@@ -64,7 +71,15 @@ const CORE_GROUPS: Record<string, string> = {
   PlannerQuestion: "Planner",
 };
 
-const GROUP_ORDER = ["File ops", "Search", "Execution", "Web", "Tasks", "Skills", "Planner"];
+const GROUP_ORDER = [
+  "File ops",
+  "Search",
+  "Execution",
+  "Web",
+  "Tasks",
+  "Skills",
+  "Planner",
+];
 
 // ---------------------------------------------------------------------------
 // Main Component
@@ -84,7 +99,9 @@ export default function PluginsTab() {
   const [localPath, setLocalPath] = useState("");
   const [installingLocal, setInstallingLocal] = useState(false);
 
-  const [actionLoading, setActionLoading] = useState<"start" | "stop" | "restart" | "remove" | "update" | null>(null);
+  const [actionLoading, setActionLoading] = useState<
+    "start" | "stop" | "restart" | "remove" | "update" | null
+  >(null);
   const [pluginConfig, setPluginConfig] = useState<Record<string, unknown>>({});
   const [pluginLogs, setPluginLogs] = useState("");
   const [logsRefreshing, setLogsRefreshing] = useState(false);
@@ -93,8 +110,12 @@ export default function PluginsTab() {
   const [commandOutput, setCommandOutput] = useState<string | null>(null);
 
   const [pluginAuthed, setPluginAuthed] = useState(false);
-  const [configSchema, setConfigSchema] = useState<Record<string, ConfigFieldSchemaDto> | null>(null);
-  const [authDeclaration, setAuthDeclaration] = useState<AuthDeclarationDto | null>(null);
+  const [configSchema, setConfigSchema] = useState<Record<
+    string,
+    ConfigFieldSchemaDto
+  > | null>(null);
+  const [authDeclaration, setAuthDeclaration] =
+    useState<AuthDeclarationDto | null>(null);
 
   const [showQr, setShowQr] = useState(false);
   const [qrPluginName, setQrPluginName] = useState<string | null>(null);
@@ -115,7 +136,11 @@ export default function PluginsTab() {
           toast("success", "Linked successfully!");
         } else if (qr && qr !== lastQrRef.current) {
           lastQrRef.current = qr;
-          const url = await QRCode.toDataURL(qr, { width: 256, margin: 2, color: { dark: "#000000", light: "#ffffff" } });
+          const url = await QRCode.toDataURL(qr, {
+            width: 256,
+            margin: 2,
+            color: { dark: "#000000", light: "#ffffff" },
+          });
           if (!cancelled) {
             setQrDataUrl(url);
             setQrLoading(false);
@@ -125,9 +150,11 @@ export default function PluginsTab() {
     };
     poll();
     const interval = setInterval(poll, 2000);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [showQr, qrDataUrl, qrLinked, qrPluginName, toast]);
-
 
   // ── Data fetching ──
 
@@ -140,32 +167,40 @@ export default function PluginsTab() {
     }
   }, [toast]);
 
-  useEffect(() => { refreshPlugins(); }, [refreshPlugins]);
+  useEffect(() => {
+    refreshPlugins();
+  }, [refreshPlugins]);
 
-  const loadPluginDetail = useCallback(async (name: string) => {
-    try {
-      const [cfg, logs, cmds, manifestInfo] = await Promise.all([
-        getPluginConfig(name),
-        getPluginLogs(name, 200),
-        getPluginCommands(name).catch(() => [] as PluginCommand[]),
-        getPluginManifestInfo(name).catch(() => null),
-      ]);
-      setPluginConfig(cfg);
-      setPluginLogs(logs);
-      setPluginCommands(cmds);
-      setConfigSchema(manifestInfo?.config ?? null);
-      setAuthDeclaration(manifestInfo?.auth ?? null);
-      const authed = await checkPluginAuth(name).catch(() => false);
-      setPluginAuthed(authed);
-    } catch (e) {
-      toast("error", `Failed to load plugin details: ${e}`);
-    }
-  }, [toast]);
+  const loadPluginDetail = useCallback(
+    async (name: string) => {
+      try {
+        const [cfg, logs, cmds, manifestInfo] = await Promise.all([
+          getPluginConfig(name),
+          getPluginLogs(name, 200),
+          getPluginCommands(name).catch(() => [] as PluginCommand[]),
+          getPluginManifestInfo(name).catch(() => null),
+        ]);
+        setPluginConfig(cfg);
+        setPluginLogs(logs);
+        setPluginCommands(cmds);
+        setConfigSchema(manifestInfo?.config ?? null);
+        setAuthDeclaration(manifestInfo?.auth ?? null);
+        const authed = await checkPluginAuth(name).catch(() => false);
+        setPluginAuthed(authed);
+      } catch (e) {
+        toast("error", `Failed to load plugin details: ${e}`);
+      }
+    },
+    [toast],
+  );
 
-  const selectPlugin = useCallback((name: string) => {
-    setSelectedPlugin(name);
-    loadPluginDetail(name);
-  }, [loadPluginDetail]);
+  const selectPlugin = useCallback(
+    (name: string) => {
+      setSelectedPlugin(name);
+      loadPluginDetail(name);
+    },
+    [loadPluginDetail],
+  );
 
   const goBack = useCallback(() => {
     setSelectedPlugin(null);
@@ -198,20 +233,30 @@ export default function PluginsTab() {
     }
   };
 
-  const handleAction = async (action: "start" | "stop" | "restart" | "remove" | "update", name: string) => {
+  const handleAction = async (
+    action: "start" | "stop" | "restart" | "remove" | "update",
+    name: string,
+  ) => {
     setActionLoading(action);
     try {
       if (action === "start") await startPlugin(name);
       else if (action === "stop") await stopPlugin(name);
       else if (action === "restart") await restartPlugin(name);
-      else if (action === "remove") { await removePlugin(name); await refreshPlugins(); goBack(); return; }
-      else if (action === "update") {
-        const wasRunning = plugins.find(p => p.name === name)?.running;
+      else if (action === "remove") {
+        await removePlugin(name);
+        await refreshPlugins();
+        goBack();
+        return;
+      } else if (action === "update") {
+        const wasRunning = plugins.find((p) => p.name === name)?.running;
         if (wasRunning) await stopPlugin(name);
         await installRemotePlugin(name);
         if (wasRunning) await startPlugin(name);
       }
-      toast("success", `Plugin '${name}' ${action === "restart" ? "restarted" : action + (action === "update" ? "d" : "ed")}`);
+      toast(
+        "success",
+        `Plugin '${name}' ${action === "restart" ? "restarted" : action + (action === "update" ? "d" : "ed")}`,
+      );
       await refreshPlugins();
       const logs = await getPluginLogs(name, 200);
       setPluginLogs(logs);
@@ -231,9 +276,19 @@ export default function PluginsTab() {
     lastQrRef.current = null;
   };
 
-  const handleConfigSave = async (pluginName: string, key: string, value: string) => {
+  const handleConfigSave = async (
+    pluginName: string,
+    key: string,
+    value: string,
+  ) => {
     try {
-      const parsed = (() => { try { return JSON.parse(value); } catch { return value; } })();
+      const parsed = (() => {
+        try {
+          return JSON.parse(value);
+        } catch {
+          return value;
+        }
+      })();
       await setPluginConfigField(pluginName, key, parsed);
       const cfg = await getPluginConfig(pluginName);
       setPluginConfig(cfg);
@@ -297,7 +352,9 @@ export default function PluginsTab() {
     }
   };
 
-  const activePlugin = selectedPlugin ? plugins.find((p) => p.name === selectedPlugin) ?? null : null;
+  const activePlugin = selectedPlugin
+    ? (plugins.find((p) => p.name === selectedPlugin) ?? null)
+    : null;
 
   // ── Render ──
 
@@ -325,40 +382,73 @@ export default function PluginsTab() {
         />
       ) : (
         <>
-        {/* Installed / Add-ons tabs */}
-        <div style={{ display: "flex", gap: 2, marginBottom: 16 }}>
-          <button className="s-btn" onClick={() => setMainTab("installed")} style={{
-            background: mainTab === "installed" ? "rgba(255,255,255,0.08)" : "transparent",
-            color: mainTab === "installed" ? "var(--text-primary)" : "var(--text-muted)",
-            borderColor: mainTab === "installed" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
-          }}>Installed ({plugins.length})</button>
-          <button className="s-btn" onClick={() => { setMainTab("addons"); if (remotePlugins.length === 0) loadAddons(); }} style={{
-            background: mainTab === "addons" ? "rgba(255,255,255,0.08)" : "transparent",
-            color: mainTab === "addons" ? "var(--text-primary)" : "var(--text-muted)",
-            borderColor: mainTab === "addons" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
-          }}>Add-ons</button>
-        </div>
+          {/* Installed / Add-ons tabs */}
+          <div style={{ display: "flex", gap: 2, marginBottom: 16 }}>
+            <button
+              className="s-btn"
+              onClick={() => setMainTab("installed")}
+              style={{
+                background:
+                  mainTab === "installed"
+                    ? "rgba(255,255,255,0.08)"
+                    : "transparent",
+                color:
+                  mainTab === "installed"
+                    ? "var(--text-primary)"
+                    : "var(--text-muted)",
+                borderColor:
+                  mainTab === "installed"
+                    ? "rgba(255,255,255,0.12)"
+                    : "rgba(255,255,255,0.06)",
+              }}
+            >
+              Installed ({plugins.length})
+            </button>
+            <button
+              className="s-btn"
+              onClick={() => {
+                setMainTab("addons");
+                if (remotePlugins.length === 0) loadAddons();
+              }}
+              style={{
+                background:
+                  mainTab === "addons"
+                    ? "rgba(255,255,255,0.08)"
+                    : "transparent",
+                color:
+                  mainTab === "addons"
+                    ? "var(--text-primary)"
+                    : "var(--text-muted)",
+                borderColor:
+                  mainTab === "addons"
+                    ? "rgba(255,255,255,0.12)"
+                    : "rgba(255,255,255,0.06)",
+              }}
+            >
+              Add-ons
+            </button>
+          </div>
 
-        {mainTab === "installed" ? (
-        <MasterView
-          plugins={plugins}
-          localPath={localPath}
-          installingLocal={installingLocal}
-          onLocalPathChange={setLocalPath}
-          onInstallLocal={handleInstallLocal}
-          onSelectPlugin={selectPlugin}
-        />
-        ) : (
-          <AddonsView
-            remotePlugins={remotePlugins}
-            installedNames={new Set(plugins.map((p) => p.name))}
-            loading={addonsLoading}
-            installing={installingRemote}
-            search={addonsSearch}
-            onSearchChange={setAddonsSearch}
-            onInstall={handleInstallRemote}
-          />
-        )}
+          {mainTab === "installed" ? (
+            <MasterView
+              plugins={plugins}
+              localPath={localPath}
+              installingLocal={installingLocal}
+              onLocalPathChange={setLocalPath}
+              onInstallLocal={handleInstallLocal}
+              onSelectPlugin={selectPlugin}
+            />
+          ) : (
+            <AddonsView
+              remotePlugins={remotePlugins}
+              installedNames={new Set(plugins.map((p) => p.name))}
+              loading={addonsLoading}
+              installing={installingRemote}
+              search={addonsSearch}
+              onSearchChange={setAddonsSearch}
+              onInstall={handleInstallRemote}
+            />
+          )}
         </>
       )}
 
@@ -369,10 +459,12 @@ export default function PluginsTab() {
           qrLoading={qrLoading}
           qrLinked={qrLinked}
           onClose={() => setShowQr(false)}
-          onDone={() => { setShowQr(false); refreshPlugins(); }}
+          onDone={() => {
+            setShowQr(false);
+            refreshPlugins();
+          }}
         />
       )}
-
     </div>
   );
 }
@@ -391,13 +483,24 @@ interface MasterViewProps {
 }
 
 function MasterView({
-  plugins, localPath, installingLocal,
-  onLocalPathChange, onInstallLocal, onSelectPlugin,
+  plugins,
+  localPath,
+  installingLocal,
+  onLocalPathChange,
+  onInstallLocal,
+  onSelectPlugin,
 }: MasterViewProps) {
   return (
     <>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 12,
+        }}
+      >
         <p style={{ fontSize: 12, color: "#71717a", margin: 0 }}>
           {plugins.length} installed
         </p>
@@ -409,30 +512,46 @@ function MasterView({
           value={localPath}
           placeholder="/path/to/plugin"
           onChange={(e) => onLocalPathChange(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onInstallLocal(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onInstallLocal();
+          }}
           className="flex-1 px-2.5 py-1.5 rounded-lg text-xs outline-none"
-          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+          style={{
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border)",
+            color: "var(--text-primary)",
+          }}
         />
         <button
           onClick={onInstallLocal}
           disabled={installingLocal || !localPath.trim()}
           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none shrink-0"
           style={{
-            background: "#fafafa", color: "#09090b",
+            background: "#fafafa",
+            color: "#09090b",
             opacity: installingLocal || !localPath.trim() ? 0.4 : 1,
-            pointerEvents: installingLocal || !localPath.trim() ? "none" : "auto",
+            pointerEvents:
+              installingLocal || !localPath.trim() ? "none" : "auto",
           }}
         >
-          {installingLocal ? <Loader2 size={11} className="animate-spin" /> : <FolderOpen size={11} />}
+          {installingLocal ? (
+            <Loader2 size={11} className="animate-spin" />
+          ) : (
+            <FolderOpen size={11} />
+          )}
           Install
         </button>
       </div>
 
       {/* Plugin list */}
       {plugins.length === 0 ? (
-        <div className="text-center py-10 rounded-lg" style={{
-          color: "var(--text-muted)", border: "1px dashed var(--border)",
-        }}>
+        <div
+          className="text-center py-10 rounded-lg"
+          style={{
+            color: "var(--text-muted)",
+            border: "1px dashed var(--border)",
+          }}
+        >
           <Package size={24} style={{ margin: "0 auto 8px", opacity: 0.3 }} />
           <p className="text-xs">No plugins installed</p>
         </div>
@@ -442,40 +561,73 @@ function MasterView({
             <div
               key={plugin.name}
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer"
-              style={{ background: "transparent", transition: "background 120ms" }}
+              style={{
+                background: "transparent",
+                transition: "background 120ms",
+              }}
               onClick={() => onSelectPlugin(plugin.name)}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--bg-hover)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
             >
               <Package size={13} style={{ color: "var(--text-muted)" }} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+                  <span
+                    className="text-xs font-medium"
+                    style={{ color: "var(--text-primary)" }}
+                  >
                     {plugin.name}
                   </span>
-                  <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
+                  <span
+                    className="text-[10px] font-mono"
+                    style={{ color: "var(--text-muted)" }}
+                  >
                     v{plugin.version}
                   </span>
                   {plugin.alias && (
-                    <span className="text-[10px] px-1 rounded" style={{
-                      background: "rgba(255,255,255,0.05)", color: "var(--text-muted)",
-                    }}>{plugin.alias}</span>
+                    <span
+                      className="text-[10px] px-1 rounded"
+                      style={{
+                        background: "rgba(255,255,255,0.05)",
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      {plugin.alias}
+                    </span>
                   )}
                 </div>
                 {plugin.description && (
-                  <span className="text-[10px] block truncate" style={{ color: "var(--text-muted)" }}>
+                  <span
+                    className="text-[10px] block truncate"
+                    style={{ color: "var(--text-muted)" }}
+                  >
                     {plugin.description}
                   </span>
                 )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {plugin.pluginType === "channel" || plugin.activityBar && (
-                  <span className="w-1.5 h-1.5 rounded-full" style={{
-                    background: plugin.running ? "#4ade80" : "var(--text-muted)",
-                    boxShadow: plugin.running ? "0 0 6px rgba(74,222,128,0.4)" : "none",
-                  }} />
-                )}
-                <ChevronRight size={12} style={{ color: "var(--text-muted)" }} />
+                {plugin.pluginType === "channel" ||
+                  (plugin.activityBar && (
+                    <span
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{
+                        background: plugin.running
+                          ? "#4ade80"
+                          : "var(--text-muted)",
+                        boxShadow: plugin.running
+                          ? "0 0 6px rgba(74,222,128,0.4)"
+                          : "none",
+                      }}
+                    />
+                  ))}
+                <ChevronRight
+                  size={12}
+                  style={{ color: "var(--text-muted)" }}
+                />
               </div>
             </div>
           ))}
@@ -502,7 +654,10 @@ interface DetailViewProps {
   configSchema: Record<string, ConfigFieldSchemaDto> | null;
   authDeclaration: AuthDeclarationDto | null;
   onBack: () => void;
-  onAction: (action: "start" | "stop" | "restart" | "remove" | "update", name: string) => void;
+  onAction: (
+    action: "start" | "stop" | "restart" | "remove" | "update",
+    name: string,
+  ) => void;
   onConfigSave: (pluginName: string, key: string, value: string) => void;
   onRefreshLogs: (name: string) => void;
   onShowQr: (pluginName: string) => void;
@@ -510,14 +665,28 @@ interface DetailViewProps {
 }
 
 function DetailView({
-  plugin, config, logs, actionLoading, logsRefreshing,
-  commands, commandRunning, commandOutput, pluginAuthed,
-  configSchema, authDeclaration,
-  onBack, onAction, onConfigSave, onRefreshLogs, onShowQr, onRunCommand,
+  plugin,
+  config,
+  logs,
+  actionLoading,
+  logsRefreshing,
+  commands,
+  commandRunning,
+  commandOutput,
+  pluginAuthed,
+  configSchema,
+  authDeclaration,
+  onBack,
+  onAction,
+  onConfigSave,
+  onRefreshLogs,
+  onShowQr,
+  onRunCommand,
 }: DetailViewProps) {
   const logsEndRef = useRef<HTMLPreElement>(null);
   useEffect(() => {
-    if (logsEndRef.current) logsEndRef.current.scrollTop = logsEndRef.current.scrollHeight;
+    if (logsEndRef.current)
+      logsEndRef.current.scrollTop = logsEndRef.current.scrollHeight;
   }, [logs]);
 
   const configKeys = Object.keys(config);
@@ -526,59 +695,142 @@ function DetailView({
   return (
     <div style={{ animation: "fadeIn 0.15s ease-out" }}>
       {/* Header: back + plugin name + status + actions inline */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 16,
+        }}
+      >
         <button
           onClick={onBack}
-          style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 2 }}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+            padding: 2,
+          }}
         >
           <ArrowLeft size={14} />
         </button>
-        <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{plugin.name}</span>
-        <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>v{plugin.version}</span>
+        <span
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: "var(--text-primary)",
+          }}
+        >
+          {plugin.name}
+        </span>
+        <span
+          style={{
+            fontSize: 10,
+            fontFamily: "var(--font-mono)",
+            color: "var(--text-muted)",
+          }}
+        >
+          v{plugin.version}
+        </span>
         <span className="s-badge s-badge-gray">{plugin.pluginType}</span>
         {(plugin.pluginType === "channel" || plugin.activityBar) && (
-          <span className={`s-badge ${plugin.running ? "s-badge-green" : "s-badge-gray"}`}>
+          <span
+            className={`s-badge ${plugin.running ? "s-badge-green" : "s-badge-gray"}`}
+          >
             {plugin.running ? "Active" : "Inactive"}
           </span>
         )}
         <div style={{ flex: 1 }} />
         {/* Inline action buttons */}
-        {(plugin.pluginType === "channel" || plugin.activityBar) && (
-          plugin.running ? (
+        {(plugin.pluginType === "channel" || plugin.activityBar) &&
+          (plugin.running ? (
             <>
-              <button className="s-btn" onClick={() => onAction("stop", plugin.name)} disabled={actionLoading !== null}
-                style={{ opacity: actionLoading !== null ? 0.4 : 1 }}>
-                {actionLoading === "stop" ? <Loader2 size={10} className="animate-spin" /> : <Square size={10} />}
+              <button
+                className="s-btn"
+                onClick={() => onAction("stop", plugin.name)}
+                disabled={actionLoading !== null}
+                style={{ opacity: actionLoading !== null ? 0.4 : 1 }}
+              >
+                {actionLoading === "stop" ? (
+                  <Loader2 size={10} className="animate-spin" />
+                ) : (
+                  <Square size={10} />
+                )}
                 Deactivate
               </button>
-              <button className="s-btn" onClick={() => onAction("restart", plugin.name)} disabled={actionLoading !== null}
-                style={{ opacity: actionLoading !== null ? 0.4 : 1 }}>
-                {actionLoading === "restart" ? <Loader2 size={10} className="animate-spin" /> : <RotateCw size={10} />}
+              <button
+                className="s-btn"
+                onClick={() => onAction("restart", plugin.name)}
+                disabled={actionLoading !== null}
+                style={{ opacity: actionLoading !== null ? 0.4 : 1 }}
+              >
+                {actionLoading === "restart" ? (
+                  <Loader2 size={10} className="animate-spin" />
+                ) : (
+                  <RotateCw size={10} />
+                )}
                 Restart
               </button>
             </>
           ) : (
-            <button className="s-btn" onClick={() => onAction("start", plugin.name)} disabled={actionLoading !== null}
-              style={{ opacity: actionLoading !== null ? 0.4 : 1 }}>
-              {actionLoading === "start" ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
+            <button
+              className="s-btn"
+              onClick={() => onAction("start", plugin.name)}
+              disabled={actionLoading !== null}
+              style={{ opacity: actionLoading !== null ? 0.4 : 1 }}
+            >
+              {actionLoading === "start" ? (
+                <Loader2 size={10} className="animate-spin" />
+              ) : (
+                <Play size={10} />
+              )}
               Activate
             </button>
-          )
-        )}
-        <button className="s-btn" onClick={() => onAction("update", plugin.name)} disabled={actionLoading !== null}
-          style={{ opacity: actionLoading !== null ? 0.4 : 1 }}>
-          {actionLoading === "update" ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
+          ))}
+        <button
+          className="s-btn"
+          onClick={() => onAction("update", plugin.name)}
+          disabled={actionLoading !== null}
+          style={{ opacity: actionLoading !== null ? 0.4 : 1 }}
+        >
+          {actionLoading === "update" ? (
+            <Loader2 size={10} className="animate-spin" />
+          ) : (
+            <Download size={10} />
+          )}
           Update
         </button>
-        <button className="s-btn" onClick={() => onAction("remove", plugin.name)} disabled={actionLoading !== null}
-          style={{ color: "#fb7185", borderColor: "rgba(251,113,133,0.2)", opacity: actionLoading !== null ? 0.4 : 1 }}>
-          {actionLoading === "remove" ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
+        <button
+          className="s-btn"
+          onClick={() => onAction("remove", plugin.name)}
+          disabled={actionLoading !== null}
+          style={{
+            color: "#fb7185",
+            borderColor: "rgba(251,113,133,0.2)",
+            opacity: actionLoading !== null ? 0.4 : 1,
+          }}
+        >
+          {actionLoading === "remove" ? (
+            <Loader2 size={10} className="animate-spin" />
+          ) : (
+            <Trash2 size={10} />
+          )}
           Uninstall
         </button>
       </div>
 
       {plugin.description && (
-        <p style={{ fontSize: 11.5, color: "var(--text-secondary)", marginBottom: 16, marginTop: -8 }}>{plugin.description}</p>
+        <p
+          style={{
+            fontSize: 11.5,
+            color: "var(--text-secondary)",
+            marginBottom: 16,
+            marginTop: -8,
+          }}
+        >
+          {plugin.description}
+        </p>
       )}
 
       {/* Commands */}
@@ -589,24 +841,52 @@ function DetailView({
             {commands.map((cmd) => {
               const isAuth = cmd.name === "auth";
               const btnLabel = isAuth
-                ? (commandRunning === cmd.name ? "..." : pluginAuthed ? "Re-auth" : "Authenticate")
-                : (commandRunning === cmd.name ? "..." : "Run");
+                ? commandRunning === cmd.name
+                  ? "..."
+                  : pluginAuthed
+                    ? "Re-auth"
+                    : "Authenticate"
+                : commandRunning === cmd.name
+                  ? "..."
+                  : "Run";
               return (
                 <div key={cmd.name} className="s-row">
                   <div style={{ minWidth: 0 }}>
                     <div className="s-row-label">
                       {cmd.name}
                       {isAuth && (
-                        <span style={{ marginLeft: 8, fontSize: 10, color: pluginAuthed ? "#4ade80" : "var(--text-muted)" }}>
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            fontSize: 10,
+                            color: pluginAuthed
+                              ? "#4ade80"
+                              : "var(--text-muted)",
+                          }}
+                        >
                           {pluginAuthed ? "authenticated" : "not authenticated"}
                         </span>
                       )}
                     </div>
-                    {cmd.description && <div className="s-row-hint">{cmd.description}</div>}
+                    {cmd.description && (
+                      <div className="s-row-hint">{cmd.description}</div>
+                    )}
                   </div>
-                  <button className="s-btn" onClick={() => isAuth && hasQrAuth ? onShowQr(plugin.name) : onRunCommand(plugin.name, cmd.name)}
-                    disabled={commandRunning !== null} style={{ opacity: commandRunning !== null ? 0.4 : 1 }}>
-                    {commandRunning === cmd.name ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
+                  <button
+                    className="s-btn"
+                    onClick={() =>
+                      isAuth && hasQrAuth
+                        ? onShowQr(plugin.name)
+                        : onRunCommand(plugin.name, cmd.name)
+                    }
+                    disabled={commandRunning !== null}
+                    style={{ opacity: commandRunning !== null ? 0.4 : 1 }}
+                  >
+                    {commandRunning === cmd.name ? (
+                      <Loader2 size={10} className="animate-spin" />
+                    ) : (
+                      <Play size={10} />
+                    )}
                     {btnLabel}
                   </button>
                 </div>
@@ -614,12 +894,25 @@ function DetailView({
             })}
           </div>
           {commandOutput && (
-            <pre style={{
-              fontSize: 10, padding: "8px 10px", marginTop: 6, borderRadius: 4, overflow: "auto",
-              background: "rgba(0,0,0,0.2)", color: "var(--text-secondary)", maxHeight: 120,
-              whiteSpace: "pre-wrap", wordBreak: "break-word", margin: "6px 0 0",
-              fontFamily: "var(--font-mono)", border: "1px solid rgba(255,255,255,0.04)",
-            }}>{commandOutput}</pre>
+            <pre
+              style={{
+                fontSize: 10,
+                padding: "8px 10px",
+                marginTop: 6,
+                borderRadius: 4,
+                overflow: "auto",
+                background: "rgba(0,0,0,0.2)",
+                color: "var(--text-secondary)",
+                maxHeight: 120,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                margin: "6px 0 0",
+                fontFamily: "var(--font-mono)",
+                border: "1px solid rgba(255,255,255,0.04)",
+              }}
+            >
+              {commandOutput}
+            </pre>
           )}
         </div>
       )}
@@ -641,7 +934,11 @@ function DetailView({
 
       {/* Tools */}
       {(plugin.pluginType === "channel" || plugin.activityBar) && (
-        <PluginToolsSection pluginName={plugin.name} config={config} onConfigSave={onConfigSave} />
+        <PluginToolsSection
+          pluginName={plugin.name}
+          config={config}
+          onConfigSave={onConfigSave}
+        />
       )}
 
       {/* Configuration */}
@@ -658,23 +955,51 @@ function DetailView({
       {/* Logs */}
       {(plugin.pluginType === "channel" || plugin.activityBar) && (
         <div className="s-section">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <div className="s-section-title" style={{ marginBottom: 0 }}>Logs</div>
-            <button className="s-btn" onClick={() => onRefreshLogs(plugin.name)} disabled={logsRefreshing}
-              style={{ opacity: logsRefreshing ? 0.4 : 1 }}>
-              <RefreshCw size={10} className={logsRefreshing ? "animate-spin" : ""} /> Refresh
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 8,
+            }}
+          >
+            <div className="s-section-title" style={{ marginBottom: 0 }}>
+              Logs
+            </div>
+            <button
+              className="s-btn"
+              onClick={() => onRefreshLogs(plugin.name)}
+              disabled={logsRefreshing}
+              style={{ opacity: logsRefreshing ? 0.4 : 1 }}
+            >
+              <RefreshCw
+                size={10}
+                className={logsRefreshing ? "animate-spin" : ""}
+              />{" "}
+              Refresh
             </button>
           </div>
           <pre
             ref={logsEndRef}
             style={{
-              fontFamily: "var(--font-mono)", fontSize: 10, padding: "10px 12px", borderRadius: 4,
-              minHeight: 100, maxHeight: 220, width: "100%", overflow: "auto",
-              background: "rgba(0,0,0,0.2)", color: "var(--text-secondary)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              padding: "10px 12px",
+              borderRadius: 4,
+              minHeight: 100,
+              maxHeight: 220,
+              width: "100%",
+              overflow: "auto",
+              background: "rgba(0,0,0,0.2)",
+              color: "var(--text-secondary)",
               border: "1px solid rgba(255,255,255,0.04)",
-              lineHeight: 1.5, whiteSpace: "pre", margin: 0,
+              lineHeight: 1.5,
+              whiteSpace: "pre",
+              margin: 0,
             }}
-          >{logs || "No logs available"}</pre>
+          >
+            {logs || "No logs available"}
+          </pre>
         </div>
       )}
     </div>
@@ -685,13 +1010,19 @@ function DetailView({
 // Plugin Tools Section
 // ===========================================================================
 
-function PluginToolsSection({ pluginName, config, onConfigSave }: {
+function PluginToolsSection({
+  pluginName,
+  config,
+  onConfigSave,
+}: {
   pluginName: string;
   config: Record<string, unknown>;
   onConfigSave: (pluginName: string, key: string, value: string) => void;
 }) {
   const { toast } = useToast();
-  const [manifestInfo, setManifestInfo] = useState<PluginToolsInfo | null>(null);
+  const [manifestInfo, setManifestInfo] = useState<PluginToolsInfo | null>(
+    null,
+  );
   const [pluginTools, setPluginTools] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -703,7 +1034,9 @@ function PluginToolsSection({ pluginName, config, onConfigSave }: {
           listTools(),
         ]);
         setManifestInfo(info);
-        setPluginTools(allTools.filter((t) => t.source !== null).map((t) => t.name));
+        setPluginTools(
+          allTools.filter((t) => t.source !== null).map((t) => t.name),
+        );
       } catch (e) {
         toast("error", `Failed to load tools info: ${e}`);
       } finally {
@@ -719,7 +1052,8 @@ function PluginToolsSection({ pluginName, config, onConfigSave }: {
     if (Array.isArray(configTools)) return new Set(configTools as string[]);
     if (!manifestInfo) return new Set<string>();
     // No override — use defaults. Empty defaults = all core tools only.
-    if (manifestInfo.defaultTools.length === 0) return new Set(manifestInfo.allCoreTools);
+    if (manifestInfo.defaultTools.length === 0)
+      return new Set(manifestInfo.allCoreTools);
     return new Set(manifestInfo.defaultTools);
   }, [config.tools, manifestInfo]);
 
@@ -773,8 +1107,14 @@ function PluginToolsSection({ pluginName, config, onConfigSave }: {
     return (
       <Section icon={<Wrench size={12} />} title="Tools">
         <div className="flex items-center gap-2 py-2">
-          <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-muted)" }} />
-          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Loading tools...</span>
+          <Loader2
+            size={12}
+            className="animate-spin"
+            style={{ color: "var(--text-muted)" }}
+          />
+          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+            Loading tools...
+          </span>
         </div>
       </Section>
     );
@@ -822,13 +1162,18 @@ function PluginToolsSection({ pluginName, config, onConfigSave }: {
             <div key={group}>
               <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-semibold" style={{ color: "var(--text-secondary)" }}>
+                  <span
+                    className="text-[10px] font-semibold"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
                     {group}
                   </span>
                   <span
                     className="text-[9px] px-1 py-px rounded-full"
                     style={{
-                      background: allDisabled ? "rgba(239,68,68,0.1)" : "rgba(63,63,70,0.4)",
+                      background: allDisabled
+                        ? "rgba(239,68,68,0.1)"
+                        : "rgba(63,63,70,0.4)",
                       color: allDisabled ? "#f87171" : "var(--text-muted)",
                     }}
                   >
@@ -838,7 +1183,10 @@ function PluginToolsSection({ pluginName, config, onConfigSave }: {
                 <button
                   onClick={() => setGroup(tools, !allEnabled)}
                   className="text-[9px] px-1.5 py-0.5 rounded cursor-pointer border-none"
-                  style={{ background: "rgba(63,63,70,0.3)", color: "var(--text-muted)" }}
+                  style={{
+                    background: "rgba(63,63,70,0.3)",
+                    color: "var(--text-muted)",
+                  }}
                 >
                   {allEnabled ? "Disable all" : "Enable all"}
                 </button>
@@ -855,17 +1203,27 @@ function PluginToolsSection({ pluginName, config, onConfigSave }: {
                       className="flex items-center justify-between px-2.5 py-1.5"
                       style={{
                         background: "rgba(24,24,27,0.5)",
-                        borderTop: i > 0 ? "1px solid rgba(63,63,70,0.2)" : undefined,
+                        borderTop:
+                          i > 0 ? "1px solid rgba(63,63,70,0.2)" : undefined,
                       }}
                     >
-                      <span className="text-[11px] font-mono" style={{ color: enabled ? "var(--text-primary)" : "var(--text-muted)" }}>
+                      <span
+                        className="text-[11px] font-mono"
+                        style={{
+                          color: enabled
+                            ? "var(--text-primary)"
+                            : "var(--text-muted)",
+                        }}
+                      >
                         {tool}
                       </span>
                       <button
                         onClick={() => toggle(tool)}
                         className="relative w-7 h-[16px] rounded-full transition-colors"
                         style={{
-                          background: enabled ? "rgba(34,197,94,0.35)" : "rgba(63,63,70,0.4)",
+                          background: enabled
+                            ? "rgba(34,197,94,0.35)"
+                            : "rgba(63,63,70,0.4)",
                           border: "none",
                           cursor: "pointer",
                           padding: 0,
@@ -888,78 +1246,99 @@ function PluginToolsSection({ pluginName, config, onConfigSave }: {
         })}
 
         {/* Plugin-provided tools (toggleable) */}
-        {pluginTools.length > 0 && (() => {
-          const groupEnabled = pluginTools.filter((t) => enabledTools.has(t)).length;
-          const allEnabled = groupEnabled === pluginTools.length;
-          const allDisabled = groupEnabled === 0;
-          return (
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-semibold" style={{ color: "var(--text-secondary)" }}>
-                    Plugin Tools
-                  </span>
-                  <span
-                    className="text-[9px] px-1 py-px rounded-full"
-                    style={{
-                      background: allDisabled ? "rgba(239,68,68,0.1)" : "rgba(63,63,70,0.4)",
-                      color: allDisabled ? "#f87171" : "var(--text-muted)",
-                    }}
-                  >
-                    {groupEnabled}/{pluginTools.length}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setGroup(pluginTools, !allEnabled)}
-                  className="text-[9px] px-1.5 py-0.5 rounded cursor-pointer border-none"
-                  style={{ background: "rgba(63,63,70,0.3)", color: "var(--text-muted)" }}
-                >
-                  {allEnabled ? "Disable all" : "Enable all"}
-                </button>
-              </div>
-              <div
-                className="flex flex-col rounded-lg overflow-hidden"
-                style={{ border: "1px solid rgba(63,63,70,0.3)" }}
-              >
-                {pluginTools.map((tool, i) => {
-                  const enabled = enabledTools.has(tool);
-                  return (
-                    <div
-                      key={tool}
-                      className="flex items-center justify-between px-2.5 py-1.5"
+        {pluginTools.length > 0 &&
+          (() => {
+            const groupEnabled = pluginTools.filter((t) =>
+              enabledTools.has(t),
+            ).length;
+            const allEnabled = groupEnabled === pluginTools.length;
+            const allDisabled = groupEnabled === 0;
+            return (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="text-[10px] font-semibold"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      Plugin Tools
+                    </span>
+                    <span
+                      className="text-[9px] px-1 py-px rounded-full"
                       style={{
-                        background: "rgba(24,24,27,0.5)",
-                        borderTop: i > 0 ? "1px solid rgba(63,63,70,0.2)" : undefined,
+                        background: allDisabled
+                          ? "rgba(239,68,68,0.1)"
+                          : "rgba(63,63,70,0.4)",
+                        color: allDisabled ? "#f87171" : "var(--text-muted)",
                       }}
                     >
-                      <span className="text-[11px] font-mono" style={{ color: enabled ? "var(--text-primary)" : "var(--text-muted)" }}>
-                        {tool}
-                      </span>
-                      <button
-                        onClick={() => toggle(tool)}
-                        className="relative w-7 h-[16px] rounded-full transition-colors"
+                      {groupEnabled}/{pluginTools.length}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setGroup(pluginTools, !allEnabled)}
+                    className="text-[9px] px-1.5 py-0.5 rounded cursor-pointer border-none"
+                    style={{
+                      background: "rgba(63,63,70,0.3)",
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    {allEnabled ? "Disable all" : "Enable all"}
+                  </button>
+                </div>
+                <div
+                  className="flex flex-col rounded-lg overflow-hidden"
+                  style={{ border: "1px solid rgba(63,63,70,0.3)" }}
+                >
+                  {pluginTools.map((tool, i) => {
+                    const enabled = enabledTools.has(tool);
+                    return (
+                      <div
+                        key={tool}
+                        className="flex items-center justify-between px-2.5 py-1.5"
                         style={{
-                          background: enabled ? "rgba(34,197,94,0.35)" : "rgba(63,63,70,0.4)",
-                          border: "none",
-                          cursor: "pointer",
-                          padding: 0,
+                          background: "rgba(24,24,27,0.5)",
+                          borderTop:
+                            i > 0 ? "1px solid rgba(63,63,70,0.2)" : undefined,
                         }}
                       >
                         <span
-                          className="absolute top-[2px] w-[12px] h-[12px] rounded-full transition-all"
+                          className="text-[11px] font-mono"
                           style={{
-                            background: enabled ? "#22c55e" : "#52525b",
-                            left: enabled ? 12 : 2,
+                            color: enabled
+                              ? "var(--text-primary)"
+                              : "var(--text-muted)",
                           }}
-                        />
-                      </button>
-                    </div>
-                  );
-                })}
+                        >
+                          {tool}
+                        </span>
+                        <button
+                          onClick={() => toggle(tool)}
+                          className="relative w-7 h-[16px] rounded-full transition-colors"
+                          style={{
+                            background: enabled
+                              ? "rgba(34,197,94,0.35)"
+                              : "rgba(63,63,70,0.4)",
+                            border: "none",
+                            cursor: "pointer",
+                            padding: 0,
+                          }}
+                        >
+                          <span
+                            className="absolute top-[2px] w-[12px] h-[12px] rounded-full transition-all"
+                            style={{
+                              background: enabled ? "#22c55e" : "#52525b",
+                              left: enabled ? 12 : 2,
+                            }}
+                          />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          );
-        })()}
+            );
+          })()}
       </div>
     </Section>
   );
@@ -969,15 +1348,32 @@ function PluginToolsSection({ pluginName, config, onConfigSave }: {
 // Section wrapper
 // ===========================================================================
 
-function Section({ icon, title, action, children }: {
-  icon: React.ReactNode; title: string; action?: React.ReactNode; children: React.ReactNode;
+function Section({
+  icon,
+  title,
+  action,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="mb-3 p-3 rounded-lg" style={{ background: "rgba(20,20,20,0.9)", border: "1px solid var(--border)" }}>
+    <div
+      className="mb-3 p-3 rounded-lg"
+      style={{
+        background: "rgba(20,20,20,0.9)",
+        border: "1px solid var(--border)",
+      }}
+    >
       <div className="flex items-center justify-between mb-2.5">
         <div className="flex items-center gap-1.5">
           <span style={{ color: "var(--text-muted)" }}>{icon}</span>
-          <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+          <span
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: "var(--text-muted)" }}
+          >
             {title}
           </span>
         </div>
@@ -992,21 +1388,45 @@ function Section({ icon, title, action, children }: {
 // Action button
 // ===========================================================================
 
-function ActionBtn({ icon, label, onClick, disabled, variant, small }: {
-  icon: React.ReactNode; label: string; onClick: () => void;
-  disabled?: boolean; variant?: "secondary" | "danger"; small?: boolean;
+function ActionBtn({
+  icon,
+  label,
+  onClick,
+  disabled,
+  variant,
+  small,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  variant?: "secondary" | "danger";
+  small?: boolean;
 }) {
-  const base: React.CSSProperties = variant === "danger"
-    ? { background: "rgba(220,38,38,0.12)", color: "#fb7185", border: "1px solid rgba(251,113,133,0.15)" }
-    : variant === "secondary"
-      ? { background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border)" }
-      : { background: "#fafafa", color: "#09090b" };
+  const base: React.CSSProperties =
+    variant === "danger"
+      ? {
+          background: "rgba(220,38,38,0.12)",
+          color: "#fb7185",
+          border: "1px solid rgba(251,113,133,0.15)",
+        }
+      : variant === "secondary"
+        ? {
+            background: "var(--bg-tertiary)",
+            color: "var(--text-primary)",
+            border: "1px solid var(--border)",
+          }
+        : { background: "#fafafa", color: "#09090b" };
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       className={`inline-flex items-center gap-1 ${small ? "px-1.5 py-0.5 text-[10px]" : "px-2.5 py-1.5 text-xs"} rounded-lg font-medium cursor-pointer border-none`}
-      style={{ ...base, opacity: disabled ? 0.4 : 1, pointerEvents: disabled ? "none" : "auto" }}
+      style={{
+        ...base,
+        opacity: disabled ? 0.4 : 1,
+        pointerEvents: disabled ? "none" : "auto",
+      }}
     >
       {icon}
       {label}
@@ -1018,10 +1438,20 @@ function ActionBtn({ icon, label, onClick, disabled, variant, small }: {
 // Config Field
 // ===========================================================================
 
-const SENSITIVE_KEYS = /token|key|secret|password|credential|api.?key|access.?token|refresh.?token|client.?id|client.?secret/i;
+const SENSITIVE_KEYS =
+  /token|key|secret|password|credential|api.?key|access.?token|refresh.?token|client.?id|client.?secret/i;
 
-function ConfigField({ fieldKey, value, onSave }: { fieldKey: string; value: unknown; onSave: (v: string) => void }) {
-  const displayValue = typeof value === "string" ? value : JSON.stringify(value);
+function ConfigField({
+  fieldKey,
+  value,
+  onSave,
+}: {
+  fieldKey: string;
+  value: unknown;
+  onSave: (v: string) => void;
+}) {
+  const displayValue =
+    typeof value === "string" ? value : JSON.stringify(value);
   const [localValue, setLocalValue] = useState(displayValue);
   const [dirty, setDirty] = useState(false);
   const isSensitive = SENSITIVE_KEYS.test(fieldKey);
@@ -1035,17 +1465,36 @@ function ConfigField({ fieldKey, value, onSave }: { fieldKey: string; value: unk
 
   return (
     <div className="flex items-center gap-2">
-      <span className="text-[10px] font-mono shrink-0 px-2 py-1 rounded truncate" style={{
-        color: "var(--text-secondary)", background: "var(--bg-tertiary)", maxWidth: 120,
-      }} title={fieldKey}>{fieldKey}</span>
+      <span
+        className="text-[10px] font-mono shrink-0 px-2 py-1 rounded truncate"
+        style={{
+          color: "var(--text-secondary)",
+          background: "var(--bg-tertiary)",
+          maxWidth: 120,
+        }}
+        title={fieldKey}
+      >
+        {fieldKey}
+      </span>
       <input
         type={visible ? "text" : "password"}
         value={localValue}
-        onChange={(e) => { setLocalValue(e.target.value); setDirty(e.target.value !== displayValue); }}
-        onBlur={() => { if (dirty) onSave(localValue); }}
-        onKeyDown={(e) => { if (e.key === "Enter" && dirty) onSave(localValue); }}
+        onChange={(e) => {
+          setLocalValue(e.target.value);
+          setDirty(e.target.value !== displayValue);
+        }}
+        onBlur={() => {
+          if (dirty) onSave(localValue);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && dirty) onSave(localValue);
+        }}
         className="flex-1 px-2 py-1 rounded-lg text-xs outline-none"
-        style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+        style={{
+          background: "var(--bg-tertiary)",
+          border: "1px solid var(--border)",
+          color: "var(--text-primary)",
+        }}
       />
       {isSensitive && (
         <button
@@ -1062,12 +1511,17 @@ function ConfigField({ fieldKey, value, onSave }: { fieldKey: string; value: unk
   );
 }
 
-
 // ===========================================================================
 // Generic Config Form
 // ===========================================================================
 
-function GenericConfigForm({ pluginName, config, schema, running, onConfigSave }: {
+function GenericConfigForm({
+  pluginName,
+  config,
+  schema,
+  running,
+  onConfigSave,
+}: {
   pluginName: string;
   config: Record<string, unknown>;
   schema: Record<string, ConfigFieldSchemaDto> | null;
@@ -1075,7 +1529,8 @@ function GenericConfigForm({ pluginName, config, schema, running, onConfigSave }
   onConfigSave: (pluginName: string, key: string, value: string) => void;
 }) {
   const { toast } = useToast();
-  const saveField = (key: string, value: unknown) => onConfigSave(pluginName, key, JSON.stringify(value));
+  const saveField = (key: string, value: unknown) =>
+    onConfigSave(pluginName, key, JSON.stringify(value));
 
   // If no schema, fall back to raw config field editor
   if (!schema) {
@@ -1084,7 +1539,12 @@ function GenericConfigForm({ pluginName, config, schema, running, onConfigSave }
       <Section icon={<Settings2 size={12} />} title="Configuration">
         <div className="flex flex-col gap-2">
           {keys.map((key) => (
-            <ConfigField key={key} fieldKey={key} value={config[key]} onSave={(v) => onConfigSave(pluginName, key, v)} />
+            <ConfigField
+              key={key}
+              fieldKey={key}
+              value={config[key]}
+              onSave={(v) => onConfigSave(pluginName, key, v)}
+            />
           ))}
         </div>
       </Section>
@@ -1135,7 +1595,12 @@ function GenericConfigForm({ pluginName, config, schema, running, onConfigSave }
         <Section icon={<Settings2 size={12} />} title="Other Settings">
           <div className="flex flex-col gap-2">
             {remainingKeys.map((key) => (
-              <ConfigField key={key} fieldKey={key} value={config[key]} onSave={(v) => onConfigSave(pluginName, key, v)} />
+              <ConfigField
+                key={key}
+                fieldKey={key}
+                value={config[key]}
+                onSave={(v) => onConfigSave(pluginName, key, v)}
+              />
             ))}
           </div>
         </Section>
@@ -1148,7 +1613,14 @@ function GenericConfigForm({ pluginName, config, schema, running, onConfigSave }
 // Generic Field (renders based on schema type + format)
 // ===========================================================================
 
-function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: {
+function GenericField({
+  fieldKey,
+  schema,
+  value,
+  pluginName,
+  running,
+  onSave,
+}: {
   fieldKey: string;
   schema: ConfigFieldSchemaDto;
   value: unknown;
@@ -1160,8 +1632,10 @@ function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: 
 
   // string + valid_values → select
   if (schema.type === "string" && schema.validValues.length > 0) {
-    const defaultStr = schema.default != null ? String(schema.default) : undefined;
-    const effectiveValue = value != null && value !== "" ? String(value) : (defaultStr ?? "");
+    const defaultStr =
+      schema.default != null ? String(schema.default) : undefined;
+    const effectiveValue =
+      value != null && value !== "" ? String(value) : (defaultStr ?? "");
     return (
       <FieldRow label={label} description={schema.description}>
         <select
@@ -1169,13 +1643,21 @@ function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: 
           onChange={(e) => onSave(e.target.value)}
           className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none appearance-none"
           style={{
-            background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border)",
+            color: "var(--text-primary)",
             backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-            backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center", paddingRight: "2rem",
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "right 8px center",
+            paddingRight: "2rem",
           }}
         >
           <option value="">{defaultStr ? `— (${defaultStr})` : "—"}</option>
-          {schema.validValues.map((v) => <option key={v} value={v}>{v}</option>)}
+          {schema.validValues.map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
         </select>
       </FieldRow>
     );
@@ -1183,7 +1665,14 @@ function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: 
 
   // string[] + format: "phone" → phone list
   if (schema.type === "string[]" && schema.format === "phone") {
-    return <PhoneListField label={label} description={schema.description} value={value} onSave={onSave} />;
+    return (
+      <PhoneListField
+        label={label}
+        description={schema.description}
+        value={value}
+        onSave={onSave}
+      />
+    );
   }
 
   // string[] + options_command → remote select (fetch options from plugin)
@@ -1203,7 +1692,14 @@ function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: 
 
   // string[] → tag list
   if (schema.type === "string[]") {
-    return <TagListField label={label} description={schema.description} value={value} onSave={onSave} />;
+    return (
+      <TagListField
+        label={label}
+        description={schema.description}
+        value={value}
+        onSave={onSave}
+      />
+    );
   }
 
   // bool → toggle
@@ -1217,12 +1713,17 @@ function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: 
           className="relative w-7 h-[16px] rounded-full transition-colors"
           style={{
             background: checked ? "rgba(34,197,94,0.35)" : "rgba(63,63,70,0.4)",
-            border: "none", cursor: "pointer", padding: 0,
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
           }}
         >
           <span
             className="absolute top-[2px] w-[12px] h-[12px] rounded-full transition-all"
-            style={{ background: checked ? "#22c55e" : "#52525b", left: checked ? 12 : 2 }}
+            style={{
+              background: checked ? "#22c55e" : "#52525b",
+              left: checked ? 12 : 2,
+            }}
           />
         </button>
       </FieldRow>
@@ -1231,13 +1732,27 @@ function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: 
 
   // number → number input
   if (schema.type === "number") {
-    const effectiveValue = (value != null && value !== "") ? value : schema.default;
-    return <TextInputField label={label} description={schema.description} value={effectiveValue} type="number" sensitive={false} onSave={onSave} isDefault={value == null || value === ""} />;
+    const effectiveValue =
+      value != null && value !== "" ? value : schema.default;
+    return (
+      <TextInputField
+        label={label}
+        description={schema.description}
+        value={effectiveValue}
+        type="number"
+        sensitive={false}
+        onSave={onSave}
+        isDefault={value == null || value === ""}
+      />
+    );
   }
 
   // string (default) — with format hints
-  const isSensitive = schema.format === "password" || /token|key|secret|password|credential/i.test(fieldKey);
-  const effectiveStrValue = (value != null && value !== "") ? value : schema.default;
+  const isSensitive =
+    schema.format === "password" ||
+    /token|key|secret|password|credential/i.test(fieldKey);
+  const effectiveStrValue =
+    value != null && value !== "" ? value : schema.default;
   return (
     <TextInputField
       label={label}
@@ -1251,30 +1766,58 @@ function GenericField({ fieldKey, schema, value, pluginName, running, onSave }: 
   );
 }
 
-function FieldRow({ label, description, children }: {
-  label: string; description?: string; children: React.ReactNode;
+function FieldRow({
+  label,
+  description,
+  children,
+}: {
+  label: string;
+  description?: string;
+  children: React.ReactNode;
 }) {
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-1">
-        <span className="text-[10px] font-medium" style={{ color: "var(--text-secondary)" }}>{label}</span>
+        <span
+          className="text-[10px] font-medium"
+          style={{ color: "var(--text-secondary)" }}
+        >
+          {label}
+        </span>
         {children}
       </div>
       {description && (
-        <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>{description}</p>
+        <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+          {description}
+        </p>
       )}
     </div>
   );
 }
 
-function TextInputField({ label, description, value, type, sensitive, onSave, isDefault }: {
-  label: string; description?: string; value: unknown; type: string; sensitive: boolean;
-  onSave: (v: unknown) => void; isDefault?: boolean;
+function TextInputField({
+  label,
+  description,
+  value,
+  type,
+  sensitive,
+  onSave,
+  isDefault,
+}: {
+  label: string;
+  description?: string;
+  value: unknown;
+  type: string;
+  sensitive: boolean;
+  onSave: (v: unknown) => void;
+  isDefault?: boolean;
 }) {
   const strValue = value === null || value === undefined ? "" : String(value);
   const [local, setLocal] = useState(strValue);
   const [visible, setVisible] = useState(!sensitive);
-  useEffect(() => { setLocal(value === null || value === undefined ? "" : String(value)); }, [value]);
+  useEffect(() => {
+    setLocal(value === null || value === undefined ? "" : String(value));
+  }, [value]);
 
   const commit = () => {
     if (local !== strValue) {
@@ -1284,16 +1827,27 @@ function TextInputField({ label, description, value, type, sensitive, onSave, is
 
   return (
     <div>
-      <span className="text-[10px] font-medium block mb-1" style={{ color: "var(--text-secondary)" }}>{label}</span>
+      <span
+        className="text-[10px] font-medium block mb-1"
+        style={{ color: "var(--text-secondary)" }}
+      >
+        {label}
+      </span>
       <div className="flex items-center gap-1">
         <input
           type={visible ? (type === "number" ? "number" : "text") : "password"}
           value={local}
           onChange={(e) => setLocal(e.target.value)}
           onBlur={commit}
-          onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+          }}
           className="flex-1 px-2.5 py-1.5 rounded-lg text-xs outline-none"
-          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: isDefault ? "var(--text-muted)" : "var(--text-primary)" }}
+          style={{
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border)",
+            color: isDefault ? "var(--text-muted)" : "var(--text-primary)",
+          }}
         />
         {sensitive && (
           <button
@@ -1306,13 +1860,25 @@ function TextInputField({ label, description, value, type, sensitive, onSave, is
           </button>
         )}
       </div>
-      {description && <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>}
+      {description && (
+        <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+          {description}
+        </p>
+      )}
     </div>
   );
 }
 
-function TagListField({ label, description, value, onSave }: {
-  label: string; description?: string; value: unknown; onSave: (v: unknown) => void;
+function TagListField({
+  label,
+  description,
+  value,
+  onSave,
+}: {
+  label: string;
+  description?: string;
+  value: unknown;
+  onSave: (v: unknown) => void;
 }) {
   const items: string[] = Array.isArray(value) ? (value as string[]) : [];
   const [adding, setAdding] = useState(false);
@@ -1329,13 +1895,19 @@ function TagListField({ label, description, value, onSave }: {
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] font-medium" style={{ color: "var(--text-secondary)" }}>
-          {label}{items.length > 0 ? ` (${items.length})` : ""}
+        <span
+          className="text-[10px] font-medium"
+          style={{ color: "var(--text-secondary)" }}
+        >
+          {label}
+          {items.length > 0 ? ` (${items.length})` : ""}
         </span>
         {!adding && (
-          <button onClick={() => setAdding(true)}
+          <button
+            onClick={() => setAdding(true)}
             className="inline-flex items-center gap-0.5 text-[9px] cursor-pointer border-none bg-transparent"
-            style={{ color: "var(--text-muted)" }}>
+            style={{ color: "var(--text-muted)" }}
+          >
             + Add
           </button>
         )}
@@ -1343,13 +1915,21 @@ function TagListField({ label, description, value, onSave }: {
       {items.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-1.5">
           {items.map((item) => (
-            <span key={item} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono" style={{
-              background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
-            }}>
+            <span
+              key={item}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono"
+              style={{
+                background: "var(--bg-tertiary)",
+                border: "1px solid var(--border)",
+                color: "var(--text-primary)",
+              }}
+            >
               {item}
-              <button className="inline-flex border-none bg-transparent cursor-pointer p-0"
+              <button
+                className="inline-flex border-none bg-transparent cursor-pointer p-0"
                 style={{ color: "var(--text-muted)" }}
-                onClick={() => onSave(items.filter((i) => i !== item))}>
+                onClick={() => onSave(items.filter((i) => i !== item))}
+              >
                 <X size={10} />
               </button>
             </span>
@@ -1358,33 +1938,65 @@ function TagListField({ label, description, value, onSave }: {
       )}
       {adding && (
         <div className="flex gap-1.5">
-          <input value={newItem}
+          <input
+            value={newItem}
             onChange={(e) => setNewItem(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setAdding(false); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleAdd();
+              if (e.key === "Escape") setAdding(false);
+            }}
             placeholder="Value"
             className="flex-1 px-2 py-1 rounded text-[10px] outline-none"
-            style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+            style={{
+              background: "var(--bg-tertiary)",
+              border: "1px solid var(--border)",
+              color: "var(--text-primary)",
+            }}
             autoFocus
           />
-          <button onClick={handleAdd} disabled={!newItem.trim()}
+          <button
+            onClick={handleAdd}
+            disabled={!newItem.trim()}
             className="px-2 py-1 rounded text-[10px] font-medium cursor-pointer border-none"
-            style={{ background: "#fafafa", color: "#09090b", opacity: !newItem.trim() ? 0.4 : 1 }}>
+            style={{
+              background: "#fafafa",
+              color: "#09090b",
+              opacity: !newItem.trim() ? 0.4 : 1,
+            }}
+          >
             Add
           </button>
-          <button onClick={() => { setAdding(false); setNewItem(""); }}
+          <button
+            onClick={() => {
+              setAdding(false);
+              setNewItem("");
+            }}
             className="px-2 py-1 rounded text-[10px] cursor-pointer border-none"
-            style={{ background: "transparent", color: "var(--text-muted)" }}>
+            style={{ background: "transparent", color: "var(--text-muted)" }}
+          >
             Cancel
           </button>
         </div>
       )}
-      {description && <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>}
+      {description && (
+        <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+          {description}
+        </p>
+      )}
     </div>
   );
 }
 
-function PhoneListField({ label, description, value, onSave }: {
-  label: string; description?: string; value: unknown; onSave: (v: unknown) => void;
+function PhoneListField({
+  label,
+  description,
+  value,
+  onSave,
+}: {
+  label: string;
+  description?: string;
+  value: unknown;
+  onSave: (v: unknown) => void;
 }) {
   const { toast } = useToast();
   const items: string[] = Array.isArray(value) ? (value as string[]) : [];
@@ -1396,7 +2008,10 @@ function PhoneListField({ label, description, value, onSave }: {
     const digits = phoneNumber.replace(/\D/g, "");
     if (!digits) return;
     const full = phoneCountry + digits;
-    if (items.includes(full)) { toast("info", "Already in list"); return; }
+    if (items.includes(full)) {
+      toast("info", "Already in list");
+      return;
+    }
     onSave([...items, full]);
     setPhoneNumber("");
     setShowAdd(false);
@@ -1405,13 +2020,19 @@ function PhoneListField({ label, description, value, onSave }: {
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] font-medium" style={{ color: "var(--text-secondary)" }}>
-          {label}{items.length > 0 ? ` (${items.length})` : ""}
+        <span
+          className="text-[10px] font-medium"
+          style={{ color: "var(--text-secondary)" }}
+        >
+          {label}
+          {items.length > 0 ? ` (${items.length})` : ""}
         </span>
         {!showAdd && (
-          <button onClick={() => setShowAdd(true)}
+          <button
+            onClick={() => setShowAdd(true)}
             className="inline-flex items-center gap-0.5 text-[9px] cursor-pointer border-none bg-transparent"
-            style={{ color: "var(--text-muted)" }}>
+            style={{ color: "var(--text-muted)" }}
+          >
             + Add
           </button>
         )}
@@ -1419,13 +2040,21 @@ function PhoneListField({ label, description, value, onSave }: {
       {items.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-1.5">
           {items.map((num) => (
-            <span key={num} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono" style={{
-              background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)",
-            }}>
+            <span
+              key={num}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono"
+              style={{
+                background: "var(--bg-tertiary)",
+                border: "1px solid var(--border)",
+                color: "var(--text-primary)",
+              }}
+            >
               {formatPhoneNumber(num)}
-              <button className="inline-flex border-none bg-transparent cursor-pointer p-0"
+              <button
+                className="inline-flex border-none bg-transparent cursor-pointer p-0"
                 style={{ color: "var(--text-muted)" }}
-                onClick={() => onSave(items.filter((n) => n !== num))}>
+                onClick={() => onSave(items.filter((n) => n !== num))}
+              >
                 <X size={10} />
               </button>
             </span>
@@ -1433,47 +2062,107 @@ function PhoneListField({ label, description, value, onSave }: {
         </div>
       )}
       {items.length === 0 && !showAdd && (
-        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>No numbers. All allowed.</p>
+        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+          No numbers. All allowed.
+        </p>
       )}
       {showAdd && (
-        <div className="flex flex-wrap gap-1.5 p-2 rounded-lg" style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}>
-          <select value={phoneCountry} onChange={(e) => setPhoneCountry(e.target.value)}
+        <div
+          className="flex flex-wrap gap-1.5 p-2 rounded-lg"
+          style={{
+            background: "var(--bg-base)",
+            border: "1px solid var(--border)",
+          }}
+        >
+          <select
+            value={phoneCountry}
+            onChange={(e) => setPhoneCountry(e.target.value)}
             className="px-2 py-1 rounded text-[10px] outline-none appearance-none"
             style={{
-              background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)", width: "100%",
+              background: "var(--bg-tertiary)",
+              border: "1px solid var(--border)",
+              color: "var(--text-primary)",
+              width: "100%",
               backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-              backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center", paddingRight: "2rem",
-            }}>
-            {COUNTRY_CODES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              backgroundRepeat: "no-repeat",
+              backgroundPosition: "right 8px center",
+              paddingRight: "2rem",
+            }}
+          >
+            {COUNTRY_CODES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
           </select>
           <div className="flex gap-1.5 w-full">
-            <input value={phoneNumber} placeholder="Phone number"
-              onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ""))}
-              onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setShowAdd(false); }}
+            <input
+              value={phoneNumber}
+              placeholder="Phone number"
+              onChange={(e) =>
+                setPhoneNumber(e.target.value.replace(/\D/g, ""))
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAdd();
+                if (e.key === "Escape") setShowAdd(false);
+              }}
               className="flex-1 px-2 py-1 rounded text-[10px] outline-none"
-              style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+              style={{
+                background: "var(--bg-tertiary)",
+                border: "1px solid var(--border)",
+                color: "var(--text-primary)",
+              }}
             />
-            <button onClick={handleAdd} disabled={!phoneNumber.trim()}
+            <button
+              onClick={handleAdd}
+              disabled={!phoneNumber.trim()}
               className="inline-flex items-center gap-0.5 px-2 py-1 rounded text-[10px] font-medium cursor-pointer border-none"
-              style={{ background: "#fafafa", color: "#09090b", opacity: !phoneNumber.trim() ? 0.4 : 1 }}>
+              style={{
+                background: "#fafafa",
+                color: "#09090b",
+                opacity: !phoneNumber.trim() ? 0.4 : 1,
+              }}
+            >
               Add
             </button>
-            <button onClick={() => { setShowAdd(false); setPhoneNumber(""); }}
+            <button
+              onClick={() => {
+                setShowAdd(false);
+                setPhoneNumber("");
+              }}
               className="px-2 py-1 rounded text-[10px] cursor-pointer border-none"
-              style={{ background: "transparent", color: "var(--text-muted)" }}>
+              style={{ background: "transparent", color: "var(--text-muted)" }}
+            >
               Cancel
             </button>
           </div>
         </div>
       )}
-      {description && <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>}
+      {description && (
+        <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+          {description}
+        </p>
+      )}
     </div>
   );
 }
 
-function RemoteOptionsField({ label, description, value, pluginName, command, running, onSave }: {
-  label: string; description?: string; value: unknown; pluginName: string; command: string;
-  running: boolean; onSave: (v: unknown) => void;
+function RemoteOptionsField({
+  label,
+  description,
+  value,
+  pluginName,
+  command,
+  running,
+  onSave,
+}: {
+  label: string;
+  description?: string;
+  value: unknown;
+  pluginName: string;
+  command: string;
+  running: boolean;
+  onSave: (v: unknown) => void;
 }) {
   const { toast } = useToast();
   const items: string[] = Array.isArray(value) ? (value as string[]) : [];
@@ -1489,10 +2178,14 @@ function RemoteOptionsField({ label, description, value, pluginName, command, ru
       const firstLine = output.split("\n")[0]?.trim() ?? output;
       const parsed = JSON.parse(firstLine);
       // Support both [{id, label}] and [{id, subject}] (WhatsApp compat)
-      setOptions(Array.isArray(parsed) ? parsed.map((o: Record<string, unknown>) => ({
-        id: String(o.id ?? o.value ?? ""),
-        label: String(o.label ?? o.subject ?? o.name ?? o.id ?? ""),
-      })) : []);
+      setOptions(
+        Array.isArray(parsed)
+          ? parsed.map((o: Record<string, unknown>) => ({
+              id: String(o.id ?? o.value ?? ""),
+              label: String(o.label ?? o.subject ?? o.name ?? o.id ?? ""),
+            }))
+          : [],
+      );
       setFetched(true);
     } catch (e) {
       toast("error", `Failed to fetch options: ${e}`);
@@ -1502,44 +2195,85 @@ function RemoteOptionsField({ label, description, value, pluginName, command, ru
   };
 
   const toggle = (id: string) => {
-    const next = items.includes(id) ? items.filter((i) => i !== id) : [...items, id];
+    const next = items.includes(id)
+      ? items.filter((i) => i !== id)
+      : [...items, id];
     onSave(next);
   };
 
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] font-medium" style={{ color: "var(--text-secondary)" }}>
-          {label}{items.length > 0 ? ` (${items.length})` : ""}
+        <span
+          className="text-[10px] font-medium"
+          style={{ color: "var(--text-secondary)" }}
+        >
+          {label}
+          {items.length > 0 ? ` (${items.length})` : ""}
         </span>
-        <button onClick={fetchOptions} disabled={!running || loading}
+        <button
+          onClick={fetchOptions}
+          disabled={!running || loading}
           className="inline-flex items-center gap-1 text-[10px] cursor-pointer border-none bg-transparent"
-          style={{ color: "var(--text-muted)", opacity: !running || loading ? 0.4 : 1 }}>
-          {loading ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+          style={{
+            color: "var(--text-muted)",
+            opacity: !running || loading ? 0.4 : 1,
+          }}
+        >
+          {loading ? (
+            <Loader2 size={10} className="animate-spin" />
+          ) : (
+            <RefreshCw size={10} />
+          )}
           Fetch
         </button>
       </div>
       {!running && !fetched && (
-        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>Start plugin to fetch options.</p>
+        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+          Start plugin to fetch options.
+        </p>
       )}
       {options.length > 0 && (
-        <div className="flex flex-col gap-px rounded-lg overflow-auto" style={{
-          maxHeight: 180, border: "1px solid var(--border)",
-        }}>
+        <div
+          className="flex flex-col gap-px rounded-lg overflow-auto"
+          style={{
+            maxHeight: 180,
+            border: "1px solid var(--border)",
+          }}
+        >
           {options.map((opt) => (
-            <label key={opt.id}
+            <label
+              key={opt.id}
               className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer text-xs"
               style={{ background: "var(--bg-secondary)" }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-secondary)"; }}>
-              <input type="checkbox" checked={items.includes(opt.id)} onChange={() => toggle(opt.id)}
-                style={{ accentColor: "#a1a1aa" }} />
-              <span className="truncate" style={{ color: "var(--text-primary)" }}>{opt.label ?? opt.id}</span>
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--bg-hover)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "var(--bg-secondary)";
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={items.includes(opt.id)}
+                onChange={() => toggle(opt.id)}
+                style={{ accentColor: "#a1a1aa" }}
+              />
+              <span
+                className="truncate"
+                style={{ color: "var(--text-primary)" }}
+              >
+                {opt.label ?? opt.id}
+              </span>
             </label>
           ))}
         </div>
       )}
-      {description && <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>}
+      {description && (
+        <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+          {description}
+        </p>
+      )}
     </div>
   );
 }
@@ -1548,12 +2282,23 @@ function RemoteOptionsField({ label, description, value, pluginName, command, ru
 // QR Modal
 // ===========================================================================
 
-function QrModal({ qrDataUrl, qrLoading, qrLinked, onClose, onDone }: {
-  qrDataUrl: string | null; qrLoading: boolean; qrLinked: boolean;
-  onClose: () => void; onDone: () => void;
+function QrModal({
+  qrDataUrl,
+  qrLoading,
+  qrLinked,
+  onClose,
+  onDone,
+}: {
+  qrDataUrl: string | null;
+  qrLoading: boolean;
+  qrLinked: boolean;
+  onClose: () => void;
+  onDone: () => void;
 }) {
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
@@ -1566,49 +2311,111 @@ function QrModal({ qrDataUrl, qrLoading, qrLinked, onClose, onDone }: {
     >
       <div
         className="rounded-xl p-5 flex flex-col items-center gap-3"
-        style={{ background: "rgba(20,20,20,0.98)", border: "1px solid var(--border)", maxWidth: 300 }}
+        style={{
+          background: "rgba(20,20,20,0.98)",
+          border: "1px solid var(--border)",
+          maxWidth: 300,
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {qrLinked ? (
           <>
-            <div className="flex items-center justify-center" style={{
-              width: 56, height: 56, borderRadius: "50%",
-              background: "rgba(74,222,128,0.15)", border: "2px solid rgba(74,222,128,0.4)",
-            }}>
+            <div
+              className="flex items-center justify-center"
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: "50%",
+                background: "rgba(74,222,128,0.15)",
+                border: "2px solid rgba(74,222,128,0.4)",
+              }}
+            >
               <Check size={28} style={{ color: "#4ade80" }} />
             </div>
-            <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Linked!</span>
-            <p className="text-[11px] text-center" style={{ color: "var(--text-secondary)" }}>
+            <span
+              className="text-sm font-semibold"
+              style={{ color: "var(--text-primary)" }}
+            >
+              Linked!
+            </span>
+            <p
+              className="text-[11px] text-center"
+              style={{ color: "var(--text-secondary)" }}
+            >
               Connected successfully.
             </p>
-            <button onClick={onDone} className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
-              style={{ background: "#fafafa", color: "#09090b" }}>Done</button>
+            <button
+              onClick={onDone}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
+              style={{ background: "#fafafa", color: "#09090b" }}
+            >
+              Done
+            </button>
           </>
         ) : (
           <>
             <div className="flex items-center gap-1.5">
               <QrCode size={14} style={{ color: "var(--text-secondary)" }} />
-              <span className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>Scan QR Code</span>
+              <span
+                className="text-xs font-semibold"
+                style={{ color: "var(--text-primary)" }}
+              >
+                Scan QR Code
+              </span>
             </div>
-            <p className="text-[10px] text-center" style={{ color: "var(--text-muted)" }}>
+            <p
+              className="text-[10px] text-center"
+              style={{ color: "var(--text-muted)" }}
+            >
               Scan with your device to link
             </p>
             {qrLoading ? (
-              <div className="flex items-center justify-center" style={{ width: 220, height: 220 }}>
-                <Loader2 size={24} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+              <div
+                className="flex items-center justify-center"
+                style={{ width: 220, height: 220 }}
+              >
+                <Loader2
+                  size={24}
+                  className="animate-spin"
+                  style={{ color: "var(--text-muted)" }}
+                />
               </div>
             ) : qrDataUrl ? (
-              <img src={qrDataUrl} alt="QR" style={{ width: 220, height: 220, borderRadius: 8, imageRendering: "pixelated" }} />
+              <img
+                src={qrDataUrl}
+                alt="QR"
+                style={{
+                  width: 220,
+                  height: 220,
+                  borderRadius: 8,
+                  imageRendering: "pixelated",
+                }}
+              />
             ) : (
-              <div className="flex items-center justify-center text-[10px] text-center" style={{
-                width: 220, height: 140, color: "var(--text-muted)", background: "var(--bg-tertiary)",
-                borderRadius: 8, border: "1px dashed var(--border)", padding: 16,
-              }}>
+              <div
+                className="flex items-center justify-center text-[10px] text-center"
+                style={{
+                  width: 220,
+                  height: 140,
+                  color: "var(--text-muted)",
+                  background: "var(--bg-tertiary)",
+                  borderRadius: 8,
+                  border: "1px dashed var(--border)",
+                  padding: 16,
+                }}
+              >
                 No QR available. Is the plugin running?
               </div>
             )}
-            <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs cursor-pointer"
-              style={{ background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border)" }}>
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 rounded-lg text-xs cursor-pointer"
+              style={{
+                background: "var(--bg-tertiary)",
+                color: "var(--text-primary)",
+                border: "1px solid var(--border)",
+              }}
+            >
               Close
             </button>
           </>
@@ -1622,7 +2429,15 @@ function QrModal({ qrDataUrl, qrLoading, qrLinked, onClose, onDone }: {
 // Add-ons View (inline, not modal)
 // ===========================================================================
 
-function AddonsView({ remotePlugins, installedNames, loading, installing, search, onSearchChange, onInstall }: {
+function AddonsView({
+  remotePlugins,
+  installedNames,
+  loading,
+  installing,
+  search,
+  onSearchChange,
+  onInstall,
+}: {
   remotePlugins: RemotePlugin[];
   installedNames: Set<string>;
   loading: boolean;
@@ -1632,15 +2447,30 @@ function AddonsView({ remotePlugins, installedNames, loading, installing, search
   onInstall: (name: string) => void;
 }) {
   const filtered = search
-    ? remotePlugins.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()) || p.description?.toLowerCase().includes(search.toLowerCase()))
+    ? remotePlugins.filter(
+        (p) =>
+          p.name.toLowerCase().includes(search.toLowerCase()) ||
+          p.description?.toLowerCase().includes(search.toLowerCase()),
+      )
     : remotePlugins;
 
-  const available = filtered.filter((p) => !installedNames.has(p.name) && p.available);
+  const available = filtered.filter(
+    (p) => !installedNames.has(p.name) && p.available,
+  );
   const installed = filtered.filter((p) => installedNames.has(p.name));
 
   if (loading) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, gap: 8, color: "#52525b" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: 200,
+          gap: 8,
+          color: "#52525b",
+        }}
+      >
         <Loader2 size={16} className="animate-spin" />
         <span style={{ fontSize: 13 }}>Loading add-ons...</span>
       </div>
@@ -1651,7 +2481,16 @@ function AddonsView({ remotePlugins, installedNames, loading, installing, search
     <div>
       {/* Search */}
       <div style={{ position: "relative", marginBottom: 14 }}>
-        <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#52525b" }} />
+        <Search
+          size={13}
+          style={{
+            position: "absolute",
+            left: 10,
+            top: "50%",
+            transform: "translateY(-50%)",
+            color: "#52525b",
+          }}
+        />
         <input
           className="s-input"
           style={{ width: "100%", paddingLeft: 30 }}
@@ -1669,20 +2508,58 @@ function AddonsView({ remotePlugins, installedNames, loading, installing, search
             {available.map((p) => (
               <div key={p.name} className="s-row">
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-primary)" }}>{p.name}</span>
-                    <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>v{p.version}</span>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        color: "var(--text-primary)",
+                      }}
+                    >
+                      {p.name}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontFamily: "var(--font-mono)",
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      v{p.version}
+                    </span>
                     <span className="s-badge s-badge-gray">{p.pluginType}</span>
                   </div>
                   {p.description && (
-                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "var(--text-muted)",
+                        marginTop: 2,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {p.description}
                     </div>
                   )}
                 </div>
-                <button className="s-btn" onClick={() => onInstall(p.name)} disabled={installing !== null}
-                  style={{ opacity: installing !== null ? 0.4 : 1, flexShrink: 0 }}>
-                  {installing === p.name ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+                <button
+                  className="s-btn"
+                  onClick={() => onInstall(p.name)}
+                  disabled={installing !== null}
+                  style={{
+                    opacity: installing !== null ? 0.4 : 1,
+                    flexShrink: 0,
+                  }}
+                >
+                  {installing === p.name ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : (
+                    <Download size={11} />
+                  )}
                   Install
                 </button>
               </div>
@@ -1699,8 +2576,20 @@ function AddonsView({ remotePlugins, installedNames, loading, installing, search
             {installed.map((p) => (
               <div key={p.name} className="s-row">
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 12.5, color: "var(--text-primary)" }}>{p.name}</span>
-                  <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>v{p.version}</span>
+                  <span
+                    style={{ fontSize: 12.5, color: "var(--text-primary)" }}
+                  >
+                    {p.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    v{p.version}
+                  </span>
                 </div>
                 <span className="s-badge s-badge-green">Installed</span>
               </div>
@@ -1710,7 +2599,14 @@ function AddonsView({ remotePlugins, installedNames, loading, installing, search
       )}
 
       {filtered.length === 0 && (
-        <div style={{ textAlign: "center", padding: "32px 0", color: "#52525b", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: "32px 0",
+            color: "#52525b",
+            fontSize: 12,
+          }}
+        >
           {search ? "No add-ons match your search." : "No add-ons available."}
         </div>
       )}

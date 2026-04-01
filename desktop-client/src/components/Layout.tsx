@@ -13,12 +13,42 @@ import {
 } from "lucide-react";
 
 const tabs: { id: TabId; label: string; desc: string; icon: ReactNode }[] = [
-  { id: "chat", label: "Chat", desc: "AI Assistant", icon: <MessageSquare size={18} /> },
-  { id: "terminal", label: "Terminal", desc: "Shell", icon: <TerminalSquare size={18} /> },
-  { id: "config", label: "Config", desc: "LLM & general", icon: <Settings size={18} /> },
-  { id: "credentials", label: "Credentials", desc: "API keys", icon: <KeyRound size={18} /> },
-  { id: "plugins", label: "Plugins", desc: "Extensions", icon: <Puzzle size={18} /> },
-  { id: "providers", label: "Providers", desc: "Models", icon: <Server size={18} /> },
+  {
+    id: "chat",
+    label: "Chat",
+    desc: "AI Assistant",
+    icon: <MessageSquare size={18} />,
+  },
+  {
+    id: "terminal",
+    label: "Terminal",
+    desc: "Shell",
+    icon: <TerminalSquare size={18} />,
+  },
+  {
+    id: "config",
+    label: "Config",
+    desc: "LLM & general",
+    icon: <Settings size={18} />,
+  },
+  {
+    id: "credentials",
+    label: "Credentials",
+    desc: "API keys",
+    icon: <KeyRound size={18} />,
+  },
+  {
+    id: "plugins",
+    label: "Plugins",
+    desc: "Extensions",
+    icon: <Puzzle size={18} />,
+  },
+  {
+    id: "providers",
+    label: "Providers",
+    desc: "Models",
+    icon: <Server size={18} />,
+  },
   { id: "memory", label: "Memory", desc: "Context", icon: <Brain size={18} /> },
 ];
 
@@ -28,7 +58,11 @@ interface LayoutProps {
   children: ReactNode;
 }
 
-export default function Layout({ activeTab, onTabChange, children }: LayoutProps) {
+export default function Layout({
+  activeTab,
+  onTabChange,
+  children,
+}: LayoutProps) {
   return (
     <div className="flex h-screen" style={{ background: "var(--bg-base)" }}>
       {/* Sidebar — monochrome matching web */}
@@ -52,11 +86,12 @@ export default function Layout({ activeTab, onTabChange, children }: LayoutProps
               <img src={logoUrl} alt="lukan" className="h-5 w-5" />
             </div>
             <div>
-              <img src={logoTextUrl} alt="lukan" style={{ height: 14, objectFit: "contain" }} />
-              <p
-                className="text-[10px]"
-                style={{ color: "#52525b" }}
-              >
+              <img
+                src={logoTextUrl}
+                alt="lukan"
+                style={{ height: 14, objectFit: "contain" }}
+              />
+              <p className="text-[10px]" style={{ color: "#52525b" }}>
                 Settings
               </p>
             </div>
@@ -64,7 +99,10 @@ export default function Layout({ activeTab, onTabChange, children }: LayoutProps
         </div>
 
         {/* Divider */}
-        <div className="mx-3" style={{ borderTop: "1px solid rgba(60, 60, 60, 0.4)" }} />
+        <div
+          className="mx-3"
+          style={{ borderTop: "1px solid rgba(60, 60, 60, 0.4)" }}
+        />
 
         {/* Tabs */}
         <div className="flex flex-col gap-0.5 px-3 pt-3 flex-1">
@@ -113,7 +151,9 @@ export default function Layout({ activeTab, onTabChange, children }: LayoutProps
                   {tab.icon}
                 </span>
                 <div className="min-w-0">
-                  <div className="font-medium leading-tight text-[13px]">{tab.label}</div>
+                  <div className="font-medium leading-tight text-[13px]">
+                    {tab.label}
+                  </div>
                   <div
                     className="text-[11px] leading-tight mt-0.5 truncate"
                     style={{ color: "#52525b" }}
@@ -127,7 +167,10 @@ export default function Layout({ activeTab, onTabChange, children }: LayoutProps
         </div>
 
         {/* Bottom version */}
-        <div className="px-4 py-3" style={{ borderTop: "1px solid rgba(60, 60, 60, 0.4)" }}>
+        <div
+          className="px-4 py-3"
+          style={{ borderTop: "1px solid rgba(60, 60, 60, 0.4)" }}
+        >
           <span className="text-[10px] font-mono" style={{ color: "#52525b" }}>
             v0.1.0
           </span>

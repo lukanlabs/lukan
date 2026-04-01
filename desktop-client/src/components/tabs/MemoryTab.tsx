@@ -128,15 +128,10 @@ export default function MemoryTab() {
         <button
           className={pillBase}
           style={{
-            background:
-              activeTab === "global"
-                ? "#fafafa"
-                : "transparent",
+            background: activeTab === "global" ? "#fafafa" : "transparent",
             color: activeTab === "global" ? "#09090b" : "var(--text-secondary)",
             boxShadow:
-              activeTab === "global"
-                ? "0 1px 4px rgba(0,0,0,0.1)"
-                : "none",
+              activeTab === "global" ? "0 1px 4px rgba(0,0,0,0.1)" : "none",
             transitionDuration: "200ms",
           }}
           onClick={() => setActiveTab("global")}
@@ -147,15 +142,11 @@ export default function MemoryTab() {
         <button
           className={pillBase}
           style={{
-            background:
-              activeTab === "project"
-                ? "#fafafa"
-                : "transparent",
-            color: activeTab === "project" ? "#09090b" : "var(--text-secondary)",
+            background: activeTab === "project" ? "#fafafa" : "transparent",
+            color:
+              activeTab === "project" ? "#09090b" : "var(--text-secondary)",
             boxShadow:
-              activeTab === "project"
-                ? "0 1px 4px rgba(0,0,0,0.1)"
-                : "none",
+              activeTab === "project" ? "0 1px 4px rgba(0,0,0,0.1)" : "none",
             transitionDuration: "200ms",
           }}
           onClick={() => setActiveTab("project")}
@@ -302,9 +293,7 @@ export default function MemoryTab() {
                   size={32}
                   style={{ margin: "0 auto 12px", opacity: 0.4 }}
                 />
-                <p className="text-sm">
-                  Enter a project path and click Load.
-                </p>
+                <p className="text-sm">Enter a project path and click Load.</p>
               </div>
             )}
           </Card>

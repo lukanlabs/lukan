@@ -96,11 +96,19 @@ function StatusBadge({ status }: { status?: string }) {
   const cfg: Record<string, { color: string; icon: React.ReactNode }> = {
     running: {
       color: "var(--warning, #f59e0b)",
-      icon: <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />,
+      icon: (
+        <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
+      ),
     },
-    success: { color: "var(--success, #22c55e)", icon: <CheckCircle2 size={10} /> },
+    success: {
+      color: "var(--success, #22c55e)",
+      icon: <CheckCircle2 size={10} />,
+    },
     error: { color: "var(--danger, #ef4444)", icon: <XCircle size={10} /> },
-    partial: { color: "var(--warning, #f59e0b)", icon: <AlertTriangle size={10} /> },
+    partial: {
+      color: "var(--warning, #f59e0b)",
+      icon: <AlertTriangle size={10} />,
+    },
     pending: { color: "var(--text-muted)", icon: <Clock size={10} /> },
     skipped: { color: "var(--text-muted)", icon: null },
     waiting_approval: { color: "#8b5cf6", icon: <Clock size={10} /> },
@@ -161,19 +169,27 @@ export function PipelinesPanel() {
       loadPipelines();
       // Also refresh detail view if we're looking at one
       if (view.kind === "detail") {
-        getPipelineDetail(view.id).then(setDetail).catch(() => {});
+        getPipelineDetail(view.id)
+          .then(setDetail)
+          .catch(() => {});
       }
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
   }, [loadPipelines, view]);
 
   // Load detail when navigating to detail view
   useEffect(() => {
     if (view.kind === "detail") {
-      getPipelineDetail(view.id).then(setDetail).catch((e) => {
-        console.error("Failed to load pipeline detail:", e);
-        setDetail(null);
-      });
+      getPipelineDetail(view.id)
+        .then(setDetail)
+        .catch((e) => {
+          console.error("Failed to load pipeline detail:", e);
+          setDetail(null);
+        });
     }
   }, [view]);
 
@@ -203,7 +219,7 @@ export function PipelinesPanel() {
 
   const handleToggle = async (id: string, enabled: boolean) => {
     setPipelines((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, enabled } : p))
+      prev.map((p) => (p.id === id ? { ...p, enabled } : p)),
     );
     if (detail && detail.id === id) {
       setDetail({ ...detail, enabled });
@@ -250,7 +266,9 @@ export function PipelinesPanel() {
         try {
           const d = await getPipelineDetail(id);
           setDetail(d);
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
         setTriggering(false);
       }, 1500);
     } catch (e) {
@@ -265,7 +283,14 @@ export function PipelinesPanel() {
   if (view.kind === "list") {
     if (loading) {
       return (
-        <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: 24,
+            color: "var(--text-muted)",
+            fontSize: 12,
+          }}
+        >
           Loading...
         </div>
       );
@@ -275,15 +300,40 @@ export function PipelinesPanel() {
       return (
         <div style={{ textAlign: "center", padding: 24 }}>
           {error && (
-            <div style={{ fontSize: 10, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)", borderRadius: 4, padding: "4px 8px", marginBottom: 8, textAlign: "left" }}>
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--danger, #ef4444)",
+                background: "rgba(239,68,68,0.08)",
+                borderRadius: 4,
+                padding: "4px 8px",
+                marginBottom: 8,
+                textAlign: "left",
+              }}
+            >
               {error}
             </div>
           )}
-          <Workflow size={20} style={{ color: "var(--text-muted)", marginBottom: 8 }} />
-          <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 4 }}>
+          <Workflow
+            size={20}
+            style={{ color: "var(--text-muted)", marginBottom: 8 }}
+          />
+          <div
+            style={{
+              color: "var(--text-muted)",
+              fontSize: 12,
+              marginBottom: 4,
+            }}
+          >
             No pipelines configured
           </div>
-          <div style={{ color: "var(--text-faint)", fontSize: 11, marginBottom: 12 }}>
+          <div
+            style={{
+              color: "var(--text-faint)",
+              fontSize: 11,
+              marginBottom: 12,
+            }}
+          >
             Pipelines chain agents where output feeds into input
           </div>
           <button
@@ -310,11 +360,27 @@ export function PipelinesPanel() {
     return (
       <div>
         {error && (
-          <div style={{ fontSize: 10, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)", borderRadius: 4, padding: "4px 8px", margin: "4px 8px" }}>
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--danger, #ef4444)",
+              background: "rgba(239,68,68,0.08)",
+              borderRadius: 4,
+              padding: "4px 8px",
+              margin: "4px 8px",
+            }}
+          >
             {error}
           </div>
         )}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 2, padding: "4px 8px" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 2,
+            padding: "4px 8px",
+          }}
+        >
           <button
             onClick={() => {
               const input = document.createElement("input");
@@ -327,7 +393,9 @@ export function PipelinesPanel() {
                   const text = await file.text();
                   const template = JSON.parse(text);
                   if (!template.name || !template.steps || !template.trigger) {
-                    setError("Invalid pipeline template: missing name, steps, or trigger");
+                    setError(
+                      "Invalid pipeline template: missing name, steps, or trigger",
+                    );
                     return;
                   }
                   await createPipeline({
@@ -382,20 +450,54 @@ export function PipelinesPanel() {
             className="worker-entry"
             onClick={() => {
               setView({ kind: "detail", id: p.id });
-              window.dispatchEvent(new CustomEvent("open-pipeline-flow", { detail: p.id }));
+              window.dispatchEvent(
+                new CustomEvent("open-pipeline-flow", { detail: p.id }),
+              );
             }}
             style={{ cursor: "pointer" }}
           >
             <div className="worker-info">
-              <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  minWidth: 0,
+                }}
+              >
                 <StatusDot status={p.recentRunStatus ?? p.lastRunStatus} />
-                <span className="worker-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span
+                  className="worker-name"
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {p.name}
                 </span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--text-muted)", minWidth: 0 }} title={triggerLabel(p.trigger)}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontSize: 10,
+                  color: "var(--text-muted)",
+                  minWidth: 0,
+                }}
+                title={triggerLabel(p.trigger)}
+              >
                 <Clock size={10} style={{ flexShrink: 0 }} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{triggerLabel(p.trigger)}</span>
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {triggerLabel(p.trigger)}
+                </span>
               </div>
             </div>
             <button
@@ -406,7 +508,9 @@ export function PipelinesPanel() {
               style={{
                 border: "none",
                 background: "transparent",
-                color: p.enabled ? "var(--success, #22c55e)" : "var(--text-muted)",
+                color: p.enabled
+                  ? "var(--success, #22c55e)"
+                  : "var(--text-muted)",
                 cursor: "pointer",
                 padding: 4,
                 borderRadius: 4,
@@ -426,7 +530,12 @@ export function PipelinesPanel() {
   // ── Create View ──────────────────────────────────────────────────
 
   if (view.kind === "create") {
-    return <CreateForm onSubmit={handleCreate} onCancel={() => setView({ kind: "list" })} />;
+    return (
+      <CreateForm
+        onSubmit={handleCreate}
+        onCancel={() => setView({ kind: "list" })}
+      />
+    );
   }
 
   // ── Run Detail View ──────────────────────────────────────────────
@@ -434,17 +543,33 @@ export function PipelinesPanel() {
   if (view.kind === "run") {
     if (!runDetail) {
       return (
-        <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: 24,
+            color: "var(--text-muted)",
+            fontSize: 12,
+          }}
+        >
           Loading run...
         </div>
       );
     }
 
-    const totalTokens = runDetail.tokenUsage.input + runDetail.tokenUsage.output;
+    const totalTokens =
+      runDetail.tokenUsage.input + runDetail.tokenUsage.output;
     return (
       <div style={{ padding: "0 8px" }}>
         {/* Back button */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "4px 0" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginBottom: 8,
+            padding: "4px 0",
+          }}
+        >
           <button
             onClick={() => setView({ kind: "detail", id: view.pipelineId })}
             style={{
@@ -459,7 +584,13 @@ export function PipelinesPanel() {
           >
             <ArrowLeft size={14} />
           </button>
-          <span style={{ fontSize: 10, fontFamily: "monospace", color: "var(--text-muted)" }}>
+          <span
+            style={{
+              fontSize: 10,
+              fontFamily: "monospace",
+              color: "var(--text-muted)",
+            }}
+          >
             {runDetail.id}
           </span>
           <StatusBadge status={runDetail.status} />
@@ -492,10 +623,25 @@ export function PipelinesPanel() {
         </div>
 
         {/* Step Runs */}
-        <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)", marginBottom: 6 }}>
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 500,
+            color: "var(--text-muted)",
+            marginBottom: 6,
+          }}
+        >
           Steps
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: "calc(100vh - 280px)", overflowY: "auto" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            maxHeight: "calc(100vh - 280px)",
+            overflowY: "auto",
+          }}
+        >
           {runDetail.stepRuns.map((sr) => {
             const stepTokens = sr.tokenUsage.input + sr.tokenUsage.output;
             return (
@@ -507,9 +653,24 @@ export function PipelinesPanel() {
                   padding: "6px 8px",
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text-primary)" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: 2,
+                  }}
+                >
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: "var(--text-primary)",
+                      }}
+                    >
                       {sr.stepName}
                     </span>
                     <StatusBadge status={sr.status} />
@@ -520,21 +681,52 @@ export function PipelinesPanel() {
                     </span>
                   )}
                 </div>
-                <div style={{ display: "flex", gap: 8, fontSize: 10, color: "var(--text-muted)", marginBottom: 2 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    fontSize: 10,
+                    color: "var(--text-muted)",
+                    marginBottom: 2,
+                  }}
+                >
                   <span>turns: {sr.turns}</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                  <span
+                    style={{ display: "flex", alignItems: "center", gap: 2 }}
+                  >
                     <Coins size={9} />
                     {formatTokens(stepTokens)}
                   </span>
                 </div>
                 {sr.error && (
-                  <div style={{ fontSize: 10, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)", borderRadius: 3, padding: "3px 6px", marginTop: 2 }}>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: "var(--danger, #ef4444)",
+                      background: "rgba(239,68,68,0.08)",
+                      borderRadius: 3,
+                      padding: "3px 6px",
+                      marginTop: 2,
+                    }}
+                  >
                     {sr.error}
                   </div>
                 )}
                 {sr.output && (
-                  <pre style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: "2px 0 0", maxHeight: 100, overflowY: "auto" }}>
-                    {sr.output.slice(0, 300)}{sr.output.length > 300 ? "..." : ""}
+                  <pre
+                    style={{
+                      fontSize: 10,
+                      color: "var(--text-muted)",
+                      fontFamily: "monospace",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      margin: "2px 0 0",
+                      maxHeight: 100,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {sr.output.slice(0, 300)}
+                    {sr.output.length > 300 ? "..." : ""}
                   </pre>
                 )}
               </div>
@@ -550,7 +742,14 @@ export function PipelinesPanel() {
   if (view.kind === "detail") {
     if (!detail) {
       return (
-        <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: 24,
+            color: "var(--text-muted)",
+            fontSize: 12,
+          }}
+        >
           Loading...
         </div>
       );
@@ -559,7 +758,15 @@ export function PipelinesPanel() {
     return (
       <div style={{ padding: "0 8px" }}>
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "4px 0" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginBottom: 8,
+            padding: "4px 0",
+          }}
+        >
           <button
             onClick={() => {
               setDetail(null);
@@ -578,11 +785,21 @@ export function PipelinesPanel() {
             <ArrowLeft size={14} />
           </button>
           <Workflow size={14} style={{ color: "var(--accent, #fbbf24)" }} />
-          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{detail.name}</span>
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 500,
+              color: "var(--text-primary)",
+            }}
+          >
+            {detail.name}
+          </span>
           <span
             style={{
               fontSize: 10,
-              color: detail.enabled ? "var(--success, #22c55e)" : "var(--text-muted)",
+              color: detail.enabled
+                ? "var(--success, #22c55e)"
+                : "var(--text-muted)",
             }}
           >
             {detail.enabled ? "enabled" : "paused"}
@@ -597,14 +814,29 @@ export function PipelinesPanel() {
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 11,
+              color: "var(--text-muted)",
+              marginBottom: 4,
+            }}
+          >
             <Clock size={11} />
             {triggerLabel(detail.trigger)}
             <span style={{ color: "var(--text-faint)" }}>|</span>
             <span>{detail.steps.length} steps</span>
           </div>
           {detail.description && (
-            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--text-secondary)",
+                marginBottom: 4,
+              }}
+            >
               {detail.description}
             </div>
           )}
@@ -638,7 +870,14 @@ export function PipelinesPanel() {
               opacity: triggering ? 0.6 : 1,
             }}
           >
-            {triggering ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <Play size={11} />}
+            {triggering ? (
+              <Loader2
+                size={11}
+                style={{ animation: "spin 1s linear infinite" }}
+              />
+            ) : (
+              <Play size={11} />
+            )}
             {triggering ? "Running..." : "Run"}
           </button>
           <button
@@ -646,7 +885,9 @@ export function PipelinesPanel() {
             style={{
               border: "1px solid var(--border)",
               background: "transparent",
-              color: detail.enabled ? "var(--text-muted)" : "var(--success, #22c55e)",
+              color: detail.enabled
+                ? "var(--text-muted)"
+                : "var(--success, #22c55e)",
               cursor: "pointer",
               padding: "3px 8px",
               borderRadius: 4,
@@ -680,24 +921,54 @@ export function PipelinesPanel() {
         </div>
 
         {/* Recent Runs */}
-        <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)", marginBottom: 6 }}>
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 500,
+            color: "var(--text-muted)",
+            marginBottom: 6,
+          }}
+        >
           Recent Runs ({detail.recentRuns.length})
         </div>
 
         {detail.recentRuns.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 16, color: "var(--text-muted)", fontSize: 11 }}>
+          <div
+            style={{
+              textAlign: "center",
+              padding: 16,
+              color: "var(--text-muted)",
+              fontSize: 11,
+            }}
+          >
             <Clock size={16} style={{ opacity: 0.4, marginBottom: 4 }} />
             <div>No runs yet</div>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: "calc(100vh - 380px)", overflowY: "auto" }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              maxHeight: "calc(100vh - 380px)",
+              overflowY: "auto",
+            }}
+          >
             {detail.recentRuns.map((run) => {
               const totalTokens = run.tokenUsage.input + run.tokenUsage.output;
-              const successSteps = run.stepRuns.filter((s) => s.status === "success").length;
+              const successSteps = run.stepRuns.filter(
+                (s) => s.status === "success",
+              ).length;
               return (
                 <button
                   key={run.id}
-                  onClick={() => setView({ kind: "run", pipelineId: detail.id, runId: run.id })}
+                  onClick={() =>
+                    setView({
+                      kind: "run",
+                      pipelineId: detail.id,
+                      runId: run.id,
+                    })
+                  }
                   style={{
                     display: "block",
                     width: "100%",
@@ -711,9 +982,24 @@ export function PipelinesPanel() {
                   }}
                   className="worker-entry-hover"
                 >
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 10, fontFamily: "monospace", color: "var(--text-muted)" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: 2,
+                    }}
+                  >
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 6 }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontFamily: "monospace",
+                          color: "var(--text-muted)",
+                        }}
+                      >
                         {run.id}
                       </span>
                       <StatusBadge status={run.status} />
@@ -722,15 +1008,32 @@ export function PipelinesPanel() {
                       {new Date(run.startedAt).toLocaleString()}
                     </span>
                   </div>
-                  <div style={{ display: "flex", gap: 8, fontSize: 10, color: "var(--text-muted)" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      fontSize: 10,
+                      color: "var(--text-muted)",
+                    }}
+                  >
                     {run.completedAt && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                      <span
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 2,
+                        }}
+                      >
                         <Clock size={9} />
                         {formatElapsed(run.startedAt, run.completedAt)}
                       </span>
                     )}
-                    <span>{successSteps}/{run.stepRuns.length} steps</span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <span>
+                      {successSteps}/{run.stepRuns.length} steps
+                    </span>
+                    <span
+                      style={{ display: "flex", alignItems: "center", gap: 2 }}
+                    >
                       <Coins size={9} />
                       {formatTokens(totalTokens)}
                     </span>
@@ -758,7 +1061,9 @@ function CreateForm({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [triggerType, setTriggerType] = useState<"manual" | "schedule" | "webhook" | "event" | "fileWatch">("manual");
+  const [triggerType, setTriggerType] = useState<
+    "manual" | "schedule" | "webhook" | "event" | "fileWatch"
+  >("manual");
   const [schedule, setSchedule] = useState("every:5m");
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [webhookSecret, setWebhookSecret] = useState("");
@@ -776,7 +1081,11 @@ function CreateForm({
         return false;
       }
       const ms =
-        everyMatch[2] === "s" ? n * 1000 : everyMatch[2] === "m" ? n * 60000 : n * 3600000;
+        everyMatch[2] === "s"
+          ? n * 1000
+          : everyMatch[2] === "m"
+            ? n * 60000
+            : n * 3600000;
       if (ms < 10000) {
         setScheduleError("Minimum interval is 10 seconds");
         return false;
@@ -788,7 +1097,9 @@ function CreateForm({
       setScheduleError(null);
       return true;
     }
-    setScheduleError('Use "every:Nm", "every:Nh", "every:Ns", or "*/N * * * *"');
+    setScheduleError(
+      'Use "every:Nm", "every:Nh", "every:Ns", or "*/N * * * *"',
+    );
     return false;
   };
 
@@ -805,9 +1116,17 @@ function CreateForm({
         : triggerType === "webhook"
           ? { type: "webhook", secret: webhookSecret.trim() || undefined }
           : triggerType === "event"
-            ? { type: "event", source: eventSource.trim(), level: eventLevel.trim() || undefined }
+            ? {
+                type: "event",
+                source: eventSource.trim(),
+                level: eventLevel.trim() || undefined,
+              }
             : triggerType === "fileWatch"
-              ? { type: "fileWatch", path: watchPath.trim(), debounceSecs: parseInt(debounceSecs) || 5 }
+              ? {
+                  type: "fileWatch",
+                  path: watchPath.trim(),
+                  debounceSecs: parseInt(debounceSecs) || 5,
+                }
               : { type: "manual" };
 
     onSubmit({
@@ -833,7 +1152,8 @@ function CreateForm({
   };
 
   const triggerValid =
-    triggerType === "manual" || triggerType === "webhook" ||
+    triggerType === "manual" ||
+    triggerType === "webhook" ||
     (triggerType === "schedule" && schedule.trim()) ||
     (triggerType === "event" && eventSource.trim()) ||
     (triggerType === "fileWatch" && watchPath.trim());
@@ -841,7 +1161,15 @@ function CreateForm({
   return (
     <form onSubmit={handleSubmit} style={{ padding: "0 8px" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, padding: "4px 0" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 10,
+          padding: "4px 0",
+        }}
+      >
         <button
           type="button"
           onClick={onCancel}
@@ -858,12 +1186,27 @@ function CreateForm({
           <ArrowLeft size={14} />
         </button>
         <Plus size={14} style={{ color: "var(--accent, #fbbf24)" }} />
-        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>New Pipeline</span>
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 500,
+            color: "var(--text-primary)",
+          }}
+        >
+          New Pipeline
+        </span>
       </div>
 
       {/* Name */}
       <div style={{ marginBottom: 10 }}>
-        <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: 11,
+            color: "var(--text-muted)",
+            marginBottom: 3,
+          }}
+        >
           Name
         </label>
         <input
@@ -877,7 +1220,14 @@ function CreateForm({
 
       {/* Description */}
       <div style={{ marginBottom: 10 }}>
-        <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: 11,
+            color: "var(--text-muted)",
+            marginBottom: 3,
+          }}
+        >
           Description (optional)
         </label>
         <input
@@ -891,18 +1241,41 @@ function CreateForm({
 
       {/* Trigger */}
       <div style={{ marginBottom: 10 }}>
-        <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: 11,
+            color: "var(--text-muted)",
+            marginBottom: 3,
+          }}
+        >
           Trigger
         </label>
-        <div style={{ display: "flex", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-          {(["manual", "schedule", "webhook", "event", "fileWatch"] as const).map((t) => (
-            <label key={t} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)", cursor: "pointer" }}>
+        <div
+          style={{ display: "flex", gap: 8, marginBottom: 4, flexWrap: "wrap" }}
+        >
+          {(
+            ["manual", "schedule", "webhook", "event", "fileWatch"] as const
+          ).map((t) => (
+            <label
+              key={t}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 11,
+                color: "var(--text-muted)",
+                cursor: "pointer",
+              }}
+            >
               <input
                 type="radio"
                 checked={triggerType === t}
                 onChange={() => setTriggerType(t)}
               />
-              {t === "fileWatch" ? "File Watch" : t.charAt(0).toUpperCase() + t.slice(1)}
+              {t === "fileWatch"
+                ? "File Watch"
+                : t.charAt(0).toUpperCase() + t.slice(1)}
             </label>
           ))}
         </div>
@@ -918,15 +1291,29 @@ function CreateForm({
               placeholder="every:5m or */5 * * * *"
               style={{
                 ...inputStyle,
-                borderColor: scheduleError ? "var(--danger, #ef4444)" : "var(--border)",
+                borderColor: scheduleError
+                  ? "var(--danger, #ef4444)"
+                  : "var(--border)",
               }}
             />
             {scheduleError ? (
-              <div style={{ fontSize: 10, color: "var(--danger, #ef4444)", marginTop: 2 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "var(--danger, #ef4444)",
+                  marginTop: 2,
+                }}
+              >
                 {scheduleError}
               </div>
             ) : (
-              <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-faint)",
+                  marginTop: 2,
+                }}
+              >
                 every:5m, every:1h, every:30s, */10 * * * *
               </div>
             )}
@@ -941,7 +1328,9 @@ function CreateForm({
               placeholder="Secret token (optional)"
               style={inputStyle}
             />
-            <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}>
+            <div
+              style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}
+            >
               POST /api/pipelines/ID/webhook?secret=TOKEN
             </div>
           </>
@@ -962,7 +1351,9 @@ function CreateForm({
               placeholder="Level filter (optional: info, warn, error)"
               style={inputStyle}
             />
-            <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}>
+            <div
+              style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}
+            >
               Triggers when a matching event appears
             </div>
           </>
@@ -983,14 +1374,25 @@ function CreateForm({
               placeholder="Debounce seconds (default: 5)"
               style={inputStyle}
             />
-            <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}>
+            <div
+              style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}
+            >
               Triggers when the file/directory is modified
             </div>
           </>
         )}
       </div>
 
-      <div style={{ fontSize: 10, color: "var(--text-faint)", marginBottom: 10, padding: "6px 8px", border: "1px solid var(--border)", borderRadius: 4 }}>
+      <div
+        style={{
+          fontSize: 10,
+          color: "var(--text-faint)",
+          marginBottom: 10,
+          padding: "6px 8px",
+          border: "1px solid var(--border)",
+          borderRadius: 4,
+        }}
+      >
         Steps are added in the visual flow editor after creation
       </div>
 
@@ -1015,9 +1417,16 @@ function CreateForm({
           type="submit"
           disabled={!name.trim() || !triggerValid}
           style={{
-            border: !name.trim() || !triggerValid ? "1px solid rgba(255,255,255,0.1)" : "1px solid rgba(255,255,255,0.2)",
-            background: !name.trim() || !triggerValid ? "transparent" : "#fafafa",
-            color: !name.trim() || !triggerValid ? "rgba(255,255,255,0.3)" : "#0a0a0a",
+            border:
+              !name.trim() || !triggerValid
+                ? "1px solid rgba(255,255,255,0.1)"
+                : "1px solid rgba(255,255,255,0.2)",
+            background:
+              !name.trim() || !triggerValid ? "transparent" : "#fafafa",
+            color:
+              !name.trim() || !triggerValid
+                ? "rgba(255,255,255,0.3)"
+                : "#0a0a0a",
             cursor: !name.trim() || !triggerValid ? "not-allowed" : "pointer",
             padding: "4px 10px",
             borderRadius: 4,

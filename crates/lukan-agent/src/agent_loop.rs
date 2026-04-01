@@ -714,14 +714,20 @@ impl AgentLoop {
             }
         }
 
-        // Load project memory if active
+        // Load project memories — prefer structured files, fallback to MEMORY.md
+        if let Some(summaries) =
+            lukan_tools::remember::get_memory_summaries_for_prompt(&self.cwd).await
+        {
+            cached.push(summaries);
+        }
+        // Always load behavior profile (MEMORY.md) if it exists
         let active_path = LukanPaths::project_memory_active_file();
         if tokio::fs::metadata(&active_path).await.is_ok() {
             let project_path = LukanPaths::project_memory_file();
             if let Ok(memory) = tokio::fs::read_to_string(&project_path).await {
                 let trimmed = memory.trim();
                 if !trimmed.is_empty() {
-                    cached.push(format!("## Project Memory\n\n{trimmed}"));
+                    cached.push(format!("## Project Behavior Profile\n\n{trimmed}"));
                 }
             }
         }
@@ -2255,7 +2261,12 @@ async fn update_behavior_profile(
     let memory_path = cwd.join(".lukan").join("memories").join("MEMORY.md");
     let current = tokio::fs::read_to_string(&memory_path)
         .await
-        .unwrap_or_else(|_| "# Behavior Profile\n\n(empty)\n".to_string());
+        .unwrap_or_else(|_| "(empty)\n".to_string());
+    // Strip duplicate title if present
+    let current = current
+        .trim_start_matches("# Behavior Profile")
+        .trim_start()
+        .to_string();
 
     // Build tools registry for the sub-agent
     let tools = lukan_tools::create_default_registry();
@@ -2272,7 +2283,9 @@ async fn update_behavior_profile(
          If the current profile is empty or outdated, explore the project structure first.\n\n\
          MANDATORY: The MEMORY.md MUST end with a '## Project Structure' section containing the project's \
          directory tree (2 levels deep, excluding node_modules, target, .git, dist, build, __pycache__, .venv). \
-         Use Bash with 'find' or 'ls -R' to get the real tree. This section prevents path errors.",
+         Use Bash with 'find' or 'ls -R' to get the real tree. This section prevents path errors.\n\n\
+         DO NOT include '# Behavior Profile' as a title — it is added automatically by the system. \
+         Start directly with the first ## section.",
         BEHAVIOR_MEMORY_UPDATE_PROMPT,
         cwd.display(),
         memory_path.display(),

@@ -152,6 +152,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(rest_processes::send_to_background),
         )
         .route(
+            "/processes/clear",
+            post(rest_processes::clear_completed_processes),
+        )
+        .route(
             "/processes/{pid}/log",
             get(rest_processes::get_bg_process_log),
         )

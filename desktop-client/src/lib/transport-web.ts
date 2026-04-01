@@ -1093,6 +1093,8 @@ export class WebTransport implements Transport {
         return { method: "POST", url: `/api/processes/${args?.pid}/kill` };
       case "send_to_background":
         return { method: "POST", url: "/api/processes/background" };
+      case "clear_bg_processes":
+        return { method: "POST", url: "/api/processes/clear" };
 
       // ── Browser ──
       case "browser_launch":

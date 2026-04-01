@@ -121,6 +121,12 @@ pub async fn get_bg_process_log(
     }
 }
 
+/// POST /api/processes/clear — remove all completed/killed processes from history
+pub async fn clear_completed_processes() -> Json<serde_json::Value> {
+    let removed = bg_processes::clear_completed();
+    Json(serde_json::json!({ "removed": removed }))
+}
+
 /// POST /api/processes/:pid/kill
 pub async fn kill_bg_process(Path(pid): Path<u32>) -> Json<bool> {
     let sent = bg_processes::kill_bg_process(pid);

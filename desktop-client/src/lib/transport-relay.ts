@@ -1327,6 +1327,8 @@ export class RelayTransport implements Transport {
         };
       case "send_to_background":
         return { method: "POST", url: "/api/processes/background" };
+      case "clear_bg_processes":
+        return { method: "POST", url: "/api/processes/clear" };
       default:
         return { method: "GET", url: `/api/${command}` };
     }

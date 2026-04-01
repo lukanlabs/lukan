@@ -229,8 +229,27 @@ fn snapshot_process(p: &mut BgProcess) -> (BgProcessSnapshot, bool) {
     )
 }
 
+/// Merge processes from disk into the in-memory tracker.
+/// Picks up processes registered by other lukan instances (subagents, CLI).
+fn merge_from_disk(t: &mut BgTracker) {
+    let on_disk = load_persisted();
+    let mut added = 0;
+    for (pid, process) in on_disk {
+        if !t.processes.contains_key(&pid) {
+            t.processes.insert(pid, process);
+            added += 1;
+        }
+    }
+    if added > 0 {
+        debug!(added, "Merged processes from disk into tracker");
+    }
+}
+
 /// Collect snapshots from tracker, persist if any status changed.
 fn collect_snapshots(t: &mut BgTracker, filter: Option<&str>) -> Vec<BgProcessSnapshot> {
+    // Merge any processes added by other lukan instances
+    merge_from_disk(t);
+
     let mut any_changed = false;
     let mut result: Vec<BgProcessSnapshot> = t
         .processes
@@ -427,6 +446,25 @@ pub async fn wait_bg_process(pid: u32, timeout_ms: u64) -> Option<String> {
         }
         tokio::time::sleep(poll_interval).await;
     }
+}
+
+/// Remove all non-running processes from the tracker (clear history).
+/// Returns the number of entries removed.
+pub fn clear_completed() -> usize {
+    let mut t = tracker().lock().unwrap();
+    let before = t.processes.len();
+    t.processes.retain(|&pid, p| {
+        let alive = is_process_alive(pid);
+        if !alive {
+            let _ = std::fs::remove_file(&p.log_file);
+        }
+        alive
+    });
+    let removed = before - t.processes.len();
+    if removed > 0 {
+        persist(&t);
+    }
+    removed
 }
 
 /// Remove a tracked process entry (and its log file)

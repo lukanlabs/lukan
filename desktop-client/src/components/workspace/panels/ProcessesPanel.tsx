@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, Trash2 } from "lucide-react";
 import type { BgProcessInfo } from "../../../lib/types";
-import { listBgProcesses } from "../../../lib/tauri";
+import { listBgProcesses, clearBgProcesses } from "../../../lib/tauri";
 
 function formatDuration(startedAt: string, endedAt?: string | null): string {
   const start = new Date(startedAt).getTime();
@@ -122,6 +122,17 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
   // Force tick reference so running timers update
   void tick;
 
+  const hasCompleted = processes.some((p) => p.status !== "running");
+
+  const handleClear = useCallback(async () => {
+    try {
+      await clearBgProcesses();
+      loadProcesses();
+    } catch (e) {
+      console.error("Failed to clear processes:", e);
+    }
+  }, [loadProcesses]);
+
   if (processes.length === 0) {
     return (
       <div style={{ textAlign: "center", padding: 24 }}>
@@ -139,6 +150,20 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
 
   return (
     <>
+      {hasCompleted && (
+        <div style={{ padding: "6px 12px", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "flex-end" }}>
+          <button
+            onClick={handleClear}
+            style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", gap: 4, padding: "2px 6px", borderRadius: 4 }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
+            title="Clear completed processes"
+          >
+            <Trash2 size={11} />
+            Clear history
+          </button>
+        </div>
+      )}
       <div>
         {processes.map((p) => (
           <div

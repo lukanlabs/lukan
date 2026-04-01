@@ -61,6 +61,12 @@ pub async fn kill_bg_process(pid: u32) -> bool {
     sent
 }
 
+#[tauri::command]
+pub fn clear_bg_processes() -> serde_json::Value {
+    let removed = bg_processes::clear_completed();
+    serde_json::json!({ "removed": removed })
+}
+
 /// Send the currently running Bash tool to background (equivalent to Alt+B in TUI)
 #[tauri::command]
 pub async fn send_to_background(

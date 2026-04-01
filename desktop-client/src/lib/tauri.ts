@@ -295,6 +295,8 @@ export const killBgProcess = (pid: number) =>
   getTransport().call<boolean>("kill_bg_process", { pid });
 export const sendToBackground = (sessionId: string) =>
   getTransport().call<boolean>("send_to_background", { sessionId });
+export const clearBgProcesses = () =>
+  getTransport().call<{ removed: number }>("clear_bg_processes");
 
 // Browser
 export const browserLaunch = (

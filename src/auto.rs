@@ -8,17 +8,17 @@ use lukan_core::config::{CredentialsManager, ConfigManager, ResolvedConfig};
 use lukan_core::models::events::StreamEvent;
 use lukan_providers::{Provider, StreamParams, SystemPrompt, create_provider};
 
-const MAX_TURNS: usize = 50;
+const DEFAULT_MAX_TURNS: usize = 0; // 0 = unlimited
 const TURN_TIMEOUT_SECS: u64 = 600; // 10 minutes per turn
 
 /// Run autonomous agent: takes a goal, runs an agent in skip mode, and uses
 /// a supervisor LLM to evaluate progress and send follow-up messages.
-pub async fn run_auto(goal: &str, max_turns: Option<usize>) -> Result<()> {
-    let max_turns = max_turns.unwrap_or(MAX_TURNS);
+pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
+    let unlimited = max_turns == 0;
 
     eprintln!("\x1b[1;36m▶ Autonomous mode\x1b[0m");
     eprintln!("  Goal: {goal}");
-    eprintln!("  Max turns: {max_turns}");
+    eprintln!("  Max turns: {}", if unlimited { "unlimited".to_string() } else { max_turns.to_string() });
     eprintln!();
 
     // Load config and create provider
@@ -84,12 +84,13 @@ pub async fn run_auto(goal: &str, max_turns: Option<usize>) -> Result<()> {
 
     loop {
         turn += 1;
-        if turn > max_turns {
+        if !unlimited && turn > max_turns {
             eprintln!("\n\x1b[1;33m⚠ Max turns ({max_turns}) reached.\x1b[0m");
             break;
         }
 
-        eprintln!("\x1b[1;34m── Turn {turn}/{max_turns} ──\x1b[0m");
+        let turn_label = if unlimited { format!("Turn {turn}") } else { format!("Turn {turn}/{max_turns}") };
+        eprintln!("\x1b[1;34m── {turn_label} ──\x1b[0m");
 
         // Run agent turn and collect events
         let (text_response, had_error) = run_agent_turn(&mut agent, &current_message).await?;

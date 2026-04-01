@@ -621,7 +621,9 @@ impl App {
             let after = &self.input[end..];
             format!("{before}{label}{after}")
         } else {
-            self.input.clone()
+            // Replace newlines with spaces for single-line display
+            // (newlines are preserved in self.input for sending to the agent)
+            self.input.replace('\n', " ")
         }
     }
 
@@ -1034,10 +1036,51 @@ impl App {
                                 && self.model_picker.is_none()
                                 && self.reasoning_picker.is_none()
                             {
-                                let char_count = text.chars().count();
+                                // Aggressive sanitization for pasted text:
+                                // - Remove all ANSI escape sequences (ESC [ ... m)
+                                // - Remove bracketed paste markers (ESC[200~, ESC[201~)
+                                // - Convert tabs to spaces (preserve visual layout)
+                                // - Normalize \r and \r\n to \n
+                                // Step 1: Remove ANSI escape sequences: ESC followed by [ and ending with letter
+                                let mut cleaned = String::with_capacity(text.len());
+                                let mut chars = text.chars().peekable();
+                                while let Some(ch) = chars.next() {
+                                    if ch == '\x1b' {
+                                        // Skip escape sequence
+                                        if chars.peek() == Some(&'[') {
+                                            chars.next(); // consume [
+                                            // Consume until we hit a letter (end of CSI sequence)
+                                            while let Some(&seq_ch) = chars.peek() {
+                                                chars.next();
+                                                if seq_ch.is_ascii_alphabetic() || seq_ch == '~' {
+                                                    break;
+                                                }
+                                            }
+                                        } else {
+                                            // Skip next char after ESC if not [
+                                            chars.next();
+                                        }
+                                    } else {
+                                        cleaned.push(ch);
+                                    }
+                                }
+
+                                // Step 2: Normalize whitespace and remove remaining control chars
+                                let sanitized: String = cleaned
+                                    .chars()
+                                    .filter_map(|c| match c {
+                                        '\t' => Some(' '),
+                                        '\r' => None,
+                                        '\n' => Some('\n'),
+                                        c if c.is_control() && c != '\n' => None,
+                                        c => Some(c),
+                                    })
+                                    .collect();
+
+                                let char_count = sanitized.chars().count();
                                 let start = self.cursor_pos;
-                                self.input.insert_str(start, &text);
-                                let end = start + text.len();
+                                self.input.insert_str(start, &sanitized);
+                                let end = start + sanitized.len();
                                 self.cursor_pos = end;
                                 // Short pastes: inline. Long pastes: collapsed block.
                                 if char_count > 200 {

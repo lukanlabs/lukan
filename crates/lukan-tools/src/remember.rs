@@ -225,7 +225,10 @@ pub async fn get_memory_summaries_for_prompt(cwd: &Path) -> Option<String> {
     }
 
     let mut section = String::from(
-        "## Project Memories\nUse the Remember tool to recall details before important decisions.\n\n",
+        "## Project Memories\n\
+         IMPORTANT: Before starting any task that modifies code, creates files, or makes decisions, \
+         call the Remember tool with keywords related to the task. Past decisions, mistakes, and \
+         lessons are stored here and MUST be consulted to avoid repeating errors.\n\n",
     );
 
     let cap = files.len().min(20);
@@ -296,8 +299,9 @@ impl Tool for RememberTool {
     }
 
     fn description(&self) -> &str {
-        "Recall relevant project memories, past decisions, and lessons learned. \
-         Use this before important actions to check for relevant context. \
+        "ALWAYS call this tool BEFORE starting any task. It contains past decisions, \
+         mistakes to avoid, and lessons learned from this project. Skipping this tool \
+         risks repeating past errors. Query with keywords related to your task. \
          Returns matching memory summaries and index entries. \
          Use ReadFiles with line ranges to load full details if needed."
     }

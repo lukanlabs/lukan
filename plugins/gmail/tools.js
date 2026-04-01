@@ -6,6 +6,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { htmlToText } = require("html-to-text");
 
 // ── Config ──────────────────────────────────────────────────────────────
 
@@ -165,40 +166,14 @@ function extractBody(payload) {
 }
 
 function stripHtml(html) {
-  let text = html;
-
-  // Structural tags → whitespace
-  text = text
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "- ");
-
-  // Strip all tags and dangerous fragments — iterate until stable
-  let prev;
-  do {
-    prev = text;
-    text = text
-      .replace(/<script/gi, "")
-      .replace(/<\/script/gi, "")
-      .replace(/<style/gi, "")
-      .replace(/<\/style/gi, "")
-      .replace(/<[^>]*>/g, "");
-  } while (text !== prev);
-
-  // Decode entities (&amp; last to prevent double-decode)
-  text = text
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  return text;
+  if (typeof html !== "string") return "";
+  const text = htmlToText(html, {
+    wordwrap: false,
+    selectors: [
+      { selector: "a", options: { ignoreHref: true } },
+    ],
+  });
+  return text.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // ── MIME builder ────────────────────────────────────────────────────────

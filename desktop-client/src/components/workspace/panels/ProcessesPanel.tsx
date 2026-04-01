@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, Trash2, AlertTriangle } from "lucide-react";
 import type { BgProcessInfo } from "../../../lib/types";
-import { listBgProcesses } from "../../../lib/tauri";
+import { listBgProcesses, clearBgProcesses } from "../../../lib/tauri";
 
 function formatDuration(startedAt: string, endedAt?: string | null): string {
   const start = new Date(startedAt).getTime();
@@ -122,6 +122,19 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
   // Force tick reference so running timers update
   void tick;
 
+  const hasCompleted = processes.some((p) => p.status !== "running");
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const handleClear = useCallback(async () => {
+    try {
+      await clearBgProcesses();
+      setConfirmClear(false);
+      loadProcesses();
+    } catch (e) {
+      console.error("Failed to clear processes:", e);
+    }
+  }, [loadProcesses]);
+
   if (processes.length === 0) {
     return (
       <div style={{ textAlign: "center", padding: 24 }}>
@@ -131,7 +144,7 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
           No background processes
         </div>
         <div style={{ color: "var(--text-faint)", fontSize: 11 }}>
-          Use Bash with background=true to spawn processes
+          Processes launched by the agent will appear here
         </div>
       </div>
     );
@@ -139,6 +152,71 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
 
   return (
     <>
+      {hasCompleted && (
+        <div style={{ padding: "6px 12px", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "flex-end" }}>
+          <button
+            onClick={() => setConfirmClear(true)}
+            style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", gap: 4, padding: "2px 6px", borderRadius: 4 }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
+            title="Clear completed processes"
+          >
+            <Trash2 size={11} />
+            Clear history
+          </button>
+        </div>
+      )}
+      {confirmClear && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 9999,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)",
+          }}
+          onClick={() => setConfirmClear(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#1a1a1e", border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 10, padding: "20px 24px", maxWidth: 360, width: "90%",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <AlertTriangle size={18} style={{ color: "#fbbf24", flexShrink: 0 }} />
+              <span style={{ fontSize: 14, fontWeight: 600, color: "#fafafa" }}>
+                Clear process history?
+              </span>
+            </div>
+            <p style={{ fontSize: 13, color: "#a1a1aa", margin: "0 0 20px", lineHeight: 1.5 }}>
+              This will remove all completed and killed processes from the list. Running processes will not be affected.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                onClick={() => setConfirmClear(false)}
+                style={{
+                  padding: "6px 16px", fontSize: 13, borderRadius: 6,
+                  border: "1px solid rgba(255,255,255,0.1)", background: "transparent",
+                  color: "#a1a1aa", cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleClear}
+                style={{
+                  padding: "6px 16px", fontSize: 13, borderRadius: 6,
+                  border: "none", background: "#dc2626", color: "#fff",
+                  cursor: "pointer", fontWeight: 500,
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div>
         {processes.map((p) => (
           <div

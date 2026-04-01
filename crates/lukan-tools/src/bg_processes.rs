@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 /// Information about a background process
+#[derive(Serialize, Deserialize)]
 pub struct BgProcess {
     pub pid: u32,
     pub command: String,
@@ -28,12 +30,47 @@ struct BgTracker {
     processes: HashMap<u32, BgProcess>,
 }
 
+fn persist_path() -> PathBuf {
+    lukan_core::config::LukanPaths::data_dir().join("bg-processes.json")
+}
+
+/// Save tracker state to disk (best-effort, non-blocking)
+fn persist(tracker: &BgTracker) {
+    let path = persist_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_string(&tracker.processes) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                warn!(error = %e, "Failed to persist bg processes");
+            }
+        }
+        Err(e) => warn!(error = %e, "Failed to serialize bg processes"),
+    }
+}
+
+/// Load tracker state from disk
+fn load_persisted() -> HashMap<u32, BgProcess> {
+    let path = persist_path();
+    match std::fs::read_to_string(&path) {
+        Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
 fn tracker() -> &'static Mutex<BgTracker> {
     static INSTANCE: OnceLock<Mutex<BgTracker>> = OnceLock::new();
     INSTANCE.get_or_init(|| {
-        Mutex::new(BgTracker {
-            processes: HashMap::new(),
-        })
+        let mut processes = load_persisted();
+        // Check which persisted processes are still alive and update dead ones
+        for p in processes.values_mut() {
+            if p.exited_at.is_none() && !is_process_alive(p.pid) {
+                p.exited_at = Some(Utc::now());
+            }
+        }
+        debug!(count = processes.len(), "Loaded persisted bg processes");
+        Mutex::new(BgTracker { processes })
     })
 }
 
@@ -59,6 +96,7 @@ pub fn add_bg_process(
     };
     let mut t = tracker().lock().unwrap();
     t.processes.insert(pid, process);
+    persist(&t);
     debug!(pid, "Registered background process");
 }
 
@@ -161,10 +199,13 @@ fn kill_tree(pid: u32, signal: i32) {
 }
 
 /// Build a snapshot from a tracked process, updating exited_at on first death detection.
-fn snapshot_process(p: &mut BgProcess) -> BgProcessSnapshot {
+/// Returns (snapshot, changed) where changed indicates if exited_at was set.
+fn snapshot_process(p: &mut BgProcess) -> (BgProcessSnapshot, bool) {
     let alive = is_process_alive(p.pid);
+    let mut changed = false;
     if !alive && p.exited_at.is_none() {
         p.exited_at = Some(Utc::now());
+        changed = true;
     }
     let status = if alive {
         BgProcessStatus::Running
@@ -173,46 +214,80 @@ fn snapshot_process(p: &mut BgProcess) -> BgProcessSnapshot {
     } else {
         BgProcessStatus::Completed
     };
-    BgProcessSnapshot {
-        pid: p.pid,
-        command: p.command.clone(),
-        started_at: p.started_at,
-        exited_at: p.exited_at,
-        status,
-        label: p.label.clone(),
-        session_id: p.session_id.clone(),
-        tab_id: p.tab_id.clone(),
+    (
+        BgProcessSnapshot {
+            pid: p.pid,
+            command: p.command.clone(),
+            started_at: p.started_at,
+            exited_at: p.exited_at,
+            status,
+            label: p.label.clone(),
+            session_id: p.session_id.clone(),
+            tab_id: p.tab_id.clone(),
+        },
+        changed,
+    )
+}
+
+/// Merge processes from disk into the in-memory tracker.
+/// Only imports processes that are still alive — dead ones on disk but not
+/// in memory were likely cleared by the user and should stay removed.
+fn merge_from_disk(t: &mut BgTracker) {
+    let on_disk = load_persisted();
+    let mut added = 0;
+    for (pid, process) in on_disk {
+        if !t.processes.contains_key(&pid) && is_process_alive(pid) {
+            t.processes.insert(pid, process);
+            added += 1;
+        }
     }
+    if added > 0 {
+        debug!(added, "Merged live processes from disk into tracker");
+    }
+}
+
+/// Collect snapshots from tracker, persist if any status changed.
+fn collect_snapshots(t: &mut BgTracker, filter: Option<&str>) -> Vec<BgProcessSnapshot> {
+    // Merge any processes added by other lukan instances
+    merge_from_disk(t);
+
+    let mut any_changed = false;
+    let mut result: Vec<BgProcessSnapshot> = t
+        .processes
+        .values_mut()
+        .filter(|p| match filter {
+            Some(sid) => p.session_id.as_deref() == Some(sid),
+            None => true,
+        })
+        .map(|p| {
+            let (snap, changed) = snapshot_process(p);
+            if changed {
+                any_changed = true;
+            }
+            snap
+        })
+        .collect();
+    if any_changed {
+        persist(t);
+    }
+    result.sort_by(|a, b| {
+        let a_alive = a.status == BgProcessStatus::Running;
+        let b_alive = b.status == BgProcessStatus::Running;
+        b_alive.cmp(&a_alive).then(b.started_at.cmp(&a.started_at))
+    });
+    result
 }
 
 /// Get list of all tracked background processes (alive ones first, then dead)
 pub fn get_bg_processes() -> Vec<BgProcessSnapshot> {
     let mut t = tracker().lock().unwrap();
-    let mut result: Vec<BgProcessSnapshot> =
-        t.processes.values_mut().map(snapshot_process).collect();
-    result.sort_by(|a, b| {
-        let a_alive = a.status == BgProcessStatus::Running;
-        let b_alive = b.status == BgProcessStatus::Running;
-        b_alive.cmp(&a_alive).then(b.started_at.cmp(&a.started_at))
-    });
-    result
+    collect_snapshots(&mut t, None)
 }
 
 /// Get list of background processes filtered by session
 pub fn get_bg_processes_for_session(session_id: &str) -> Vec<BgProcessSnapshot> {
     let mut t = tracker().lock().unwrap();
-    let mut result: Vec<BgProcessSnapshot> = t
-        .processes
-        .values_mut()
-        .filter(|p| p.session_id.as_deref() == Some(session_id))
-        .map(snapshot_process)
-        .collect();
-    result.sort_by(|a, b| {
-        let a_alive = a.status == BgProcessStatus::Running;
-        let b_alive = b.status == BgProcessStatus::Running;
-        b_alive.cmp(&a_alive).then(b.started_at.cmp(&a.started_at))
-    });
-    result
+    collect_snapshots(&mut t, Some(session_id))
 }
 
 /// Read the last `max_lines` from a background process log file.
@@ -273,6 +348,7 @@ pub fn kill_bg_process(pid: u32) -> bool {
         if let Some(p) = t.processes.get_mut(&pid) {
             p.killed = true;
         }
+        persist(&t);
     }
 
     let alive = is_process_alive(pid);
@@ -350,6 +426,7 @@ pub async fn kill_by_label_prefix(prefix: &str) -> Vec<u32> {
             proc.killed = true;
             proc.exited_at = Some(Utc::now());
         }
+        persist(&t);
     }
     pids
 }
@@ -372,11 +449,31 @@ pub async fn wait_bg_process(pid: u32, timeout_ms: u64) -> Option<String> {
     }
 }
 
+/// Remove all non-running processes from the tracker (clear history).
+/// Returns the number of entries removed.
+pub fn clear_completed() -> usize {
+    let mut t = tracker().lock().unwrap();
+    let before = t.processes.len();
+    t.processes.retain(|&pid, p| {
+        let alive = is_process_alive(pid);
+        if !alive {
+            let _ = std::fs::remove_file(&p.log_file);
+        }
+        alive
+    });
+    let removed = before - t.processes.len();
+    if removed > 0 {
+        persist(&t);
+    }
+    removed
+}
+
 /// Remove a tracked process entry (and its log file)
 pub fn remove_bg_process(pid: u32) {
     let mut t = tracker().lock().unwrap();
     if let Some(process) = t.processes.remove(&pid) {
         let _ = std::fs::remove_file(&process.log_file);
+        persist(&t);
     }
 }
 
@@ -389,6 +486,7 @@ pub fn cleanup_all() {
         }
         let _ = std::fs::remove_file(&process.log_file);
     }
+    persist(&t);
     debug!("Cleaned up all background processes");
 }
 

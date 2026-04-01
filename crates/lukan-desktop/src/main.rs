@@ -437,6 +437,7 @@ fn main() {
             commands::bg_processes::list_bg_processes,
             commands::bg_processes::get_bg_process_log,
             commands::bg_processes::kill_bg_process,
+            commands::bg_processes::clear_bg_processes,
             commands::bg_processes::send_to_background,
             // Events
             commands::events::consume_pending_events,

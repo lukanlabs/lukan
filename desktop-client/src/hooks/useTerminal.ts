@@ -159,7 +159,9 @@ export function useTerminal({ sessionId, containerRef, fontSize = DEFAULT_FONT_S
       e.preventDefault();
       // Suppress xterm.js onData for this paste cycle
       pasteInProgress = true;
-      sendInput(sessionId, text);
+      // Wrap with bracketed paste markers so the TUI recognizes it as a paste event
+      // ESC[200~ = start of paste, ESC[201~ = end of paste
+      sendInput(sessionId, `\x1b[200~${text}\x1b[201~`);
       // Re-enable onData after the current event loop tick
       // (xterm.js fires onData synchronously during paste processing)
       setTimeout(() => { pasteInProgress = false; }, 0);

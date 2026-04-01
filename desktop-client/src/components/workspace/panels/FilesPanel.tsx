@@ -1,4 +1,13 @@
-import { FolderOpen, Folder, File, RefreshCw, ChevronRight, ChevronDown } from "lucide-react";
+import {
+  FolderOpen,
+  Folder,
+  File,
+  RefreshCw,
+  ChevronRight,
+  ChevronDown,
+  Eye,
+  EyeOff,
+} from "lucide-react";
 import { useFileExplorer } from "../../../hooks/useFileExplorer";
 
 const GIT_BADGE_COLORS: Record<string, { color: string; bg: string }> = {
@@ -14,7 +23,17 @@ interface FilesPanelProps {
 }
 
 export function FilesPanel({ onPreviewFile }: FilesPanelProps) {
-  const { tree, rootPath, loading, toggleDir, openFile, refresh, getGitStatus } = useFileExplorer();
+  const {
+    tree,
+    rootPath,
+    loading,
+    toggleDir,
+    openFile,
+    refresh,
+    getGitStatus,
+    showHidden,
+    toggleHidden,
+  } = useFileExplorer();
 
   const dirName = rootPath.split("/").pop() || rootPath;
 
@@ -33,26 +52,62 @@ export function FilesPanel({ onPreviewFile }: FilesPanelProps) {
           gap: 4,
         }}
       >
-        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600, color: "var(--text-secondary)" }}>
+        <span
+          style={{
+            flex: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontWeight: 600,
+            color: "var(--text-secondary)",
+          }}
+        >
           {dirName}
         </span>
         <button
+          onClick={toggleHidden}
+          title={showHidden ? "Hide dotfiles" : "Show dotfiles"}
+          style={{
+            border: "none",
+            background: "transparent",
+            color: showHidden ? "var(--text-secondary)" : "var(--text-muted)",
+            cursor: "pointer",
+            padding: 2,
+          }}
+        >
+          {showHidden ? <Eye size={12} /> : <EyeOff size={12} />}
+        </button>
+        <button
           onClick={refresh}
           title="Refresh"
-          style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", padding: 2 }}
+          style={{
+            border: "none",
+            background: "transparent",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+            padding: 2,
+          }}
         >
           <RefreshCw size={12} />
         </button>
       </div>
 
       {loading ? (
-        <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: 24,
+            color: "var(--text-muted)",
+            fontSize: 12,
+          }}
+        >
           Loading...
         </div>
       ) : (
         tree.map((entry) => {
           const gitSt = getGitStatus(entry.path);
-          const gitColor = gitSt && GIT_BADGE_COLORS[gitSt] ? GIT_BADGE_COLORS[gitSt] : null;
+          const gitColor =
+            gitSt && GIT_BADGE_COLORS[gitSt] ? GIT_BADGE_COLORS[gitSt] : null;
 
           return (
             <button
@@ -71,17 +126,35 @@ export function FilesPanel({ onPreviewFile }: FilesPanelProps) {
             >
               {/* Expand/collapse arrow for dirs */}
               {entry.isDir ? (
-                <span style={{ width: 14, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
-                  {entry.expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                <span
+                  style={{
+                    width: 14,
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  {entry.expanded ? (
+                    <ChevronDown size={12} />
+                  ) : (
+                    <ChevronRight size={12} />
+                  )}
                 </span>
               ) : (
                 <span style={{ width: 14, flexShrink: 0 }} />
               )}
               <span className="file-icon">
-                {entry.isDir
-                  ? (entry.expanded ? <FolderOpen size={14} /> : <Folder size={14} />)
-                  : <File size={14} />
-                }
+                {entry.isDir ? (
+                  entry.expanded ? (
+                    <FolderOpen size={14} />
+                  ) : (
+                    <Folder size={14} />
+                  )
+                ) : (
+                  <File size={14} />
+                )}
               </span>
               <span
                 className="file-name"
@@ -90,17 +163,31 @@ export function FilesPanel({ onPreviewFile }: FilesPanelProps) {
                 {entry.name}
               </span>
               {gitSt && gitColor && (
-                <span style={{
-                  fontSize: 9, fontWeight: 700, lineHeight: "14px",
-                  minWidth: 14, textAlign: "center", borderRadius: 3,
-                  color: gitColor.color, background: gitColor.bg, flexShrink: 0,
-                  padding: "0 3px",
-                }}>
+                <span
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 700,
+                    lineHeight: "14px",
+                    minWidth: 14,
+                    textAlign: "center",
+                    borderRadius: 3,
+                    color: gitColor.color,
+                    background: gitColor.bg,
+                    flexShrink: 0,
+                    padding: "0 3px",
+                  }}
+                >
                   {gitSt}
                 </span>
               )}
               {!entry.isDir && (
-                <span style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: "var(--text-muted)",
+                    flexShrink: 0,
+                  }}
+                >
                   {formatSize(entry.size)}
                 </span>
               )}

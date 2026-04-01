@@ -16,13 +16,25 @@ import type { LucideIcon } from "lucide-react";
 import { ToastProvider, useToast } from "./components/ui/Toast";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { Toolbar } from "./components/workspace/Toolbar";
-import { ActivityBar, type DynamicActivityItem } from "./components/workspace/ActivityBar";
+import {
+  ActivityBar,
+  type DynamicActivityItem,
+} from "./components/workspace/ActivityBar";
 import { SidePanel } from "./components/workspace/SidePanel";
 import { MainArea } from "./components/workspace/MainArea";
 import { SettingsOverlay } from "./components/workspace/SettingsOverlay";
 import { useBrowser } from "./hooks/useBrowser";
-import { onWorkerNotification, listPlugins, consumePendingEvents } from "./lib/tauri";
-import type { BgProcessInfo, PluginInfo, SidePanelId, ViewDeclaration } from "./lib/types";
+import {
+  onWorkerNotification,
+  listPlugins,
+  consumePendingEvents,
+} from "./lib/tauri";
+import type {
+  BgProcessInfo,
+  PluginInfo,
+  SidePanelId,
+  ViewDeclaration,
+} from "./lib/types";
 
 /** Map of lucide icon names to components. Plugins reference these by name in plugin.toml. */
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -48,12 +60,19 @@ function WorkerNotificationListener() {
       try {
         const notif = JSON.parse(payload);
         const type = notif.status === "success" ? "success" : "error";
-        toast(type, `Worker '${notif.workerName}': ${notif.summary?.slice(0, 120) ?? notif.status}`);
+        toast(
+          type,
+          `Worker '${notif.workerName}': ${notif.summary?.slice(0, 120) ?? notif.status}`,
+        );
       } catch {
         // ignore
       }
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
   }, [toast]);
   return null;
 }
@@ -64,12 +83,16 @@ export default function App() {
   const [currentSessionId, setCurrentSessionId] = useState("");
   const [processLog, setProcessLog] = useState<BgProcessInfo | null>(null);
   // File viewer tabs
-  const [openTabs, setOpenTabs] = useState<Array<{ path: string; size?: number; diff?: string; sha?: string }>>([]);
+  const [openTabs, setOpenTabs] = useState<
+    Array<{ path: string; size?: number; diff?: string; sha?: string }>
+  >([]);
   const [activeTabIdx, setActiveTabIdx] = useState(0);
   const [terminalAttachedIds, setTerminalAttachedIds] = useState<string[]>([]);
   const [runningMonitors, setRunningMonitors] = useState<PluginInfo[]>([]);
   const [unreadSources, setUnreadSources] = useState<Set<string>>(new Set());
-  const [eventSourceFilter, setEventSourceFilter] = useState<string | null>(null);
+  const [eventSourceFilter, setEventSourceFilter] = useState<string | null>(
+    null,
+  );
   const [activePluginName, setActivePluginName] = useState<string | null>(null);
   const [activePipelineId, setActivePipelineId] = useState<string | null>(null);
   const [settingsClosing, setSettingsClosing] = useState(false);
@@ -121,7 +144,10 @@ export default function App() {
         next.delete(item.sourceFilter);
         return next;
       });
-      if (workspace.sidePanel === "plugin" && activePluginName === item.sourceFilter) {
+      if (
+        workspace.sidePanel === "plugin" &&
+        activePluginName === item.sourceFilter
+      ) {
         // Clicking the same plugin icon again closes the panel
         workspace.togglePanel("plugin");
         setActivePluginName(null);
@@ -199,27 +225,37 @@ export default function App() {
       setTerminalAttachedIds(ids ?? []);
     };
     window.addEventListener("terminal-attached-ids", onAttachedIds);
-    return () => window.removeEventListener("terminal-attached-ids", onAttachedIds);
+    return () =>
+      window.removeEventListener("terminal-attached-ids", onAttachedIds);
   }, []);
 
   // Listen for diff viewer requests from plugin webviews
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ path: string; diff: string; sha: string }>).detail;
+      const detail = (
+        e as CustomEvent<{ path: string; diff: string; sha: string }>
+      ).detail;
       if (detail) {
         const key = `diff:${detail.path}:${detail.sha}`;
-        setOpenTabs(prev => {
-          const existing = prev.findIndex(t => t.diff && t.path === detail.path && t.sha === detail.sha);
-          if (existing >= 0) { setActiveTabIdx(existing); return prev; }
+        setOpenTabs((prev) => {
+          const existing = prev.findIndex(
+            (t) => t.diff && t.path === detail.path && t.sha === detail.sha,
+          );
+          if (existing >= 0) {
+            setActiveTabIdx(existing);
+            return prev;
+          }
           setActiveTabIdx(prev.length);
-          return [...prev, { path: detail.path, diff: detail.diff, sha: detail.sha }];
+          return [
+            ...prev,
+            { path: detail.path, diff: detail.diff, sha: detail.sha },
+          ];
         });
       }
     };
     window.addEventListener("open-diff-viewer", handler);
     return () => window.removeEventListener("open-diff-viewer", handler);
   }, []);
-
 
   // Listen for pipeline open requests from PipelinesPanel
   useEffect(() => {
@@ -231,7 +267,8 @@ export default function App() {
       }
     };
     window.addEventListener("open-pipeline-flow", onOpenPipeline);
-    return () => window.removeEventListener("open-pipeline-flow", onOpenPipeline);
+    return () =>
+      window.removeEventListener("open-pipeline-flow", onOpenPipeline);
   }, [workspace]);
 
   const handleSwitchToTerminal = useCallback(
@@ -252,18 +289,23 @@ export default function App() {
       if (id) setCurrentSessionId(id);
     };
     window.addEventListener("session-changed", onSessionChanged);
-    return () => window.removeEventListener("session-changed", onSessionChanged);
+    return () =>
+      window.removeEventListener("session-changed", onSessionChanged);
   }, []);
 
   const handleLoadSession = (id: string, name?: string) => {
-    setOpenTabs([]); setActiveTabIdx(0);
+    setOpenTabs([]);
+    setActiveTabIdx(0);
     setCurrentSessionId(id);
     workspace.setMode("agent");
-    window.dispatchEvent(new CustomEvent("load-session", { detail: { id, name } }));
+    window.dispatchEvent(
+      new CustomEvent("load-session", { detail: { id, name } }),
+    );
   };
 
   const handleNewSession = () => {
-    setOpenTabs([]); setActiveTabIdx(0);
+    setOpenTabs([]);
+    setActiveTabIdx(0);
     setCurrentSessionId("");
     workspace.setMode("agent");
     window.dispatchEvent(new CustomEvent("new-session"));
@@ -272,7 +314,9 @@ export default function App() {
   return (
     <ToastProvider>
       <WorkerNotificationListener />
-      <div className={`workspace-grid ${!workspace.sidePanel ? "sidebar-collapsed" : ""}`}>
+      <div
+        className={`workspace-grid ${!workspace.sidePanel ? "sidebar-collapsed" : ""}`}
+      >
         <Toolbar
           mode={workspace.mode}
           onModeChange={workspace.setMode}
@@ -300,9 +344,14 @@ export default function App() {
             onNewSession={handleNewSession}
             onOpenProcessLog={handleOpenProcessLog}
             onPreviewFile={(path, size) => {
-              setOpenTabs(prev => {
-                const existing = prev.findIndex(t => !t.diff && t.path === path);
-                if (existing >= 0) { setActiveTabIdx(existing); return prev; }
+              setOpenTabs((prev) => {
+                const existing = prev.findIndex(
+                  (t) => !t.diff && t.path === path,
+                );
+                if (existing >= 0) {
+                  setActiveTabIdx(existing);
+                  return prev;
+                }
                 setActiveTabIdx(prev.length);
                 return [...prev, { path, size }];
               });
@@ -310,8 +359,19 @@ export default function App() {
             terminalAttachedIds={terminalAttachedIds}
             onSwitchToTerminal={handleSwitchToTerminal}
             activePluginName={activePluginName}
-            activePluginViews={activePluginName ? runningMonitors.find((m) => m.name === activePluginName)?.views : undefined}
-            activePluginRunning={activePluginName ? runningMonitors.some((m) => m.name === activePluginName && m.running) : undefined}
+            activePluginViews={
+              activePluginName
+                ? runningMonitors.find((m) => m.name === activePluginName)
+                    ?.views
+                : undefined
+            }
+            activePluginRunning={
+              activePluginName
+                ? runningMonitors.some(
+                    (m) => m.name === activePluginName && m.running,
+                  )
+                : undefined
+            }
             onClose={() => workspace.setSidePanel(null)}
           />
         )}
@@ -319,7 +379,10 @@ export default function App() {
         <MainArea
           mode={workspace.mode}
           pipelineId={activePipelineId}
-          onPipelineBack={() => { workspace.setMode("agent"); setActivePipelineId(null); }}
+          onPipelineBack={() => {
+            workspace.setMode("agent");
+            setActivePipelineId(null);
+          }}
           processLog={processLog}
           processLogSessionId={currentSessionId}
           onCloseProcessLog={handleCloseProcessLog}
@@ -327,14 +390,18 @@ export default function App() {
           activeTabIdx={activeTabIdx}
           onSetActiveTab={setActiveTabIdx}
           onCloseTab={(idx) => {
-            setOpenTabs(prev => {
+            setOpenTabs((prev) => {
               const next = prev.filter((_, i) => i !== idx);
-              if (activeTabIdx >= next.length) setActiveTabIdx(Math.max(0, next.length - 1));
+              if (activeTabIdx >= next.length)
+                setActiveTabIdx(Math.max(0, next.length - 1));
               else if (idx < activeTabIdx) setActiveTabIdx(activeTabIdx - 1);
               return next;
             });
           }}
-          onCloseAllTabs={() => { setOpenTabs([]); setActiveTabIdx(0); }}
+          onCloseAllTabs={() => {
+            setOpenTabs([]);
+            setActiveTabIdx(0);
+          }}
         />
         {showSettingsWithTransition && (
           <SettingsOverlay

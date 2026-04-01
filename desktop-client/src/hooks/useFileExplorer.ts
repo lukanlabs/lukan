@@ -24,7 +24,8 @@ async function fetchGitStatus(dir: string): Promise<GitStatusMap> {
 
     for (const line of data.stdout.trim().split("\n")) {
       if (line.length < 4) continue;
-      const idx = line[0], wt = line[1];
+      const idx = line[0],
+        wt = line[1];
       let path = line.substring(2).trimStart();
       if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
       const arrow = path.indexOf(" -> ");
@@ -56,7 +57,10 @@ export function useFileExplorer() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatusMap>(new Map());
+  const [showHidden, setShowHidden] = useState(false);
   const expandedRef = useRef<Set<string>>(new Set());
+  const showHiddenRef = useRef(false);
+  showHiddenRef.current = showHidden;
 
   const loadGitStatus = useCallback(async (dirPath: string) => {
     const map = await fetchGitStatus(dirPath);
@@ -64,97 +68,108 @@ export function useFileExplorer() {
   }, []);
 
   /** Load children of a directory and insert into tree */
-  const loadChildren = useCallback(async (dirPath: string, depth: number, insertAfterIdx?: number) => {
-    const result = await listDirectory(dirPath);
-    // Sort: dirs first, then alphabetical
-    const sorted = [...result.entries].sort((a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    const children: TreeEntry[] = sorted.map(e => ({
-      name: e.name,
-      path: `${dirPath}/${e.name}`,
-      isDir: e.isDir,
-      size: e.size,
-      depth,
-      expanded: false,
-    }));
-    return children;
-  }, []);
-
-  /** Initialize tree from a root path */
-  const initTree = useCallback(async (path?: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await listDirectory(path);
-      const root = result.path;
-      setRootPath(root);
-      expandedRef.current = new Set([root]);
-
+  const loadChildren = useCallback(
+    async (dirPath: string, depth: number, insertAfterIdx?: number) => {
+      const result = await listDirectory(dirPath, showHiddenRef.current);
+      // Sort: dirs first, then alphabetical
       const sorted = [...result.entries].sort((a, b) => {
         if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
-      setTree(sorted.map(e => ({
+      const children: TreeEntry[] = sorted.map((e) => ({
         name: e.name,
-        path: `${root}/${e.name}`,
+        path: `${dirPath}/${e.name}`,
         isDir: e.isDir,
         size: e.size,
-        depth: 0,
+        depth,
         expanded: false,
-      })));
-      loadGitStatus(root);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [loadGitStatus, loadChildren]);
+      }));
+      return children;
+    },
+    [],
+  );
 
-  /** Toggle expand/collapse a directory */
-  const toggleDir = useCallback(async (dirPath: string) => {
-    const expanded = expandedRef.current;
-
-    if (expanded.has(dirPath)) {
-      // Collapse: remove all descendants
-      expanded.delete(dirPath);
-      setTree(prev => {
-        const idx = prev.findIndex(e => e.path === dirPath);
-        if (idx < 0) return prev;
-        const depth = prev[idx].depth;
-        let endIdx = idx + 1;
-        while (endIdx < prev.length && prev[endIdx].depth > depth) endIdx++;
-        const next = [...prev];
-        next[idx] = { ...next[idx], expanded: false };
-        next.splice(idx + 1, endIdx - idx - 1);
-        // Also remove any nested expanded dirs
-        for (let i = idx + 1; i < endIdx; i++) {
-          if (prev[i].isDir) expanded.delete(prev[i].path);
-        }
-        return next;
-      });
-    } else {
-      // Expand: load children and insert
+  /** Initialize tree from a root path */
+  const initTree = useCallback(
+    async (path?: string) => {
+      setLoading(true);
+      setError(null);
       try {
-        const idx = tree.findIndex(e => e.path === dirPath);
-        if (idx < 0) return;
-        const depth = tree[idx].depth;
-        const children = await loadChildren(dirPath, depth + 1);
-        expanded.add(dirPath);
-        setTree(prev => {
-          const i = prev.findIndex(e => e.path === dirPath);
-          if (i < 0) return prev;
-          const next = [...prev];
-          next[i] = { ...next[i], expanded: true };
-          next.splice(i + 1, 0, ...children);
-          return next;
+        const result = await listDirectory(path, showHiddenRef.current);
+        const root = result.path;
+        setRootPath(root);
+        expandedRef.current = new Set([root]);
+
+        const sorted = [...result.entries].sort((a, b) => {
+          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+          return a.name.localeCompare(b.name);
         });
+        setTree(
+          sorted.map((e) => ({
+            name: e.name,
+            path: `${root}/${e.name}`,
+            isDir: e.isDir,
+            size: e.size,
+            depth: 0,
+            expanded: false,
+          })),
+        );
+        loadGitStatus(root);
       } catch (e) {
         setError(String(e));
+      } finally {
+        setLoading(false);
       }
-    }
-  }, [tree, loadChildren]);
+    },
+    [loadGitStatus, loadChildren],
+  );
+
+  /** Toggle expand/collapse a directory */
+  const toggleDir = useCallback(
+    async (dirPath: string) => {
+      const expanded = expandedRef.current;
+
+      if (expanded.has(dirPath)) {
+        // Collapse: remove all descendants
+        expanded.delete(dirPath);
+        setTree((prev) => {
+          const idx = prev.findIndex((e) => e.path === dirPath);
+          if (idx < 0) return prev;
+          const depth = prev[idx].depth;
+          let endIdx = idx + 1;
+          while (endIdx < prev.length && prev[endIdx].depth > depth) endIdx++;
+          const next = [...prev];
+          next[idx] = { ...next[idx], expanded: false };
+          next.splice(idx + 1, endIdx - idx - 1);
+          // Also remove any nested expanded dirs
+          for (let i = idx + 1; i < endIdx; i++) {
+            if (prev[i].isDir) expanded.delete(prev[i].path);
+          }
+          return next;
+        });
+      } else {
+        // Expand: load children and insert
+        try {
+          const idx = tree.findIndex((e) => e.path === dirPath);
+          if (idx < 0) return;
+          const depth = tree[idx].depth;
+          const children = await loadChildren(dirPath, depth + 1);
+          expanded.add(dirPath);
+          setTree((prev) => {
+            const i = prev.findIndex((e) => e.path === dirPath);
+            if (i < 0) return prev;
+            const next = [...prev];
+            next[i] = { ...next[i], expanded: true };
+            next.splice(i + 1, 0, ...children);
+            return next;
+          });
+        } catch (e) {
+          setError(String(e));
+        }
+      }
+    },
+    [tree, loadChildren],
+  );
 
   const openFile = useCallback(async (path: string, editor?: string) => {
     try {
@@ -179,14 +194,16 @@ export function useFileExplorer() {
       activeTerminalId.current = ""; // stop following terminal
       let attempts = 0;
       const check = () => {
-        getCwd().then((cwd) => {
-          if (cwd && cwd !== rootPath) {
-            initTree(cwd);
-          } else if (attempts < 3) {
-            attempts++;
-            setTimeout(check, 500);
-          }
-        }).catch(() => {});
+        getCwd()
+          .then((cwd) => {
+            if (cwd && cwd !== rootPath) {
+              initTree(cwd);
+            } else if (attempts < 3) {
+              attempts++;
+              setTimeout(check, 500);
+            }
+          })
+          .catch(() => {});
       };
       setTimeout(check, 300);
     };
@@ -201,7 +218,9 @@ export function useFileExplorer() {
   useEffect(() => {
     // cwd changed for a terminal — always store, navigate if active
     const onCwdChanged = (e: Event) => {
-      const { sessionId, cwd } = (e as CustomEvent<{ sessionId: string; cwd: string }>).detail;
+      const { sessionId, cwd } = (
+        e as CustomEvent<{ sessionId: string; cwd: string }>
+      ).detail;
       terminalCwds.current.set(sessionId, cwd);
       if (!activeTerminalId.current) activeTerminalId.current = sessionId;
       if (sessionId === activeTerminalId.current && cwd && cwd !== rootPath) {
@@ -217,10 +236,15 @@ export function useFileExplorer() {
       if (!cwd) {
         try {
           const base = getApiBase();
-          const r = await fetchApi(`${base}/api/terminal/${encodeURIComponent(sessionId)}/cwd`);
+          const r = await fetchApi(
+            `${base}/api/terminal/${encodeURIComponent(sessionId)}/cwd`,
+          );
           if (r.ok) {
             const data = await r.json();
-            if (data.cwd) { cwd = data.cwd as string; terminalCwds.current.set(sessionId, cwd!); }
+            if (data.cwd) {
+              cwd = data.cwd as string;
+              terminalCwds.current.set(sessionId, cwd!);
+            }
           }
         } catch {}
       }
@@ -241,15 +265,15 @@ export function useFileExplorer() {
       loadGitStatus(rootPath);
       // Refresh root entries and expanded dirs without collapsing
       try {
-        const result = await listDirectory(rootPath);
+        const result = await listDirectory(rootPath, showHiddenRef.current);
         const rootEntries = [...result.entries].sort((a, b) => {
           if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
           return a.name.localeCompare(b.name);
         });
-        setTree(prev => {
+        setTree((prev) => {
           // Rebuild root level entries, preserving expanded children
           const expanded = expandedRef.current;
-          const newRoot = rootEntries.map(e => ({
+          const newRoot = rootEntries.map((e) => ({
             name: e.name,
             path: `${rootPath}/${e.name}`,
             isDir: e.isDir,
@@ -263,7 +287,7 @@ export function useFileExplorer() {
             merged.push(entry);
             if (entry.expanded) {
               // Copy existing children from prev tree
-              const prevIdx = prev.findIndex(p => p.path === entry.path);
+              const prevIdx = prev.findIndex((p) => p.path === entry.path);
               if (prevIdx >= 0) {
                 let j = prevIdx + 1;
                 while (j < prev.length && prev[j].depth > 0) {
@@ -281,16 +305,45 @@ export function useFileExplorer() {
   }, [rootPath, loadGitStatus]);
 
   /** Get git status for a path (relative to repo root) */
-  const getGitStatus = useCallback((entryPath: string): string | undefined => {
-    if (gitStatus.size === 0) return undefined;
-    // Try matching the entry name or relative path
-    const name = entryPath.split("/").pop() ?? "";
-    for (const [gPath, status] of gitStatus) {
-      if (gPath === name || entryPath.endsWith("/" + gPath) || gPath.endsWith("/" + name)) return status;
-      if (gPath.split("/").pop() === name) return status;
-    }
-    return undefined;
-  }, [gitStatus]);
+  const getGitStatus = useCallback(
+    (entryPath: string): string | undefined => {
+      if (gitStatus.size === 0) return undefined;
+      // Try matching the entry name or relative path
+      const name = entryPath.split("/").pop() ?? "";
+      for (const [gPath, status] of gitStatus) {
+        if (
+          gPath === name ||
+          entryPath.endsWith("/" + gPath) ||
+          gPath.endsWith("/" + name)
+        )
+          return status;
+        if (gPath.split("/").pop() === name) return status;
+      }
+      return undefined;
+    },
+    [gitStatus],
+  );
 
-  return { tree, rootPath, loading, error, toggleDir, openFile, refresh, getGitStatus, initTree };
+  const toggleHidden = useCallback(() => {
+    setShowHidden((prev) => !prev);
+  }, []);
+
+  // Re-init tree when showHidden changes
+  useEffect(() => {
+    if (rootPath) initTree(rootPath);
+  }, [showHidden]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return {
+    tree,
+    rootPath,
+    loading,
+    error,
+    toggleDir,
+    openFile,
+    refresh,
+    getGitStatus,
+    initTree,
+    showHidden,
+    toggleHidden,
+  };
 }

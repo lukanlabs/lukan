@@ -6,6 +6,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { htmlToText } = require("html-to-text");
 
 // ── Config ──────────────────────────────────────────────────────────────
 
@@ -165,23 +166,14 @@ function extractBody(payload) {
 }
 
 function stripHtml(html) {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "- ")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  if (typeof html !== "string") return "";
+  const text = htmlToText(html, {
+    wordwrap: false,
+    selectors: [
+      { selector: "a", options: { ignoreHref: true } },
+    ],
+  });
+  return text.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // ── MIME builder ────────────────────────────────────────────────────────
@@ -394,16 +386,12 @@ const handlers = {
   async GmailLabelsCreate(input, token) {
     const { name } = input;
 
+    const visMap = { show: "labelShow", hide: "labelHide", showIfUnread: "labelShowIfUnread" };
     const body = {
       name,
-      labelListVisibility: `labelShow${input.showInList === "hide" ? "IfCreated" : input.showInList === "showIfUnread" ? "IfUnread" : ""}` .replace("labelShow", "labelShow") || "labelShow",
+      labelListVisibility: visMap[input.showInList || "show"],
       messageListVisibility: input.showInMessageList === "hide" ? "hide" : "show",
     };
-
-    // Simpler mapping
-    const visMap = { show: "labelShow", hide: "labelHide", showIfUnread: "labelShowIfUnread" };
-    body.labelListVisibility = visMap[input.showInList || "show"];
-    body.messageListVisibility = input.showInMessageList === "hide" ? "hide" : "show";
 
     const data = await gmailPost(`${GMAIL_BASE}/labels`, body, token);
 

@@ -164,29 +164,8 @@ function extractBody(payload) {
   return "(no body content)";
 }
 
-/** Remove all content between an opening and closing tag (case-insensitive, handles nesting). */
-function removeTagContent(html, tagName) {
-  const openTag = `<${tagName}`;
-  const closeTag = `</${tagName}`;
-  let result = "";
-  let i = 0;
-  const lower = html.toLowerCase();
-  while (i < html.length) {
-    const openStart = lower.indexOf(openTag, i);
-    if (openStart === -1) { result += html.slice(i); break; }
-    result += html.slice(i, openStart);
-    const closeStart = lower.indexOf(closeTag, openStart + openTag.length);
-    if (closeStart === -1) { break; } // no closing tag — discard rest
-    const closeEnd = lower.indexOf(">", closeStart + closeTag.length);
-    i = closeEnd === -1 ? html.length : closeEnd + 1;
-  }
-  return result;
-}
-
 function stripHtml(html) {
-  // Remove dangerous tag blocks (content included) via string walking — no regex
-  let text = removeTagContent(html, "script");
-  text = removeTagContent(text, "style");
+  let text = html;
 
   // Structural tags → whitespace
   text = text
@@ -196,11 +175,16 @@ function stripHtml(html) {
     .replace(/<\/li>/gi, "\n")
     .replace(/<li[^>]*>/gi, "- ");
 
-  // Strip all remaining tags — iterate until stable to handle malformed nesting
+  // Strip all tags and dangerous fragments — iterate until stable
   let prev;
   do {
     prev = text;
-    text = text.replace(/<[^>]*>/g, "");
+    text = text
+      .replace(/<script/gi, "")
+      .replace(/<\/script/gi, "")
+      .replace(/<style/gi, "")
+      .replace(/<\/style/gi, "")
+      .replace(/<[^>]*>/g, "");
   } while (text !== prev);
 
   // Decode entities (&amp; last to prevent double-decode)

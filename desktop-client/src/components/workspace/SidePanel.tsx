@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
-import type { SidePanelId, BgProcessInfo, ViewDeclaration } from "../../lib/types";
+import type {
+  SidePanelId,
+  BgProcessInfo,
+  ViewDeclaration,
+} from "../../lib/types";
 import { getCwd } from "../../lib/tauri";
 import { getApiBase } from "../../lib/transport";
 import { FilesPanel } from "./panels/FilesPanel";
@@ -78,7 +82,9 @@ export function SidePanel({
   const activeTerminalRef = useRef("");
   useEffect(() => {
     const onCwdChanged = (e: Event) => {
-      const { sessionId, cwd } = (e as CustomEvent<{ sessionId: string; cwd: string }>).detail;
+      const { sessionId, cwd } = (
+        e as CustomEvent<{ sessionId: string; cwd: string }>
+      ).detail;
       terminalCwdsRef.current.set(sessionId, cwd);
       if (!activeTerminalRef.current) activeTerminalRef.current = sessionId;
       // Always update plugin cwd from the active terminal
@@ -94,8 +100,16 @@ export function SidePanel({
       if (!cwd) {
         try {
           const base = getApiBase();
-          const r = await fetch(`${base}/api/terminal/${encodeURIComponent(sessionId)}/cwd`);
-          if (r.ok) { const data = await r.json(); if (data.cwd) { cwd = data.cwd as string; terminalCwdsRef.current.set(sessionId, cwd); } }
+          const r = await fetch(
+            `${base}/api/terminal/${encodeURIComponent(sessionId)}/cwd`,
+          );
+          if (r.ok) {
+            const data = await r.json();
+            if (data.cwd) {
+              cwd = data.cwd as string;
+              terminalCwdsRef.current.set(sessionId, cwd);
+            }
+          }
         } catch {}
       }
       if (cwd) setPluginCwd(cwd);
@@ -112,7 +126,9 @@ export function SidePanel({
   useEffect(() => {
     if (activePanel === "plugin" && !followingTerminalRef.current) {
       const timer = setTimeout(() => {
-        getCwd().then(setPluginCwd).catch(() => {});
+        getCwd()
+          .then(setPluginCwd)
+          .catch(() => {});
       }, 300);
       return () => clearTimeout(timer);
     }
@@ -139,7 +155,9 @@ export function SidePanel({
         )}
       </div>
       <div className="side-panel-content">
-        {activePanel === "files" && <FilesPanel onPreviewFile={onPreviewFile} />}
+        {activePanel === "files" && (
+          <FilesPanel onPreviewFile={onPreviewFile} />
+        )}
         {activePanel === "workers" && <WorkersPanel />}
         {activePanel === "pipelines" && <PipelinesPanel />}
         {activePanel === "sessions" && (
@@ -150,10 +168,15 @@ export function SidePanel({
           />
         )}
         {activePanel === "processes" && (
-          <ProcessesPanel currentSessionId={currentSessionId} onOpenLog={onOpenProcessLog} />
+          <ProcessesPanel
+            currentSessionId={currentSessionId}
+            onOpenLog={onOpenProcessLog}
+          />
         )}
         {activePanel === "browser" && <BrowserPanel />}
-        {activePanel === "events" && <EventsPanel sourceFilter={eventSourceFilter} />}
+        {activePanel === "events" && (
+          <EventsPanel sourceFilter={eventSourceFilter} />
+        )}
         {activePanel === "terminals" && (
           <TerminalsPanel
             attachedIds={terminalAttachedIds ?? []}

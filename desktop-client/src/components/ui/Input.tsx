@@ -25,7 +25,8 @@ export default function Input({ label, className = "", ...props }: InputProps) {
         }}
         onFocus={(e) => {
           e.currentTarget.style.borderColor = "rgba(100, 100, 100, 0.6)";
-          e.currentTarget.style.boxShadow = "0 0 0 2px rgba(100, 100, 100, 0.15)";
+          e.currentTarget.style.boxShadow =
+            "0 0 0 2px rgba(100, 100, 100, 0.15)";
         }}
         onBlur={(e) => {
           e.currentTarget.style.borderColor = "var(--border)";

@@ -80,8 +80,14 @@ export default function XTermPanel({
 
   return (
     <div
-      className={splitMode ? "flex flex-col min-h-0 h-full" : "absolute inset-0 flex flex-col min-h-0"}
-      style={splitMode ? undefined : { visibility: isActive ? "visible" : "hidden" }}
+      className={
+        splitMode
+          ? "flex flex-col min-h-0 h-full"
+          : "absolute inset-0 flex flex-col min-h-0"
+      }
+      style={
+        splitMode ? undefined : { visibility: isActive ? "visible" : "hidden" }
+      }
     >
       <div
         ref={containerRef}

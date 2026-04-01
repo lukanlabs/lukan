@@ -15,7 +15,11 @@ export function isRelayMode(): boolean {
   }
 
   // Known relay hosts
-  if (host === "app.lukan.ai" || host === "remote.lukan.ai" || host.endsWith(".kiteploy.com")) {
+  if (
+    host === "app.lukan.ai" ||
+    host === "remote.lukan.ai" ||
+    host.endsWith(".kiteploy.com")
+  ) {
     return true;
   }
 
@@ -24,10 +28,7 @@ export function isRelayMode(): boolean {
 
 export interface Transport {
   call<T>(command: string, args?: Record<string, unknown>): Promise<T>;
-  subscribe(
-    event: string,
-    cb: (payload: unknown) => void,
-  ): Promise<() => void>;
+  subscribe(event: string, cb: (payload: unknown) => void): Promise<() => void>;
 }
 
 let transport: Transport | null = null;
@@ -48,7 +49,9 @@ export async function initTransport(): Promise<void> {
       const { RelayTransport } = await import("./transport-relay");
       const origin = `${window.location.protocol}//${window.location.host}`;
       // Device name from URL path: e.g. /my-pc → "my-pc"
-      const pathDevice = window.location.pathname.replace(/^\/+/, "").split("/")[0];
+      const pathDevice = window.location.pathname
+        .replace(/^\/+/, "")
+        .split("/")[0];
       const device = pathDevice || "default";
       const rt = new RelayTransport(origin, device);
       await rt.connect();
@@ -85,7 +88,8 @@ export function resetTransport(): void {
  */
 export function getApiBase(): string {
   if (isRelayMode()) return window.location.origin;
-  const port = (window as any).__DAEMON_PORT__ || window.location.port || "3000";
+  const port =
+    (window as any).__DAEMON_PORT__ || window.location.port || "3000";
   return `${window.location.protocol}//${window.location.hostname}:${port}`;
 }
 
@@ -95,7 +99,9 @@ export function getApiBase(): string {
  */
 export function getDeviceName(): string {
   if (!isRelayMode()) return "";
-  return window.location.pathname.replace(/^\/+/, "").split("/")[0] || "default";
+  return (
+    window.location.pathname.replace(/^\/+/, "").split("/")[0] || "default"
+  );
 }
 
 /**
@@ -106,7 +112,9 @@ export function getDeviceName(): string {
 export function fetchApi(url: string, init?: RequestInit): Promise<Response> {
   const headers: Record<string, string> = {};
   if (isRelayMode()) {
-    const pathDevice = window.location.pathname.replace(/^\/+/, "").split("/")[0];
+    const pathDevice = window.location.pathname
+      .replace(/^\/+/, "")
+      .split("/")[0];
     headers["x-lukan-device"] = pathDevice || "default";
   }
   return fetch(url, {

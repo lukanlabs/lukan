@@ -1,5 +1,13 @@
 import type { LucideIcon } from "lucide-react";
-import { FolderOpen, Puzzle, Workflow, MessageSquare, Globe, Terminal, SquareTerminal } from "lucide-react";
+import {
+  FolderOpen,
+  Puzzle,
+  Workflow,
+  MessageSquare,
+  Globe,
+  Terminal,
+  SquareTerminal,
+} from "lucide-react";
 import type { SidePanelId } from "../../lib/types";
 
 const ITEMS: { id: SidePanelId; icon: LucideIcon; label: string }[] = [
@@ -28,7 +36,13 @@ interface ActivityBarProps {
   dynamicItems?: DynamicActivityItem[];
 }
 
-export function ActivityBar({ active, activeSource, onToggle, onDynamicClick, dynamicItems }: ActivityBarProps) {
+export function ActivityBar({
+  active,
+  activeSource,
+  onToggle,
+  onDynamicClick,
+  dynamicItems,
+}: ActivityBarProps) {
   return (
     <div className="activity-bar">
       {ITEMS.map(({ id, icon: Icon, label }) => (
@@ -47,7 +61,8 @@ export function ActivityBar({ active, activeSource, onToggle, onDynamicClick, dy
           <div className="activity-bar-separator" />
           {dynamicItems.map((item) => {
             const { icon: Icon, label, sourceFilter, hasNotification } = item;
-            const isActive = active === "plugin" && activeSource === sourceFilter;
+            const isActive =
+              active === "plugin" && activeSource === sourceFilter;
             return (
               <button
                 key={`dyn-${sourceFilter}`}
@@ -56,7 +71,9 @@ export function ActivityBar({ active, activeSource, onToggle, onDynamicClick, dy
                 title={label}
               >
                 <Icon size={18} />
-                {hasNotification && <span className="activity-notification-dot" />}
+                {hasNotification && (
+                  <span className="activity-notification-dot" />
+                )}
               </button>
             );
           })}

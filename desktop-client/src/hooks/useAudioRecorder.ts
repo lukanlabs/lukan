@@ -19,7 +19,9 @@ export interface AudioRecorder {
  * and transcribes via a plugin that contributes transcription.
  * Calls `onTranscript` with the transcribed text when done.
  */
-export function useAudioRecorder(onTranscript: (text: string) => void): AudioRecorder {
+export function useAudioRecorder(
+  onTranscript: (text: string) => void,
+): AudioRecorder {
   const [state, setState] = useState<RecorderState>("idle");
   const [duration, setDuration] = useState(0);
   const [transcriptionAvailable, setTranscriptionAvailable] = useState(false);
@@ -63,17 +65,20 @@ export function useAudioRecorder(onTranscript: (text: string) => void): AudioRec
     if (stateRef.current !== "idle") return;
     setError(null);
 
-    api.startRecording().then(() => {
-      if (stateRef.current !== "idle") return;
-      setRecorderState("recording");
-      startTimeRef.current = Date.now();
-      timerRef.current = setInterval(() => {
-        setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
-      }, 200);
-    }).catch((err) => {
-      console.error("Recording start error:", err);
-      setError(typeof err === "string" ? err : "Failed to start recording");
-    });
+    api
+      .startRecording()
+      .then(() => {
+        if (stateRef.current !== "idle") return;
+        setRecorderState("recording");
+        startTimeRef.current = Date.now();
+        timerRef.current = setInterval(() => {
+          setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
+        }, 200);
+      })
+      .catch((err) => {
+        console.error("Recording start error:", err);
+        setError(typeof err === "string" ? err : "Failed to start recording");
+      });
   }, [setRecorderState]);
 
   const stop = useCallback(() => {
@@ -81,25 +86,28 @@ export function useAudioRecorder(onTranscript: (text: string) => void): AudioRec
     stopTimer();
     setRecorderState("transcribing");
 
-    api.stopRecording().then(async (wavBytes) => {
-      try {
-        const text = await api.transcribeAudio(wavBytes);
-        const trimmed = text?.trim();
-        if (trimmed) {
-          onTranscriptRef.current(trimmed);
+    api
+      .stopRecording()
+      .then(async (wavBytes) => {
+        try {
+          const text = await api.transcribeAudio(wavBytes);
+          const trimmed = text?.trim();
+          if (trimmed) {
+            onTranscriptRef.current(trimmed);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error("Transcription failed:", msg);
+          setError("Transcription failed");
+        } finally {
+          setRecorderState("idle");
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error("Transcription failed:", msg);
-        setError("Transcription failed");
-      } finally {
+      })
+      .catch((err) => {
+        console.error("Stop recording error:", err);
+        setError(typeof err === "string" ? err : "Failed to stop recording");
         setRecorderState("idle");
-      }
-    }).catch((err) => {
-      console.error("Stop recording error:", err);
-      setError(typeof err === "string" ? err : "Failed to stop recording");
-      setRecorderState("idle");
-    });
+      });
   }, [stopTimer, setRecorderState]);
 
   const cancel = useCallback(() => {

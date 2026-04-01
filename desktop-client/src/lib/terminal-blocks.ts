@@ -23,8 +23,7 @@ export class BlockDetector {
   private lastCheckedLine = 0;
 
   /** Common prompt patterns — `$`, `%`, `#`, `❯`, `➜`, or user@host:path$. */
-  private static PROMPT_RE =
-    /^(?:.*?[@:].*?[\$#%>❯➜]|[\$#%>❯➜])\s/;
+  private static PROMPT_RE = /^(?:.*?[@:].*?[\$#%>❯➜]|[\$#%>❯➜])\s/;
 
   constructor(private terminal: Terminal) {}
 

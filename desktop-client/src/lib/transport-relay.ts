@@ -137,7 +137,9 @@ export class RelayTransport implements Transport {
   private e2eSession: E2ESession | null = null;
   private e2eReady = false;
   private e2ePending: Array<string> = [];
-  private e2eAckResolver: ((ack: { pk: string; safety_number: string }) => void) | null = null;
+  private e2eAckResolver:
+    | ((ack: { pk: string; safety_number: string }) => void)
+    | null = null;
   private connectionId: string | null = null;
 
   constructor(relayOrigin: string, device: string) {
@@ -175,11 +177,18 @@ export class RelayTransport implements Transport {
       } else if (preflight.status === 403) {
         const data = await preflight.json().catch(() => ({}));
         if (data.error === "not_registered") {
-          throw new Error("Account not registered. Create an account at cloud.lukan.ai to use remote.");
+          throw new Error(
+            "Account not registered. Create an account at cloud.lukan.ai to use remote.",
+          );
         }
       }
     } catch (e) {
-      if (e instanceof Error && (e.message === "TOTP verification cancelled" || e.message.includes("not registered"))) throw e;
+      if (
+        e instanceof Error &&
+        (e.message === "TOTP verification cancelled" ||
+          e.message.includes("not registered"))
+      )
+        throw e;
       // Preflight failed — try connecting anyway (relay might not support preflight)
     }
 
@@ -241,10 +250,12 @@ export class RelayTransport implements Transport {
   private promptTotp(): Promise<string | null> {
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
-      overlay.style.cssText = "position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center";
+      overlay.style.cssText =
+        "position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center";
 
       const backdrop = document.createElement("div");
-      backdrop.style.cssText = "position:absolute;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px)";
+      backdrop.style.cssText =
+        "position:absolute;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px)";
       overlay.appendChild(backdrop);
 
       const modal = document.createElement("div");
@@ -287,29 +298,48 @@ export class RelayTransport implements Transport {
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
-      const input = modal.querySelector("#totp-modal-input") as HTMLInputElement;
+      const input = modal.querySelector(
+        "#totp-modal-input",
+      ) as HTMLInputElement;
       setTimeout(() => input.focus(), 50);
 
       // Focus ring
-      input.addEventListener("focus", () => { input.style.borderColor = "rgba(100,100,100,0.6)"; });
-      input.addEventListener("blur", () => { input.style.borderColor = "rgba(60,60,60,0.5)"; });
+      input.addEventListener("focus", () => {
+        input.style.borderColor = "rgba(100,100,100,0.6)";
+      });
+      input.addEventListener("blur", () => {
+        input.style.borderColor = "rgba(60,60,60,0.5)";
+      });
 
-      const cleanup = () => { if (overlay.parentNode) document.body.removeChild(overlay); };
+      const cleanup = () => {
+        if (overlay.parentNode) document.body.removeChild(overlay);
+      };
 
       const submit = () => {
         const code = input.value.trim();
-        if (code) { cleanup(); resolve(code); }
+        if (code) {
+          cleanup();
+          resolve(code);
+        }
       };
 
-      modal.querySelector("#totp-modal-submit")!.addEventListener("click", submit);
-      input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
-
-      modal.querySelector("#totp-modal-cancel")!.addEventListener("click", () => {
-        cleanup(); resolve(null);
+      modal
+        .querySelector("#totp-modal-submit")!
+        .addEventListener("click", submit);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") submit();
       });
 
+      modal
+        .querySelector("#totp-modal-cancel")!
+        .addEventListener("click", () => {
+          cleanup();
+          resolve(null);
+        });
+
       backdrop.addEventListener("click", () => {
-        cleanup(); resolve(null);
+        cleanup();
+        resolve(null);
       });
     });
   }
@@ -319,7 +349,9 @@ export class RelayTransport implements Transport {
 
     // Check TOTP again on reconnect
     try {
-      const preflight = await fetch(`${this.relayOrigin}/ws/client/preflight`, { credentials: "include" });
+      const preflight = await fetch(`${this.relayOrigin}/ws/client/preflight`, {
+        credentials: "include",
+      });
       if (preflight.ok) {
         const data = await preflight.json();
         if (data.totpRequired) {
@@ -331,7 +363,9 @@ export class RelayTransport implements Transport {
         const data = await preflight.json().catch(() => ({}));
         if (data.error === "not_registered") return; // Stop reconnecting
       }
-    } catch { /* continue without TOTP */ }
+    } catch {
+      /* continue without TOTP */
+    }
 
     const ws = new WebSocket(this.wsUrl);
     this.totpCode = null; // Clear after use
@@ -375,7 +409,9 @@ export class RelayTransport implements Transport {
     try {
       const supported = await isE2ESupported();
       if (!supported) {
-        console.log("[E2E] Browser does not support X25519, continuing unencrypted");
+        console.log(
+          "[E2E] Browser does not support X25519, continuing unencrypted",
+        );
         this.e2eReady = true;
         this.flushE2EPending();
         return;
@@ -392,7 +428,9 @@ export class RelayTransport implements Transport {
       this.e2eSession = session;
       this.e2eReady = true;
       this.dispatch("e2e-established", session.safetyNumber);
-      console.log(`[E2E] Encryption active. Safety number: ${session.safetyNumber}`);
+      console.log(
+        `[E2E] Encryption active. Safety number: ${session.safetyNumber}`,
+      );
       this.flushE2EPending();
     } catch (e) {
       console.error("[E2E] Handshake failed, continuing unencrypted:", e);
@@ -460,7 +498,9 @@ export class RelayTransport implements Transport {
     // E2E handshake: daemon's acknowledgement
     if (type === "e2e_hello_ack") {
       if (this.e2eAckResolver) {
-        this.e2eAckResolver(msg as unknown as { pk: string; safety_number: string });
+        this.e2eAckResolver(
+          msg as unknown as { pk: string; safety_number: string },
+        );
         this.e2eAckResolver = null;
       }
       return;
@@ -612,7 +652,9 @@ export class RelayTransport implements Transport {
     if (type === "terminal_cwd") {
       const sessionId = msg.sessionId as string;
       const cwd = msg.cwd as string;
-      window.dispatchEvent(new CustomEvent("terminal-cwd-changed", { detail: { sessionId, cwd } }));
+      window.dispatchEvent(
+        new CustomEvent("terminal-cwd-changed", { detail: { sessionId, cwd } }),
+      );
       return;
     }
     if (type === "terminal_exited") {
@@ -693,11 +735,19 @@ export class RelayTransport implements Transport {
   ): object {
     switch (command) {
       case "send_message":
-        return { type: "send_message", content: args?.content, sessionId: args?.sessionId };
+        return {
+          type: "send_message",
+          content: args?.content,
+          sessionId: args?.sessionId,
+        };
       case "cancel_stream":
         return { type: "abort", sessionId: args?.sessionId };
       case "approve_tools":
-        return { type: "approve", approvedIds: args?.approvedIds, sessionId: args?.sessionId };
+        return {
+          type: "approve",
+          approvedIds: args?.approvedIds,
+          sessionId: args?.sessionId,
+        };
       case "always_allow_tools":
         return {
           type: "always_allow",
@@ -708,11 +758,23 @@ export class RelayTransport implements Transport {
       case "deny_all_tools":
         return { type: "deny_all", sessionId: args?.sessionId };
       case "accept_plan":
-        return { type: "plan_accept", tasks: args?.tasks ?? null, sessionId: args?.sessionId };
+        return {
+          type: "plan_accept",
+          tasks: args?.tasks ?? null,
+          sessionId: args?.sessionId,
+        };
       case "reject_plan":
-        return { type: "plan_reject", feedback: args?.feedback, sessionId: args?.sessionId };
+        return {
+          type: "plan_reject",
+          feedback: args?.feedback,
+          sessionId: args?.sessionId,
+        };
       case "answer_question":
-        return { type: "answer_question", answer: args?.answer, sessionId: args?.sessionId };
+        return {
+          type: "answer_question",
+          answer: args?.answer,
+          sessionId: args?.sessionId,
+        };
       case "list_sessions":
         return { type: "list_sessions" };
       case "delete_session":
@@ -720,33 +782,66 @@ export class RelayTransport implements Transport {
       case "delete_all_sessions":
         return { type: "delete_all_sessions" };
       case "load_session":
-        return { type: "load_session", sessionId: args?.sessionId, id: args?.id };
+        return {
+          type: "load_session",
+          sessionId: args?.sessionId,
+          id: args?.id,
+        };
       case "new_session":
-        return { type: "new_session", name: args?.name ?? null, sessionId: args?.sessionId };
+        return {
+          type: "new_session",
+          name: args?.name ?? null,
+          sessionId: args?.sessionId,
+        };
       case "set_permission_mode":
         return { type: "set_permission_mode", mode: args?.mode };
       case "create_agent_tab":
-        return { type: "create_agent_tab", ...(args?.cwd ? { cwd: args.cwd } : {}) };
+        return {
+          type: "create_agent_tab",
+          ...(args?.cwd ? { cwd: args.cwd } : {}),
+        };
       case "destroy_agent_tab":
         return { type: "destroy_agent_tab", sessionId: args?.sessionId };
       case "rename_agent_tab":
-        return { type: "rename_agent_tab", sessionId: args?.sessionId, label: args?.label };
+        return {
+          type: "rename_agent_tab",
+          sessionId: args?.sessionId,
+          label: args?.label,
+        };
       case "send_to_background":
         return { type: "send_to_background", sessionId: args?.sessionId };
       case "terminal_create":
-        return { type: "terminal_create", cwd: args?.cwd, cols: args?.cols, rows: args?.rows };
+        return {
+          type: "terminal_create",
+          cwd: args?.cwd,
+          cols: args?.cols,
+          rows: args?.rows,
+        };
       case "terminal_reconnect":
         return { type: "terminal_reconnect", sessionId: args?.sessionId };
       case "terminal_input":
-        return { type: "terminal_input", sessionId: args?.sessionId, data: args?.data };
+        return {
+          type: "terminal_input",
+          sessionId: args?.sessionId,
+          data: args?.data,
+        };
       case "terminal_resize":
-        return { type: "terminal_resize", sessionId: args?.sessionId, cols: args?.cols, rows: args?.rows };
+        return {
+          type: "terminal_resize",
+          sessionId: args?.sessionId,
+          cols: args?.cols,
+          rows: args?.rows,
+        };
       case "terminal_destroy":
         return { type: "terminal_destroy", sessionId: args?.sessionId };
       case "terminal_list":
         return { type: "terminal_list" };
       case "terminal_rename":
-        return { type: "terminal_rename", sessionId: args?.sessionId, name: args?.name };
+        return {
+          type: "terminal_rename",
+          sessionId: args?.sessionId,
+          name: args?.name,
+        };
       default:
         return { type: command, ...args };
     }
@@ -981,7 +1076,11 @@ export class RelayTransport implements Transport {
       case "get_models":
         return { method: "GET", url: "/api/models" };
       case "add_model":
-        return { method: "POST", url: "/api/models", body: { entry: args?.entry } };
+        return {
+          method: "POST",
+          url: "/api/models",
+          body: { entry: args?.entry },
+        };
       case "fetch_provider_models":
         return {
           method: "GET",
@@ -1039,13 +1138,16 @@ export class RelayTransport implements Transport {
       case "git_command": {
         let qs = `?cmd=${encodeURIComponent(args?.cmd as string)}`;
         if (args?.dir) qs += `&dir=${encodeURIComponent(args.dir as string)}`;
-        if (args?.args) qs += `&args=${encodeURIComponent(args.args as string)}`;
+        if (args?.args)
+          qs += `&args=${encodeURIComponent(args.args as string)}`;
         return { method: "GET", url: `/api/git${qs}` };
       }
       case "list_directory": {
-        const qs = args?.path
-          ? `?path=${encodeURIComponent(args.path as string)}`
-          : "";
+        const params: string[] = [];
+        if (args?.path)
+          params.push(`path=${encodeURIComponent(args.path as string)}`);
+        if (args?.show_hidden) params.push("show_hidden=true");
+        const qs = params.length ? `?${params.join("&")}` : "";
         return { method: "GET", url: `/api/files${qs}` };
       }
       case "read_file":
@@ -1232,14 +1334,17 @@ export class RelayTransport implements Transport {
 
   // ── Local Commands (browser-only, no-op in relay mode) ─────────
 
-  private handleLocal<T>(
-    command: string,
-    _args?: Record<string, unknown>,
-  ): T {
+  private handleLocal<T>(command: string, _args?: Record<string, unknown>): T {
     switch (command) {
       case "get_web_ui_status": {
-        const port = new URL(this.relayOrigin).port || (this.relayOrigin.startsWith("https") ? 443 : 80);
-        return { running: true, port: Number(port), url: this.relayOrigin } as T;
+        const port =
+          new URL(this.relayOrigin).port ||
+          (this.relayOrigin.startsWith("https") ? 443 : 80);
+        return {
+          running: true,
+          port: Number(port),
+          url: this.relayOrigin,
+        } as T;
       }
       case "initialize_chat":
         // Return cached init data or wait for it
@@ -1340,7 +1445,9 @@ export class RelayTransport implements Transport {
     }
   }
 
-  private convertInitResponse(msg: Record<string, unknown>): Record<string, unknown> {
+  private convertInitResponse(
+    msg: Record<string, unknown>,
+  ): Record<string, unknown> {
     return {
       sessionId: msg.sessionId,
       messages: msg.messages ?? [],
@@ -1354,7 +1461,9 @@ export class RelayTransport implements Transport {
     };
   }
 
-  private convertSessionLoaded(msg: Record<string, unknown>): Record<string, unknown> {
+  private convertSessionLoaded(
+    msg: Record<string, unknown>,
+  ): Record<string, unknown> {
     return {
       sessionId: msg.sessionId,
       messages: msg.messages ?? [],

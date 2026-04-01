@@ -8,7 +8,10 @@ interface FolderPickerProps {
   onCancel: () => void;
 }
 
-export default function FolderPicker({ onSelect, onCancel }: FolderPickerProps) {
+export default function FolderPicker({
+  onSelect,
+  onCancel,
+}: FolderPickerProps) {
   const [currentPath, setCurrentPath] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -18,7 +21,11 @@ export default function FolderPicker({ onSelect, onCancel }: FolderPickerProps) 
     try {
       const result = await listDirectory(path);
       setCurrentPath(result.path);
-      setEntries(result.entries.filter((e) => e.isDir).sort((a, b) => a.name.localeCompare(b.name)));
+      setEntries(
+        result.entries
+          .filter((e) => e.isDir)
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      );
     } catch {
       setEntries([]);
     } finally {
@@ -27,7 +34,9 @@ export default function FolderPicker({ onSelect, onCancel }: FolderPickerProps) 
   }, []);
 
   useEffect(() => {
-    getCwd().then((cwd) => navigate(cwd)).catch(() => navigate());
+    getCwd()
+      .then((cwd) => navigate(cwd))
+      .catch(() => navigate());
   }, [navigate]);
 
   const goUp = () => {
@@ -36,9 +45,10 @@ export default function FolderPicker({ onSelect, onCancel }: FolderPickerProps) 
   };
 
   // Shorten path for display
-  const displayPath = currentPath.length > 50
-    ? "..." + currentPath.slice(currentPath.length - 47)
-    : currentPath;
+  const displayPath =
+    currentPath.length > 50
+      ? "..." + currentPath.slice(currentPath.length - 47)
+      : currentPath;
 
   return (
     <div
@@ -156,13 +166,28 @@ export default function FolderPicker({ onSelect, onCancel }: FolderPickerProps) 
         </div>
 
         {/* Directory list */}
-        <div style={{ flex: 1, overflowY: "auto", minHeight: 100, maxHeight: 400 }}>
+        <div
+          style={{ flex: 1, overflowY: "auto", minHeight: 100, maxHeight: 400 }}
+        >
           {loading ? (
-            <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
-              <Loader2 size={18} style={{ color: "#71717a" }} className="animate-spin" />
+            <div
+              style={{ display: "flex", justifyContent: "center", padding: 24 }}
+            >
+              <Loader2
+                size={18}
+                style={{ color: "#71717a" }}
+                className="animate-spin"
+              />
             </div>
           ) : entries.length === 0 ? (
-            <div style={{ textAlign: "center", padding: 24, color: "#71717a", fontSize: 12 }}>
+            <div
+              style={{
+                textAlign: "center",
+                padding: 24,
+                color: "#71717a",
+                fontSize: 12,
+              }}
+            >
               No subdirectories
             </div>
           ) : (
@@ -192,11 +217,20 @@ export default function FolderPicker({ onSelect, onCancel }: FolderPickerProps) 
                 }}
               >
                 <Folder size={14} style={{ color: "#71717a", flexShrink: 0 }} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {entry.name}
                 </span>
                 <div style={{ flex: 1 }} />
-                <ChevronRight size={12} style={{ color: "#52525b", flexShrink: 0 }} />
+                <ChevronRight
+                  size={12}
+                  style={{ color: "#52525b", flexShrink: 0 }}
+                />
               </button>
             ))
           )}

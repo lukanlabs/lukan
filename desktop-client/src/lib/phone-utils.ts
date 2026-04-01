@@ -19,9 +19,10 @@ export const COUNTRY_CODES: { value: string; label: string; code: string }[] = [
   { value: "58", label: "Venezuela (+58)", code: "+58" },
 ];
 
-const COUNTRY_CODE_PREFIXES = COUNTRY_CODES
-  .map((c) => ({ prefix: c.value, display: c.code }))
-  .sort((a, b) => b.prefix.length - a.prefix.length);
+const COUNTRY_CODE_PREFIXES = COUNTRY_CODES.map((c) => ({
+  prefix: c.value,
+  display: c.code,
+})).sort((a, b) => b.prefix.length - a.prefix.length);
 
 export function formatPhoneNumber(num: string): string {
   for (const { prefix, display } of COUNTRY_CODE_PREFIXES) {

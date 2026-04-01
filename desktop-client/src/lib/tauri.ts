@@ -67,12 +67,22 @@ export const testProvider = (provider: string) =>
 export const listPlugins = () =>
   getTransport().call<PluginInfo[]>("list_plugins");
 export const installPlugin = async (path: string): Promise<string> => {
-  const res = await getTransport().call<string | { message: string }>("install_plugin", { path });
-  return typeof res === "object" && res !== null ? (res as { message: string }).message : (res as string);
+  const res = await getTransport().call<string | { message: string }>(
+    "install_plugin",
+    { path },
+  );
+  return typeof res === "object" && res !== null
+    ? (res as { message: string }).message
+    : (res as string);
 };
 export const installRemotePlugin = async (name: string): Promise<string> => {
-  const res = await getTransport().call<string | { message: string }>("install_remote_plugin", { name });
-  return typeof res === "object" && res !== null ? (res as { message: string }).message : (res as string);
+  const res = await getTransport().call<string | { message: string }>(
+    "install_remote_plugin",
+    { name },
+  );
+  return typeof res === "object" && res !== null
+    ? (res as { message: string }).message
+    : (res as string);
 };
 export const removePlugin = (name: string) =>
   getTransport().call<void>("remove_plugin", { name });
@@ -88,14 +98,16 @@ export const setPluginConfigField = (
   name: string,
   key: string,
   value: unknown,
-) =>
-  getTransport().call<void>("set_plugin_config_field", { name, key, value });
+) => getTransport().call<void>("set_plugin_config_field", { name, key, value });
 export const getPluginLogs = (name: string, lines: number) =>
   getTransport().call<string>("get_plugin_logs", { name, lines });
 export const listRemotePlugins = () =>
   getTransport().call<RemotePlugin[]>("list_remote_plugins");
 export const getPluginManifestInfo = (name: string) =>
-  getTransport().call<{ config: Record<string, ConfigFieldSchemaDto>; auth: AuthDeclarationDto | null }>("get_plugin_manifest_info", { name });
+  getTransport().call<{
+    config: Record<string, ConfigFieldSchemaDto>;
+    auth: AuthDeclarationDto | null;
+  }>("get_plugin_manifest_info", { name });
 export const getPluginAuthQr = (name: string) =>
   getTransport().call<string | null>("get_plugin_auth_qr", { name });
 export const checkPluginAuth = (name: string) =>
@@ -202,8 +214,7 @@ export const deleteSession = (id: string) =>
   getTransport().call<boolean>("delete_session", { id });
 export const deleteAllSessions = () =>
   getTransport().call<number>("delete_all_sessions");
-export const listTasks = () =>
-  getTransport().call<TaskInfo[]>("list_tasks");
+export const listTasks = () => getTransport().call<TaskInfo[]>("list_tasks");
 
 // Chat — per-session (scoped by sessionId)
 export const sendMessage = (sessionId: string, content: string) =>
@@ -217,7 +228,11 @@ export const alwaysAllowTools = (
   approvedIds: string[],
   tools: ToolApprovalRequest[],
 ) =>
-  getTransport().call<void>("always_allow_tools", { sessionId, approvedIds, tools });
+  getTransport().call<void>("always_allow_tools", {
+    sessionId,
+    approvedIds,
+    tools,
+  });
 export const denyAllTools = (sessionId: string) =>
   getTransport().call<void>("deny_all_tools", { sessionId });
 export const acceptPlan = (
@@ -242,11 +257,8 @@ export const terminalCreate = (cwd?: string, cols?: number, rows?: number) =>
   });
 export const terminalInput = (sessionId: string, data: string) =>
   getTransport().call<void>("terminal_input", { sessionId, data });
-export const terminalResize = (
-  sessionId: string,
-  cols: number,
-  rows: number,
-) => getTransport().call<void>("terminal_resize", { sessionId, cols, rows });
+export const terminalResize = (sessionId: string, cols: number, rows: number) =>
+  getTransport().call<void>("terminal_resize", { sessionId, cols, rows });
 export const terminalDestroy = (sessionId: string) =>
   getTransport().call<void>("terminal_destroy", { sessionId });
 export const terminalList = () =>
@@ -303,12 +315,14 @@ export const browserScreenshot = () =>
   getTransport().call<string>("browser_screenshot");
 export const browserTabs = () =>
   getTransport().call<BrowserTab[]>("browser_tabs");
-export const browserClose = () =>
-  getTransport().call<void>("browser_close");
+export const browserClose = () => getTransport().call<void>("browser_close");
 
 // Files
-export const listDirectory = (path?: string) =>
-  getTransport().call<DirectoryListing>("list_directory", { path });
+export const listDirectory = (path?: string, showHidden?: boolean) =>
+  getTransport().call<DirectoryListing>("list_directory", {
+    path,
+    show_hidden: showHidden,
+  });
 export const readFile = (path: string) =>
   getTransport().call<FileContent>("read_file", { path });
 export const writeFile = (path: string, content: string) =>
@@ -317,7 +331,10 @@ export const openInEditor = (path: string, editor?: string) =>
   getTransport().call<void>("open_in_editor", { path, editor });
 export const getCwd = () => getTransport().call<string>("get_cwd");
 export const gitCommand = (cmd: string, dir: string, args?: string) =>
-  getTransport().call<{ ok: boolean; stdout: string; stderr: string }>("git_command", { cmd, dir, args });
+  getTransport().call<{ ok: boolean; stdout: string; stderr: string }>(
+    "git_command",
+    { cmd, dir, args },
+  );
 export const setActiveTab = (tabId: string) =>
   getTransport().call<void>("set_active_tab", { tabId });
 export const openUrl = (url: string) =>
@@ -343,7 +360,9 @@ export const getWorkerRun = (workerId: string, runId: string) =>
 export const listPipelines = () =>
   getTransport().call<PipelineSummary[]>("list_pipelines");
 export const createPipeline = (input: PipelineCreateInput) =>
-  getTransport().call<PipelineDefinition>("create_pipeline", { pipeline: input });
+  getTransport().call<PipelineDefinition>("create_pipeline", {
+    pipeline: input,
+  });
 export const updatePipeline = (id: string, patch: PipelineUpdateInput) =>
   getTransport().call<PipelineDefinition>("update_pipeline", { id, patch });
 export const deletePipeline = (id: string) =>
@@ -392,16 +411,27 @@ export const stopRecording = () =>
   getTransport().call<number[]>("stop_recording");
 export const cancelRecording = () =>
   getTransport().call<void>("cancel_recording");
-export const isRecording = () =>
-  getTransport().call<boolean>("is_recording");
+export const isRecording = () => getTransport().call<boolean>("is_recording");
 export const listAudioDevices = () =>
   getTransport().call<string[]>("list_audio_devices");
 
 // Event listeners (session-scoped)
-export const onStreamEvent = (sessionId: string, cb: (payload: string) => void) =>
-  getTransport().subscribe(`stream-event-${sessionId}`, cb as (p: unknown) => void);
-export const onTurnComplete = (sessionId: string, cb: (payload: string) => void) =>
-  getTransport().subscribe(`turn-complete-${sessionId}`, cb as (p: unknown) => void);
+export const onStreamEvent = (
+  sessionId: string,
+  cb: (payload: string) => void,
+) =>
+  getTransport().subscribe(
+    `stream-event-${sessionId}`,
+    cb as (p: unknown) => void,
+  );
+export const onTurnComplete = (
+  sessionId: string,
+  cb: (payload: string) => void,
+) =>
+  getTransport().subscribe(
+    `turn-complete-${sessionId}`,
+    cb as (p: unknown) => void,
+  );
 
 // Event listeners (global)
 export const onWorkerNotification = (cb: (payload: string) => void) =>

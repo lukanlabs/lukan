@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useCallback } from "react";
 import ReactDOM from "react-dom/client";
-import { IS_TAURI, isRelayMode, initTransport, resetTransport } from "./lib/transport";
+import {
+  IS_TAURI,
+  isRelayMode,
+  initTransport,
+  resetTransport,
+} from "./lib/transport";
 import App from "./App";
 import LoginPage from "./components/LoginPage";
 import ProjectSelector from "./components/ProjectSelector";
@@ -40,7 +45,9 @@ function Root() {
       if (data.error === "not_registered") {
         await fetch("/auth/logout", { method: "POST" }).catch(() => {});
         setAuthenticated(false);
-        setLoginMessage("Account not registered. Create an account at cloud.lukan.ai to use remote.");
+        setLoginMessage(
+          "Account not registered. Create an account at cloud.lukan.ai to use remote.",
+        );
       } else if (!data.authenticated) {
         await fetch("/auth/logout", { method: "POST" }).catch(() => {});
         setAuthenticated(false);
@@ -53,9 +60,7 @@ function Root() {
         if (selectedDevice && !isSpecialPath) {
           const deviceList: string[] = data.devices ?? [];
           if (deviceList.length > 0 && !deviceList.includes(selectedDevice)) {
-            setLoginMessage(
-              `Device "${selectedDevice}" is not connected.`,
-            );
+            setLoginMessage(`Device "${selectedDevice}" is not connected.`);
             setAuthenticated(false);
           }
         }
@@ -81,7 +86,14 @@ function Root() {
 
   // Initialize transport once authenticated (and device selected)
   useEffect(() => {
-    if (!authenticated || ready || transportError || needsDevicePicker || cliPort) return;
+    if (
+      !authenticated ||
+      ready ||
+      transportError ||
+      needsDevicePicker ||
+      cliPort
+    )
+      return;
     initTransport()
       .then(() => setReady(true))
       .catch(() => {

@@ -16,26 +16,45 @@ function buildSimpleDiff(oldText: string, newText: string): string[] {
 
   // Simple LCS-based diff
   const maxLen = Math.max(oldLines.length, newLines.length);
-  let oi = 0, ni = 0;
+  let oi = 0,
+    ni = 0;
 
   while (oi < oldLines.length || ni < newLines.length) {
-    if (oi < oldLines.length && ni < newLines.length && oldLines[oi] === newLines[ni]) {
+    if (
+      oi < oldLines.length &&
+      ni < newLines.length &&
+      oldLines[oi] === newLines[ni]
+    ) {
       result.push(` ${oldLines[oi]}`);
       oi++;
       ni++;
     } else {
       // Look ahead to find next matching line
-      let foundOld = -1, foundNew = -1;
+      let foundOld = -1,
+        foundNew = -1;
       for (let k = 1; k < Math.min(10, maxLen); k++) {
-        if (foundNew === -1 && ni + k < newLines.length && oi < oldLines.length && oldLines[oi] === newLines[ni + k]) {
+        if (
+          foundNew === -1 &&
+          ni + k < newLines.length &&
+          oi < oldLines.length &&
+          oldLines[oi] === newLines[ni + k]
+        ) {
           foundNew = ni + k;
         }
-        if (foundOld === -1 && oi + k < oldLines.length && ni < newLines.length && oldLines[oi + k] === newLines[ni]) {
+        if (
+          foundOld === -1 &&
+          oi + k < oldLines.length &&
+          ni < newLines.length &&
+          oldLines[oi + k] === newLines[ni]
+        ) {
           foundOld = oi + k;
         }
       }
 
-      if (foundOld !== -1 && (foundNew === -1 || (foundOld - oi) <= (foundNew - ni))) {
+      if (
+        foundOld !== -1 &&
+        (foundNew === -1 || foundOld - oi <= foundNew - ni)
+      ) {
         // Lines were removed
         while (oi < foundOld) {
           result.push(`-${oldLines[oi]}`);
@@ -64,7 +83,11 @@ function buildSimpleDiff(oldText: string, newText: string): string[] {
   return result;
 }
 
-function ToolApprovalCard({ tool, checked, onToggle }: {
+function ToolApprovalCard({
+  tool,
+  checked,
+  onToggle,
+}: {
   tool: ToolApprovalRequest;
   checked: boolean;
   onToggle: () => void;
@@ -74,21 +97,29 @@ function ToolApprovalCard({ tool, checked, onToggle }: {
   const isWrite = tool.name === "WriteFile";
   const isBash = tool.name === "Bash";
 
-  const filePath = typeof tool.input.file_path === "string" ? tool.input.file_path : null;
-  const command = typeof tool.input.command === "string" ? tool.input.command : null;
-  const oldText = typeof tool.input.old_text === "string" ? tool.input.old_text : null;
-  const newText = typeof tool.input.new_text === "string" ? tool.input.new_text : null;
-  const content = typeof tool.input.content === "string" ? tool.input.content : null;
+  const filePath =
+    typeof tool.input.file_path === "string" ? tool.input.file_path : null;
+  const command =
+    typeof tool.input.command === "string" ? tool.input.command : null;
+  const oldText =
+    typeof tool.input.old_text === "string" ? tool.input.old_text : null;
+  const newText =
+    typeof tool.input.new_text === "string" ? tool.input.new_text : null;
+  const content =
+    typeof tool.input.content === "string" ? tool.input.content : null;
 
   // Build diff lines for EditFile
-  const diffLines = isEdit && oldText !== null && newText !== null
-    ? buildSimpleDiff(oldText, newText)
-    : null;
+  const diffLines =
+    isEdit && oldText !== null && newText !== null
+      ? buildSimpleDiff(oldText, newText)
+      : null;
 
   return (
-    <div className={`rounded-lg border transition-colors ${
-      checked ? "border-blue-500/40 bg-blue-500/5" : "border-zinc-800"
-    }`}>
+    <div
+      className={`rounded-lg border transition-colors ${
+        checked ? "border-blue-500/40 bg-blue-500/5" : "border-zinc-800"
+      }`}
+    >
       {/* Header */}
       <label className="flex items-center gap-3 px-3 py-2.5 cursor-pointer">
         <input
@@ -98,18 +129,31 @@ function ToolApprovalCard({ tool, checked, onToggle }: {
           className="rounded accent-blue-500 shrink-0"
         />
         <button
-          onClick={(e) => { e.preventDefault(); setExpanded(!expanded); }}
+          onClick={(e) => {
+            e.preventDefault();
+            setExpanded(!expanded);
+          }}
           className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
         >
           <span className="text-zinc-600 shrink-0">
-            {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            {expanded ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
           </span>
-          <span className="text-sm font-semibold text-blue-400">{tool.name}</span>
+          <span className="text-sm font-semibold text-blue-400">
+            {tool.name}
+          </span>
           {filePath && (
-            <span className="text-xs text-zinc-500 font-mono truncate">{filePath}</span>
+            <span className="text-xs text-zinc-500 font-mono truncate">
+              {filePath}
+            </span>
           )}
           {isBash && command && (
-            <span className="text-xs text-zinc-500 font-mono truncate">{command.slice(0, 60)}</span>
+            <span className="text-xs text-zinc-500 font-mono truncate">
+              {command.slice(0, 60)}
+            </span>
           )}
         </button>
       </label>
@@ -126,7 +170,11 @@ function ToolApprovalCard({ tool, checked, onToggle }: {
                   if (line.startsWith("+")) cls += " diff-add";
                   else if (line.startsWith("-")) cls += " diff-remove";
                   else cls += " text-zinc-500";
-                  return <div key={i} className={cls}>{line}</div>;
+                  return (
+                    <div key={i} className={cls}>
+                      {line}
+                    </div>
+                  );
                 })}
               </pre>
             </div>
@@ -135,7 +183,9 @@ function ToolApprovalCard({ tool, checked, onToggle }: {
           {/* WriteFile: show content preview */}
           {isWrite && content && (
             <pre className="max-h-48 rounded-md overflow-auto border border-white/5 p-2 text-xs font-mono text-zinc-400 whitespace-pre-wrap">
-              {content.length > 1000 ? content.slice(0, 1000) + "\n..." : content}
+              {content.length > 1000
+                ? content.slice(0, 1000) + "\n..."
+                : content}
             </pre>
           )}
 
@@ -158,8 +208,14 @@ function ToolApprovalCard({ tool, checked, onToggle }: {
   );
 }
 
-export function ApprovalModal({ tools, onApprove, onDenyAll }: ApprovalModalProps) {
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(tools.map((t) => t.id)));
+export function ApprovalModal({
+  tools,
+  onApprove,
+  onDenyAll,
+}: ApprovalModalProps) {
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(tools.map((t) => t.id)),
+  );
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -182,7 +238,10 @@ export function ApprovalModal({ tools, onApprove, onDenyAll }: ApprovalModalProp
           boxShadow: "var(--shadow-lg)",
         }}
       >
-        <div className="px-6 py-4 border-b" style={{ borderColor: "var(--border-subtle)" }}>
+        <div
+          className="px-6 py-4 border-b"
+          style={{ borderColor: "var(--border-subtle)" }}
+        >
           <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
             <ShieldCheck className="h-5 w-5 text-yellow-400" />
             Approve {tools.length} tool{tools.length > 1 ? "s" : ""}
@@ -200,7 +259,10 @@ export function ApprovalModal({ tools, onApprove, onDenyAll }: ApprovalModalProp
           ))}
         </div>
 
-        <div className="px-6 py-4 border-t flex items-center justify-end gap-3" style={{ borderColor: "var(--border-subtle)" }}>
+        <div
+          className="px-6 py-4 border-t flex items-center justify-end gap-3"
+          style={{ borderColor: "var(--border-subtle)" }}
+        >
           <button
             onClick={() => onApprove([...selected])}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-zinc-100 text-zinc-900 hover:bg-zinc-200 transition-colors"

@@ -42,7 +42,8 @@ export function ChatInput({
   const recorder = useAudioRecorder(handleTranscript);
 
   useEffect(() => {
-    if (!isProcessing && recorder.state === "idle") textareaRef.current?.focus();
+    if (!isProcessing && recorder.state === "idle")
+      textareaRef.current?.focus();
   }, [isProcessing, recorder.state]);
 
   // Refocus when settings closes

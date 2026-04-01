@@ -57,7 +57,9 @@ function sendInput(sessionId: string, data: string): void {
   let chain: Promise<void> = Promise.resolve();
   for (let offset = 0; offset < data.length; offset += CHAR_CHUNK) {
     const chunk = data.slice(offset, offset + CHAR_CHUNK);
-    chain = chain.then(() => terminalInput(sessionId, toBase64(chunk))).catch(() => {});
+    chain = chain
+      .then(() => terminalInput(sessionId, toBase64(chunk)))
+      .catch(() => {});
   }
 }
 
@@ -69,9 +71,14 @@ interface UseTerminalOptions {
   fontSize?: number;
 }
 
-const DEFAULT_FONT_SIZE = typeof window !== "undefined" && window.innerWidth < 768 ? 10 : 13;
+const DEFAULT_FONT_SIZE =
+  typeof window !== "undefined" && window.innerWidth < 768 ? 10 : 13;
 
-export function useTerminal({ sessionId, containerRef, fontSize = DEFAULT_FONT_SIZE }: UseTerminalOptions) {
+export function useTerminal({
+  sessionId,
+  containerRef,
+  fontSize = DEFAULT_FONT_SIZE,
+}: UseTerminalOptions) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
 
@@ -164,7 +171,9 @@ export function useTerminal({ sessionId, containerRef, fontSize = DEFAULT_FONT_S
       sendInput(sessionId, `\x1b[200~${text}\x1b[201~`);
       // Re-enable onData after the current event loop tick
       // (xterm.js fires onData synchronously during paste processing)
-      setTimeout(() => { pasteInProgress = false; }, 0);
+      setTimeout(() => {
+        pasteInProgress = false;
+      }, 0);
     };
     document.addEventListener("paste", onPaste, true);
 
@@ -183,9 +192,12 @@ export function useTerminal({ sessionId, containerRef, fontSize = DEFAULT_FONT_S
       }
       // Ctrl+Shift+V → paste from clipboard via async API
       if (e.key === "v" && e.ctrlKey && e.shiftKey) {
-        navigator.clipboard.readText().then((text) => {
-          if (text) sendInput(sessionId, text);
-        }).catch(() => {});
+        navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (text) sendInput(sessionId, text);
+          })
+          .catch(() => {});
         return false;
       }
       // Ctrl+V → let browser handle natively (xterm.js processes the paste event)

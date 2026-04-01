@@ -1,17 +1,57 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw, GitCommit, Columns2, Rows2, Maximize2, GitBranch, Minus } from "lucide-react";
+import {
+  X,
+  File,
+  Loader2,
+  AlertCircle,
+  Pencil,
+  Save,
+  RotateCcw,
+  GitCommit,
+  Columns2,
+  Rows2,
+  Maximize2,
+  GitBranch,
+  Minus,
+} from "lucide-react";
 import { MarkdownRenderer } from "../chat/MarkdownRenderer";
 import { DiffView } from "../chat/DiffView";
 import { readFile, writeFile, gitCommand } from "../../lib/tauri";
 import type { FileContent } from "../../lib/types";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection } from "@codemirror/view";
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  drawSelection,
+  rectangularSelection,
+} from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
-import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
-import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, foldKeymap, indentOnInput, LanguageDescription } from "@codemirror/language";
+import {
+  defaultKeymap,
+  indentWithTab,
+  history,
+  historyKeymap,
+} from "@codemirror/commands";
+import {
+  syntaxHighlighting,
+  defaultHighlightStyle,
+  bracketMatching,
+  foldGutter,
+  foldKeymap,
+  indentOnInput,
+  LanguageDescription,
+} from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { highlightSelectionMatches } from "@codemirror/search";
-import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import {
+  autocompletion,
+  completionKeymap,
+  closeBrackets,
+  closeBracketsKeymap,
+} from "@codemirror/autocomplete";
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -20,11 +60,14 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function getFileType(fc: FileContent): "code" | "markdown" | "image" | "csv" | "json" | "pdf" | "binary" {
+function getFileType(
+  fc: FileContent,
+): "code" | "markdown" | "image" | "csv" | "json" | "pdf" | "binary" {
   const ext = fc.name.split(".").pop()?.toLowerCase() ?? "";
   if (fc.mimeType === "application/pdf") return "pdf";
   if (fc.mimeType?.startsWith("image/")) return "image";
-  if (fc.encoding === "base64" && fc.mimeType === "application/octet-stream") return "binary";
+  if (fc.encoding === "base64" && fc.mimeType === "application/octet-stream")
+    return "binary";
   if (ext === "md" || ext === "markdown") return "markdown";
   if (ext === "json") return "json";
   if (ext === "csv") return "csv";
@@ -40,13 +83,23 @@ function CsvTable({ content }: { content: string }) {
       .map((line) => line.split(",").map((c) => c.trim()));
   }, [content]);
 
-  if (rows.length === 0) return <div style={{ padding: 16, color: "var(--text-muted)" }}>Empty CSV</div>;
+  if (rows.length === 0)
+    return (
+      <div style={{ padding: 16, color: "var(--text-muted)" }}>Empty CSV</div>
+    );
 
   const [header, ...body] = rows;
 
   return (
     <div style={{ overflow: "auto", padding: "8px 16px" }}>
-      <table style={{ borderCollapse: "collapse", width: "100%", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+      <table
+        style={{
+          borderCollapse: "collapse",
+          width: "100%",
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+        }}
+      >
         <thead>
           <tr>
             {header.map((cell, i) => (
@@ -120,27 +173,45 @@ function PdfViewer({ file }: { file: FileContent }) {
 }
 
 function isEditable(fileType: ReturnType<typeof getFileType>): boolean {
-  return fileType === "code" || fileType === "json" || fileType === "markdown" || fileType === "csv";
+  return (
+    fileType === "code" ||
+    fileType === "json" ||
+    fileType === "markdown" ||
+    fileType === "csv"
+  );
 }
 
 // ── CodeMirror 6 language resolver ───────────────────────────────────
 
 function resolveLanguage(lang?: string): LanguageDescription | undefined {
   if (!lang) return undefined;
-  return LanguageDescription.matchLanguageName(languages, lang, true) ?? undefined;
+  return (
+    LanguageDescription.matchLanguageName(languages, lang, true) ?? undefined
+  );
 }
 
 // ── Shared CM6 theme to match app styling ───────────────────────────
 
-const cmTheme = EditorView.theme({
-  "&": { fontSize: "13px", fontFamily: "var(--font-mono)", height: "100%", background: "var(--bg-base, #0a0a0a)" },
-  ".cm-scroller": { overflow: "auto" },
-  ".cm-gutters": { background: "var(--bg-base, #0a0a0a)", borderRight: "1px solid var(--border-subtle, rgba(60,60,60,0.3))" },
-  ".cm-activeLineGutter": { background: "rgba(255,255,255,0.04)" },
-  ".cm-activeLine": { background: "rgba(255,255,255,0.03)" },
-  ".cm-foldGutter": { width: "12px" },
-  ".cm-content": { caretColor: "#fff" },
-}, { dark: true });
+const cmTheme = EditorView.theme(
+  {
+    "&": {
+      fontSize: "13px",
+      fontFamily: "var(--font-mono)",
+      height: "100%",
+      background: "var(--bg-base, #0a0a0a)",
+    },
+    ".cm-scroller": { overflow: "auto" },
+    ".cm-gutters": {
+      background: "var(--bg-base, #0a0a0a)",
+      borderRight: "1px solid var(--border-subtle, rgba(60,60,60,0.3))",
+    },
+    ".cm-activeLineGutter": { background: "rgba(255,255,255,0.04)" },
+    ".cm-activeLine": { background: "rgba(255,255,255,0.03)" },
+    ".cm-foldGutter": { width: "12px" },
+    ".cm-content": { caretColor: "#fff" },
+  },
+  { dark: true },
+);
 
 // ── CodeMirror Editor (editable) ────────────────────────────────────
 
@@ -219,7 +290,9 @@ function CodeEditor({
     // Scroll to initial line
     if (initialLine != null && initialLine > 0) {
       requestAnimationFrame(() => {
-        const line = view.state.doc.line(Math.min(initialLine, view.state.doc.lines));
+        const line = view.state.doc.line(
+          Math.min(initialLine, view.state.doc.lines),
+        );
         view.dispatch({
           selection: { anchor: line.from },
           effects: EditorView.scrollIntoView(line.from, { y: "center" }),
@@ -230,7 +303,10 @@ function CodeEditor({
       view.focus();
     }
 
-    return () => { view.destroy(); viewRef.current = null; };
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
   }, [language]); // Only recreate on language change, not on every value change
 
   return <div ref={containerRef} style={{ flex: 1, overflow: "hidden" }} />;
@@ -302,18 +378,28 @@ function CodeViewer({
     const view = new EditorView({ state, parent: containerRef.current });
     viewRef.current = view;
 
-    return () => { view.destroy(); viewRef.current = null; };
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
   }, [value, language]);
 
   return <div ref={containerRef} style={{ flex: 1, overflow: "hidden" }} />;
 }
 
-function fileLang(file: FileContent, fileType: ReturnType<typeof getFileType>): string | undefined {
+function fileLang(
+  file: FileContent,
+  fileType: ReturnType<typeof getFileType>,
+): string | undefined {
   switch (fileType) {
-    case "json": return "json";
-    case "markdown": return "markdown";
-    case "csv": return undefined;
-    default: return file.language ?? undefined;
+    case "json":
+      return "json";
+    case "markdown":
+      return "markdown";
+    case "csv":
+      return undefined;
+    default:
+      return file.language ?? undefined;
   }
 }
 
@@ -345,16 +431,30 @@ function FileContentView({
     );
   }
 
-  const dblClickHandler = isEditable(fileType) && onDoubleClickLine ? onDoubleClickLine : undefined;
+  const dblClickHandler =
+    isEditable(fileType) && onDoubleClickLine ? onDoubleClickLine : undefined;
 
   switch (fileType) {
     case "image":
       return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, padding: 24, overflow: "auto" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flex: 1,
+            padding: 24,
+            overflow: "auto",
+          }}
+        >
           <img
             src={`data:${file.mimeType};base64,${file.content}`}
             alt={file.name}
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+            style={{
+              maxWidth: "100%",
+              maxHeight: "100%",
+              objectFit: "contain",
+            }}
           />
         </div>
       );
@@ -365,8 +465,15 @@ function FileContentView({
     case "markdown":
       return (
         <div
-          style={{ padding: "16px 24px", overflow: "auto", flex: 1, cursor: "default" }}
-          onDoubleClick={dblClickHandler ? () => onDoubleClickLine!(1) : undefined}
+          style={{
+            padding: "16px 24px",
+            overflow: "auto",
+            flex: 1,
+            cursor: "default",
+          }}
+          onDoubleClick={
+            dblClickHandler ? () => onDoubleClickLine!(1) : undefined
+          }
         >
           <MarkdownRenderer content={file.content} />
         </div>
@@ -379,35 +486,71 @@ function FileContentView({
       } catch {
         formatted = file.content;
       }
-      return <CodeViewer value={formatted} language="json" onDoubleClickLine={dblClickHandler} />;
+      return (
+        <CodeViewer
+          value={formatted}
+          language="json"
+          onDoubleClickLine={dblClickHandler}
+        />
+      );
     }
 
     case "csv":
       return (
-        <div onDoubleClick={dblClickHandler ? () => onDoubleClickLine!(1) : undefined}>
+        <div
+          onDoubleClick={
+            dblClickHandler ? () => onDoubleClickLine!(1) : undefined
+          }
+        >
           <CsvTable content={file.content} />
         </div>
       );
 
     case "code":
-      return <CodeViewer value={file.content} language={file.language ?? undefined} onDoubleClickLine={dblClickHandler} />;
+      return (
+        <CodeViewer
+          value={file.content}
+          language={file.language ?? undefined}
+          onDoubleClickLine={dblClickHandler}
+        />
+      );
 
     case "binary":
       return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, color: "var(--text-muted)" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flex: 1,
+            color: "var(--text-muted)",
+          }}
+        >
           <div style={{ textAlign: "center" }}>
             <File size={48} style={{ marginBottom: 12, opacity: 0.3 }} />
-            <div style={{ fontSize: 14 }}>Binary file — {formatSize(file.size)}</div>
+            <div style={{ fontSize: 14 }}>
+              Binary file — {formatSize(file.size)}
+            </div>
           </div>
         </div>
       );
   }
 }
 
-const MAX_TEXT_PREVIEW = 2 * 1024 * 1024;   // 2MB — matches server MAX_TEXT_SIZE
+const MAX_TEXT_PREVIEW = 2 * 1024 * 1024; // 2MB — matches server MAX_TEXT_SIZE
 const MAX_BINARY_PREVIEW = 10 * 1024 * 1024; // 10MB — matches server MAX_BINARY_SIZE
 
-const BINARY_EXTS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "pdf"]);
+const BINARY_EXTS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "svg",
+  "webp",
+  "ico",
+  "bmp",
+  "pdf",
+]);
 
 function previewLimit(path: string): number {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -439,7 +582,22 @@ interface FileViewerProps {
   onCloseAll?: () => void;
 }
 
-export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, splitDirection, onSplitChange, tabs, activeTabIdx = 0, onTabClick, onTabClose, onMinimize, onCloseAll }: FileViewerProps) {
+export function FileViewer({
+  path,
+  fileSize,
+  onClose,
+  diff,
+  diffSha,
+  split,
+  splitDirection,
+  onSplitChange,
+  tabs,
+  activeTabIdx = 0,
+  onTabClick,
+  onTabClose,
+  onMinimize,
+  onCloseAll,
+}: FileViewerProps) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -470,31 +628,47 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
     const limit = previewLimit(path);
     if (fileSize != null && fileSize > limit) {
       const maxLabel = limit === MAX_BINARY_PREVIEW ? "10 MB" : "2 MB";
-      setError(`File too large for preview: ${formatSize(fileSize)} (max ${maxLabel})`);
+      setError(
+        `File too large for preview: ${formatSize(fileSize)} (max ${maxLabel})`,
+      );
       setLoading(false);
       return;
     }
 
     readFile(path)
-      .then((fc) => { if (active) setFile(fc); })
-      .catch((e) => { if (active) setError(String(e)); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+      .then((fc) => {
+        if (active) setFile(fc);
+      })
+      .catch((e) => {
+        if (active) setError(String(e));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [path, fileSize, isDiffMode]);
 
   const canEdit = file ? isEditable(getFileType(file)) : false;
 
-  const handleEdit = useCallback((line?: number) => {
-    if (!file) return;
-    setEditContent(file.content);
-    setInitialLine(line);
-    setEditing(true);
-    setDirty(false);
-  }, [file]);
+  const handleEdit = useCallback(
+    (line?: number) => {
+      if (!file) return;
+      setEditContent(file.content);
+      setInitialLine(line);
+      setEditing(true);
+      setDirty(false);
+    },
+    [file],
+  );
 
-  const handleDoubleClickLine = useCallback((line: number) => {
-    handleEdit(line);
-  }, [handleEdit]);
+  const handleDoubleClickLine = useCallback(
+    (line: number) => {
+      handleEdit(line);
+    },
+    [handleEdit],
+  );
 
   const handleEditChange = useCallback(
     (v: string) => {
@@ -595,17 +769,43 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
     <div
       style={{
         ...(split
-          ? { flex: 1, display: "flex", flexDirection: "column" as const, background: "var(--bg-base)", minHeight: 0, overflow: "hidden" }
-          : { position: "absolute" as const, inset: 0, zIndex: 10, display: "flex", flexDirection: "column" as const, background: "var(--bg-base)" }
-        ),
+          ? {
+              flex: 1,
+              display: "flex",
+              flexDirection: "column" as const,
+              background: "var(--bg-base)",
+              minHeight: 0,
+              overflow: "hidden",
+            }
+          : {
+              position: "absolute" as const,
+              inset: 0,
+              zIndex: 10,
+              display: "flex",
+              flexDirection: "column" as const,
+              background: "var(--bg-base)",
+            }),
       }}
     >
       {/* Tab bar with window controls */}
-      <div style={{
-        display: "flex", alignItems: "center", background: "var(--bg-tertiary, #0f0f0f)",
-        borderBottom: "1px solid var(--border-subtle)", flexShrink: 0,
-      }}>
-        <div style={{ display: "flex", flex: 1, overflow: "auto", scrollbarWidth: "none", minWidth: 0 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          background: "var(--bg-tertiary, #0f0f0f)",
+          borderBottom: "1px solid var(--border-subtle)",
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flex: 1,
+            overflow: "auto",
+            scrollbarWidth: "none",
+            minWidth: 0,
+          }}
+        >
           {(tabs && tabs.length > 1 ? tabs : []).map((tab, i) => {
             const name = tab.path.split("/").pop() ?? tab.path;
             const isDiff = !!tab.diff;
@@ -614,26 +814,54 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
               <div
                 key={`${tab.path}-${tab.sha ?? i}`}
                 onClick={() => onTabClick?.(i)}
-                onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onTabClose?.(i); } }}
+                onAuxClick={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    onTabClose?.(i);
+                  }
+                }}
                 style={{
-                  display: "flex", alignItems: "center", gap: 4,
-                  padding: "4px 8px", fontSize: 11, cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "4px 8px",
+                  fontSize: 11,
+                  cursor: "pointer",
                   fontFamily: "var(--font-mono)",
                   color: isActive ? "var(--text-primary)" : "var(--text-muted)",
                   background: isActive ? "var(--bg-secondary)" : "transparent",
-                  borderBottom: isActive ? "2px solid var(--accent)" : "2px solid transparent",
+                  borderBottom: isActive
+                    ? "2px solid var(--accent)"
+                    : "2px solid transparent",
                   borderRight: "1px solid var(--border-subtle)",
-                  whiteSpace: "nowrap", flexShrink: 0,
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
                 }}
               >
                 {isDiff && <GitCommit size={10} style={{ opacity: 0.5 }} />}
                 <span>{name}</span>
-                {isDiff && tab.sha && <span style={{ fontSize: 9, opacity: 0.4 }}>{tab.sha.slice(0, 7)}</span>}
+                {isDiff && tab.sha && (
+                  <span style={{ fontSize: 9, opacity: 0.4 }}>
+                    {tab.sha.slice(0, 7)}
+                  </span>
+                )}
                 <span
-                  onClick={(e) => { e.stopPropagation(); onTabClose?.(i); }}
-                  style={{ marginLeft: 2, opacity: 0.4, cursor: "pointer", lineHeight: 1 }}
-                  onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTabClose?.(i);
+                  }}
+                  style={{
+                    marginLeft: 2,
+                    opacity: 0.4,
+                    cursor: "pointer",
+                    lineHeight: 1,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.opacity = "1";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.opacity = "0.4";
+                  }}
                 >
                   ×
                 </span>
@@ -642,13 +870,37 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
           })}
         </div>
         {/* Window controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 6px", flexShrink: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 2,
+            padding: "0 6px",
+            flexShrink: 0,
+          }}
+        >
           {onMinimize && !split && (
             <button
               onClick={onMinimize}
-              style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 4, display: "flex", alignItems: "center", borderRadius: 4, transition: "all 0.1s" }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                padding: 4,
+                display: "flex",
+                alignItems: "center",
+                borderRadius: 4,
+                transition: "all 0.1s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "var(--text-primary)";
+                e.currentTarget.style.background = "var(--bg-hover)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "var(--text-muted)";
+                e.currentTarget.style.background = "transparent";
+              }}
               title="Minimize"
             >
               <Minus size={14} />
@@ -656,9 +908,25 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
           )}
           <button
             onClick={onCloseAll ?? onClose}
-            style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 4, display: "flex", alignItems: "center", borderRadius: 4, transition: "all 0.1s" }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "rgba(220,38,38,0.2)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              padding: 4,
+              display: "flex",
+              alignItems: "center",
+              borderRadius: 4,
+              transition: "all 0.1s",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = "var(--text-primary)";
+              e.currentTarget.style.background = "rgba(220,38,38,0.2)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "var(--text-muted)";
+              e.currentTarget.style.background = "transparent";
+            }}
             title="Close all"
           >
             <X size={14} />
@@ -679,11 +947,25 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
           gap: 12,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            minWidth: 0,
+            flex: 1,
+          }}
+        >
           {isDiffMode ? (
-            <GitCommit size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
+            <GitCommit
+              size={14}
+              style={{ color: "var(--accent)", flexShrink: 0 }}
+            />
           ) : (
-            <File size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+            <File
+              size={14}
+              style={{ color: "var(--text-muted)", flexShrink: 0 }}
+            />
           )}
           <span
             style={{
@@ -742,58 +1024,98 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
           {!isDiffMode && !editing && (
             <button
               onClick={toggleDiff}
-              style={{ ...headerBtnStyle, color: showDiff ? "var(--accent)" : "var(--text-muted)" }}
+              style={{
+                ...headerBtnStyle,
+                color: showDiff ? "var(--accent)" : "var(--text-muted)",
+              }}
               title={showDiff ? "View file" : "View diff vs HEAD"}
               disabled={diffLoading}
             >
-              {diffLoading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <GitBranch size={14} />}
+              {diffLoading ? (
+                <Loader2
+                  size={14}
+                  style={{ animation: "spin 1s linear infinite" }}
+                />
+              ) : (
+                <GitBranch size={14} />
+              )}
             </button>
           )}
-          {!isDiffMode && (editing ? (
-            <>
-              <button
-                onClick={handleCancel}
-                style={headerBtnStyle}
-                title="Cancel (Esc)"
-              >
-                <RotateCcw size={14} />
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={!dirty || saving}
-                style={{
-                  ...headerBtnStyle,
-                  color: dirty ? "var(--accent)" : "var(--text-muted)",
-                  opacity: saving ? 0.5 : 1,
-                }}
-                title="Save (Ctrl+S)"
-              >
-                {saving ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={14} />}
-              </button>
-            </>
-          ) : (
-            canEdit && (
-              <button
-                onClick={() => handleEdit()}
-                style={headerBtnStyle}
-                title="Edit"
-              >
-                <Pencil size={14} />
-              </button>
-            )
-          ))}
+          {!isDiffMode &&
+            (editing ? (
+              <>
+                <button
+                  onClick={handleCancel}
+                  style={headerBtnStyle}
+                  title="Cancel (Esc)"
+                >
+                  <RotateCcw size={14} />
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={!dirty || saving}
+                  style={{
+                    ...headerBtnStyle,
+                    color: dirty ? "var(--accent)" : "var(--text-muted)",
+                    opacity: saving ? 0.5 : 1,
+                  }}
+                  title="Save (Ctrl+S)"
+                >
+                  {saving ? (
+                    <Loader2
+                      size={14}
+                      style={{ animation: "spin 1s linear infinite" }}
+                    />
+                  ) : (
+                    <Save size={14} />
+                  )}
+                </button>
+              </>
+            ) : (
+              canEdit && (
+                <button
+                  onClick={() => handleEdit()}
+                  style={headerBtnStyle}
+                  title="Edit"
+                >
+                  <Pencil size={14} />
+                </button>
+              )
+            ))}
           {onSplitChange && (
             <>
               <button
-                onClick={() => onSplitChange(split && splitDirection === "horizontal" ? "off" : "horizontal")}
-                style={{ ...headerBtnStyle, color: split && splitDirection === "horizontal" ? "var(--accent)" : "var(--text-muted)" }}
+                onClick={() =>
+                  onSplitChange(
+                    split && splitDirection === "horizontal"
+                      ? "off"
+                      : "horizontal",
+                  )
+                }
+                style={{
+                  ...headerBtnStyle,
+                  color:
+                    split && splitDirection === "horizontal"
+                      ? "var(--accent)"
+                      : "var(--text-muted)",
+                }}
                 title="Split horizontal"
               >
                 <Columns2 size={14} />
               </button>
               <button
-                onClick={() => onSplitChange(split && splitDirection === "vertical" ? "off" : "vertical")}
-                style={{ ...headerBtnStyle, color: split && splitDirection === "vertical" ? "var(--accent)" : "var(--text-muted)" }}
+                onClick={() =>
+                  onSplitChange(
+                    split && splitDirection === "vertical" ? "off" : "vertical",
+                  )
+                }
+                style={{
+                  ...headerBtnStyle,
+                  color:
+                    split && splitDirection === "vertical"
+                      ? "var(--accent)"
+                      : "var(--text-muted)",
+                }}
                 title="Split vertical"
               >
                 <Rows2 size={14} />
@@ -825,15 +1147,44 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
       ) : showDiff && diffContent ? (
         <DiffView diff={diffContent} fullHeight />
       ) : (
-        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "auto",
+          }}
+        >
           {loading && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1 }}>
-              <Loader2 size={24} style={{ color: "var(--text-muted)", animation: "spin 1s linear infinite" }} />
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: 1,
+              }}
+            >
+              <Loader2
+                size={24}
+                style={{
+                  color: "var(--text-muted)",
+                  animation: "spin 1s linear infinite",
+                }}
+              />
             </div>
           )}
 
           {error && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, color: "var(--danger)" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: 1,
+                color: "var(--danger)",
+              }}
+            >
               <div style={{ textAlign: "center" }}>
                 <AlertCircle size={32} style={{ marginBottom: 8 }} />
                 <div style={{ fontSize: 13 }}>{error}</div>

@@ -28,7 +28,10 @@ const TABS = [
   { id: "memory", label: "Memory", icon: Brain },
 ] as const;
 
-const TAB_COMPONENTS: Record<string, React.LazyExoticComponent<() => JSX.Element>> = {
+const TAB_COMPONENTS: Record<
+  string,
+  React.LazyExoticComponent<() => JSX.Element>
+> = {
   config: ConfigTab,
   credentials: CredentialsTab,
   plugins: PluginsTab,
@@ -46,7 +49,13 @@ interface SettingsOverlayProps {
   onExited?: () => void;
 }
 
-export function SettingsOverlay({ activeTab, onTabChange, onClose, isClosing = false, onExited }: SettingsOverlayProps) {
+export function SettingsOverlay({
+  activeTab,
+  onTabChange,
+  onClose,
+  isClosing = false,
+  onExited,
+}: SettingsOverlayProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -55,17 +64,23 @@ export function SettingsOverlay({ activeTab, onTabChange, onClose, isClosing = f
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  const handleAnimationEnd = useCallback((e: React.AnimationEvent) => {
-    if (isClosing && e.currentTarget === e.target) {
-      onExited?.();
-    }
-  }, [isClosing, onExited]);
+  const handleAnimationEnd = useCallback(
+    (e: React.AnimationEvent) => {
+      if (isClosing && e.currentTarget === e.target) {
+        onExited?.();
+      }
+    },
+    [isClosing, onExited],
+  );
 
   const TabComponent = TAB_COMPONENTS[activeTab];
   const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Settings";
 
   return (
-    <div className={`settings-panel ${isClosing ? 'settings-closing' : ''}`} onAnimationEnd={handleAnimationEnd}>
+    <div
+      className={`settings-panel ${isClosing ? "settings-closing" : ""}`}
+      onAnimationEnd={handleAnimationEnd}
+    >
       <div className="settings-sidebar">
         <div className="settings-sidebar-header">
           <span>Settings</span>
@@ -90,7 +105,11 @@ export function SettingsOverlay({ activeTab, onTabChange, onClose, isClosing = f
       <div className="settings-content">
         <div className="settings-content-header">
           <span className="settings-content-title">{activeLabel}</span>
-          <button onClick={onClose} className="settings-close-btn" title="Close (Esc)">
+          <button
+            onClick={onClose}
+            className="settings-close-btn"
+            title="Close (Esc)"
+          >
             <X size={15} />
           </button>
         </div>
@@ -98,7 +117,14 @@ export function SettingsOverlay({ activeTab, onTabChange, onClose, isClosing = f
           {TabComponent && (
             <Suspense
               fallback={
-                <div style={{ textAlign: "center", padding: 32, color: "var(--text-muted)", fontSize: 13 }}>
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: 32,
+                    color: "var(--text-muted)",
+                    fontSize: 13,
+                  }}
+                >
                   Loading...
                 </div>
               }

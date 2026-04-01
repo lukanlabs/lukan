@@ -14,12 +14,9 @@ export function useWorkspace() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState("config");
 
-  const togglePanel = useCallback(
-    (panel: SidePanelId) => {
-      setSidePanel((prev) => (prev === panel ? null : panel));
-    },
-    [],
-  );
+  const togglePanel = useCallback((panel: SidePanelId) => {
+    setSidePanel((prev) => (prev === panel ? null : panel));
+  }, []);
 
   const openSettings = useCallback((tab?: string) => {
     if (tab) setSettingsTab(tab);

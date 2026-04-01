@@ -22,7 +22,7 @@ export function useTerminalSessions() {
   /** Initialize by listing existing tmux sessions and reconnecting to each. */
   const initialize = useCallback(async () => {
     try {
-      const existing = await terminalList() ?? [];
+      const existing = (await terminalList()) ?? [];
       if (!Array.isArray(existing) || existing.length === 0) {
         // No existing sessions — create a fresh one
         const info = await terminalCreate(undefined, 80, 24);
@@ -116,7 +116,9 @@ export function useTerminalSessions() {
         return [...prev, session];
       });
       setActiveSessionId(id);
-      window.dispatchEvent(new CustomEvent("terminal-session-switched", { detail: id }));
+      window.dispatchEvent(
+        new CustomEvent("terminal-session-switched", { detail: id }),
+      );
     } catch {
       // ignore
     }
@@ -124,11 +126,15 @@ export function useTerminalSessions() {
 
   const switchSession = useCallback((id: string) => {
     setActiveSessionId(id);
-    window.dispatchEvent(new CustomEvent("terminal-session-switched", { detail: id }));
+    window.dispatchEvent(
+      new CustomEvent("terminal-session-switched", { detail: id }),
+    );
   }, []);
 
   const renameSession = useCallback(async (id: string, label: string) => {
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, label, name: label } : s)));
+    setSessions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, label, name: label } : s)),
+    );
     try {
       await terminalRename(id, label);
     } catch {
@@ -193,7 +199,8 @@ export function useTerminalSessions() {
   // Sync renames coming from the side panel
   useEffect(() => {
     const onRenamed = (e: Event) => {
-      const { id, name } = (e as CustomEvent<{ id: string; name: string }>).detail;
+      const { id, name } = (e as CustomEvent<{ id: string; name: string }>)
+        .detail;
       setSessions((prev) =>
         prev.map((s) => (s.id === id ? { ...s, label: name, name } : s)),
       );

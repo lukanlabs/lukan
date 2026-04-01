@@ -1,7 +1,19 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { MessageSquare, Loader2, Search, Trash2, CheckSquare, Square, X } from "lucide-react";
+import {
+  MessageSquare,
+  Loader2,
+  Search,
+  Trash2,
+  CheckSquare,
+  Square,
+  X,
+} from "lucide-react";
 import type { SessionSummary } from "../../../lib/types";
-import { listSessions, deleteSession, deleteAllSessions } from "../../../lib/tauri";
+import {
+  listSessions,
+  deleteSession,
+  deleteAllSessions,
+} from "../../../lib/tauri";
 
 interface SessionsPanelProps {
   currentSessionId: string;
@@ -19,13 +31,19 @@ function formatDate(dateStr: string): string {
     if (diffHours < 1) return "Just now";
     if (diffHours < 24) return `${Math.floor(diffHours)}h ago`;
     if (diffHours < 48) return "Yesterday";
-    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
   } catch {
     return dateStr;
   }
 }
 
-type ConfirmAction = { type: "single"; id: string } | { type: "selected" } | { type: "all" };
+type ConfirmAction =
+  | { type: "single"; id: string }
+  | { type: "selected" }
+  | { type: "all" };
 
 export function SessionsPanel({
   currentSessionId,
@@ -36,7 +54,9 @@ export function SessionsPanel({
   const [search, setSearch] = useState("");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(
+    null,
+  );
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -54,7 +74,9 @@ export function SessionsPanel({
 
   // Refresh sessions list when a session changes (e.g. renamed)
   useEffect(() => {
-    const onChanged = () => { load(); };
+    const onChanged = () => {
+      load();
+    };
     window.addEventListener("session-changed", onChanged);
     return () => window.removeEventListener("session-changed", onChanged);
   }, [load]);
@@ -103,7 +125,9 @@ export function SessionsPanel({
       setSelectionMode(false);
       await load();
       if (deletedIds.length > 0) {
-        window.dispatchEvent(new CustomEvent("sessions-deleted", { detail: deletedIds }));
+        window.dispatchEvent(
+          new CustomEvent("sessions-deleted", { detail: deletedIds }),
+        );
       }
     } catch (e) {
       console.error("Failed to delete sessions:", e);
@@ -112,11 +136,12 @@ export function SessionsPanel({
     }
   }, [confirmAction, selectedIds, load, sessions]);
 
-  const confirmLabel = confirmAction?.type === "all"
-    ? `Delete all ${sessions?.length ?? 0} sessions?`
-    : confirmAction?.type === "selected"
-      ? `Delete ${selectedIds.size} session${selectedIds.size !== 1 ? "s" : ""}?`
-      : "Delete this session?";
+  const confirmLabel =
+    confirmAction?.type === "all"
+      ? `Delete all ${sessions?.length ?? 0} sessions?`
+      : confirmAction?.type === "selected"
+        ? `Delete ${selectedIds.size} session${selectedIds.size !== 1 ? "s" : ""}?`
+        : "Delete this session?";
 
   return (
     <div>
@@ -129,10 +154,22 @@ export function SessionsPanel({
             borderBottom: "1px solid rgba(220, 38, 38, 0.3)",
           }}
         >
-          <div style={{ fontSize: 12, color: "var(--text-primary, #e4e4e7)", marginBottom: 6 }}>
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--text-primary, #e4e4e7)",
+              marginBottom: 6,
+            }}
+          >
             {confirmLabel}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
+          <div
+            style={{
+              fontSize: 11,
+              color: "var(--text-muted)",
+              marginBottom: 8,
+            }}
+          >
             This cannot be undone.
           </div>
           <div style={{ display: "flex", gap: 6 }}>
@@ -179,7 +216,9 @@ export function SessionsPanel({
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <span style={{ fontSize: 11, color: "var(--text-secondary)", flex: 1 }}>
+          <span
+            style={{ fontSize: 11, color: "var(--text-secondary)", flex: 1 }}
+          >
             {selectedIds.size} selected
           </span>
           <button
@@ -191,7 +230,10 @@ export function SessionsPanel({
             style={{
               border: "none",
               background: "transparent",
-              color: selectedIds.size > 0 ? "rgba(220, 38, 38, 0.8)" : "var(--text-muted)",
+              color:
+                selectedIds.size > 0
+                  ? "rgba(220, 38, 38, 0.8)"
+                  : "var(--text-muted)",
               cursor: selectedIds.size > 0 ? "pointer" : "default",
               padding: 4,
               borderRadius: 4,
@@ -218,7 +260,14 @@ export function SessionsPanel({
       )}
 
       {/* Header: search + actions */}
-      <div style={{ padding: "4px 8px", display: "flex", alignItems: "center", gap: 4 }}>
+      <div
+        style={{
+          padding: "4px 8px",
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+        }}
+      >
         <div
           style={{
             flex: 1,
@@ -230,7 +279,10 @@ export function SessionsPanel({
             padding: "3px 6px",
           }}
         >
-          <Search size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+          <Search
+            size={12}
+            style={{ color: "var(--text-muted)", flexShrink: 0 }}
+          />
           <input
             type="text"
             value={search}
@@ -286,10 +338,21 @@ export function SessionsPanel({
 
       {filtered === null ? (
         <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
-          <Loader2 size={18} style={{ color: "var(--text-muted)" }} className="animate-spin" />
+          <Loader2
+            size={18}
+            style={{ color: "var(--text-muted)" }}
+            className="animate-spin"
+          />
         </div>
       ) : filtered.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 12 }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: 24,
+            color: "var(--text-muted)",
+            fontSize: 12,
+          }}
+        >
           {search ? "No matching sessions" : "No sessions yet"}
         </div>
       ) : (
@@ -297,8 +360,10 @@ export function SessionsPanel({
           const isActive = session.id === currentSessionId;
           const isSelected = selectedIds.has(session.id);
           const isHovered = hoveredId === session.id;
-          const displayName = session.name || session.lastMessage || "New session";
-          const subtitle = session.name && session.lastMessage ? session.lastMessage : null;
+          const displayName =
+            session.name || session.lastMessage || "New session";
+          const subtitle =
+            session.name && session.lastMessage ? session.lastMessage : null;
           return (
             <button
               key={session.id}
@@ -311,11 +376,13 @@ export function SessionsPanel({
               }}
               onMouseEnter={(e) => {
                 setHoveredId(session.id);
-                if (!isActive && !selectionMode) e.currentTarget.style.background = "rgba(50, 50, 50, 0.2)";
+                if (!isActive && !selectionMode)
+                  e.currentTarget.style.background = "rgba(50, 50, 50, 0.2)";
               }}
               onMouseLeave={(e) => {
                 setHoveredId(null);
-                if (!isActive && !selectionMode) e.currentTarget.style.background = "transparent";
+                if (!isActive && !selectionMode)
+                  e.currentTarget.style.background = "transparent";
               }}
               style={{
                 display: "flex",
@@ -338,25 +405,39 @@ export function SessionsPanel({
                 isSelected ? (
                   <CheckSquare
                     size={13}
-                    style={{ color: "rgba(59, 130, 246, 0.8)", marginTop: 2, flexShrink: 0 }}
+                    style={{
+                      color: "rgba(59, 130, 246, 0.8)",
+                      marginTop: 2,
+                      flexShrink: 0,
+                    }}
                   />
                 ) : (
                   <Square
                     size={13}
-                    style={{ color: "var(--text-muted)", marginTop: 2, flexShrink: 0 }}
+                    style={{
+                      color: "var(--text-muted)",
+                      marginTop: 2,
+                      flexShrink: 0,
+                    }}
                   />
                 )
               ) : (
                 <MessageSquare
                   size={13}
-                  style={{ color: "var(--text-muted)", marginTop: 2, flexShrink: 0 }}
+                  style={{
+                    color: "var(--text-muted)",
+                    marginTop: 2,
+                    flexShrink: 0,
+                  }}
                 />
               )}
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div
                   style={{
                     fontSize: 12,
-                    color: session.name ? "var(--text-primary, #e4e4e7)" : "var(--text-secondary)",
+                    color: session.name
+                      ? "var(--text-primary, #e4e4e7)"
+                      : "var(--text-secondary)",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
@@ -379,7 +460,14 @@ export function SessionsPanel({
                     {subtitle}
                   </div>
                 )}
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    marginTop: 2,
+                  }}
+                >
                   <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
                     {formatDate(session.updatedAt)}
                   </span>

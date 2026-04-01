@@ -19,7 +19,10 @@ export function CodeBlock({ language, children }: CodeBlockProps) {
   };
 
   return (
-    <div className="group relative my-3 rounded-lg overflow-hidden border border-white/10" style={{ background: "rgba(20, 20, 20, 0.8)" }}>
+    <div
+      className="group relative my-3 rounded-lg overflow-hidden border border-white/10"
+      style={{ background: "rgba(20, 20, 20, 0.8)" }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
         {language && (

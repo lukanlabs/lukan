@@ -38,13 +38,24 @@ function buildToolResultsMap(
 interface ChatPanelProps {
   tabId: string;
   isActive: boolean;
-  onStatsChange?: (tabId: string, tokenUsage: TokenUsage, contextSize: number) => void;
+  onStatsChange?: (
+    tabId: string,
+    tokenUsage: TokenUsage,
+    contextSize: number,
+  ) => void;
   pendingSessionId?: string;
   onPendingLoadConsumed?: (tabId: string) => void;
   onSessionIdChange?: (tabId: string, sessionId: string) => void;
 }
 
-export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, onPendingLoadConsumed, onSessionIdChange }: ChatPanelProps) {
+export function ChatPanel({
+  tabId,
+  isActive,
+  onStatsChange,
+  pendingSessionId,
+  onPendingLoadConsumed,
+  onSessionIdChange,
+}: ChatPanelProps) {
   const chat = useChat(tabId);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -67,7 +78,6 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
       onPendingLoadConsumed?.(tabId);
     }
   }, [pendingSessionId, tabId, chat.loadSession, onPendingLoadConsumed]);
-
 
   // Listen for sidebar session events (only on the active panel)
   useEffect(() => {
@@ -130,7 +140,8 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
     return () => window.removeEventListener("keydown", handler);
   }, [isActive, chat.newSession, chat.abort, chat.isProcessing]);
 
-  const isEmpty = chat.messages.length === 0 && chat.streamingBlocks.length === 0;
+  const isEmpty =
+    chat.messages.length === 0 && chat.streamingBlocks.length === 0;
 
   const toolResultsMap = useMemo(
     () => buildToolResultsMap(chat.messages, chat.toolImages),
@@ -153,12 +164,20 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
             {isEmpty && (
               <div className="flex flex-col items-center justify-center h-full text-zinc-400 gap-4 pt-16 sm:pt-32">
                 <div className="relative">
-                  <img src={logoUrl} alt="lukan" className="h-20 w-20 sm:h-32 sm:w-32 animate-pulse-subtle" style={{ imageRendering: "auto" }} />
+                  <img
+                    src={logoUrl}
+                    alt="lukan"
+                    className="h-20 w-20 sm:h-32 sm:w-32 animate-pulse-subtle"
+                    style={{ imageRendering: "auto" }}
+                  />
                 </div>
                 <div className="text-center space-y-2">
-                  <h2 className="text-xl font-semibold text-zinc-200">Welcome to lukan</h2>
+                  <h2 className="text-xl font-semibold text-zinc-200">
+                    Welcome to lukan
+                  </h2>
                   <p className="text-sm text-zinc-500 max-w-xs">
-                    Your AI-powered assistant. Tell me what to do and I'll get it done.
+                    Your AI-powered assistant. Tell me what to do and I'll get
+                    it done.
                   </p>
                 </div>
               </div>
@@ -167,7 +186,11 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
             {/* Messages */}
             <div className="space-y-1 max-w-4xl mx-auto">
               {chat.messages.map((msg, i) => (
-                <MessageBubble key={`msg-${i}`} message={msg} toolResultsMap={toolResultsMap} />
+                <MessageBubble
+                  key={`msg-${i}`}
+                  message={msg}
+                  toolResultsMap={toolResultsMap}
+                />
               ))}
             </div>
 
@@ -175,15 +198,25 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
             {chat.streamingBlocks.length > 0 && (
               <div className="mb-4 flex justify-start animate-fade-in max-w-4xl mx-auto">
                 <div className="flex gap-3 w-full max-w-4xl">
-                  <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center" style={{ perspective: 200 }}>
-                    <img src={logoUrl} alt="" className={`h-5 w-5 ${chat.isProcessing ? "animate-logo-rock" : ""}`} style={{ imageRendering: "auto" }} />
+                  <div
+                    className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center"
+                    style={{ perspective: 200 }}
+                  >
+                    <img
+                      src={logoUrl}
+                      alt=""
+                      className={`h-5 w-5 ${chat.isProcessing ? "animate-logo-rock" : ""}`}
+                      style={{ imageRendering: "auto" }}
+                    />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="space-y-1.5">
                       {chat.streamingBlocks.map((block) => {
                         switch (block.type) {
                           case "text":
-                            return <StreamingText key={block.id} text={block.text} />;
+                            return (
+                              <StreamingText key={block.id} text={block.text} />
+                            );
                           case "thinking":
                             return (
                               <div
@@ -198,7 +231,15 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
                               </div>
                             );
                           case "tool":
-                            return <ToolCallCard key={block.id} tool={block.tool} onSendToBackground={() => sendToBackground(tabId)} />;
+                            return (
+                              <ToolCallCard
+                                key={block.id}
+                                tool={block.tool}
+                                onSendToBackground={() =>
+                                  sendToBackground(tabId)
+                                }
+                              />
+                            );
                           case "approval":
                             return (
                               <InlineApproval
@@ -239,8 +280,16 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
             {/* Processing indicator */}
             {chat.isProcessing && chat.streamingBlocks.length === 0 && (
               <div className="flex items-center gap-3 py-4 animate-fade-in max-w-4xl mx-auto">
-                <div className="flex h-8 w-8 items-center justify-center" style={{ perspective: 200 }}>
-                  <img src={logoUrl} alt="" className="h-5 w-5 animate-logo-rock" style={{ imageRendering: "auto" }} />
+                <div
+                  className="flex h-8 w-8 items-center justify-center"
+                  style={{ perspective: 200 }}
+                >
+                  <img
+                    src={logoUrl}
+                    alt=""
+                    className="h-5 w-5 animate-logo-rock"
+                    style={{ imageRendering: "auto" }}
+                  />
                 </div>
                 <div className="flex gap-1">
                   <span className="typing-dot w-2 h-2 rounded-full bg-zinc-500" />
@@ -279,7 +328,6 @@ export function ChatPanel({ tabId, isActive, onStatsChange, pendingSessionId, on
         {/* Task panel */}
         {chat.tasks.length > 0 && <TaskPanel tasks={chat.tasks} />}
       </div>
-
     </div>
   );
 }

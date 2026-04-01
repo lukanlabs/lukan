@@ -19,27 +19,91 @@ function buildCompactDiff(oldText: string, newText: string): DiffLine[] {
   const oldLines = oldText.split("\n");
   const newLines = newText.split("\n");
 
-  const raw: { type: "ctx" | "add" | "del"; oldNo: number; newNo: number; text: string }[] = [];
+  const raw: {
+    type: "ctx" | "add" | "del";
+    oldNo: number;
+    newNo: number;
+    text: string;
+  }[] = [];
   const maxLen = Math.max(oldLines.length, newLines.length);
-  let oi = 0, ni = 0;
+  let oi = 0,
+    ni = 0;
 
   while (oi < oldLines.length || ni < newLines.length) {
-    if (oi < oldLines.length && ni < newLines.length && oldLines[oi] === newLines[ni]) {
-      raw.push({ type: "ctx", oldNo: oi + 1, newNo: ni + 1, text: oldLines[oi] });
-      oi++; ni++;
+    if (
+      oi < oldLines.length &&
+      ni < newLines.length &&
+      oldLines[oi] === newLines[ni]
+    ) {
+      raw.push({
+        type: "ctx",
+        oldNo: oi + 1,
+        newNo: ni + 1,
+        text: oldLines[oi],
+      });
+      oi++;
+      ni++;
     } else {
-      let foundOld = -1, foundNew = -1;
+      let foundOld = -1,
+        foundNew = -1;
       for (let k = 1; k < Math.min(10, maxLen); k++) {
-        if (foundNew === -1 && ni + k < newLines.length && oi < oldLines.length && oldLines[oi] === newLines[ni + k]) foundNew = ni + k;
-        if (foundOld === -1 && oi + k < oldLines.length && ni < newLines.length && oldLines[oi + k] === newLines[ni]) foundOld = oi + k;
+        if (
+          foundNew === -1 &&
+          ni + k < newLines.length &&
+          oi < oldLines.length &&
+          oldLines[oi] === newLines[ni + k]
+        )
+          foundNew = ni + k;
+        if (
+          foundOld === -1 &&
+          oi + k < oldLines.length &&
+          ni < newLines.length &&
+          oldLines[oi + k] === newLines[ni]
+        )
+          foundOld = oi + k;
       }
-      if (foundOld !== -1 && (foundNew === -1 || (foundOld - oi) <= (foundNew - ni))) {
-        while (oi < foundOld) { raw.push({ type: "del", oldNo: oi + 1, newNo: ni + 1, text: oldLines[oi] }); oi++; }
+      if (
+        foundOld !== -1 &&
+        (foundNew === -1 || foundOld - oi <= foundNew - ni)
+      ) {
+        while (oi < foundOld) {
+          raw.push({
+            type: "del",
+            oldNo: oi + 1,
+            newNo: ni + 1,
+            text: oldLines[oi],
+          });
+          oi++;
+        }
       } else if (foundNew !== -1) {
-        while (ni < foundNew) { raw.push({ type: "add", oldNo: oi + 1, newNo: ni + 1, text: newLines[ni] }); ni++; }
+        while (ni < foundNew) {
+          raw.push({
+            type: "add",
+            oldNo: oi + 1,
+            newNo: ni + 1,
+            text: newLines[ni],
+          });
+          ni++;
+        }
       } else {
-        if (oi < oldLines.length) { raw.push({ type: "del", oldNo: oi + 1, newNo: ni + 1, text: oldLines[oi] }); oi++; }
-        if (ni < newLines.length) { raw.push({ type: "add", oldNo: oi + 1, newNo: ni + 1, text: newLines[ni] }); ni++; }
+        if (oi < oldLines.length) {
+          raw.push({
+            type: "del",
+            oldNo: oi + 1,
+            newNo: ni + 1,
+            text: oldLines[oi],
+          });
+          oi++;
+        }
+        if (ni < newLines.length) {
+          raw.push({
+            type: "add",
+            oldNo: oi + 1,
+            newNo: ni + 1,
+            text: newLines[ni],
+          });
+          ni++;
+        }
       }
     }
   }
@@ -47,7 +111,11 @@ function buildCompactDiff(oldText: string, newText: string): DiffLine[] {
   const show = new Set<number>();
   for (let i = 0; i < raw.length; i++) {
     if (raw[i].type !== "ctx") {
-      for (let j = Math.max(0, i - 1); j <= Math.min(raw.length - 1, i + 1); j++) {
+      for (
+        let j = Math.max(0, i - 1);
+        j <= Math.min(raw.length - 1, i + 1);
+        j++
+      ) {
         show.add(j);
       }
     }
@@ -72,7 +140,14 @@ function buildCompactDiff(oldText: string, newText: string): DiffLine[] {
   return result;
 }
 
-function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll }: {
+function ToolPreview({
+  tool,
+  allIds,
+  tools,
+  onApprove,
+  onAlwaysAllow,
+  onDenyAll,
+}: {
   tool: ToolApprovalRequest;
   allIds: string[];
   tools: ToolApprovalRequest[];
@@ -84,23 +159,40 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
   const isWrite = tool.name === "WriteFile";
   const isBash = tool.name === "Bash";
 
-  const filePath = typeof tool.input.file_path === "string" ? tool.input.file_path : null;
-  const command = typeof tool.input.command === "string" ? tool.input.command : null;
-  const oldText = typeof tool.input.old_text === "string" ? tool.input.old_text : null;
-  const newText = typeof tool.input.new_text === "string" ? tool.input.new_text : null;
-  const content = typeof tool.input.content === "string" ? tool.input.content : null;
+  const filePath =
+    typeof tool.input.file_path === "string" ? tool.input.file_path : null;
+  const command =
+    typeof tool.input.command === "string" ? tool.input.command : null;
+  const oldText =
+    typeof tool.input.old_text === "string" ? tool.input.old_text : null;
+  const newText =
+    typeof tool.input.new_text === "string" ? tool.input.new_text : null;
+  const content =
+    typeof tool.input.content === "string" ? tool.input.content : null;
 
-  const diffLines = isEdit && oldText !== null && newText !== null
-    ? buildCompactDiff(oldText, newText) : null;
+  const diffLines =
+    isEdit && oldText !== null && newText !== null
+      ? buildCompactDiff(oldText, newText)
+      : null;
 
   return (
     <div className="rounded-lg bg-white/[0.02] overflow-hidden">
       {/* Header with tool info + Approve / Deny */}
       <div className="flex flex-wrap items-center justify-between gap-1 px-3 py-1.5 border-b border-white/5">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <span className="text-xs font-medium text-zinc-300 shrink-0">{tool.name}</span>
-          {filePath && <span className="text-[11px] text-zinc-500 font-mono truncate">{filePath}</span>}
-          {isBash && command && <span className="text-[11px] text-zinc-500 font-mono truncate">{command.slice(0, 80)}</span>}
+          <span className="text-xs font-medium text-zinc-300 shrink-0">
+            {tool.name}
+          </span>
+          {filePath && (
+            <span className="text-[11px] text-zinc-500 font-mono truncate">
+              {filePath}
+            </span>
+          )}
+          {isBash && command && (
+            <span className="text-[11px] text-zinc-500 font-mono truncate">
+              {command.slice(0, 80)}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button
@@ -123,7 +215,10 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
       {/* EditFile diff with line numbers */}
       {diffLines && (
         <div className="max-h-56 overflow-auto">
-          <table className="text-xs font-mono w-full border-collapse" style={{ tableLayout: "fixed" }}>
+          <table
+            className="text-xs font-mono w-full border-collapse"
+            style={{ tableLayout: "fixed" }}
+          >
             <tbody>
               {diffLines.map((line, i) => {
                 if (line.type === "sep") {
@@ -155,8 +250,11 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
                     <td className="px-2 py-0 text-right text-zinc-600 select-none w-8 border-r border-white/5 text-[10px]">
                       {line.lineNo}
                     </td>
-                    <td className={`px-3 py-0 whitespace-pre-wrap break-all overflow-hidden ${textCls}`}>
-                      {prefix}{line.text}
+                    <td
+                      className={`px-3 py-0 whitespace-pre-wrap break-all overflow-hidden ${textCls}`}
+                    >
+                      {prefix}
+                      {line.text}
                     </td>
                   </tr>
                 );
@@ -200,7 +298,12 @@ function ToolPreview({ tool, allIds, tools, onApprove, onAlwaysAllow, onDenyAll 
   );
 }
 
-export function InlineApproval({ tools, onApprove, onAlwaysAllow, onDenyAll }: InlineApprovalProps) {
+export function InlineApproval({
+  tools,
+  onApprove,
+  onAlwaysAllow,
+  onDenyAll,
+}: InlineApprovalProps) {
   const allIds = tools.map((t) => t.id);
 
   return (

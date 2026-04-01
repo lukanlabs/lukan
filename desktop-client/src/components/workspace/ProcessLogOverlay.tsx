@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { X, Skull, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import type { BgProcessInfo } from "../../lib/types";
-import { getBgProcessLog, killBgProcess, listBgProcesses, openUrl } from "../../lib/tauri";
+import {
+  getBgProcessLog,
+  killBgProcess,
+  listBgProcesses,
+  openUrl,
+} from "../../lib/tauri";
 
 function formatDuration(startedAt: string, endedAt?: string | null): string {
   const start = new Date(startedAt).getTime();
@@ -18,8 +23,12 @@ function formatDuration(startedAt: string, endedAt?: string | null): string {
 const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
 
 /** Parse a line into text and URL segments */
-function parseLine(line: string): Array<{ type: "text"; value: string } | { type: "url"; value: string }> {
-  const parts: Array<{ type: "text"; value: string } | { type: "url"; value: string }> = [];
+function parseLine(
+  line: string,
+): Array<{ type: "text"; value: string } | { type: "url"; value: string }> {
+  const parts: Array<
+    { type: "text"; value: string } | { type: "url"; value: string }
+  > = [];
   let lastIndex = 0;
   for (const match of line.matchAll(URL_RE)) {
     const idx = match.index!;
@@ -58,7 +67,9 @@ function LogContent({ text }: { text: string }) {
           >
             {i + 1}
           </span>
-          <span style={{ flex: 1, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          <span
+            style={{ flex: 1, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+          >
             {parseLine(line).map((seg, j) =>
               seg.type === "url" ? (
                 <span
@@ -66,7 +77,9 @@ function LogContent({ text }: { text: string }) {
                   role="link"
                   tabIndex={0}
                   onClick={() => openUrl(seg.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") openUrl(seg.value); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") openUrl(seg.value);
+                  }}
                   style={{
                     color: "var(--accent)",
                     textDecoration: "underline",
@@ -79,7 +92,7 @@ function LogContent({ text }: { text: string }) {
                 </span>
               ) : (
                 <span key={j}>{seg.value}</span>
-              )
+              ),
             )}
           </span>
         </div>
@@ -94,7 +107,11 @@ interface ProcessLogOverlayProps {
   onClose: () => void;
 }
 
-export function ProcessLogOverlay({ process: initialProcess, sessionId, onClose }: ProcessLogOverlayProps) {
+export function ProcessLogOverlay({
+  process: initialProcess,
+  sessionId,
+  onClose,
+}: ProcessLogOverlayProps) {
   const [process, setProcess] = useState(initialProcess);
   const [log, setLog] = useState<string | null>(null);
   const [killing, setKilling] = useState(false);
@@ -115,7 +132,10 @@ export function ProcessLogOverlay({ process: initialProcess, sessionId, onClose 
     };
     loadLog();
     const interval = setInterval(loadLog, 1000);
-    return () => { active = false; clearInterval(interval); };
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, [initialProcess.pid]);
 
   // Poll process status to update header
@@ -126,10 +146,15 @@ export function ProcessLogOverlay({ process: initialProcess, sessionId, onClose 
         const procs = await listBgProcesses(sessionId || undefined);
         const updated = procs.find((p) => p.pid === initialProcess.pid);
         if (active && updated) setProcess(updated);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     };
     const interval = setInterval(poll, 2000);
-    return () => { active = false; clearInterval(interval); };
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, [initialProcess.pid, sessionId]);
 
   // Tick for running timer
@@ -184,11 +209,12 @@ export function ProcessLogOverlay({ process: initialProcess, sessionId, onClose 
         ? "var(--text-muted)"
         : "var(--danger)";
 
-  const StatusIcon = process.status === "running"
-    ? Loader2
-    : process.status === "completed"
-      ? CheckCircle2
-      : XCircle;
+  const StatusIcon =
+    process.status === "running"
+      ? Loader2
+      : process.status === "completed"
+        ? CheckCircle2
+        : XCircle;
 
   const lineCount = log ? log.split("\n").length : 0;
 
@@ -216,13 +242,23 @@ export function ProcessLogOverlay({ process: initialProcess, sessionId, onClose 
           gap: 12,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            minWidth: 0,
+            flex: 1,
+          }}
+        >
           <StatusIcon
             size={14}
             style={{
               color: statusColor,
               flexShrink: 0,
-              ...(process.status === "running" ? { animation: "spin 1s linear infinite" } : {}),
+              ...(process.status === "running"
+                ? { animation: "spin 1s linear infinite" }
+                : {}),
             }}
           />
           <span
@@ -249,7 +285,14 @@ export function ProcessLogOverlay({ process: initialProcess, sessionId, onClose 
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexShrink: 0,
+          }}
+        >
           <span
             style={{
               fontSize: 11,
@@ -346,11 +389,11 @@ export function ProcessLogOverlay({ process: initialProcess, sessionId, onClose 
           flexShrink: 0,
         }}
       >
+        <span>{lineCount} lines</span>
         <span>
-          {lineCount} lines
-        </span>
-        <span>
-          {autoScroll ? "auto-scroll: on" : "auto-scroll: off (scroll to bottom to resume)"}
+          {autoScroll
+            ? "auto-scroll: on"
+            : "auto-scroll: off (scroll to bottom to resume)"}
         </span>
       </div>
     </div>

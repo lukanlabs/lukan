@@ -53,7 +53,8 @@ export default function AgentTabBar({
     }
   };
 
-  const hasUsage = tokenUsage && (tokenUsage.input > 0 || tokenUsage.output > 0);
+  const hasUsage =
+    tokenUsage && (tokenUsage.input > 0 || tokenUsage.output > 0);
   const hasCtx = !!contextSize && contextSize > 0;
 
   return (
@@ -65,7 +66,8 @@ export default function AgentTabBar({
       }}
     >
       {/* Action buttons — always visible on the left */}
-      <div className="flex items-center gap-0.5 pl-2 pr-1 flex-shrink-0"
+      <div
+        className="flex items-center gap-0.5 pl-2 pr-1 flex-shrink-0"
         style={{ borderRight: "1px solid rgba(60, 60, 60, 0.4)" }}
       >
         <button
@@ -134,7 +136,12 @@ export default function AgentTabBar({
             <button
               key={t.id}
               onClick={() => onSwitch(t.id)}
-              onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(t.id); } }}
+              onAuxClick={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault();
+                  onClose(t.id);
+                }
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 startRename(t.id, label);
@@ -146,7 +153,8 @@ export default function AgentTabBar({
                 color: isActive ? "#fafafa" : "#71717a",
               }}
               onMouseEnter={(e) => {
-                if (!isActive) e.currentTarget.style.background = "rgba(50, 50, 50, 0.2)";
+                if (!isActive)
+                  e.currentTarget.style.background = "rgba(50, 50, 50, 0.2)";
               }}
               onMouseLeave={(e) => {
                 if (!isActive) e.currentTarget.style.background = "transparent";
@@ -179,7 +187,8 @@ export default function AgentTabBar({
           )}
           {hasUsage && (
             <span className="text-[10px] text-zinc-600 font-mono">
-              {formatTokens(tokenUsage.input)}in / {formatTokens(tokenUsage.output)}out
+              {formatTokens(tokenUsage.input)}in /{" "}
+              {formatTokens(tokenUsage.output)}out
             </span>
           )}
         </div>

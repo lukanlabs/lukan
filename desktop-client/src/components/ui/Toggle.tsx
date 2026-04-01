@@ -13,9 +13,7 @@ export default function Toggle({ label, checked, onChange }: ToggleProps) {
         aria-checked={checked}
         className="relative w-11 h-6 rounded-full border-none cursor-pointer transition-all"
         style={{
-          background: checked
-            ? "#fafafa"
-            : "var(--bg-tertiary)",
+          background: checked ? "#fafafa" : "var(--bg-tertiary)",
           boxShadow: checked ? "none" : "inset 0 1px 3px rgba(0,0,0,0.3)",
           transitionDuration: "250ms",
         }}

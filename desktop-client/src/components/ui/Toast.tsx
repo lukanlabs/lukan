@@ -1,4 +1,11 @@
-import { useEffect, useState, useCallback, createContext, useContext, type ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  useCallback,
+  createContext,
+  useContext,
+  type ReactNode,
+} from "react";
 import { CheckCircle, XCircle, AlertTriangle } from "lucide-react";
 
 interface ToastMessage {
@@ -34,7 +41,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ toast }}>
       {children}
-      <div className="fixed bottom-5 right-5 flex flex-col gap-2.5" style={{ zIndex: 200 }}>
+      <div
+        className="fixed bottom-5 right-5 flex flex-col gap-2.5"
+        style={{ zIndex: 200 }}
+      >
         {toasts.map((t) => (
           <ToastItem key={t.id} toast={t} onDone={() => remove(t.id)} />
         ))}
@@ -49,7 +59,13 @@ const accentColors: Record<string, string> = {
   info: "#fbbf24",
 };
 
-function ToastItem({ toast, onDone }: { toast: ToastMessage; onDone: () => void }) {
+function ToastItem({
+  toast,
+  onDone,
+}: {
+  toast: ToastMessage;
+  onDone: () => void;
+}) {
   useEffect(() => {
     const timer = setTimeout(onDone, 3000);
     return () => clearTimeout(timer);

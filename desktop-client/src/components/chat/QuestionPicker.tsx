@@ -1,4 +1,12 @@
-import { HelpCircle, Send, Check, Square, CheckSquare, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  HelpCircle,
+  Send,
+  Check,
+  Square,
+  CheckSquare,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { useState } from "react";
 import type { PlannerQuestion } from "../../lib/types";
 
@@ -64,7 +72,11 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
         className="flex items-center gap-2 w-full text-left cursor-pointer rounded-md px-2 py-1.5 hover:bg-white/5 transition-colors"
       >
         <span className="text-zinc-600 shrink-0">
-          {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          {open ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
         </span>
         <span className="shrink-0 text-blue-400/70">
           <HelpCircle className="h-3.5 w-3.5" />
@@ -116,9 +128,13 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
                     <Square className="h-3.5 w-3.5 shrink-0 mt-0.5 text-zinc-600" />
                   )}
                   <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-medium text-blue-400/80">{opt.label}</span>
+                    <span className="text-xs font-medium text-blue-400/80">
+                      {opt.label}
+                    </span>
                     {opt.description && (
-                      <span className="text-[11px] text-zinc-600 mt-0.5">{opt.description}</span>
+                      <span className="text-[11px] text-zinc-600 mt-0.5">
+                        {opt.description}
+                      </span>
                     )}
                   </div>
                 </button>
@@ -128,9 +144,13 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
                   onClick={() => advance(opt.label)}
                   className="flex w-full flex-col items-start rounded-md bg-white/[0.02] px-3 py-2 text-left transition-colors hover:bg-white/[0.03] cursor-pointer"
                 >
-                  <span className="text-xs font-medium text-blue-400/80">{opt.label}</span>
+                  <span className="text-xs font-medium text-blue-400/80">
+                    {opt.label}
+                  </span>
                   {opt.description && (
-                    <span className="text-[11px] text-zinc-600 mt-0.5">{opt.description}</span>
+                    <span className="text-[11px] text-zinc-600 mt-0.5">
+                      {opt.description}
+                    </span>
                   )}
                 </button>
               ),

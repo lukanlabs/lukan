@@ -21,6 +21,7 @@ pub struct DirectoryListing {
 #[derive(serde::Deserialize)]
 pub struct PathQuery {
     path: Option<String>,
+    show_hidden: Option<bool>,
 }
 
 /// GET /api/files?path=...
@@ -53,7 +54,7 @@ pub async fn list_directory(Query(q): Query<PathQuery>) -> impl IntoResponse {
 
     while let Ok(Some(entry)) = read_dir.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
+        if name.starts_with('.') && !q.show_hidden.unwrap_or(false) {
             continue;
         }
 

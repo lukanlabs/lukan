@@ -14,15 +14,32 @@ interface LoginPageProps {
 function GoogleIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 48 48">
-      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-      <path fill="#FBBC05" d="M10.53 28.59a14.5 14.5 0 0 1 0-9.18l-7.98-6.19a24.01 24.01 0 0 0 0 21.56l7.98-6.19z" />
-      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M10.53 28.59a14.5 14.5 0 0 1 0-9.18l-7.98-6.19a24.01 24.01 0 0 0 0 21.56l7.98-6.19z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+      />
     </svg>
   );
 }
 
-export default function LoginPage({ onAuthenticated, message, devices, onLogout }: LoginPageProps) {
+export default function LoginPage({
+  onAuthenticated,
+  message,
+  devices,
+  onLogout,
+}: LoginPageProps) {
   const isDevicePicker = devices !== undefined;
   const [email, setEmail] = useState("");
   const [secret, setSecret] = useState("");
@@ -36,7 +53,9 @@ export default function LoginPage({ onAuthenticated, message, devices, onLogout 
   const origin = `${window.location.protocol}//${window.location.host}`;
 
   // Check if this is a CLI login flow (lukan login --remote <url>)
-  const rawCliPort = new URLSearchParams(window.location.search).get("cli_port");
+  const rawCliPort = new URLSearchParams(window.location.search).get(
+    "cli_port",
+  );
   const cliPort = rawCliPort && /^\d+$/.test(rawCliPort) ? rawCliPort : null;
 
   useEffect(() => {
@@ -54,7 +73,11 @@ export default function LoginPage({ onAuthenticated, message, devices, onLogout 
   }, [origin]);
 
   /** Send token + user info back to the CLI's local callback server. */
-  const callbackToCli = async (token: string, userId: string, userEmail: string) => {
+  const callbackToCli = async (
+    token: string,
+    userId: string,
+    userEmail: string,
+  ) => {
     const callbackUrl = `http://localhost:${cliPort}/callback?token=${encodeURIComponent(token)}&user_id=${encodeURIComponent(userId)}&email=${encodeURIComponent(userEmail)}`;
     try {
       await fetch(callbackUrl);
@@ -251,7 +274,8 @@ export default function LoginPage({ onAuthenticated, message, devices, onLogout 
               >
                 Your AI-powered assistant,
                 <br />
-                running on <strong style={{ fontWeight: 500 }}>your machine</strong>.
+                running on{" "}
+                <strong style={{ fontWeight: 500 }}>your machine</strong>.
               </p>
               <p
                 style={{
@@ -261,7 +285,8 @@ export default function LoginPage({ onAuthenticated, message, devices, onLogout 
                   margin: 0,
                 }}
               >
-                Sign in to securely connect to your local agent through the relay.
+                Sign in to securely connect to your local agent through the
+                relay.
               </p>
             </div>
           </div>
@@ -356,7 +381,9 @@ export default function LoginPage({ onAuthenticated, message, devices, onLogout 
                     </p>
                   </div>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div
+                    style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                  >
                     {devices.map((device) => (
                       <a
                         key={device}
@@ -377,7 +404,8 @@ export default function LoginPage({ onAuthenticated, message, devices, onLogout 
                         }}
                         onMouseEnter={(e) => {
                           e.currentTarget.style.borderColor = "#6366f1";
-                          e.currentTarget.style.background = "rgba(99,102,241,0.06)";
+                          e.currentTarget.style.background =
+                            "rgba(99,102,241,0.06)";
                         }}
                         onMouseLeave={(e) => {
                           e.currentTarget.style.borderColor = "#1e1e24";
@@ -394,7 +422,14 @@ export default function LoginPage({ onAuthenticated, message, devices, onLogout 
                           strokeLinecap="round"
                           strokeLinejoin="round"
                         >
-                          <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                          <rect
+                            x="2"
+                            y="3"
+                            width="20"
+                            height="14"
+                            rx="2"
+                            ry="2"
+                          />
                           <line x1="8" y1="21" x2="16" y2="21" />
                           <line x1="12" y1="17" x2="12" y2="21" />
                         </svg>
@@ -430,8 +465,12 @@ export default function LoginPage({ onAuthenticated, message, devices, onLogout 
                       padding: "8px 16px",
                       transition: "color 0.15s ease",
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = "#94a3b8"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = "#475569"; }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = "#94a3b8";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = "#475569";
+                    }}
                   >
                     Sign out
                   </button>

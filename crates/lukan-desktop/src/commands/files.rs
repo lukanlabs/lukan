@@ -25,6 +25,7 @@ pub struct DirectoryListing {
 pub async fn list_directory(
     state: State<'_, ChatState>,
     path: Option<String>,
+    show_hidden: Option<bool>,
 ) -> Result<DirectoryListing, String> {
     let dir = match path {
         Some(p) => PathBuf::from(p),
@@ -39,8 +40,8 @@ pub async fn list_directory(
     while let Ok(Some(entry)) = read_dir.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
 
-        // Skip hidden files starting with .
-        if name.starts_with('.') {
+        // Skip hidden files starting with . (unless show_hidden is true)
+        if name.starts_with('.') && !show_hidden.unwrap_or(false) {
             continue;
         }
 

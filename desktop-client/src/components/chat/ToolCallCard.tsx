@@ -50,11 +50,16 @@ const toolDisplayNames: Record<string, string> = {
   SubmitPlan: "Plan",
 };
 
-function getToolSummary(name: string, input?: Record<string, unknown>): string | null {
+function getToolSummary(
+  name: string,
+  input?: Record<string, unknown>,
+): string | null {
   if (!input) return null;
   switch (name) {
     case "Bash":
-      return typeof input.command === "string" ? input.command.slice(0, 60) : null;
+      return typeof input.command === "string"
+        ? input.command.slice(0, 60)
+        : null;
     case "ReadFiles":
     case "WriteFile":
     case "EditFile":
@@ -90,7 +95,10 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
   // Tick elapsed time while Bash is running (for delayed "Background" button)
   useEffect(() => {
     if (!isBashRunning) return;
-    const interval = setInterval(() => setElapsed(Date.now() - startedAt), 1000);
+    const interval = setInterval(
+      () => setElapsed(Date.now() - startedAt),
+      1000,
+    );
     return () => clearInterval(interval);
   }, [isBashRunning, startedAt]);
 
@@ -122,16 +130,26 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
         className="flex items-center gap-2 w-full text-left cursor-pointer rounded-md px-2 py-1.5 hover:bg-white/5 transition-colors"
       >
         <span className="text-zinc-600 shrink-0">
-          {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          {open ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
         </span>
-        <span className={`shrink-0 ${isAgent ? "text-purple-400/70" : "text-zinc-500"}`}>
+        <span
+          className={`shrink-0 ${isAgent ? "text-purple-400/70" : "text-zinc-500"}`}
+        >
           {icon}
         </span>
-        <span className={`text-xs font-medium ${isAgent ? "text-purple-300/80" : "text-zinc-400"}`}>
+        <span
+          className={`text-xs font-medium ${isAgent ? "text-purple-300/80" : "text-zinc-400"}`}
+        >
           {displayName}
         </span>
         {summary && (
-          <span className="text-xs text-zinc-600 truncate font-mono flex-1 min-w-0">{summary}</span>
+          <span className="text-xs text-zinc-600 truncate font-mono flex-1 min-w-0">
+            {summary}
+          </span>
         )}
         <span className="shrink-0 ml-auto flex items-center gap-1.5">
           {isBashRunning && !sendingToBg && tool.content && elapsed >= 5000 && (
@@ -167,8 +185,11 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
       {/* Image result */}
       {tool.image && (
         <div className="mt-1.5 mx-2 rounded-md overflow-hidden">
-          <img src={tool.image} alt="Tool result"
-               className="max-w-full max-h-64 sm:max-h-96 object-contain" />
+          <img
+            src={tool.image}
+            alt="Tool result"
+            className="max-w-full max-h-64 sm:max-h-96 object-contain"
+          />
         </div>
       )}
 
@@ -179,7 +200,9 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
             tool.isError ? "text-red-400/70" : "text-zinc-600"
           }`}
         >
-          {tool.content.length > 500 ? tool.content.slice(0, 500) + "..." : tool.content}
+          {tool.content.length > 500
+            ? tool.content.slice(0, 500) + "..."
+            : tool.content}
         </pre>
       )}
     </div>

@@ -16,7 +16,9 @@ export default function ProjectSelector({ onSelect }: Props) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    getRecentProjects().then(setRecents).catch(() => {});
+    getRecentProjects()
+      .then(setRecents)
+      .catch(() => {});
   }, []);
 
   const selectPath = async (path: string) => {
@@ -40,8 +42,9 @@ export default function ProjectSelector({ onSelect }: Props) {
 
   const handleHomeDir = async () => {
     const home =
-      (await import("../lib/tauri").then((m) => m.getCwd()).catch(() => null)) ||
-      "/";
+      (await import("../lib/tauri")
+        .then((m) => m.getCwd())
+        .catch(() => null)) || "/";
     await selectPath(home);
   };
 
@@ -95,7 +98,9 @@ export default function ProjectSelector({ onSelect }: Props) {
                 d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0h4"
               />
             </svg>
-            <span className="text-sm">Continue without project (home directory)</span>
+            <span className="text-sm">
+              Continue without project (home directory)
+            </span>
           </button>
         </div>
 

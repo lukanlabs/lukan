@@ -9,6 +9,7 @@ use lukan_plugins::PluginManager;
 use lukan_providers::create_provider;
 use lukan_tui::app::App;
 
+mod auto;
 mod daemon;
 mod login;
 mod models;
@@ -143,6 +144,14 @@ enum Commands {
         #[command(subcommand)]
         command: RelayCommands,
     },
+    /// Run an autonomous agent to complete a goal without human intervention
+    Auto {
+        /// The goal to achieve
+        goal: String,
+        /// Maximum number of turns (default: 50)
+        #[arg(long, default_value = "50")]
+        max_turns: usize,
+    },
     /// Catch-all for plugin aliases (e.g. `lukan wa ...`)
     #[command(external_subcommand)]
     External(Vec<String>),
@@ -269,6 +278,9 @@ async fn main() -> Result<()> {
                 );
             }
         },
+        Some(Commands::Auto { goal, max_turns }) => {
+            auto::run_auto(&goal, Some(max_turns)).await?;
+        }
         Some(Commands::External(args)) => {
             dispatch_alias_command(&args).await?;
         }

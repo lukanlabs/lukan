@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw, GitCommit, Columns2, Rows2, Maximize2, GitBranch } from "lucide-react";
+import { X, File, Loader2, AlertCircle, Pencil, Save, RotateCcw, GitCommit, Columns2, Rows2, Maximize2, GitBranch, Minus } from "lucide-react";
 import { MarkdownRenderer } from "../chat/MarkdownRenderer";
 import { DiffView } from "../chat/DiffView";
 import { readFile, writeFile, gitCommand } from "../../lib/tauri";
@@ -433,9 +433,13 @@ interface FileViewerProps {
   activeTabIdx?: number;
   onTabClick?: (idx: number) => void;
   onTabClose?: (idx: number) => void;
+  /** Called when the user clicks the minimize button */
+  onMinimize?: () => void;
+  /** Close all tabs at once */
+  onCloseAll?: () => void;
 }
 
-export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, splitDirection, onSplitChange, tabs, activeTabIdx = 0, onTabClick, onTabClose }: FileViewerProps) {
+export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, splitDirection, onSplitChange, tabs, activeTabIdx = 0, onTabClick, onTabClose, onMinimize, onCloseAll }: FileViewerProps) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -596,14 +600,13 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
         ),
       }}
     >
-      {/* Tab bar */}
-      {tabs && tabs.length > 1 && (
-        <div style={{
-          display: "flex", alignItems: "center", background: "var(--bg-tertiary, #0f0f0f)",
-          borderBottom: "1px solid var(--border-subtle)", flexShrink: 0, overflow: "auto",
-          scrollbarWidth: "none",
-        }}>
-          {tabs.map((tab, i) => {
+      {/* Tab bar with window controls */}
+      <div style={{
+        display: "flex", alignItems: "center", background: "var(--bg-tertiary, #0f0f0f)",
+        borderBottom: "1px solid var(--border-subtle)", flexShrink: 0,
+      }}>
+        <div style={{ display: "flex", flex: 1, overflow: "auto", scrollbarWidth: "none", minWidth: 0 }}>
+          {(tabs && tabs.length > 1 ? tabs : []).map((tab, i) => {
             const name = tab.path.split("/").pop() ?? tab.path;
             const isDiff = !!tab.diff;
             const isActive = i === activeTabIdx;
@@ -638,7 +641,30 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
             );
           })}
         </div>
-      )}
+        {/* Window controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 6px", flexShrink: 0 }}>
+          {onMinimize && !split && (
+            <button
+              onClick={onMinimize}
+              style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 4, display: "flex", alignItems: "center", borderRadius: 4, transition: "all 0.1s" }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
+              title="Minimize"
+            >
+              <Minus size={14} />
+            </button>
+          )}
+          <button
+            onClick={onCloseAll ?? onClose}
+            style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 4, display: "flex", alignItems: "center", borderRadius: 4, transition: "all 0.1s" }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "rgba(220,38,38,0.2)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
+            title="Close all"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </div>
 
       {/* Header */}
       <div
@@ -786,7 +812,7 @@ export function FileViewer({ path, fileSize, onClose, diff, diffSha, split, spli
           <button
             onClick={onClose}
             style={headerBtnStyle}
-            title="Close (Esc)"
+            title="Close tab (Esc)"
           >
             <X size={16} />
           </button>

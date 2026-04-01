@@ -148,8 +148,8 @@ enum Commands {
     Auto {
         /// The goal to achieve
         goal: String,
-        /// Maximum number of turns (default: 50)
-        #[arg(long, default_value = "50")]
+        /// Maximum number of turns (0 = unlimited)
+        #[arg(long, default_value = "0")]
         max_turns: usize,
     },
     /// Catch-all for plugin aliases (e.g. `lukan wa ...`)
@@ -279,7 +279,7 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Auto { goal, max_turns }) => {
-            auto::run_auto(&goal, Some(max_turns)).await?;
+            auto::run_auto(&goal, max_turns).await?;
         }
         Some(Commands::External(args)) => {
             dispatch_alias_command(&args).await?;

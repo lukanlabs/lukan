@@ -737,6 +737,7 @@ select {
 
 .settings-panel {
   grid-area: main;
+  z-index: 20;
   display: flex;
   min-height: 0;
   min-width: 0;
@@ -745,9 +746,18 @@ select {
   animation: settingsFadeIn 0.15s ease-out;
 }
 
+.settings-panel.settings-closing {
+  animation: settingsFadeOut 0.15s ease-out forwards;
+}
+
 @keyframes settingsFadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes settingsFadeOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(4px); }
 }
 
 .settings-sidebar {
@@ -1227,4 +1237,81 @@ select {
 .plugin-view-tabs button.active {
   color: var(--text-primary);
   border-bottom-color: var(--text-primary);
+}
+
+/* ── File Viewer PiP (minimized thumbnail) ──────────────────── */
+
+.file-viewer-pip {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  z-index: 15;
+  width: 220px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  overflow: hidden;
+  animation: pipIn 0.2s ease-out;
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+
+.file-viewer-pip:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+@keyframes pipIn {
+  from { opacity: 0; transform: scale(0.9) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.file-viewer-pip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  gap: 8px;
+}
+
+.file-viewer-pip-title {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.file-viewer-pip-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.file-viewer-pip-controls button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all var(--transition-fast);
+}
+
+.file-viewer-pip-controls button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.file-viewer-pip-badge {
+  padding: 0 10px 8px;
+  font-size: 10px;
+  color: var(--text-muted);
 }

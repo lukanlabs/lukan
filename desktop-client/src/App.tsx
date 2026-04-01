@@ -72,6 +72,7 @@ export default function App() {
   const [eventSourceFilter, setEventSourceFilter] = useState<string | null>(null);
   const [activePluginName, setActivePluginName] = useState<string | null>(null);
   const [activePipelineId, setActivePipelineId] = useState<string | null>(null);
+  const [settingsClosing, setSettingsClosing] = useState(false);
   const sidePanelRef = useRef<SidePanelId | null>(null);
   sidePanelRef.current = workspace.sidePanel;
 
@@ -168,6 +169,21 @@ export default function App() {
   const handleCloseProcessLog = useCallback(() => {
     setProcessLog(null);
   }, []);
+
+  const handleCloseSettings = useCallback(() => {
+    setSettingsClosing(true);
+  }, []);
+
+  const handleSettingsExited = useCallback(() => {
+    setSettingsClosing(false);
+    workspace.closeSettings();
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new CustomEvent("terminal-refit"));
+      window.dispatchEvent(new CustomEvent("restore-focus"));
+    });
+  }, [workspace]);
+
+  const showSettingsWithTransition = workspace.showSettings || settingsClosing;
 
   const handleBrowserClick = () => {
     if (!browser.status.running) {
@@ -300,32 +316,33 @@ export default function App() {
           />
         )}
 
-        {workspace.showSettings ? (
+        <MainArea
+          mode={workspace.mode}
+          pipelineId={activePipelineId}
+          onPipelineBack={() => { workspace.setMode("agent"); setActivePipelineId(null); }}
+          processLog={processLog}
+          processLogSessionId={currentSessionId}
+          onCloseProcessLog={handleCloseProcessLog}
+          openTabs={openTabs}
+          activeTabIdx={activeTabIdx}
+          onSetActiveTab={setActiveTabIdx}
+          onCloseTab={(idx) => {
+            setOpenTabs(prev => {
+              const next = prev.filter((_, i) => i !== idx);
+              if (activeTabIdx >= next.length) setActiveTabIdx(Math.max(0, next.length - 1));
+              else if (idx < activeTabIdx) setActiveTabIdx(activeTabIdx - 1);
+              return next;
+            });
+          }}
+          onCloseAllTabs={() => { setOpenTabs([]); setActiveTabIdx(0); }}
+        />
+        {showSettingsWithTransition && (
           <SettingsOverlay
             activeTab={workspace.settingsTab}
             onTabChange={workspace.setSettingsTab}
-            onClose={workspace.closeSettings}
-          />
-        ) : (
-          <MainArea
-            mode={workspace.mode}
-            pipelineId={activePipelineId}
-            onPipelineBack={() => { workspace.setMode("agent"); setActivePipelineId(null); }}
-            processLog={processLog}
-            processLogSessionId={currentSessionId}
-            onCloseProcessLog={handleCloseProcessLog}
-            openTabs={openTabs}
-            activeTabIdx={activeTabIdx}
-            onSetActiveTab={setActiveTabIdx}
-            onCloseTab={(idx) => {
-              setOpenTabs(prev => {
-                const next = prev.filter((_, i) => i !== idx);
-                if (activeTabIdx >= next.length) setActiveTabIdx(Math.max(0, next.length - 1));
-                else if (idx < activeTabIdx) setActiveTabIdx(activeTabIdx - 1);
-                return next;
-              });
-            }}
-            onCloseAllTabs={() => { setOpenTabs([]); setActiveTabIdx(0); }}
+            onClose={handleCloseSettings}
+            isClosing={settingsClosing}
+            onExited={handleSettingsExited}
           />
         )}
       </div>

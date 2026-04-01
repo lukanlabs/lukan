@@ -64,6 +64,20 @@ export default function XTermPanel({
     }
   }, [scrollback, termRef, onScrollbackReplayed]);
 
+  // Listen for global refit requests (e.g. after closing Settings)
+  useEffect(() => {
+    const onRefitRequest = () => {
+      if (isActive) {
+        requestAnimationFrame(() => {
+          fit();
+          termRef.current?.focus();
+        });
+      }
+    };
+    window.addEventListener("terminal-refit", onRefitRequest);
+    return () => window.removeEventListener("terminal-refit", onRefitRequest);
+  }, [isActive, fit, termRef]);
+
   return (
     <div
       className={splitMode ? "flex flex-col min-h-0 h-full" : "absolute inset-0 flex flex-col min-h-0"}

@@ -3,6 +3,7 @@ import type { WorkspaceMode, BgProcessInfo } from "../../lib/types";
 import ChatView from "../../views/ChatView";
 import TerminalView from "../../views/TerminalView";
 import PipelineFlowView from "../../views/PipelineFlowView";
+import { X, Expand } from "lucide-react";
 import { ProcessLogOverlay } from "./ProcessLogOverlay";
 import { FileViewer } from "./FileViewer";
 
@@ -34,6 +35,7 @@ export function MainArea({ mode, pipelineId, onPipelineBack, processLog, process
   const activeTab = openTabs[activeTabIdx] ?? null;
   const [splitMode, setSplitMode] = useState<SplitMode>("off");
   const [splitPct, setSplitPct] = useState(50);
+  const [minimized, setMinimized] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const isSplit = hasViewer && splitMode !== "off";
@@ -78,6 +80,8 @@ export function MainArea({ mode, pipelineId, onPipelineBack, processLog, process
       activeTabIdx={activeTabIdx}
       onTabClick={onSetActiveTab}
       onTabClose={onCloseTab}
+      onMinimize={() => setMinimized(true)}
+      onCloseAll={onCloseAllTabs}
     />
   ) : null;
 
@@ -113,8 +117,32 @@ export function MainArea({ mode, pipelineId, onPipelineBack, processLog, process
     </div>
   );
 
+  // PiP thumbnail shown when viewer is minimized
+  const pipEl = minimized && hasViewer && activeTab ? (
+    <div className="file-viewer-pip" onClick={() => setMinimized(false)}>
+      <div className="file-viewer-pip-header">
+        <span className="file-viewer-pip-title">
+          {activeTab.diff
+            ? (activeTab.sha ? `Diff ${activeTab.sha.slice(0, 7)}` : "Diff")
+            : activeTab.path.split("/").pop()}
+        </span>
+        <div className="file-viewer-pip-controls">
+          <button onClick={(e) => { e.stopPropagation(); setMinimized(false); }} title="Restore">
+            <Expand size={13} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); setMinimized(false); onCloseTab?.(activeTabIdx); }} title="Close">
+            <X size={13} />
+          </button>
+        </div>
+      </div>
+      {openTabs.length > 1 && (
+        <div className="file-viewer-pip-badge">{openTabs.length} files</div>
+      )}
+    </div>
+  ) : null;
+
   // Overlay mode (no split) — floating panel over content
-  if (hasViewer && !isSplit) {
+  if (hasViewer && !isSplit && !minimized) {
     return (
       <div ref={containerRef} className="main-area" style={{ position: "relative" }}>
         {mainContent}
@@ -151,7 +179,7 @@ export function MainArea({ mode, pipelineId, onPipelineBack, processLog, process
   }
 
   // Split mode
-  if (isSplit && viewerEl) {
+  if (isSplit && viewerEl && !minimized) {
     const flexDir = isHorizontal ? "row" : "column";
     const handleSize = isHorizontal ? { width: 4, cursor: "col-resize" as const } : { height: 4, cursor: "row-resize" as const };
 
@@ -178,10 +206,11 @@ export function MainArea({ mode, pipelineId, onPipelineBack, processLog, process
     );
   }
 
-  // No viewer
+  // No viewer or minimized
   return (
     <div ref={containerRef} className="main-area" style={{ position: "relative" }}>
       {mainContent}
+      {pipEl}
     </div>
   );
 }

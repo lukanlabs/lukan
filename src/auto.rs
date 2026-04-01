@@ -80,11 +80,11 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
 
     // Build initial prompt
     let initial_prompt = format!(
-        "You are running in autonomous mode. Complete the following goal.\n\n\
-         IMPORTANT RULES:\n\
-         - Do NOT use PlannerQuestion or SubmitPlan tools. Work directly without planning phases.\n\
-         - Do NOT ask the user questions. Make decisions using your best judgment.\n\
-         - If you need clarification, make reasonable assumptions and proceed.\n\
+        "You are running in autonomous mode with a supervisor reviewing your work.\n\n\
+         RULES:\n\
+         - Do NOT use PlannerQuestion or SubmitPlan tools. Work directly.\n\
+         - If you need to ask something, ask it in your response text. A supervisor will answer.\n\
+         - For minor decisions, use your best judgment and proceed without asking.\n\
          - When you are completely done, say: GOAL_COMPLETE\n\
          - If the goal is impossible, say: GOAL_FAILED followed by the reason.\n\n\
          ## Goal\n\n{goal}"
@@ -104,20 +104,20 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
         eprintln!("\x1b[1;34m── {turn_label} ──\x1b[0m");
 
         // Run agent turn and collect events
-        let (text_response, had_error) = run_agent_turn(&mut agent, &current_message).await?;
+        let result = run_agent_turn(&mut agent, &current_message).await?;
 
         // Check for explicit completion signals
-        if text_response.contains("GOAL_COMPLETE") {
+        if result.text.contains("GOAL_COMPLETE") {
             eprintln!("\n\x1b[1;32m✓ Goal completed in {turn} turns.\x1b[0m");
             break;
         }
-        if text_response.contains("GOAL_FAILED") {
+        if result.text.contains("GOAL_FAILED") {
             eprintln!("\n\x1b[1;31m✗ Agent reported failure.\x1b[0m");
             break;
         }
 
-        // Supervisor evaluates progress
-        match evaluate_progress(&supervisor, goal, &text_response, turn, had_error).await? {
+        // Supervisor evaluates progress (sees both text and tool actions)
+        match evaluate_progress(&supervisor, goal, &result.text, &result.tool_summary, turn, result.had_error).await? {
             Decision::Done => {
                 eprintln!("\n\x1b[1;32m✓ Goal achieved in {turn} turns.\x1b[0m");
                 break;
@@ -142,17 +142,25 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
     Ok(())
 }
 
+/// Result of a single agent turn
+struct TurnResult {
+    text: String,
+    tool_summary: String,
+    had_error: bool,
+}
+
 /// Run a single agent turn, printing events to stderr, returning the text response.
 async fn run_agent_turn(
     agent: &mut lukan_agent::AgentLoop,
     message: &str,
-) -> Result<(String, bool)> {
+) -> Result<TurnResult> {
     let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
 
     // Spawn event consumer
     let collector = tokio::spawn(async move {
         let mut text = String::new();
         let mut had_error = false;
+        let mut tools_used: Vec<String> = Vec::new();
 
         while let Some(event) = event_rx.recv().await {
             match &event {
@@ -172,18 +180,21 @@ async fn run_agent_turn(
                     is_error,
                     ..
                 } => {
-                    let icon = if is_error == &Some(true) {
-                        had_error = true;
-                        "\x1b[31m✗\x1b[0m"
-                    } else {
-                        "\x1b[32m✓\x1b[0m"
-                    };
+                    let failed = is_error == &Some(true);
+                    if failed { had_error = true; }
+                    let icon = if failed { "\x1b[31m✗\x1b[0m" } else { "\x1b[32m✓\x1b[0m" };
                     let preview = if content.len() > 120 {
                         format!("{}…", &content[..120])
                     } else {
                         content.clone()
                     };
                     eprintln!("    {icon} {name}: {preview}");
+                    tools_used.push(format!(
+                        "{} {} ({})",
+                        if failed { "✗" } else { "✓" },
+                        name,
+                        if content.len() > 80 { format!("{}…", &content[..80]) } else { content.clone() }
+                    ));
                 }
                 StreamEvent::Error { error } => {
                     eprintln!("\x1b[31m  ✗ {error}\x1b[0m");
@@ -193,7 +204,12 @@ async fn run_agent_turn(
             }
         }
         eprintln!();
-        (text, had_error)
+        let tool_summary = if tools_used.is_empty() {
+            "No tools used.".to_string()
+        } else {
+            tools_used.join("\n")
+        };
+        TurnResult { text, tool_summary, had_error }
     });
 
     // Run the turn with a timeout
@@ -209,7 +225,7 @@ async fn run_agent_turn(
         }
     }
 
-    Ok(collector.await?)
+    collector.await.context("Event collector panicked")
 }
 
 enum Decision {
@@ -223,6 +239,7 @@ async fn evaluate_progress(
     provider: &Arc<dyn Provider>,
     goal: &str,
     last_response: &str,
+    tool_summary: &str,
     turn: usize,
     had_error: bool,
 ) -> Result<Decision> {
@@ -233,14 +250,21 @@ async fn evaluate_progress(
         last_response.to_string()
     };
 
+    let tool_preview = if tool_summary.len() > 1000 {
+        format!("{}…\n[truncated]", &tool_summary[..1000])
+    } else {
+        tool_summary.to_string()
+    };
+
     let prompt = format!(
         "## Original Goal\n{goal}\n\n\
-         ## Agent Response (turn {turn})\n{response_preview}\n\n\
+         ## Tools Executed (turn {turn})\n{tool_preview}\n\n\
+         ## Agent Message\n{response_preview}\n\n\
          ## Status\nErrors: {had_error}\n\n\
-         Respond with exactly one of:\n\
+         Evaluate and respond with exactly one of:\n\
          DONE — if the goal is fully complete\n\
-         CONTINUE: <next instruction> — if more work is needed\n\
-         FAILED: <reason> — if stuck or impossible"
+         CONTINUE: <instruction or answer> — if the agent asked a question, answer it thoughtfully; if more work is needed, give clear next steps\n\
+         FAILED: <reason> — if stuck in a loop or impossible"
     );
 
     let messages = vec![lukan_core::models::messages::Message {

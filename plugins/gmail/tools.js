@@ -164,33 +164,49 @@ function extractBody(payload) {
   return "(no body content)";
 }
 
-function stripHtml(html) {
-  // Iteratively remove dangerous tags to prevent nested bypass (e.g. <scr<script>ipt>)
-  let text = html;
-  let prev;
-  do {
-    prev = text;
-    text = text
-      .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, "")
-      .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "");
-  } while (text !== prev);
+/** Remove all content between an opening and closing tag (case-insensitive, handles nesting). */
+function removeTagContent(html, tagName) {
+  const openTag = `<${tagName}`;
+  const closeTag = `</${tagName}`;
+  let result = "";
+  let i = 0;
+  const lower = html.toLowerCase();
+  while (i < html.length) {
+    const openStart = lower.indexOf(openTag, i);
+    if (openStart === -1) { result += html.slice(i); break; }
+    result += html.slice(i, openStart);
+    const closeStart = lower.indexOf(closeTag, openStart + openTag.length);
+    if (closeStart === -1) { break; } // no closing tag — discard rest
+    const closeEnd = lower.indexOf(">", closeStart + closeTag.length);
+    i = closeEnd === -1 ? html.length : closeEnd + 1;
+  }
+  return result;
+}
 
+function stripHtml(html) {
+  // Remove dangerous tag blocks (content included) via string walking — no regex
+  let text = removeTagContent(html, "script");
+  text = removeTagContent(text, "style");
+
+  // Structural tags → whitespace
   text = text
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n\n")
     .replace(/<\/div>/gi, "\n")
     .replace(/<\/li>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "- ")
-    .replace(/<[^>]+>/g, "");
+    .replace(/<li[^>]*>/gi, "- ");
 
-  // Decode entities after all tags are stripped (order matters to avoid double-decode)
+  // Strip all remaining tags
+  text = text.replace(/<[^>]*>/g, "");
+
+  // Decode entities (&amp; last to prevent double-decode)
   text = text
     .replace(/&#39;/g, "'")
     .replace(/&quot;/g, '"')
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")  // must be last — other entities contain '&'
+    .replace(/&amp;/g, "&")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 

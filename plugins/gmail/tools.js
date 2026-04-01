@@ -165,23 +165,36 @@ function extractBody(payload) {
 }
 
 function stripHtml(html) {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+  // Iteratively remove dangerous tags to prevent nested bypass (e.g. <scr<script>ipt>)
+  let text = html;
+  let prev;
+  do {
+    prev = text;
+    text = text
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, "")
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "");
+  } while (text !== prev);
+
+  text = text
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n\n")
     .replace(/<\/div>/gi, "\n")
     .replace(/<\/li>/gi, "\n")
     .replace(/<li[^>]*>/gi, "- ")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
+    .replace(/<[^>]+>/g, "");
+
+  // Decode entities after all tags are stripped (order matters to avoid double-decode)
+  text = text
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")  // must be last — other entities contain '&'
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+
+  return text;
 }
 
 // ── MIME builder ────────────────────────────────────────────────────────
@@ -394,16 +407,12 @@ const handlers = {
   async GmailLabelsCreate(input, token) {
     const { name } = input;
 
+    const visMap = { show: "labelShow", hide: "labelHide", showIfUnread: "labelShowIfUnread" };
     const body = {
       name,
-      labelListVisibility: `labelShow${input.showInList === "hide" ? "IfCreated" : input.showInList === "showIfUnread" ? "IfUnread" : ""}` .replace("labelShow", "labelShow") || "labelShow",
+      labelListVisibility: visMap[input.showInList || "show"],
       messageListVisibility: input.showInMessageList === "hide" ? "hide" : "show",
     };
-
-    // Simpler mapping
-    const visMap = { show: "labelShow", hide: "labelHide", showIfUnread: "labelShowIfUnread" };
-    body.labelListVisibility = visMap[input.showInList || "show"];
-    body.messageListVisibility = input.showInMessageList === "hide" ? "hide" : "show";
 
     const data = await gmailPost(`${GMAIL_BASE}/labels`, body, token);
 

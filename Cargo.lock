@@ -2770,16 +2770,17 @@ dependencies = [
 
 [[package]]
 name = "jsonwebtoken"
-version = "9.3.1"
+version = "10.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
+checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
 dependencies = [
  "base64 0.22.1",
+ "getrandom 0.2.17",
  "js-sys",
  "pem",
- "ring",
  "serde",
  "serde_json",
+ "signature",
  "simple_asn1",
 ]
 
@@ -2958,7 +2959,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "lukan"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "axum",
@@ -2994,7 +2995,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-agent"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3020,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-browser"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3038,7 +3039,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-core"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3061,7 +3062,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-desktop"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3090,7 +3091,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-plugins"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3109,7 +3110,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-providers"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3134,7 +3135,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-relay"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "axum",
@@ -3163,7 +3164,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-search"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "lukan-core",
@@ -3173,7 +3174,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-tools"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3208,7 +3209,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-tui"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3235,7 +3236,7 @@ dependencies = [
 
 [[package]]
 name = "lukan-web"
-version = "0.1.13"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "axum",
@@ -4940,9 +4941,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.9"
+version = "0.103.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7df23109aa6c1567d1c575b9952556388da57401e4ace1d15f79eedad0d8f53"
+checksum = "df33b2b81ac578cabaf06b89b0631153a3f416b0a886e8a7a1707fb51abbd1ef"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -5367,6 +5368,15 @@ checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
 dependencies = [
  "errno",
  "libc",
+]
+
+[[package]]
+name = "signature"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+dependencies = [
+ "rand_core 0.6.4",
 ]
 
 [[package]]

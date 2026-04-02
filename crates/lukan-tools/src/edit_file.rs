@@ -21,9 +21,16 @@ fn apply_edit(content: &str, edit: &SingleEdit<'_>, file_path_str: &str) -> Resu
     let count = content.matches(edit.old_text).count();
 
     if count == 0 {
+        // Truncate old_text in error message to avoid flooding the screen
+        let preview: String = edit.old_text.chars().take(200).collect();
+        let truncated = if edit.old_text.len() > 200 {
+            format!("{preview}... ({} chars total)", edit.old_text.len())
+        } else {
+            preview
+        };
         return Err(format!(
             "old_text not found in {file_path_str}. Make sure it matches exactly (including whitespace).\nold_text: {:?}",
-            edit.old_text
+            truncated
         ));
     }
 

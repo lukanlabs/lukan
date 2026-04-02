@@ -108,6 +108,10 @@ const GITHUB_COPILOT_MODELS: &[StaticModel] = &[
 
 const OPENAI_CODEX_MODELS: &[StaticModel] = &[
     StaticModel {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+    },
+    StaticModel {
         id: "gpt-5.3-codex",
         name: "GPT-5.3 Codex",
     },

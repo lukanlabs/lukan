@@ -4,23 +4,58 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
-use lukan_core::config::{CredentialsManager, ConfigManager, ResolvedConfig};
+use lukan_core::config::{ConfigManager, CredentialsManager, ResolvedConfig};
 use lukan_core::models::events::StreamEvent;
+use lukan_core::models::messages::{Message, MessageContent, Role};
 use lukan_providers::{Provider, StreamParams, SystemPrompt, create_provider};
 
 const TURN_TIMEOUT_SECS: u64 = 600; // 10 minutes per turn
 
-/// Run autonomous agent: takes a goal, runs an agent in skip mode, and uses
-/// a supervisor LLM to evaluate progress and send follow-up messages.
+const SUPERVISOR_SYSTEM: &str = "\
+You are a senior software engineer supervising an AI coding agent. \
+The user gives you a goal and you direct the agent to accomplish it.
+
+Your role:
+1. FIRST TURN: Analyze the goal. Decide your strategy — should the agent explore the codebase first? \
+   Ask clarifying questions? Start building directly? Write a detailed first instruction for the agent.
+2. SUBSEQUENT TURNS: Review what the agent did (tools executed + its response). Then either:
+   - Give the next instruction if more work is needed
+   - Ask the agent to verify/test if it claims to be done
+   - Answer any questions the agent asked
+   - Correct course if the agent went in the wrong direction
+
+Response format — respond with exactly ONE of:
+INSTRUCT: <detailed instruction for the agent>
+VERIFY: <ask the agent to run tests, build, or verify its work>
+DONE: <brief summary of what was accomplished>
+FAILED: <reason why the goal cannot be achieved>
+
+Guidelines:
+- Be specific in instructions. Don't say \"implement auth\" — say \"create src/auth.rs with a JWT middleware using the jsonwebtoken crate\"
+- Always VERIFY before declaring DONE — ask the agent to build, test, or demonstrate the feature works
+- If the agent asks a question, answer it based on the codebase context and best practices
+- If the agent is stuck or looping, try a different approach
+- You can ask the agent to explore the codebase first if you need more context";
+
+/// Run autonomous agent directed by a supervisor LLM.
+/// The supervisor processes the user's goal, plans the approach, and sends
+/// instructions to the agent. The agent executes and reports back.
 pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
     let unlimited = max_turns == 0;
 
     eprintln!("\x1b[1;36m▶ Autonomous mode\x1b[0m");
     eprintln!("  Goal: {goal}");
-    eprintln!("  Max turns: {}", if unlimited { "unlimited".to_string() } else { max_turns.to_string() });
+    eprintln!(
+        "  Max turns: {}",
+        if unlimited {
+            "unlimited".to_string()
+        } else {
+            max_turns.to_string()
+        }
+    );
     eprintln!();
 
-    // Load config and create provider
+    // Load config and create providers
     let config = ConfigManager::load().await?;
     let credentials = CredentialsManager::load().await?;
     let resolved = ResolvedConfig { config, credentials };
@@ -28,21 +63,16 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
     let provider: Arc<dyn Provider> = Arc::from(
         create_provider(&resolved).context("No provider configured. Run `lukan setup` first.")?,
     );
-
-    // Create a second provider for the supervisor evaluations
     let supervisor: Arc<dyn Provider> = Arc::from(
         create_provider(&resolved).context("Failed to create supervisor provider")?,
     );
 
     let cwd = std::env::current_dir()?;
 
-    // Build system prompt (same as TUI/web)
+    // Build agent
     let system_prompt = build_auto_system_prompt().await;
-
-    // Create tools registry
     let tools = lukan_tools::create_default_registry();
 
-    // Create agent in skip mode
     let agent_config = lukan_agent::AgentConfig {
         provider: provider.clone(),
         system_prompt,
@@ -65,8 +95,6 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
     };
 
     let mut agent = lukan_agent::AgentLoop::new(agent_config).await?;
-
-    // Disable planning tools — autonomous mode works directly without planning phases
     agent.set_disabled_tools(
         ["PlannerQuestion", "SubmitPlan"]
             .into_iter()
@@ -78,21 +106,49 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
     eprintln!("  Session: {session_id}");
     eprintln!();
 
-    // Build initial prompt
-    let initial_prompt = format!(
-        "You are running in autonomous mode with a supervisor reviewing your work.\n\n\
-         RULES:\n\
-         - Do NOT use PlannerQuestion or SubmitPlan tools. Work directly.\n\
-         - If you need to ask something, ask it in your response text. A supervisor will answer.\n\
-         - For minor decisions, use your best judgment and proceed without asking.\n\
-         - When you are completely done, say: GOAL_COMPLETE\n\
-         - If the goal is impossible, say: GOAL_FAILED followed by the reason.\n\n\
-         ## Goal\n\n{goal}"
-    );
+    // Supervisor conversation history (persists across turns for context)
+    let mut supervisor_history: Vec<Message> = Vec::new();
 
+    // Phase 1: Supervisor processes the goal and creates first instruction
+    eprintln!("\x1b[1;35m── Supervisor analyzing goal ──\x1b[0m");
+    let first_instruction = supervisor_think(
+        &supervisor,
+        &mut supervisor_history,
+        &format!(
+            "The user wants to achieve this goal:\n\n{goal}\n\n\
+             Working directory: {}\n\n\
+             Analyze the goal and provide your first INSTRUCT to the agent.",
+            cwd.display()
+        ),
+    )
+    .await?;
+
+    let mut current_message = match &first_instruction {
+        SupervisorAction::Instruct(msg) | SupervisorAction::Verify(msg) => {
+            eprintln!("\x1b[36m  ▸ {}\x1b[0m", first_line(msg));
+            format!(
+                "You are running in autonomous mode directed by a supervisor.\n\
+                 Do NOT use PlannerQuestion or SubmitPlan tools. Work directly.\n\
+                 If you have questions, ask them in your response text.\n\
+                 When done with the current instruction, summarize what you did.\n\n\
+                 ## Instruction\n\n{}",
+                msg
+            )
+        }
+        SupervisorAction::Done(summary) => {
+            eprintln!("\n\x1b[1;32m✓ Supervisor: {summary}\x1b[0m");
+            eprintln!("\n  Session: {session_id}");
+            return Ok(());
+        }
+        SupervisorAction::Failed(reason) => {
+            eprintln!("\n\x1b[1;31m✗ Supervisor: {reason}\x1b[0m");
+            eprintln!("\n  Session: {session_id}");
+            return Ok(());
+        }
+    };
+
+    // Phase 2: Agent execution loop
     let mut turn = 0;
-    let mut current_message = initial_prompt;
-
     loop {
         turn += 1;
         if !unlimited && turn > max_turns {
@@ -100,36 +156,44 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
             break;
         }
 
-        let turn_label = if unlimited { format!("Turn {turn}") } else { format!("Turn {turn}/{max_turns}") };
+        let turn_label = if unlimited {
+            format!("Turn {turn}")
+        } else {
+            format!("Turn {turn}/{max_turns}")
+        };
         eprintln!("\x1b[1;34m── {turn_label} ──\x1b[0m");
 
-        // Run agent turn and collect events
+        // Run agent turn
         let result = run_agent_turn(&mut agent, &current_message).await?;
 
-        // Check for explicit completion signals
-        if result.text.contains("GOAL_COMPLETE") {
-            eprintln!("\n\x1b[1;32m✓ Goal completed in {turn} turns.\x1b[0m");
-            break;
-        }
-        if result.text.contains("GOAL_FAILED") {
-            eprintln!("\n\x1b[1;31m✗ Agent reported failure.\x1b[0m");
-            break;
-        }
+        // Supervisor reviews the result
+        eprintln!("\x1b[1;35m── Supervisor reviewing ──\x1b[0m");
+        let action = supervisor_think(
+            &supervisor,
+            &mut supervisor_history,
+            &format!(
+                "## Agent executed (turn {turn}):\n\
+                 ### Tools used:\n{}\n\n\
+                 ### Agent response:\n{}\n\n\
+                 ### Errors: {}\n\n\
+                 What should the agent do next?",
+                truncate(&result.tool_summary, 1500),
+                truncate(&result.text, 2000),
+                result.had_error,
+            ),
+        )
+        .await?;
 
-        // Supervisor evaluates progress (sees both text and tool actions)
-        match evaluate_progress(&supervisor, goal, &result.text, &result.tool_summary, turn, result.had_error).await? {
-            Decision::Done => {
-                eprintln!("\n\x1b[1;32m✓ Goal achieved in {turn} turns.\x1b[0m");
+        match action {
+            SupervisorAction::Instruct(msg) | SupervisorAction::Verify(msg) => {
+                eprintln!("\x1b[36m  ▸ {}\x1b[0m", first_line(&msg));
+                current_message = msg;
+            }
+            SupervisorAction::Done(summary) => {
+                eprintln!("\n\x1b[1;32m✓ {summary}\x1b[0m");
                 break;
             }
-            Decision::Continue { message } => {
-                eprintln!(
-                    "\x1b[36m  ▸ {}\x1b[0m",
-                    message.lines().next().unwrap_or("(follow-up)")
-                );
-                current_message = message;
-            }
-            Decision::Failed { reason } => {
+            SupervisorAction::Failed(reason) => {
                 eprintln!("\n\x1b[1;31m✗ {reason}\x1b[0m");
                 break;
             }
@@ -138,25 +202,98 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
 
     eprintln!("\n  Session: {session_id}");
     eprintln!("  Resume: lukan -c");
-
     Ok(())
 }
 
-/// Result of a single agent turn
+// ── Supervisor ──────────────────────────────────────────────────────────
+
+enum SupervisorAction {
+    Instruct(String),
+    Verify(String),
+    Done(String),
+    Failed(String),
+}
+
+/// Send a message to the supervisor and get its decision.
+/// Maintains conversation history so the supervisor has full context.
+async fn supervisor_think(
+    provider: &Arc<dyn Provider>,
+    history: &mut Vec<Message>,
+    message: &str,
+) -> Result<SupervisorAction> {
+    // Add user message to supervisor history
+    history.push(Message {
+        role: Role::User,
+        content: MessageContent::Text(message.to_string()),
+        tool_call_id: None,
+        name: None,
+    });
+
+    // Call LLM
+    let (tx, mut rx) = mpsc::channel::<StreamEvent>(64);
+    let params = StreamParams {
+        system_prompt: SystemPrompt::Text(SUPERVISOR_SYSTEM.to_string()),
+        messages: history.clone(),
+        tools: vec![],
+    };
+
+    let p = provider.clone();
+    let handle = tokio::spawn(async move { p.stream(params, tx).await });
+
+    let mut response = String::new();
+    while let Some(event) = rx.recv().await {
+        if let StreamEvent::TextDelta { text } = event {
+            response.push_str(&text);
+        }
+    }
+    let _ = handle.await?;
+
+    let response = response.trim().to_string();
+
+    // Add assistant response to history
+    history.push(Message {
+        role: Role::Assistant,
+        content: MessageContent::Text(response.clone()),
+        tool_call_id: None,
+        name: None,
+    });
+
+    // Parse decision
+    Ok(parse_supervisor_response(&response))
+}
+
+fn parse_supervisor_response(response: &str) -> SupervisorAction {
+    let trimmed = response.trim();
+    if let Some(msg) = trimmed.strip_prefix("INSTRUCT:") {
+        SupervisorAction::Instruct(msg.trim().to_string())
+    } else if let Some(msg) = trimmed.strip_prefix("VERIFY:") {
+        SupervisorAction::Verify(msg.trim().to_string())
+    } else if let Some(msg) = trimmed.strip_prefix("DONE:") {
+        SupervisorAction::Done(msg.trim().to_string())
+    } else if trimmed.starts_with("DONE") {
+        SupervisorAction::Done("Goal completed.".to_string())
+    } else if let Some(msg) = trimmed.strip_prefix("FAILED:") {
+        SupervisorAction::Failed(msg.trim().to_string())
+    } else {
+        // Default: treat as instruction
+        SupervisorAction::Instruct(trimmed.to_string())
+    }
+}
+
+// ── Agent turn ──────────────────────────────────────────────────────────
+
 struct TurnResult {
     text: String,
     tool_summary: String,
     had_error: bool,
 }
 
-/// Run a single agent turn, printing events to stderr, returning the text response.
 async fn run_agent_turn(
     agent: &mut lukan_agent::AgentLoop,
     message: &str,
 ) -> Result<TurnResult> {
     let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
 
-    // Spawn event consumer
     let collector = tokio::spawn(async move {
         let mut text = String::new();
         let mut had_error = false;
@@ -181,19 +318,21 @@ async fn run_agent_turn(
                     ..
                 } => {
                     let failed = is_error == &Some(true);
-                    if failed { had_error = true; }
-                    let icon = if failed { "\x1b[31m✗\x1b[0m" } else { "\x1b[32m✓\x1b[0m" };
-                    let preview = if content.len() > 120 {
-                        format!("{}…", &content[..120])
+                    if failed {
+                        had_error = true;
+                    }
+                    let icon = if failed {
+                        "\x1b[31m✗\x1b[0m"
                     } else {
-                        content.clone()
+                        "\x1b[32m✓\x1b[0m"
                     };
+                    let preview = truncate_str(content, 120);
                     eprintln!("    {icon} {name}: {preview}");
                     tools_used.push(format!(
                         "{} {} ({})",
                         if failed { "✗" } else { "✓" },
                         name,
-                        if content.len() > 80 { format!("{}…", &content[..80]) } else { content.clone() }
+                        truncate_str(content, 80)
                     ));
                 }
                 StreamEvent::Error { error } => {
@@ -209,10 +348,13 @@ async fn run_agent_turn(
         } else {
             tools_used.join("\n")
         };
-        TurnResult { text, tool_summary, had_error }
+        TurnResult {
+            text,
+            tool_summary,
+            had_error,
+        }
     });
 
-    // Run the turn with a timeout
     match tokio::time::timeout(
         Duration::from_secs(TURN_TIMEOUT_SECS),
         agent.run_turn(message, event_tx, None, None),
@@ -228,93 +370,26 @@ async fn run_agent_turn(
     collector.await.context("Event collector panicked")
 }
 
-enum Decision {
-    Done,
-    Continue { message: String },
-    Failed { reason: String },
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() > max {
+        format!("{}…\n[truncated]", &s[..max])
+    } else {
+        s.to_string()
+    }
 }
 
-/// Supervisor LLM evaluates whether the goal is complete.
-async fn evaluate_progress(
-    provider: &Arc<dyn Provider>,
-    goal: &str,
-    last_response: &str,
-    tool_summary: &str,
-    turn: usize,
-    had_error: bool,
-) -> Result<Decision> {
-    // Truncate response if too long
-    let response_preview = if last_response.len() > 2000 {
-        format!("{}…\n[truncated]", &last_response[..2000])
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.len() > max {
+        format!("{}…", &s[..max])
     } else {
-        last_response.to_string()
-    };
-
-    let tool_preview = if tool_summary.len() > 1000 {
-        format!("{}…\n[truncated]", &tool_summary[..1000])
-    } else {
-        tool_summary.to_string()
-    };
-
-    let prompt = format!(
-        "## Original Goal\n{goal}\n\n\
-         ## Tools Executed (turn {turn})\n{tool_preview}\n\n\
-         ## Agent Message\n{response_preview}\n\n\
-         ## Status\nErrors: {had_error}\n\n\
-         Evaluate and respond with exactly one of:\n\
-         DONE — if the goal is fully complete\n\
-         CONTINUE: <instruction or answer> — if the agent asked a question, answer it thoughtfully; if more work is needed, give clear next steps\n\
-         FAILED: <reason> — if stuck in a loop or impossible"
-    );
-
-    let messages = vec![lukan_core::models::messages::Message {
-        role: lukan_core::models::messages::Role::User,
-        content: lukan_core::models::messages::MessageContent::Text(prompt),
-        tool_call_id: None,
-        name: None,
-    }];
-
-    let (tx, mut rx) = mpsc::channel::<StreamEvent>(64);
-    let p = provider.clone();
-    let handle = tokio::spawn(async move {
-        p.stream(
-            StreamParams {
-                system_prompt: SystemPrompt::Text(
-                    "You are a concise supervisor. Respond with DONE, CONTINUE: <message>, or FAILED: <reason>. Nothing else.".to_string(),
-                ),
-                messages,
-                tools: vec![],
-            },
-            tx,
-        )
-        .await
-    });
-
-    let mut response = String::new();
-    while let Some(event) = rx.recv().await {
-        if let StreamEvent::TextDelta { text } = event {
-            response.push_str(&text);
-        }
+        s.to_string()
     }
-    let _ = handle.await?;
+}
 
-    let response = response.trim();
-    if response.starts_with("DONE") {
-        Ok(Decision::Done)
-    } else if let Some(msg) = response.strip_prefix("CONTINUE:") {
-        Ok(Decision::Continue {
-            message: msg.trim().to_string(),
-        })
-    } else if let Some(reason) = response.strip_prefix("FAILED:") {
-        Ok(Decision::Failed {
-            reason: reason.trim().to_string(),
-        })
-    } else {
-        // Default: treat unknown response as continue
-        Ok(Decision::Continue {
-            message: response.to_string(),
-        })
-    }
+fn first_line(s: &str) -> &str {
+    s.lines().next().unwrap_or("(instruction)")
 }
 
 /// Build system prompt for autonomous mode (reuses base prompt + memory)

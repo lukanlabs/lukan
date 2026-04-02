@@ -43,7 +43,7 @@ Guidelines:
 pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
     let unlimited = max_turns == 0;
 
-    eprintln!("\x1b[1;36m▶ Autonomous mode\x1b[0m");
+    eprintln!("\x1b[1;36m▶ Autonomous mode \x1b[33m[BETA]\x1b[0m");
     eprintln!("  Goal: {goal}");
     eprintln!(
         "  Max turns: {}",
@@ -58,14 +58,16 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
     // Load config and create providers
     let config = ConfigManager::load().await?;
     let credentials = CredentialsManager::load().await?;
-    let resolved = ResolvedConfig { config, credentials };
+    let resolved = ResolvedConfig {
+        config,
+        credentials,
+    };
 
     let provider: Arc<dyn Provider> = Arc::from(
         create_provider(&resolved).context("No provider configured. Run `lukan setup` first.")?,
     );
-    let supervisor: Arc<dyn Provider> = Arc::from(
-        create_provider(&resolved).context("Failed to create supervisor provider")?,
-    );
+    let supervisor: Arc<dyn Provider> =
+        Arc::from(create_provider(&resolved).context("Failed to create supervisor provider")?);
 
     let cwd = std::env::current_dir()?;
 
@@ -288,10 +290,7 @@ struct TurnResult {
     had_error: bool,
 }
 
-async fn run_agent_turn(
-    agent: &mut lukan_agent::AgentLoop,
-    message: &str,
-) -> Result<TurnResult> {
+async fn run_agent_turn(agent: &mut lukan_agent::AgentLoop, message: &str) -> Result<TurnResult> {
     let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
 
     let collector = tokio::spawn(async move {

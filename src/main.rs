@@ -144,7 +144,7 @@ enum Commands {
         #[command(subcommand)]
         command: RelayCommands,
     },
-    /// Run an autonomous agent to complete a goal without human intervention
+    /// [BETA] Run an autonomous agent to complete a goal without human intervention
     Auto {
         /// The goal to achieve
         goal: String,

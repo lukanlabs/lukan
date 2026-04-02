@@ -618,6 +618,12 @@ impl App {
                     self.messages.push(ChatMessage::new("assistant", content));
                 }
                 self.messages.push(ChatMessage::new("user", &text));
+                // Remove the injected message from the local queue so the UI
+                // stops showing it in the "↳ queued" indicator.
+                let mut queue = self.queued_messages.lock().unwrap();
+                if let Some(pos) = queue.iter().position(|m| m == &text) {
+                    queue.remove(pos);
+                }
             }
             StreamEvent::SubAgentUpdate {
                 id,

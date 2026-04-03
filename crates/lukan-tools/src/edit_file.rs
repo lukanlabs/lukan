@@ -46,11 +46,14 @@ fn apply_edit(content: &str, edit: &SingleEdit<'_>, file_path_str: &str) -> Resu
                     let expected_preview: String = expected.chars().take(300).collect();
                     format!(
                         "\nFirst line matched at line {}, but the full block differs.\nYou sent:\n{:?}\nFile has:\n{:?}\nUse the file's actual content as old_text.",
-                        idx + 1, expected_preview, actual_preview
+                        idx + 1,
+                        expected_preview,
+                        actual_preview
                     )
                 } else {
                     // Lines match individually but full text doesn't — likely trailing newline/whitespace
-                    "\nHint: lines match but whitespace differs. Check trailing newlines or spaces.".to_string()
+                    "\nHint: lines match but whitespace differs. Check trailing newlines or spaces."
+                        .to_string()
                 }
             } else {
                 String::new()

@@ -1013,6 +1013,7 @@ async fn execute_step_live(
         skip_session_save: true,
         vision_provider: None,
         extra_env: config.credentials.flatten_skill_env(),
+        compaction_threshold: None,
     };
 
     let mut agent = AgentLoop::new(agent_config).await?;

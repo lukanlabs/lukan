@@ -384,7 +384,13 @@ impl App {
             &mode_str,
         )
         .view_label(view_label)
-        .event_unread(self.event_agent_has_unread && self.active_view == ActiveView::Main);
+        .event_unread(self.event_agent_has_unread && self.active_view == ActiveView::Main)
+        .compaction_threshold(
+            self.config.config.model_settings
+                .get(&effective_model)
+                .and_then(|s| s.compaction_threshold)
+                .unwrap_or(150_000)
+        );
         frame.render_widget(status, status_area);
 
         // Toast notifications — floating overlay in top-right of chat area

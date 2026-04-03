@@ -202,6 +202,7 @@ impl ChatState {
             Box::leak(Box::new(result.manager));
         }
 
+        let compaction_threshold = config.config.model_settings.get(&model_name).and_then(|s| s.compaction_threshold);
         let agent_config = AgentConfig {
             provider: Arc::from(provider),
             tools,
@@ -225,6 +226,7 @@ impl ChatState {
             )
             .map(Arc::from),
             extra_env: config.credentials.flatten_skill_env(),
+            compaction_threshold,
         };
 
         let mut agent = AgentLoop::new(agent_config).await?;
@@ -299,6 +301,7 @@ impl ChatState {
             Box::leak(Box::new(result.manager));
         }
 
+        let compaction_threshold = config.config.model_settings.get(&model_name).and_then(|s| s.compaction_threshold);
         let agent_config = AgentConfig {
             provider: Arc::from(provider),
             tools,
@@ -322,6 +325,7 @@ impl ChatState {
             )
             .map(Arc::from),
             extra_env: config.credentials.flatten_skill_env(),
+            compaction_threshold,
         };
 
         let mut agent = AgentLoop::load_session(agent_config, session_id).await?;

@@ -23,6 +23,8 @@ pub struct StatusBarWidget<'a> {
     view_label: Option<&'a str>,
     /// Whether the Event Agent has unread messages (shown as badge in Main view)
     event_unread: bool,
+    /// Compaction threshold in tokens
+    compaction_threshold: u64,
 }
 
 impl<'a> StatusBarWidget<'a> {
@@ -54,7 +56,13 @@ impl<'a> StatusBarWidget<'a> {
             permission_mode,
             view_label: None,
             event_unread: false,
+            compaction_threshold: 150_000,
         }
+    }
+
+    pub fn compaction_threshold(mut self, threshold: u64) -> Self {
+        self.compaction_threshold = threshold;
+        self
     }
 
     pub fn view_label(mut self, label: Option<&'a str>) -> Self {
@@ -87,15 +95,16 @@ impl Widget for StatusBarWidget<'_> {
         );
 
         // Context size with compaction threshold indicator
-        let ctx_color = if self.context_size >= 150_000 {
+        let threshold = self.compaction_threshold;
+        let ctx_color = if self.context_size >= threshold {
             Color::Red
-        } else if self.context_size >= 100_000 {
+        } else if self.context_size >= threshold * 2 / 3 {
             Color::Yellow
         } else {
             Color::DarkGray
         };
         let ctx_text = if self.context_size > 0 {
-            format!(" ctx: {}k/150k", self.context_size / 1000)
+            format!(" ctx: {}k/{}k", self.context_size / 1000, threshold / 1000)
         } else {
             String::new()
         };

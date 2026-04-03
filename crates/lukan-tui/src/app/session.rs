@@ -187,6 +187,7 @@ impl App {
             )
             .map(std::sync::Arc::from),
             extra_env: self.config.credentials.flatten_skill_env(),
+            compaction_threshold: self.config.config.model_settings.get(&self.config.effective_model().unwrap_or_default()).and_then(|s| s.compaction_threshold),
         };
 
         match AgentLoop::load_session(config, &session_id).await {

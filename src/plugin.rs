@@ -588,6 +588,7 @@ async fn plugin_start_foreground(
         )
         .map(Arc::from),
         extra_env: resolved.credentials.flatten_skill_env(),
+        compaction_threshold: None,
     };
 
     println!(

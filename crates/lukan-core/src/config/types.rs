@@ -88,6 +88,19 @@ pub struct AppConfig {
     /// Bind daemon to localhost only (not accessible from the network)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub local_only: bool,
+    /// Per-model settings (keyed by model ID, e.g. "gpt-5.4", "kimi-k2.5")
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub model_settings: HashMap<String, ModelSettings>,
+}
+
+/// Per-model configuration overrides.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSettings {
+    /// Context token threshold at which auto-compaction triggers.
+    /// Default is 150,000 if not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction_threshold: Option<u64>,
 }
 
 /// Configuration for an MCP (Model Context Protocol) server.
@@ -129,6 +142,7 @@ impl Default for AppConfig {
             mcp_servers: HashMap::new(),
             local_only: false,
             zai_base_url: None,
+            model_settings: HashMap::new(),
         }
     }
 }

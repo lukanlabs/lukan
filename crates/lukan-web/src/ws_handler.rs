@@ -2181,6 +2181,11 @@ async fn create_agent(
         Box::leak(Box::new(result.manager));
     }
 
+    let compaction_threshold = config
+        .config
+        .model_settings
+        .get(&model_name)
+        .and_then(|s| s.compaction_threshold);
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools,
@@ -2204,6 +2209,7 @@ async fn create_agent(
         )
         .map(Arc::from),
         extra_env: config.credentials.flatten_skill_env(),
+        compaction_threshold,
     };
 
     let mut agent = AgentLoop::new(agent_config).await?;
@@ -2301,6 +2307,11 @@ async fn create_agent_with_session(
         Box::leak(Box::new(result.manager));
     }
 
+    let compaction_threshold = config
+        .config
+        .model_settings
+        .get(&model_name)
+        .and_then(|s| s.compaction_threshold);
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools,
@@ -2324,6 +2335,7 @@ async fn create_agent_with_session(
         )
         .map(Arc::from),
         extra_env: config.credentials.flatten_skill_env(),
+        compaction_threshold,
     };
 
     let mut agent = AgentLoop::load_session(agent_config, session_id).await?;

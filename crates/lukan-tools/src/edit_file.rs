@@ -28,8 +28,42 @@ fn apply_edit(content: &str, edit: &SingleEdit<'_>, file_path_str: &str) -> Resu
         } else {
             preview
         };
+
+        // Try to find the region in the file that best matches old_text
+        // so the model can see exactly what differs.
+        let old_lines: Vec<&str> = edit.old_text.lines().collect();
+        let first_line = old_lines.first().map(|l| l.trim()).unwrap_or("");
+        let hint = if !first_line.is_empty() {
+            let file_lines: Vec<&str> = content.lines().collect();
+            if let Some(idx) = file_lines.iter().position(|l| l.trim() == first_line) {
+                // Extract the same number of lines from the file as old_text has
+                let end = (idx + old_lines.len()).min(file_lines.len());
+                let actual: String = file_lines[idx..end].join("\n");
+                let expected: String = old_lines.join("\n");
+                if actual != expected {
+                    // Show what the model sent vs what the file actually has
+                    let actual_preview: String = actual.chars().take(300).collect();
+                    let expected_preview: String = expected.chars().take(300).collect();
+                    format!(
+                        "\nFirst line matched at line {}, but the full block differs.\nYou sent:\n{:?}\nFile has:\n{:?}\nUse the file's actual content as old_text.",
+                        idx + 1,
+                        expected_preview,
+                        actual_preview
+                    )
+                } else {
+                    // Lines match individually but full text doesn't — likely trailing newline/whitespace
+                    "\nHint: lines match but whitespace differs. Check trailing newlines or spaces."
+                        .to_string()
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
         return Err(format!(
-            "old_text not found in {file_path_str}. Make sure it matches exactly (including whitespace).\nold_text: {:?}",
+            "old_text not found in {file_path_str}. Make sure it matches exactly (including whitespace).\nold_text: {:?}{hint}",
             truncated
         ));
     }

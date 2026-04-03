@@ -88,6 +88,8 @@ pub struct AgentConfig {
     /// Extra environment variables injected into Bash commands (e.g. skill credentials)
     #[allow(dead_code)]
     pub extra_env: HashMap<String, String>,
+    /// Context token threshold for auto-compaction (None = use default 150k)
+    pub compaction_threshold: Option<u64>,
 }
 
 /// Pending tool call accumulated from stream events
@@ -148,6 +150,8 @@ pub struct AgentLoop {
     pub tab_id: Option<String>,
     /// Environment variable names whose values are redacted from tool output
     blocked_env_vars: Vec<String>,
+    /// Context token threshold for auto-compaction
+    compaction_threshold: u64,
 }
 
 /// A system event from a plugin, queued for injection into the agent context.
@@ -243,6 +247,7 @@ impl AgentLoop {
             label: None,
             tab_id: None,
             blocked_env_vars: Vec::new(),
+            compaction_threshold: config.compaction_threshold.unwrap_or(COMPACTION_THRESHOLD),
         })
     }
 
@@ -333,6 +338,7 @@ impl AgentLoop {
             label: None,
             tab_id: None,
             blocked_env_vars: Vec::new(),
+            compaction_threshold: config.compaction_threshold.unwrap_or(COMPACTION_THRESHOLD),
         })
     }
 
@@ -1763,8 +1769,8 @@ impl AgentLoop {
     async fn check_auto_ops(&mut self, event_tx: &mpsc::Sender<StreamEvent>) {
         let ctx = self.last_context_size;
 
-        // Auto-compaction at 150k context tokens
-        if ctx >= COMPACTION_THRESHOLD {
+        // Auto-compaction when context exceeds threshold
+        if ctx >= self.compaction_threshold {
             if let Err(e) = self.compact_history(event_tx).await {
                 error!("Compaction failed: {e}");
             }

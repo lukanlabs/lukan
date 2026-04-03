@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "imapflow": "^1.2.9",
-    "nodemailer": "^8.0.1"
+    "nodemailer": "^8.0.4"
   }
 }

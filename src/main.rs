@@ -733,6 +733,11 @@ async fn run_chat(
     browser_opts: Option<BrowserOpts>,
     continue_session: bool,
 ) -> Result<()> {
+    // First-run wizard: guide new users through setup before starting
+    if setup::is_first_run() {
+        setup::run_first_run_wizard().await?;
+    }
+
     // Ensure daemon is running (workers + web server)
     let daemon_port = daemon::ensure_daemon_running().unwrap_or_else(|e| {
         tracing::warn!(error = %e, "Failed to auto-start daemon, continuing without it");

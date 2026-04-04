@@ -538,6 +538,240 @@ pub async fn run_doctor() -> Result<()> {
     Ok(())
 }
 
+// ── First-run wizard ──────────────────────────────────────────────────────
+
+/// Check if this is the first time running lukan (no config file exists).
+pub fn is_first_run() -> bool {
+    !LukanPaths::config_file().exists()
+}
+
+/// Interactive first-run wizard that guides new users through initial setup.
+/// Returns true if setup completed, false if user skipped.
+pub async fn run_first_run_wizard() -> Result<bool> {
+    println!();
+    println!("{BOLD}{CYAN}  Welcome to Lukan!{RESET}");
+    println!("{DIM}  Let's get you set up in a few quick steps.{RESET}");
+    println!();
+
+    let skip = prompt(&format!("Run quick setup? {DIM}(Y/n){RESET}: "))?;
+    if skip.trim().eq_ignore_ascii_case("n") {
+        println!("{DIM}  Skipped. Run 'lukan setup' later to configure.{RESET}");
+        return Ok(false);
+    }
+
+    // ── Step 1: Provider ────────────────────────────────────────────
+    println!();
+    println!("{BOLD}Step 1/4 — Choose a provider{RESET}");
+    println!();
+
+    let providers = [
+        ("anthropic", "Anthropic (Claude)", false),
+        (
+            "github-copilot",
+            "GitHub Copilot (free with GitHub account)",
+            false,
+        ),
+        ("openai-codex", "OpenAI Codex (ChatGPT subscription)", false),
+        ("fireworks", "Fireworks (open-source models)", false),
+        ("nebius", "Nebius (DeepSeek, MiniMax, GLM)", false),
+        ("gemini", "Google Gemini", false),
+        ("lukan-cloud", "Lukan Cloud", false),
+        ("zai", "z.ai (GLM models)", false),
+        ("ollama-cloud", "Ollama Cloud", false),
+        ("openai-compatible", "OpenAI-compatible endpoint", false),
+    ];
+
+    for (i, (_, desc, _)) in providers.iter().enumerate() {
+        println!("  {DIM}{}{RESET}  {desc}", i + 1);
+    }
+
+    println!();
+    let input = prompt(&format!("Select provider [1-{}]: ", providers.len()))?;
+    let idx: usize = input.trim().parse().unwrap_or(0);
+    if idx < 1 || idx > providers.len() {
+        println!("{YELLOW}⚠{RESET} Invalid selection. Run 'lukan setup' to try again.");
+        return Ok(false);
+    }
+
+    let (provider_id, provider_desc, _) = providers[idx - 1];
+    let provider: ProviderName =
+        serde_json::from_value(serde_json::Value::String(provider_id.to_string()))?;
+    println!("  {GREEN}✓{RESET} {provider_desc}");
+
+    // ── Step 2: Authentication ──────────────────────────────────────
+    println!();
+    println!("{BOLD}Step 2/4 — Authentication{RESET}");
+    println!();
+
+    let mut config = AppConfig {
+        provider: provider.clone(),
+        ..Default::default()
+    };
+
+    let mut creds = CredentialsManager::load().await.unwrap_or_default();
+
+    match &provider {
+        ProviderName::GithubCopilot => {
+            println!("  {DIM}GitHub Copilot uses OAuth device flow.{RESET}");
+            let input = prompt(&format!("  Authenticate now? {DIM}(Y/n){RESET}: "))?;
+            if !input.trim().eq_ignore_ascii_case("n") {
+                let client = reqwest::Client::new();
+                match copilot_auth::auth_copilot_device_flow(&client).await {
+                    Ok(token) => {
+                        creds.copilot_token = Some(token);
+                        println!("  {GREEN}✓{RESET} Copilot authenticated!");
+                    }
+                    Err(e) => {
+                        println!("  {RED}✗{RESET} Auth failed: {e}");
+                        println!("  {DIM}Run 'lukan copilot-auth' later to retry.{RESET}");
+                    }
+                }
+            }
+        }
+        ProviderName::OpenaiCodex => {
+            println!("  {DIM}OpenAI Codex uses device code authentication.{RESET}");
+            let input = prompt(&format!("  Authenticate now? {DIM}(Y/n){RESET}: "))?;
+            if !input.trim().eq_ignore_ascii_case("n") {
+                let client = reqwest::Client::new();
+                match codex_auth::auth_device_flow(&client).await {
+                    Ok(tokens) => {
+                        creds.codex_access_token = Some(tokens.access_token);
+                        creds.codex_refresh_token = Some(tokens.refresh_token);
+                        creds.codex_token_expiry = Some(tokens.expires_at);
+                        println!("  {GREEN}✓{RESET} Codex authenticated!");
+                    }
+                    Err(e) => {
+                        println!("  {RED}✗{RESET} Auth failed: {e}");
+                        println!("  {DIM}Run 'lukan codex-auth' later to retry.{RESET}");
+                    }
+                }
+            }
+        }
+        ProviderName::OpenaiCompatible => {
+            let input = prompt(&format!(
+                "  Base URL {DIM}(e.g. http://localhost:11434/v1){RESET}: "
+            ))?;
+            if !input.is_empty() {
+                let normalized = lukan_providers::openai_compat::normalize_base_url(&input);
+                config.openai_compatible_base_url = Some(normalized.clone());
+                println!("  {GREEN}✓{RESET} Base URL: {normalized}");
+            }
+            creds.openai_compatible_api_key =
+                prompt_credential("API key (optional)", "OPENAI_COMPATIBLE_API_KEY", None)?;
+        }
+        other => {
+            let env_var = env_var_for_provider(other);
+            creds = setup_credentials_for_provider(other, creds, env_var)?;
+        }
+    }
+
+    // Save config + credentials before model selection (some providers need them to fetch models)
+    ConfigManager::save(&config).await?;
+    CredentialsManager::save(&creds).await?;
+
+    // ── Step 3: Select models ───────────────────────────────────────
+    println!();
+    println!("{BOLD}Step 3/4 — Select models{RESET}");
+    println!();
+
+    let provider_str = provider.to_string();
+    // Use the existing model selector — it saves to config automatically
+    if let Err(e) = crate::models::run_models(Some(&provider_str), None).await {
+        println!("  {YELLOW}⚠{RESET} Model selection failed: {e}");
+        println!("  {DIM}Run 'lukan models {provider_str}' later to configure.{RESET}");
+    }
+
+    // ── Step 4: Choose default model ────────────────────────────────
+    // Reload config after model selection (run_models saves models to config)
+    config = ConfigManager::load().await?;
+
+    if let Some(ref models) = config.models {
+        let provider_models: Vec<&String> = models
+            .iter()
+            .filter(|m| m.starts_with(&format!("{provider_str}:")))
+            .collect();
+
+        if provider_models.len() == 1 {
+            // Only one model — auto-select it
+            let model_id = provider_models[0]
+                .strip_prefix(&format!("{provider_str}:"))
+                .unwrap_or(provider_models[0]);
+            config.model = Some(model_id.to_string());
+            println!();
+            println!("  {GREEN}✓{RESET} Default model: {BOLD}{model_id}{RESET}");
+        } else if provider_models.len() > 1 {
+            println!();
+            println!("{BOLD}Step 4/4 — Choose default model{RESET}");
+            println!();
+
+            for (i, m) in provider_models.iter().enumerate() {
+                let model_id = m.strip_prefix(&format!("{provider_str}:")).unwrap_or(m);
+                println!("  {DIM}{}{RESET}  {model_id}", i + 1);
+            }
+
+            println!();
+            let input = prompt(&format!("Default model [1-{}]: ", provider_models.len()))?;
+            let idx: usize = input.trim().parse().unwrap_or(1);
+            let idx = idx.clamp(1, provider_models.len());
+            let selected = provider_models[idx - 1];
+            let model_id = selected
+                .strip_prefix(&format!("{provider_str}:"))
+                .unwrap_or(selected);
+            config.model = Some(model_id.to_string());
+            println!("  {GREEN}✓{RESET} Default model: {BOLD}{model_id}{RESET}");
+        }
+    }
+
+    // Final save
+    ConfigManager::save(&config).await?;
+
+    println!();
+    println!("{GREEN}✓{RESET} Setup complete! Starting lukan...");
+    println!();
+
+    Ok(true)
+}
+
+/// Simplified credential prompt for a single provider during first-run.
+fn setup_credentials_for_provider(
+    provider: &ProviderName,
+    mut creds: Credentials,
+    env_var: &str,
+) -> Result<Credentials> {
+    match provider {
+        ProviderName::Anthropic => {
+            creds.anthropic_api_key =
+                prompt_credential("Anthropic API key", env_var, None)?.or(creds.anthropic_api_key);
+        }
+        ProviderName::Nebius => {
+            creds.nebius_api_key =
+                prompt_credential("Nebius API key", env_var, None)?.or(creds.nebius_api_key);
+        }
+        ProviderName::Fireworks => {
+            creds.fireworks_api_key =
+                prompt_credential("Fireworks API key", env_var, None)?.or(creds.fireworks_api_key);
+        }
+        ProviderName::Zai => {
+            creds.zai_api_key =
+                prompt_credential("z.ai API key", env_var, None)?.or(creds.zai_api_key);
+        }
+        ProviderName::OllamaCloud => {
+            creds.ollama_cloud_api_key = prompt_credential("Ollama Cloud API key", env_var, None)?
+                .or(creds.ollama_cloud_api_key);
+        }
+        ProviderName::LukanCloud => {
+            creds.lukan_cloud_api_key = prompt_credential("Lukan Cloud API key", env_var, None)?
+                .or(creds.lukan_cloud_api_key);
+        }
+        ProviderName::Gemini => {
+            creds.gemini_api_key =
+                prompt_credential("Gemini API key", env_var, None)?.or(creds.gemini_api_key);
+        }
+        _ => {}
+    }
+    Ok(creds)
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 fn prompt(msg: &str) -> Result<String> {

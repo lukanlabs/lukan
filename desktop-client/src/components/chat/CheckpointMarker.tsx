@@ -17,7 +17,6 @@ export function CheckpointMarker({
   const [expanded, setExpanded] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
-  const fileCount = checkpoint.snapshots.length;
   // Unique files affected by restore (from this checkpoint onward)
   const affectedFileCount = new Set(affectedSnapshots.map((s) => s.path)).size;
   const time = new Date(checkpoint.createdAt).toLocaleTimeString([], {

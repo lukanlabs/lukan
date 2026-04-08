@@ -3,11 +3,12 @@ import { AlertCircle } from "lucide-react";
 import logoUrl from "../assets/logo.png";
 import { useChat } from "../hooks/useChat";
 import type { ToolResultInfo } from "../components/chat/MessageBubble";
-import type { Message, TokenUsage } from "../lib/types";
+import type { Message, TokenUsage, CheckpointInfo } from "../lib/types";
 import { MessageBubble } from "../components/chat/MessageBubble";
 import { StreamingText } from "../components/chat/StreamingText";
 import { ToolCallCard } from "../components/chat/ToolCallCard";
 import { ChatInput } from "../components/chat/ChatInput";
+import { CheckpointMarker } from "../components/chat/CheckpointMarker";
 import { InlineApproval } from "../components/chat/InlineApproval";
 import { InlinePlanReview } from "../components/chat/InlinePlanReview";
 import { QuestionPicker } from "../components/chat/QuestionPicker";
@@ -17,17 +18,58 @@ import { sendToBackground } from "../lib/tauri";
 function buildToolResultsMap(
   messages: Message[],
   toolImages?: Record<string, string>,
+  toolAfterContent?: Record<string, string>,
+  checkpoints?: CheckpointInfo[],
 ): Map<string, ToolResultInfo> {
   const map = new Map<string, ToolResultInfo>();
+
+  // Build ordered list of all snapshots from checkpoints
+  const allSnapshots: Array<{ path: string; after?: string; diff?: string }> = [];
+  if (checkpoints) {
+    for (const cp of checkpoints) {
+      for (const snap of cp.snapshots) {
+        allSnapshots.push(snap);
+      }
+    }
+  }
+
+  // Collect file-modifying tool_use IDs in order, then match to snapshots by order
+  const toolAfterFromCheckpoints = new Map<string, string>();
+  let snapIdx = 0;
+  for (const msg of messages) {
+    if (!Array.isArray(msg.content)) continue;
+    for (const block of msg.content) {
+      if (
+        block.type === "tool_use" &&
+        (block.name === "EditFile" || block.name === "WriteFile") &&
+        typeof block.input?.file_path === "string"
+      ) {
+        // Match this tool call to the next snapshot (same file path)
+        for (let s = snapIdx; s < allSnapshots.length; s++) {
+          if (allSnapshots[s].path === block.input.file_path || allSnapshots[s].path.endsWith("/" + block.input.file_path)) {
+            if (allSnapshots[s].after) {
+              toolAfterFromCheckpoints.set(block.id, allSnapshots[s].after!);
+            }
+            snapIdx = s + 1;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   for (const msg of messages) {
     if (!Array.isArray(msg.content)) continue;
     for (const block of msg.content) {
       if (block.type === "tool_result") {
+        const afterFromCache = toolAfterContent?.[block.toolUseId];
+        const afterFromCheckpoint = toolAfterFromCheckpoints.get(block.toolUseId);
         map.set(block.toolUseId, {
           content: block.content,
           isError: block.isError,
           diff: block.diff,
           image: toolImages?.[block.toolUseId] ?? block.image,
+          afterContent: afterFromCache ?? afterFromCheckpoint,
         });
       }
     }
@@ -60,6 +102,13 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+
+  const handleRestore = useCallback(
+    (checkpointId: string, restoreCode: boolean) => {
+      chat.restoreCheckpoint(checkpointId, restoreCode);
+    },
+    [chat.restoreCheckpoint],
+  );
 
   // Report stats to parent whenever they change
   useEffect(() => {
@@ -144,8 +193,8 @@ export function ChatPanel({
     chat.messages.length === 0 && chat.streamingBlocks.length === 0;
 
   const toolResultsMap = useMemo(
-    () => buildToolResultsMap(chat.messages, chat.toolImages),
-    [chat.messages, chat.toolImages],
+    () => buildToolResultsMap(chat.messages, chat.toolImages, chat.toolAfterContent, chat.checkpoints),
+    [chat.messages, chat.toolImages, chat.toolAfterContent, chat.checkpoints],
   );
 
   return (
@@ -183,15 +232,48 @@ export function ChatPanel({
               </div>
             )}
 
-            {/* Messages */}
+            {/* Messages with checkpoint markers */}
             <div className="space-y-1 max-w-4xl mx-auto">
-              {chat.messages.map((msg, i) => (
-                <MessageBubble
-                  key={`msg-${i}`}
-                  message={msg}
-                  toolResultsMap={toolResultsMap}
-                />
-              ))}
+              {chat.messages.map((msg, i) => {
+                // Show checkpoint marker before the message at messageIndex
+                // (messageIndex points to the start of the next turn, so
+                // the checkpoint appears between the turn that made edits
+                // and the next user message)
+                const cpBefore = chat.checkpoints.find(
+                  (c) => c.messageIndex === i && i > 0,
+                );
+                return (
+                  <div key={`msg-${i}`}>
+                    {cpBefore && (
+                      <CheckpointMarker
+                        checkpoint={cpBefore}
+                        affectedSnapshots={
+                          chat.checkpoints
+                            .filter((c) => c.messageIndex >= cpBefore.messageIndex)
+                            .flatMap((c) => c.snapshots)
+                        }
+                        onRestore={handleRestore}
+                      />
+                    )}
+                    <MessageBubble
+                      message={msg}
+                      toolResultsMap={toolResultsMap}
+                      silentTools={chat.silentTools}
+                    />
+                  </div>
+                );
+              })}
+              {/* Show checkpoint after last message if its messageIndex >= messages.length */}
+              {chat.checkpoints
+                .filter((c) => c.messageIndex >= chat.messages.length)
+                .map((cp) => (
+                  <CheckpointMarker
+                    key={`cp-${cp.id}`}
+                    checkpoint={cp}
+                    affectedSnapshots={cp.snapshots}
+                    onRestore={handleRestore}
+                  />
+                ))}
             </div>
 
             {/* Streaming blocks */}
@@ -231,6 +313,7 @@ export function ChatPanel({
                               </div>
                             );
                           case "tool":
+                            if (chat.silentTools.includes(block.tool.name)) return null;
                             return (
                               <ToolCallCard
                                 key={block.id}

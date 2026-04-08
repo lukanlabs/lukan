@@ -91,6 +91,13 @@ pub struct AppConfig {
     /// Per-model settings (keyed by model ID, e.g. "gpt-5.4", "kimi-k2.5")
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub model_settings: HashMap<String, ModelSettings>,
+    /// Tools that run silently (not shown in chat UI but still functional).
+    /// Default: ["Remember"]
+    #[serde(
+        default = "default_silent_tools",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub silent_tools: Vec<String>,
 }
 
 /// Per-model configuration overrides.
@@ -118,6 +125,10 @@ fn default_max_tokens() -> u32 {
     8192
 }
 
+fn default_silent_tools() -> Vec<String> {
+    vec!["Remember".to_string()]
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -143,6 +154,7 @@ impl Default for AppConfig {
             local_only: false,
             zai_base_url: None,
             model_settings: HashMap::new(),
+            silent_tools: default_silent_tools(),
         }
     }
 }

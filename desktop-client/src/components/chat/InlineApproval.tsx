@@ -170,10 +170,25 @@ function ToolPreview({
   const content =
     typeof tool.input.content === "string" ? tool.input.content : null;
 
-  const diffLines =
-    isEdit && oldText !== null && newText !== null
-      ? buildCompactDiff(oldText, newText)
-      : null;
+  // Support both top-level old_text/new_text and edits[] array
+  const diffLines = isEdit
+    ? (() => {
+        if (oldText !== null && newText !== null) {
+          return buildCompactDiff(oldText, newText);
+        }
+        if (Array.isArray(tool.input.edits)) {
+          const allLines: DiffLine[] = [];
+          for (const edit of tool.input.edits as Array<{ old_text?: string; new_text?: string }>) {
+            if (typeof edit.old_text === "string" && typeof edit.new_text === "string") {
+              if (allLines.length > 0) allLines.push({ type: "sep", text: "···" });
+              allLines.push(...buildCompactDiff(edit.old_text, edit.new_text));
+            }
+          }
+          return allLines.length > 0 ? allLines : null;
+        }
+        return null;
+      })()
+    : null;
 
   return (
     <div className="rounded-lg bg-white/[0.02] overflow-hidden">

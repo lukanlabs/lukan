@@ -320,7 +320,7 @@ async fn run_sub_agent(
     }
 
     let tools = Arc::new(tools);
-    let read_files = Arc::new(Mutex::new(std::collections::HashSet::new()));
+    let read_files = Arc::new(Mutex::new(std::collections::HashMap::new()));
 
     let mut turns = 0;
     let mut text_output = String::new();
@@ -1103,7 +1103,7 @@ pub async fn run_explore(
     tools.retain(EXPLORE_TOOLS);
     let tools = Arc::new(tools);
 
-    let read_files = Arc::new(Mutex::new(std::collections::HashSet::new()));
+    let read_files = Arc::new(Mutex::new(std::collections::HashMap::new()));
 
     let mut turns = 0usize;
     let mut text_output = String::new();

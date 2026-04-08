@@ -104,7 +104,11 @@ impl Tool for ReadFileTool {
                     };
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                     let data_url = format!("data:{mime};base64,{b64}");
-                    ctx.read_files.lock().await.insert(path.clone());
+                    let mtime = tokio::fs::metadata(&path)
+                        .await
+                        .ok()
+                        .and_then(|m| m.modified().ok());
+                    ctx.read_files.lock().await.insert(path.clone(), mtime);
                     let size_kb = bytes.len() / 1024;
                     let mut result = ToolResult::success(format!(
                         "Image file: {} ({size_kb} KB, {mime})",
@@ -117,13 +121,38 @@ impl Tool for ReadFileTool {
             }
         }
 
+        // Check if we already have this file in context and it hasn't changed
+        let current_mtime = tokio::fs::metadata(&path)
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok());
+        {
+            let read_map = ctx.read_files.lock().await;
+            if let Some(prev_mtime) = read_map.get(&path) {
+                // File was read before — check if it changed
+                if *prev_mtime == current_mtime && explicit_offset.is_none() {
+                    let total = tokio::fs::read_to_string(&path)
+                        .await
+                        .map(|c| c.lines().count())
+                        .unwrap_or(0);
+                    return Ok(ToolResult::success(format!(
+                        "(file already in context, {} lines, not modified since last read)",
+                        total
+                    )));
+                }
+            }
+        }
+
         let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
             Err(e) => return Ok(ToolResult::error(format!("Failed to read file: {e}"))),
         };
 
-        // Track that we've read this file
-        ctx.read_files.lock().await.insert(path.clone());
+        // Track that we've read this file with current mtime
+        ctx.read_files
+            .lock()
+            .await
+            .insert(path.clone(), current_mtime);
 
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();

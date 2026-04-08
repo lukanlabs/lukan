@@ -32,6 +32,7 @@ const SAFE_TOOLS: &[&str] = &[
     "PlannerQuestion",
     "SubmitPlan",
     "LoadSkill",
+    "Remember",
 ];
 
 /// Browser tools — only treated as safe when browser mode is enabled

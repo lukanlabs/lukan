@@ -705,6 +705,7 @@ export function FileViewer({
       setShowDiff(false);
       return;
     }
+    // diff button always uses git
     setDiffLoading(true);
     try {
       // Get the directory from the file path

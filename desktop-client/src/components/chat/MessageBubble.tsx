@@ -10,11 +10,13 @@ export interface ToolResultInfo {
   isError?: boolean;
   diff?: string;
   image?: string;
+  afterContent?: string;
 }
 
 interface MessageBubbleProps {
   message: Message;
   toolResultsMap: Map<string, ToolResultInfo>;
+  silentTools?: string[];
 }
 
 function extractTextContent(content: string | ContentBlock[]): string {
@@ -56,7 +58,7 @@ function isToolResultMessage(msg: Message): boolean {
   );
 }
 
-export function MessageBubble({ message, toolResultsMap }: MessageBubbleProps) {
+export function MessageBubble({ message, toolResultsMap, silentTools = [] }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const [showThinking, setShowThinking] = useState(false);
 
@@ -74,7 +76,9 @@ export function MessageBubble({ message, toolResultsMap }: MessageBubbleProps) {
   if (isUser && text.startsWith("[System:")) return null;
 
   const thinking = !isUser ? extractThinkingContent(message.content) : null;
-  const toolUses = !isUser ? extractToolUses(message.content) : [];
+  const toolUses = !isUser
+    ? extractToolUses(message.content).filter((tu) => !silentTools.includes(tu.name))
+    : [];
 
   if (!text.trim() && toolUses.length === 0) return null;
 
@@ -145,6 +149,7 @@ export function MessageBubble({ message, toolResultsMap }: MessageBubbleProps) {
                   content: result?.content,
                   diff: result?.diff,
                   image: result?.image,
+                  afterContent: result?.afterContent,
                 }}
               />
             );

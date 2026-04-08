@@ -15,6 +15,7 @@ const WS_COMMANDS = new Set([
   "delete_all_sessions",
   "load_session",
   "new_session",
+  "restore_checkpoint",
   "set_permission_mode",
   "create_agent_tab",
   "destroy_agent_tab",
@@ -601,6 +602,15 @@ export class WebTransport implements Transport {
       return;
     }
 
+    if (type === "checkpoint_restored") {
+      this.resolvePending("restore_checkpoint", {
+        sessionId: msg.sessionId,
+        messages: msg.messages,
+        checkpoints: msg.checkpoints,
+      });
+      return;
+    }
+
     // Model changed
     if (type === "model_changed") {
       this.dispatch("model-changed", msg);
@@ -782,6 +792,13 @@ export class WebTransport implements Transport {
         };
       case "new_session":
         return { type: "new_session", name: null, sessionId: args?.sessionId };
+      case "restore_checkpoint":
+        return {
+          type: "restore_checkpoint",
+          checkpointId: args?.checkpointId,
+          restoreCode: args?.restoreCode ?? false,
+          sessionId: args?.sessionId,
+        };
       case "set_permission_mode":
         return { type: "set_permission_mode", mode: args?.mode };
       case "create_agent_tab":
@@ -1381,6 +1398,7 @@ export class WebTransport implements Transport {
     return {
       sessionId: msg.sessionId,
       messages: msg.messages,
+      checkpoints: msg.checkpoints,
       providerName: msg.providerName,
       modelName: msg.modelName,
       permissionMode: msg.permissionMode,
@@ -1395,6 +1413,7 @@ export class WebTransport implements Transport {
     return {
       sessionId: msg.sessionId,
       messages: msg.messages,
+      checkpoints: msg.checkpoints,
       providerName: this.initData?.providerName,
       modelName: this.initData?.modelName,
       permissionMode: this.initData?.permissionMode,

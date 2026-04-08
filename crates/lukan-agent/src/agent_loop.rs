@@ -113,7 +113,7 @@ pub struct AgentLoop {
     last_context_size: u64,
     /// Tokens at last memory update
     last_memory_update_tokens: u64,
-    read_files: Arc<Mutex<HashSet<PathBuf>>>,
+    read_files: Arc<Mutex<HashMap<PathBuf, Option<std::time::SystemTime>>>>,
     /// Optional signal receiver for Alt+B (send Bash to background)
     bg_signal: Option<watch::Receiver<()>>,
     /// Hard path restrictions for file tools (from plugin security)
@@ -228,7 +228,7 @@ impl AgentLoop {
             output_tokens: 0,
             last_context_size: 0,
             last_memory_update_tokens: 0,
-            read_files: Arc::new(Mutex::new(HashSet::new())),
+            read_files: Arc::new(Mutex::new(HashMap::new())),
             bg_signal,
             allowed_paths,
             permission_matcher,
@@ -319,7 +319,7 @@ impl AgentLoop {
             last_context_size: session.last_context_size,
             last_memory_update_tokens: session.last_memory_update_tokens,
             session,
-            read_files: Arc::new(Mutex::new(HashSet::new())),
+            read_files: Arc::new(Mutex::new(HashMap::new())),
             bg_signal,
             allowed_paths,
             permission_matcher,
@@ -1068,7 +1068,7 @@ impl AgentLoop {
                     } else {
                         self.cwd.join(&path)
                     };
-                    if !read_files_snapshot.contains(&path) {
+                    if !read_files_snapshot.contains_key(&path) {
                         preflight_failed.push((
                             idx,
                             lukan_core::models::tools::ToolResult::error(format!(
@@ -1295,6 +1295,7 @@ impl AgentLoop {
                 });
 
                 // Send ToolResult event to TUI (also redacted)
+                let after_content = result.snapshot.as_ref().and_then(|s| s.after.clone());
                 let _ = event_tx
                     .send(StreamEvent::ToolResult {
                         id: tool.id.clone(),
@@ -1303,6 +1304,7 @@ impl AgentLoop {
                         is_error: if result.is_error { Some(true) } else { None },
                         diff: result.diff.clone(),
                         image: result.image.clone(),
+                        after_content,
                     })
                     .await;
 
@@ -1444,6 +1446,7 @@ impl AgentLoop {
                             is_error: Some(true),
                             diff: None,
                             image: None,
+                            after_content: None,
                         })
                         .await;
                     continue;
@@ -1487,6 +1490,7 @@ impl AgentLoop {
                         is_error: None,
                         diff: None,
                         image: None,
+                        after_content: None,
                     })
                     .await;
             } else {
@@ -1544,6 +1548,7 @@ impl AgentLoop {
                             is_error: Some(true),
                             diff: None,
                             image: None,
+                            after_content: None,
                         })
                         .await;
                     continue;
@@ -1651,6 +1656,7 @@ impl AgentLoop {
                                 is_error: None,
                                 diff: None,
                                 image: None,
+                                after_content: None,
                             })
                             .await;
                     }
@@ -1679,6 +1685,7 @@ impl AgentLoop {
                                 is_error: Some(true),
                                 diff: None,
                                 image: None,
+                                after_content: None,
                             })
                             .await;
                     }
@@ -1711,6 +1718,7 @@ impl AgentLoop {
                                 is_error: Some(true),
                                 diff: None,
                                 image: None,
+                                after_content: None,
                             })
                             .await;
                     }
@@ -1737,6 +1745,7 @@ impl AgentLoop {
                                 is_error: Some(true),
                                 diff: None,
                                 image: None,
+                                after_content: None,
                             })
                             .await;
                     }
@@ -2279,8 +2288,10 @@ async fn update_behavior_profile(
     let tool_defs = tools.definitions();
 
     let read_files: std::sync::Arc<
-        tokio::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
-    > = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
+        tokio::sync::Mutex<
+            std::collections::HashMap<std::path::PathBuf, Option<std::time::SystemTime>>,
+        >,
+    > = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
     let system_prompt = format!(
         "{}\n\nYou have access to tools (Glob, ReadFiles, Bash, Grep, Remember) to explore the project.\n\

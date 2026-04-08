@@ -79,7 +79,7 @@ const EXT_MAP: Record<string, string> = {
 
 function detectLanguage(diff: string): string {
   const m =
-    diff.match(/diff --git a\/\S+\.(\w+)/) ?? diff.match(/--- a\/\S+\.(\w+)/);
+    diff.match(/diff --git a\/\S+\.(\w+)/) ?? diff.match(/--- a\/\S+\.(\w+)/) ?? diff.match(/--- \S+\.(\w+)/);
   const ext = m?.[1]?.toLowerCase() ?? "";
   const lang = EXT_MAP[ext] || ext;
   try {

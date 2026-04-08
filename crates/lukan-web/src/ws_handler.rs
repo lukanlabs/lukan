@@ -2048,19 +2048,51 @@ async fn send_init(
     };
     let permission_mode = state.permission_mode.borrow().to_string();
 
+    // Try to get session data from the first active agent (for page reload)
+    let empty = (
+        String::new(),
+        vec![],
+        vec![],
+        TokenUsage {
+            input: 0,
+            output: 0,
+            cache_creation: None,
+            cache_read: None,
+        },
+        0u64,
+    );
+    let (session_id, messages, checkpoints, token_usage, context_size) = {
+        let sessions = state.sessions.lock().await;
+        if let Some((tid, ws)) = sessions.iter().next() {
+            if let Some(ref agent) = ws.agent {
+                (
+                    tid.clone(),
+                    agent.messages_json(),
+                    agent.checkpoints().to_vec(),
+                    TokenUsage {
+                        input: agent.input_tokens(),
+                        output: agent.output_tokens(),
+                        cache_creation: None,
+                        cache_read: None,
+                    },
+                    agent.last_context_size(),
+                )
+            } else {
+                empty
+            }
+        } else {
+            empty
+        }
+    };
+
     send_json(
         ws_tx,
         &ServerMessage::Init {
-            session_id: String::new(),
-            messages: vec![],
-            checkpoints: vec![],
-            token_usage: TokenUsage {
-                input: 0,
-                output: 0,
-                cache_creation: None,
-                cache_read: None,
-            },
-            context_size: 0,
+            session_id,
+            messages,
+            checkpoints,
+            token_usage,
+            context_size,
             permission_mode,
             provider_name,
             model_name,

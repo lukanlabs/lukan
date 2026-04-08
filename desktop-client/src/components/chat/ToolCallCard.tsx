@@ -90,6 +90,7 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
   const displayName = toolDisplayNames[tool.name] || tool.name;
   const summary = getToolSummary(tool.name, tool.rawInput);
   const isAgent = tool.name === "SubAgent" || tool.name === "Explore";
+  const isFileTool = ["ReadFiles", "WriteFile", "EditFile"].includes(tool.name);
   const isBashRunning = tool.name === "Bash" && tool.isRunning;
 
   // Tick elapsed time while Bash is running (for delayed "Background" button)
@@ -147,7 +148,17 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
           {displayName}
         </span>
         {summary && (
-          <span className="text-xs text-zinc-600 truncate font-mono flex-1 min-w-0">
+          <span
+            className={`text-xs truncate font-mono flex-1 min-w-0 ${
+              isFileTool ? "text-zinc-500 hover:text-indigo-400 cursor-pointer" : "text-zinc-600"
+            }`}
+            onClick={isFileTool ? (e) => {
+              e.stopPropagation();
+              window.dispatchEvent(
+                new CustomEvent("open-file-viewer", { detail: { path: summary } })
+              );
+            } : undefined}
+          >
             {summary}
           </span>
         )}

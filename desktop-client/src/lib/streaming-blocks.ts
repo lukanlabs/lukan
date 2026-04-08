@@ -7,6 +7,7 @@ export interface StreamingToolData {
   isError?: boolean;
   diff?: string;
   image?: string;
+  afterContent?: string;
 }
 
 export type StreamingLikeBlock =
@@ -83,7 +84,7 @@ export function setToolInput<T extends StreamingLikeBlock>(
 export function setToolResult<T extends StreamingLikeBlock>(
   blocks: T[],
   toolId: string,
-  payload: Pick<StreamingToolData, "content" | "isError" | "diff" | "image">,
+  payload: Pick<StreamingToolData, "content" | "isError" | "diff" | "image" | "afterContent">,
 ): void {
   const block = blocks.find(
     (b): b is Extract<T, { type: "tool" }> =>
@@ -97,6 +98,7 @@ export function setToolResult<T extends StreamingLikeBlock>(
     isError: payload.isError,
     diff: payload.diff,
     image: payload.image,
+    afterContent: payload.afterContent,
   };
 }
 

@@ -28,6 +28,7 @@ import {
   onWorkerNotification,
   listPlugins,
   consumePendingEvents,
+  getCwd,
 } from "./lib/tauri";
 import type {
   BgProcessInfo,
@@ -255,6 +256,35 @@ export default function App() {
     };
     window.addEventListener("open-diff-viewer", handler);
     return () => window.removeEventListener("open-diff-viewer", handler);
+  }, []);
+
+  // Listen for file open requests (from ToolCallCard, etc.)
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent<{ path: string }>).detail;
+      if (!detail?.path) return;
+      // Resolve relative paths against cwd
+      let fullPath = detail.path;
+      if (!fullPath.startsWith("/")) {
+        try {
+          const cwd = await getCwd();
+          fullPath = `${cwd.replace(/\/$/, "")}/${fullPath}`;
+        } catch { /* use as-is */ }
+      }
+      setOpenTabs((prev) => {
+        const existing = prev.findIndex(
+          (t) => !t.diff && t.path === fullPath,
+        );
+        if (existing >= 0) {
+          setActiveTabIdx(existing);
+          return prev;
+        }
+        setActiveTabIdx(prev.length);
+        return [...prev, { path: fullPath }];
+      });
+    };
+    window.addEventListener("open-file-viewer", handler);
+    return () => window.removeEventListener("open-file-viewer", handler);
   }, []);
 
   // Listen for pipeline open requests from PipelinesPanel

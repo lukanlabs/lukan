@@ -247,6 +247,16 @@ export const loadSession = (sessionId: string, id: string) =>
   getTransport().call<InitResponse>("load_session", { sessionId, id });
 export const newSession = (sessionId: string) =>
   getTransport().call<InitResponse>("new_session", { sessionId });
+export const restoreCheckpoint = (
+  sessionId: string,
+  checkpointId: string,
+  restoreCode: boolean,
+) =>
+  getTransport().call<void>("restore_checkpoint", {
+    sessionId,
+    checkpointId,
+    restoreCode,
+  });
 
 // Terminal
 export const terminalCreate = (cwd?: string, cols?: number, rows?: number) =>

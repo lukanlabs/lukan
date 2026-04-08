@@ -389,10 +389,13 @@ impl App {
                 self.streaming_thinking.push_str(&text);
             }
             StreamEvent::ToolUseStart { name, .. } => {
+                let is_silent = self.config.config.silent_tools.iter().any(|s| s == &name);
                 // Flush current text as a message before tool call.
                 // If we already flushed text earlier in this turn, append to
                 // the same message so mid-sentence splits don't occur.
-                self.active_tool = Some(name.clone());
+                if !is_silent {
+                    self.active_tool = Some(name.clone());
+                }
                 let content = std::mem::take(&mut self.streaming_text);
                 let trimmed = content.trim_end().to_string();
                 if !trimmed.is_empty() {
@@ -410,11 +413,14 @@ impl App {
                 }
             }
             StreamEvent::ToolUseEnd { id, name, input } => {
-                // ● ToolName(input summary)
-                let summary = summarize_tool_input(&name, &input);
-                let mut msg = ChatMessage::new("tool_call", format!("● {name}({summary})"));
-                msg.tool_id = Some(id);
-                self.messages.push(msg);
+                let is_silent = self.config.config.silent_tools.iter().any(|s| s == &name);
+                if !is_silent {
+                    // ● ToolName(input summary)
+                    let summary = summarize_tool_input(&name, &input);
+                    let mut msg = ChatMessage::new("tool_call", format!("● {name}({summary})"));
+                    msg.tool_id = Some(id);
+                    self.messages.push(msg);
+                }
 
                 // Auto-refresh task panel when task tools are used
                 if matches!(name.as_str(), "TaskAdd" | "TaskUpdate" | "TaskList") {
@@ -422,6 +428,10 @@ impl App {
                 }
             }
             StreamEvent::ToolProgress { id, name, content } => {
+                let is_silent = self.config.config.silent_tools.iter().any(|s| s == &name);
+                if is_silent {
+                    return;
+                }
                 self.active_tool = Some(name);
                 let sanitized = sanitize_for_display(&content);
                 let insert_pos = self.tool_insert_position(&id);
@@ -453,6 +463,10 @@ impl App {
                 ..
             } => {
                 self.active_tool = None;
+                let is_silent = self.config.config.silent_tools.iter().any(|s| s == &name);
+                if is_silent {
+                    return;
+                }
                 let is_err = is_error.unwrap_or(false);
 
                 // For compact tools (ReadFile, Grep, Glob): update the existing

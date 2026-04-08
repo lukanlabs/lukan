@@ -75,7 +75,7 @@ impl Tool for WriteFileTool {
 
         // Check if file exists and was read
         let old_content = if path.exists() {
-            if !ctx.read_files.lock().await.contains(&path) {
+            if !ctx.read_files.lock().await.contains_key(&path) {
                 return Ok(ToolResult::error(format!(
                     "File exists but has not been read yet. Use ReadFiles first: {file_path_str}"
                 )));
@@ -93,8 +93,12 @@ impl Tool for WriteFileTool {
         // Write the file
         tokio::fs::write(&path, content).await?;
 
-        // Track as read for future edits
-        ctx.read_files.lock().await.insert(path);
+        // Track as read with new mtime for future edits
+        let mtime = tokio::fs::metadata(&path)
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok());
+        ctx.read_files.lock().await.insert(path, mtime);
 
         // Generate diff — 3 lines of context around each change (like git)
         let old = old_content.as_deref().unwrap_or("");

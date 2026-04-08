@@ -18,6 +18,7 @@ export interface AppConfig {
   plugins?: PluginsConfig;
   browserCdpUrl?: string;
   disabledTools?: string[];
+  silentTools?: string[];
   mcpServers?: Record<string, McpServerConfig>;
 }
 
@@ -554,6 +555,7 @@ export type StreamEvent =
       isError?: boolean;
       diff?: string;
       image?: string;
+      afterContent?: string;
     }
   | { type: "approval_required"; tools: ToolApprovalRequest[] }
   | { type: "planner_question"; id: string; questions: PlannerQuestion[] }
@@ -610,6 +612,7 @@ export interface SessionSummary {
 export interface InitResponse {
   sessionId: string;
   messages: Message[];
+  checkpoints?: CheckpointInfo[];
   providerName: string;
   modelName: string;
   permissionMode: string;
@@ -624,10 +627,29 @@ export interface TokenUsage {
   cacheRead: number | null;
 }
 
+export interface FileSnapshotInfo {
+  path: string;
+  operation: string;
+  before?: string;
+  after?: string;
+  diff?: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface CheckpointInfo {
+  id: string;
+  message: string;
+  snapshots: FileSnapshotInfo[];
+  createdAt: string;
+  messageIndex: number;
+}
+
 export interface TurnComplete {
   sessionId: string;
   messages: Message[];
   contextSize: number;
   tokenUsage: TokenUsage;
+  checkpoints?: CheckpointInfo[];
   aborted?: boolean;
 }

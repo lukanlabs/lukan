@@ -105,6 +105,9 @@ pub enum StreamEvent {
         diff: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         image: Option<String>,
+        /// File content after the edit (for FileViewer inline preview)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        after_content: Option<String>,
     },
 
     /// Tool calls require user approval
@@ -409,6 +412,7 @@ mod tests {
             is_error: Some(false),
             diff: None,
             image: None,
+            after_content: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""type":"tool_result""#));

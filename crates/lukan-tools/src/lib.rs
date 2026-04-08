@@ -16,7 +16,7 @@ pub mod tasks;
 mod web_fetch;
 mod write_file;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -34,8 +34,10 @@ pub struct ToolContext {
     pub event_tx: Option<mpsc::Sender<StreamEvent>>,
     /// The tool_use ID assigned by the LLM for this call (used by Explore for progress)
     pub tool_call_id: Option<String>,
-    /// Tracks which files have been read (for write/edit guards)
-    pub read_files: Arc<Mutex<HashSet<PathBuf>>>,
+    /// Tracks which files have been read (for write/edit guards) and their
+    /// modification time at the point they were read. Used to skip re-reads
+    /// when the file hasn't changed.
+    pub read_files: Arc<Mutex<HashMap<PathBuf, Option<std::time::SystemTime>>>>,
     /// Current working directory
     pub cwd: PathBuf,
     /// Signal to send a running Bash command to background (Alt+B)
@@ -321,7 +323,7 @@ mod tests {
             progress_tx: None,
             event_tx: None,
             tool_call_id: None,
-            read_files: Arc::new(Mutex::new(HashSet::new())),
+            read_files: Arc::new(Mutex::new(HashMap::new())),
             cwd: PathBuf::from("/tmp"),
             bg_signal: None,
             sandbox: None,

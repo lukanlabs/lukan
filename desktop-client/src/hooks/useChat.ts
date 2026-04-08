@@ -34,6 +34,7 @@ export interface ToolStatus {
   isError?: boolean;
   diff?: string;
   image?: string;
+  afterContent?: string;
 }
 
 export type StreamingBlock =
@@ -74,9 +75,12 @@ export interface ChatState {
   contextSize: number;
   providerName: string;
   modelName: string;
+  silentTools: string[];
   error: string | null;
   sessionList: SessionSummary[] | null;
   toolImages: Record<string, string>;
+  toolAfterContent: Record<string, string>;
+  checkpoints: import("../lib/types").CheckpointInfo[];
   tasks: TaskInfo[];
 }
 
@@ -97,9 +101,12 @@ export function useChat(tabId: string) {
     contextSize: 0,
     providerName: "",
     modelName: "",
+    silentTools: ["Remember"],
     error: null,
     sessionList: null,
     toolImages: {},
+    toolAfterContent: {},
+    checkpoints: [],
     tasks: [],
   });
 
@@ -110,6 +117,7 @@ export function useChat(tabId: string) {
   const blockIdCounter = useRef(0);
   const renderTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imageCacheRef = useRef<Record<string, string>>({});
+  const afterContentCacheRef = useRef<Record<string, string>>({});
   // Pending text extracted before tool calls — gets prepended to the next text block
   // so text split mid-word by tool calls merges back into one continuous block.
   const pendingTextRef = useRef<string>("");
@@ -199,9 +207,13 @@ export function useChat(tabId: string) {
             isError: event.isError,
             diff: event.diff,
             image: event.image,
+            afterContent: event.afterContent,
           });
           if (event.image) {
             imageCacheRef.current[event.id] = event.image;
+          }
+          if (event.afterContent) {
+            afterContentCacheRef.current[event.id] = event.afterContent;
           }
           flushRender();
           break;
@@ -367,6 +379,8 @@ export function useChat(tabId: string) {
         messages,
         streamingBlocks: [],
         toolImages: { ...s.toolImages, ...imageCacheRef.current },
+        toolAfterContent: { ...s.toolAfterContent, ...afterContentCacheRef.current },
+        checkpoints: complete.checkpoints ?? s.checkpoints,
         contextSize: complete.contextSize ?? s.contextSize,
         tokenUsage: {
           input: complete.tokenUsage?.input ?? s.tokenUsage.input,
@@ -388,11 +402,19 @@ export function useChat(tabId: string) {
       try {
         const init = await api.initializeChat();
         if (!mounted) return;
+        // Load config to get silentTools
+        let silentTools = ["Remember"];
+        try {
+          const cfg = await api.getConfig();
+          if (cfg?.silentTools) silentTools = cfg.silentTools;
+        } catch { /* use default */ }
         setState((s) => ({
           ...s,
           initialized: true,
           providerName: init.providerName ?? "",
           modelName: init.modelName ?? "",
+          silentTools,
+          checkpoints: init.checkpoints ?? s.checkpoints,
           permissionMode: (init.permissionMode ?? "auto") as PermissionMode,
         }));
       } catch (e) {
@@ -661,6 +683,7 @@ export function useChat(tabId: string) {
     async (id: string) => {
       try {
         imageCacheRef.current = {};
+        afterContentCacheRef.current = {};
         const init = await api.loadSession(tabId, id);
         setState((s) => ({
           ...s,
@@ -668,6 +691,8 @@ export function useChat(tabId: string) {
           messages: init.messages,
           streamingBlocks: [],
           toolImages: {},
+          toolAfterContent: {},
+          checkpoints: init.checkpoints ?? [],
           tokenUsage: {
             input: init.tokenUsage?.input ?? 0,
             output: init.tokenUsage?.output ?? 0,
@@ -688,6 +713,7 @@ export function useChat(tabId: string) {
   const doNewSession = useCallback(async () => {
     try {
       imageCacheRef.current = {};
+      afterContentCacheRef.current = {};
       const init = await api.newSession(tabId);
       setState((s) => ({
         ...s,
@@ -695,6 +721,8 @@ export function useChat(tabId: string) {
         messages: [],
         streamingBlocks: [],
         toolImages: {},
+    toolAfterContent: {},
+    checkpoints: [],
         tasks: [],
         tokenUsage: {
           input: 0,
@@ -736,6 +764,31 @@ export function useChat(tabId: string) {
     loadSession: doLoadSession,
     newSession: doNewSession,
     setPermissionMode: doSetPermissionMode,
+    restoreCheckpoint: useCallback(
+      async (checkpointId: string, restoreCode: boolean) => {
+        try {
+          const result = await api.restoreCheckpoint(
+            tabId,
+            checkpointId,
+            restoreCode,
+          ) as { messages?: Message[]; checkpoints?: import("../lib/types").CheckpointInfo[] } | undefined;
+          if (result) {
+            setState((s) => ({
+              ...s,
+              messages: result.messages ?? s.messages,
+              checkpoints: result.checkpoints ?? s.checkpoints,
+              streamingBlocks: [],
+            }));
+          }
+        } catch (e) {
+          setState((s) => ({
+            ...s,
+            error: `Restore failed: ${e}`,
+          }));
+        }
+      },
+      [tabId],
+    ),
     dismissError,
     dismissSessionList,
   };

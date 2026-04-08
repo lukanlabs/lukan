@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import type { AppConfig } from "../../lib/types";
 import { getConfig, saveConfig, listTools } from "../../lib/tauri";
 import { useToast } from "../ui/Toast";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, Save, EyeOff, Eye } from "lucide-react";
 
 const CORE_GROUPS: Record<string, string> = {
   ReadFiles: "File ops",
@@ -58,6 +58,7 @@ export default function ToolsTab() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [allTools, setAllTools] = useState<ToolEntry[]>([]);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [mainTab, setMainTab] = useState<"core" | "plugins">("core");
@@ -69,6 +70,7 @@ export default function ToolsTab() {
         setConfig(cfg);
         setAllTools(tools);
         setDisabled(new Set(cfg.disabledTools ?? []));
+        setHidden(new Set(cfg.silentTools ?? ["Remember"]));
       } catch (e) {
         toast("error", `Failed to load: ${e}`);
       } finally {
@@ -115,6 +117,15 @@ export default function ToolsTab() {
     });
   };
 
+  const toggleHidden = (name: string) => {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
   const setGroup = (tools: string[], enable: boolean) => {
     setDisabled((prev) => {
       const next = new Set(prev);
@@ -140,7 +151,8 @@ export default function ToolsTab() {
     setSaving(true);
     try {
       const disabledArr = disabled.size > 0 ? [...disabled].sort() : undefined;
-      await saveConfig({ ...config, disabledTools: disabledArr });
+      const silentArr = hidden.size > 0 ? [...hidden].sort() : [];
+      await saveConfig({ ...config, disabledTools: disabledArr, silentTools: silentArr });
       toast("success", "Tool settings saved");
     } catch (e) {
       toast("error", `Failed to save: ${e}`);
@@ -275,10 +287,26 @@ export default function ToolsTab() {
                       >
                         {tool}
                       </span>
-                      <button
-                        onClick={() => toggle(tool)}
-                        className={`s-toggle${enabled ? " active" : ""}`}
-                      />
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <button
+                          onClick={() => toggleHidden(tool)}
+                          title={hidden.has(tool) ? "Hidden from chat (click to show)" : "Visible in chat (click to hide)"}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            padding: 2,
+                            color: hidden.has(tool) ? "#71717a" : "#52525b",
+                            opacity: hidden.has(tool) ? 1 : 0.4,
+                          }}
+                        >
+                          {hidden.has(tool) ? <EyeOff size={12} /> : <Eye size={12} />}
+                        </button>
+                        <button
+                          onClick={() => toggle(tool)}
+                          className={`s-toggle${enabled ? " active" : ""}`}
+                        />
+                      </div>
                     </div>
                   );
                 })}
@@ -378,10 +406,26 @@ export default function ToolsTab() {
                       >
                         {tool}
                       </span>
-                      <button
-                        onClick={() => toggle(tool)}
-                        className={`s-toggle${enabled ? " active" : ""}`}
-                      />
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <button
+                          onClick={() => toggleHidden(tool)}
+                          title={hidden.has(tool) ? "Hidden from chat (click to show)" : "Visible in chat (click to hide)"}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            padding: 2,
+                            color: hidden.has(tool) ? "#71717a" : "#52525b",
+                            opacity: hidden.has(tool) ? 1 : 0.4,
+                          }}
+                        >
+                          {hidden.has(tool) ? <EyeOff size={12} /> : <Eye size={12} />}
+                        </button>
+                        <button
+                          onClick={() => toggle(tool)}
+                          className={`s-toggle${enabled ? " active" : ""}`}
+                        />
+                      </div>
                     </div>
                   );
                 })}

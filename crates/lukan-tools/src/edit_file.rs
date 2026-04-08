@@ -169,7 +169,7 @@ impl Tool for EditFileTool {
         }
 
         // Must have been read first
-        if !ctx.read_files.lock().await.contains(&path) {
+        if !ctx.read_files.lock().await.contains_key(&path) {
             return Ok(ToolResult::error(format!(
                 "File has not been read yet. Use ReadFiles first: {file_path_str}"
             )));

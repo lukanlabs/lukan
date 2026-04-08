@@ -210,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn basedir_replacement() {
-        use std::collections::HashSet;
+        use std::collections::HashMap;
         use std::sync::Arc;
         use tokio::sync::Mutex;
 
@@ -228,7 +228,7 @@ mod tests {
             progress_tx: None,
             event_tx: None,
             tool_call_id: None,
-            read_files: Arc::new(Mutex::new(HashSet::new())),
+            read_files: Arc::new(Mutex::new(HashMap::new())),
             cwd: tmp.clone(),
             bg_signal: None,
             sandbox: None,

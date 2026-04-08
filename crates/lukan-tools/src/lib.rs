@@ -10,6 +10,7 @@ pub mod planner_tools;
 pub mod plugin_tools;
 mod read_file;
 pub mod remember;
+pub mod reranker;
 pub mod sandbox;
 pub mod skills;
 pub mod tasks;

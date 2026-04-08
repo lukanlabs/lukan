@@ -9,6 +9,10 @@ type: decision | context | preference | bug-fix | lesson
 importance: high | medium | low
 related: [topic1, topic2]
 created: YYYY-MM-DD
+updated: YYYY-MM-DD
+code_refs:
+  - "crates/module/src/file.rs"
+  - "path/to/other/relevant_file.ts"
 index:
   - "L1-15: Section description"
   - "L16-30: Another section description"
@@ -25,6 +29,8 @@ Rules:
 - The index field maps line ranges in the body to section descriptions. Update it to match the body content.
 - Never duplicate information already in existing files.
 - When updating an existing file, preserve information that is still relevant and add new information.
+- The `updated` field MUST be set to today's date when updating an existing file. On CREATE, set `updated` equal to `created`.
+- The `code_refs` field lists source files that back up this memory. Include paths to the actual code files the memory describes (relative to project root). This helps verify if the memory is still accurate.
 
 Respond with action blocks. If nothing needs saving, respond with just:
 
@@ -42,6 +48,9 @@ type: decision
 importance: high
 related: [related-topics]
 created: CURRENT_DATE
+updated: CURRENT_DATE
+code_refs:
+  - "crates/relevant/src/file.rs"
 index:
   - "L1-10: First section"
 ---

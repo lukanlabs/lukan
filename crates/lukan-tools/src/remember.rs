@@ -16,6 +16,8 @@ pub struct MemoryFrontmatter {
     pub importance: String,
     pub related: Vec<String>,
     pub created: String,
+    pub updated: String,
+    pub code_refs: Vec<String>,
     pub index: Vec<String>,
 }
 
@@ -24,6 +26,8 @@ pub struct MemoryFile {
     pub filename: String,
     pub path: PathBuf,
     pub frontmatter: MemoryFrontmatter,
+    /// Markdown body after the frontmatter (truncated for reranking).
+    pub body: String,
 }
 
 // ── Frontmatter Parsing ─────────────────────────────────────────────
@@ -45,25 +49,38 @@ pub fn parse_memory_frontmatter(content: &str) -> Option<MemoryFrontmatter> {
     let mut importance = String::from("medium");
     let mut related = Vec::new();
     let mut created = String::new();
+    let mut updated = String::new();
+    let mut code_refs = Vec::new();
     let mut index = Vec::new();
     let mut in_index = false;
+    let mut in_code_refs = false;
 
     for line in yaml_block.lines() {
         let trimmed = line.trim();
 
-        // Handle multi-line index entries
-        if in_index {
+        // Handle multi-line list entries (index, code_refs)
+        if in_index || in_code_refs {
             if let Some(val) = trimmed.strip_prefix("- ") {
-                index.push(val.trim_matches('"').trim_matches('\'').to_string());
+                let val = val.trim_matches('"').trim_matches('\'').to_string();
+                if in_index {
+                    index.push(val);
+                } else {
+                    code_refs.push(val);
+                }
                 continue;
             } else if let Some(val) = trimmed.strip_prefix('-') {
                 let val = val.trim().trim_matches('"').trim_matches('\'');
                 if !val.is_empty() {
-                    index.push(val.to_string());
+                    if in_index {
+                        index.push(val.to_string());
+                    } else {
+                        code_refs.push(val.to_string());
+                    }
                 }
                 continue;
             } else {
                 in_index = false;
+                in_code_refs = false;
             }
         }
 
@@ -79,6 +96,15 @@ pub fn parse_memory_frontmatter(content: &str) -> Option<MemoryFrontmatter> {
             related = parse_bracket_list(val);
         } else if let Some(val) = trimmed.strip_prefix("created:") {
             created = val.trim().to_string();
+        } else if let Some(val) = trimmed.strip_prefix("updated:") {
+            updated = val.trim().to_string();
+        } else if trimmed.starts_with("code_refs:") {
+            let inline = trimmed.strip_prefix("code_refs:").unwrap_or("").trim();
+            if inline.starts_with('[') {
+                code_refs = parse_bracket_list(inline);
+            } else {
+                in_code_refs = true;
+            }
         } else if trimmed.starts_with("index:") {
             in_index = true;
         }
@@ -95,8 +121,26 @@ pub fn parse_memory_frontmatter(content: &str) -> Option<MemoryFrontmatter> {
         importance,
         related,
         created,
+        updated,
+        code_refs,
         index,
     })
+}
+
+/// Extract the markdown body after the YAML frontmatter closing `---`.
+/// Returns the content trimmed, or empty string if no body.
+pub fn extract_body(content: &str) -> String {
+    let content = content.trim_start();
+    if !content.starts_with("---") {
+        return content.to_string();
+    }
+    let rest = &content[3..];
+    if let Some(end) = rest.find("\n---") {
+        let after = &rest[end + 4..]; // skip past "\n---"
+        after.trim().to_string()
+    } else {
+        String::new()
+    }
 }
 
 /// Parse `[item1, item2, item3]` into a Vec<String>.
@@ -144,10 +188,12 @@ pub async fn discover_memory_files(cwd: &Path) -> Vec<MemoryFile> {
         };
 
         if let Some(frontmatter) = parse_memory_frontmatter(&content) {
+            let body = extract_body(&content);
             files.push(MemoryFile {
                 filename,
                 path,
                 frontmatter,
+                body,
             });
         }
     }
@@ -170,13 +216,32 @@ pub async fn discover_memory_files(cwd: &Path) -> Vec<MemoryFile> {
 
 // ── Search ──────────────────────────────────────────────────────────
 
-/// Search memory files by query. Matches against tags, summary, related, and type.
-/// Returns files sorted by relevance (number of field matches).
+/// Maximum candidates from keyword stage before reranking.
+const KEYWORD_CANDIDATES: usize = 20;
+
+/// Search memory files using two-stage retrieval.
+/// Returns `(results, keyword_hit_count)` so callers can report reranking stats.
+pub async fn search_memory_files_with_stats(cwd: &Path, query: &str) -> (Vec<MemoryFile>, usize) {
+    let (results, keyword_count) = search_memory_files_inner(cwd, query).await;
+    (results, keyword_count)
+}
+
+/// Search memory files — convenience wrapper that discards stats.
 pub async fn search_memory_files(cwd: &Path, query: &str) -> Vec<MemoryFile> {
+    search_memory_files_inner(cwd, query).await.0
+}
+
+/// Two-stage retrieval:
+/// 1. Keyword scoring (fast, broad) to get candidates
+/// 2. Semantic reranking (cross-encoder) to pick the best matches
+///
+/// Returns `(results, keyword_candidate_count)`.
+async fn search_memory_files_inner(cwd: &Path, query: &str) -> (Vec<MemoryFile>, usize) {
     let all = discover_memory_files(cwd).await;
     let query_lower = query.to_lowercase();
     let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
 
+    // Stage 1: keyword scoring (caps at KEYWORD_CANDIDATES)
     let mut scored: Vec<(usize, MemoryFile)> = all
         .into_iter()
         .filter_map(|mf| {
@@ -184,23 +249,18 @@ pub async fn search_memory_files(cwd: &Path, query: &str) -> Vec<MemoryFile> {
             let fm = &mf.frontmatter;
 
             for term in &query_terms {
-                // Tags (highest weight)
                 if fm.tags.iter().any(|t| t.to_lowercase().contains(term)) {
                     score += 3;
                 }
-                // Summary
                 if fm.summary.to_lowercase().contains(term) {
                     score += 2;
                 }
-                // Related
                 if fm.related.iter().any(|r| r.to_lowercase().contains(term)) {
                     score += 1;
                 }
-                // Type
                 if fm.memory_type.to_lowercase().contains(term) {
                     score += 1;
                 }
-                // Index entries
                 if fm.index.iter().any(|i| i.to_lowercase().contains(term)) {
                     score += 1;
                 }
@@ -211,7 +271,38 @@ pub async fn search_memory_files(cwd: &Path, query: &str) -> Vec<MemoryFile> {
         .collect();
 
     scored.sort_by(|a, b| b.0.cmp(&a.0));
-    scored.into_iter().map(|(_, mf)| mf).collect()
+    scored.truncate(KEYWORD_CANDIDATES);
+
+    let candidates: Vec<MemoryFile> = scored.into_iter().map(|(_, mf)| mf).collect();
+    let keyword_count = candidates.len();
+
+    if candidates.is_empty() {
+        return (candidates, 0);
+    }
+
+    // Stage 2: semantic reranking (metadata + body content)
+    let documents: Vec<String> = candidates
+        .iter()
+        .map(|mf| {
+            crate::reranker::build_document(
+                &mf.frontmatter.summary,
+                &mf.frontmatter.tags,
+                &mf.frontmatter.related,
+                &mf.frontmatter.index,
+                &mf.body,
+            )
+        })
+        .collect();
+
+    let reranked_indices =
+        crate::reranker::rerank(query, &documents, crate::reranker::RERANK_TOP_N);
+
+    let results = reranked_indices
+        .into_iter()
+        .filter_map(|i| candidates.get(i).cloned())
+        .collect();
+
+    (results, keyword_count)
 }
 
 // ── Prompt Helpers ──────────────────────────────────────────────────
@@ -233,12 +324,17 @@ pub async fn get_memory_summaries_for_prompt(cwd: &Path) -> Option<String> {
 
     let cap = files.len().min(20);
     for mf in &files[..cap] {
+        let fm = &mf.frontmatter;
+        let date = if !fm.updated.is_empty() {
+            &fm.updated
+        } else if !fm.created.is_empty() {
+            &fm.created
+        } else {
+            "?"
+        };
         section.push_str(&format!(
-            "- **{}** [{}|{}]: {}\n",
-            mf.filename,
-            mf.frontmatter.memory_type,
-            mf.frontmatter.importance,
-            mf.frontmatter.summary,
+            "- **{}** [{}|{}|{}]: {}\n",
+            mf.filename, fm.memory_type, fm.importance, date, fm.summary,
         ));
     }
 
@@ -260,13 +356,28 @@ pub fn format_frontmatters_for_llm(files: &[MemoryFile]) -> String {
     files
         .iter()
         .map(|mf| {
+            let fm = &mf.frontmatter;
+            let date = if !fm.updated.is_empty() {
+                format!(" | updated: {}", fm.updated)
+            } else if !fm.created.is_empty() {
+                format!(" | created: {}", fm.created)
+            } else {
+                String::new()
+            };
+            let refs = if !fm.code_refs.is_empty() {
+                format!(" | code_refs: [{}]", fm.code_refs.join(", "))
+            } else {
+                String::new()
+            };
             format!(
-                "[{}] tags: [{}] | type: {} | importance: {} | summary: {}",
+                "[{}] tags: [{}] | type: {} | importance: {} | summary: {}{}{}",
                 mf.filename,
-                mf.frontmatter.tags.join(", "),
-                mf.frontmatter.memory_type,
-                mf.frontmatter.importance,
-                mf.frontmatter.summary,
+                fm.tags.join(", "),
+                fm.memory_type,
+                fm.importance,
+                fm.summary,
+                date,
+                refs,
             )
         })
         .collect::<Vec<_>>()
@@ -329,25 +440,51 @@ impl Tool for RememberTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing required field: query"))?;
 
-        let matches = search_memory_files(&ctx.cwd, query).await;
+        // Run two-stage search (keyword + reranker)
+        let (matches, keyword_count) = search_memory_files_with_stats(&ctx.cwd, query).await;
 
         if matches.is_empty() {
             return Ok(ToolResult::success("No matching memories found."));
         }
 
-        let mut output = format!("Found {} matching memories:\n", matches.len());
+        let reranked = keyword_count > matches.len();
+        let mut output = if reranked {
+            format!(
+                "Found {} memories (reranked from {} keyword matches):\n",
+                matches.len(),
+                keyword_count,
+            )
+        } else {
+            format!("Found {} matching memories:\n", matches.len())
+        };
 
         for mf in &matches {
+            let fm = &mf.frontmatter;
             output.push_str(&format!(
                 "\n--- {} [{}|{}] ---\n",
-                mf.filename, mf.frontmatter.memory_type, mf.frontmatter.importance,
+                mf.filename, fm.memory_type, fm.importance,
             ));
-            output.push_str(&format!("Summary: {}\n", mf.frontmatter.summary));
-            output.push_str(&format!("Tags: {}\n", mf.frontmatter.tags.join(", ")));
+            output.push_str(&format!("Summary: {}\n", fm.summary));
+            output.push_str(&format!("Tags: {}\n", fm.tags.join(", ")));
 
-            if !mf.frontmatter.index.is_empty() {
+            // Show freshness info
+            if !fm.updated.is_empty() {
+                output.push_str(&format!("Updated: {}\n", fm.updated));
+            } else if !fm.created.is_empty() {
+                output.push_str(&format!("Created: {} (never updated)\n", fm.created));
+            }
+
+            // Show source files so the agent can verify
+            if !fm.code_refs.is_empty() {
+                output.push_str("Source files:\n");
+                for r in &fm.code_refs {
+                    output.push_str(&format!("  - {r}\n"));
+                }
+            }
+
+            if !fm.index.is_empty() {
                 output.push_str("Index:\n");
-                for entry in &mf.frontmatter.index {
+                for entry in &fm.index {
                     output.push_str(&format!("  - {entry}\n"));
                 }
             }

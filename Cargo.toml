@@ -48,13 +48,6 @@ grep-regex = "0.1"
 grep-searcher = "0.1"
 grep-matcher = "0.1"
 
-# Symbol index
-tree-sitter = "0.24"
-tree-sitter-typescript = "0.23"
-tree-sitter-javascript = "0.23"
-tree-sitter-python = "0.23"
-tree-sitter-rust = "0.23"
-
 # Web server
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors"] }
@@ -94,12 +87,10 @@ tauri-build = "2"
 lukan-core = { path = "crates/lukan-core" }
 lukan-providers = { path = "crates/lukan-providers" }
 lukan-tools = { path = "crates/lukan-tools" }
-lukan-search = { path = "crates/lukan-search" }
 lukan-agent = { path = "crates/lukan-agent" }
 lukan-tui = { path = "crates/lukan-tui" }
 lukan-web = { path = "crates/lukan-web" }
 lukan-plugins = { path = "crates/lukan-plugins" }
-lukan-desktop = { path = "crates/lukan-desktop" }
 lukan-browser = { path = "crates/lukan-browser" }
 
 [package]

@@ -136,6 +136,7 @@ async fn connect_and_run(
     let ws_config = tungstenite::protocol::WebSocketConfig::default()
         .max_frame_size(Some(64 * 1024 * 1024))
         .max_message_size(Some(64 * 1024 * 1024));
+
     let (ws_stream, _) =
         tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false)
             .await

@@ -20,11 +20,7 @@ use crate::sse::{SseEvent, SseParser};
 
 use serde::Deserialize;
 
-const DEFAULT_BASE_URL: &str = "https://d47ac792-3100.vm.kiteploy.com";
-
-fn base_url() -> String {
-    std::env::var("LUKAN_CLOUD_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.into())
-}
+const LUKAN_CLOUD_BASE_URL: &str = "https://api.lukan.ai";
 
 // ── Model fetching ──────────────────────────────────────────────────
 
@@ -38,7 +34,7 @@ pub struct LukanCloudModel {
 }
 
 pub async fn fetch_lukan_cloud_models(api_key: &str) -> Result<Vec<LukanCloudModel>> {
-    let url = format!("{}/v1/models", base_url());
+    let url = format!("{}/v1/models", LUKAN_CLOUD_BASE_URL);
     let client = Client::new();
     let resp = client
         .get(&url)
@@ -68,11 +64,10 @@ pub struct LukanCloudProvider {
 
 impl LukanCloudProvider {
     pub fn new(api_key: String, model: String, max_tokens: u32) -> Self {
-        let base_url = base_url();
         Self {
             client: Client::new(),
             api_key,
-            base_url,
+            base_url: LUKAN_CLOUD_BASE_URL.to_string(),
             model,
             max_tokens,
         }

@@ -47,7 +47,10 @@ export async function initTransport(): Promise<void> {
       transport = new DaemonTransport(port);
     } else if (isRelayMode()) {
       const { RelayTransport } = await import("./transport-relay");
-      const origin = `${window.location.protocol}//${window.location.host}`;
+      // Use VITE_RELAY_ORIGIN if set (for split deploy: SPA on Pages, relay on Worker)
+      // Otherwise use same origin (relay serves the SPA)
+      const origin = import.meta.env.VITE_RELAY_ORIGIN
+        || `${window.location.protocol}//${window.location.host}`;
       // Device name from URL path: e.g. /my-pc → "my-pc"
       const pathDevice = window.location.pathname
         .replace(/^\/+/, "")

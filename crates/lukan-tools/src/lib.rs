@@ -15,6 +15,7 @@ pub mod sandbox;
 pub mod skills;
 pub mod tasks;
 mod web_fetch;
+mod web_search;
 mod write_file;
 
 use std::collections::HashMap;
@@ -763,6 +764,7 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(Box::new(grep::GrepTool));
     registry.register(Box::new(glob_tool::GlobTool));
     registry.register(Box::new(web_fetch::WebFetchTool));
+    registry.register(Box::new(web_search::WebSearchTool));
     // Memory retrieval
     registry.register(Box::new(remember::RememberTool));
     // Task tools

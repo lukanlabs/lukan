@@ -22,6 +22,12 @@ impl Tool for WebSearchTool {
         "Search the web for information. Uses Tavily if TAVILY_API_KEY is set, or Brave Search if BRAVE_API_KEY is set."
     }
 
+    fn is_available(&self) -> bool {
+        let has_tavily = std::env::var("TAVILY_API_KEY").is_ok_and(|v| !v.is_empty());
+        let has_brave = std::env::var("BRAVE_API_KEY").is_ok_and(|v| !v.is_empty());
+        has_tavily || has_brave
+    }
+
     fn input_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",

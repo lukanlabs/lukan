@@ -206,6 +206,12 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// Whether this tool is available given the current environment/credentials.
+    /// Tools that return false are excluded from the registry at startup.
+    fn is_available(&self) -> bool {
+        true
+    }
+
     /// Execute the tool with parsed JSON input
     async fn execute(
         &self,
@@ -235,9 +241,11 @@ impl ToolRegistry {
         }
     }
 
-    /// Register a tool
+    /// Register a tool, skipping it if `is_available()` returns false.
     pub fn register(&mut self, tool: Box<dyn Tool>) {
-        self.tools.insert(tool.name().to_string(), tool);
+        if tool.is_available() {
+            self.tools.insert(tool.name().to_string(), tool);
+        }
     }
 
     /// Get a tool by name

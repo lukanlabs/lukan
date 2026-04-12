@@ -243,8 +243,10 @@ fn has_search_key() -> bool {
         }
     }
     // Fallback to env vars
-    std::env::var("TAVILY_API_KEY").is_ok_and(|v| !v.is_empty())
-        || std::env::var("BRAVE_API_KEY").is_ok_and(|v| !v.is_empty())
+    env_has_search_key(
+        std::env::var("TAVILY_API_KEY").ok().as_deref(),
+        std::env::var("BRAVE_API_KEY").ok().as_deref(),
+    )
 }
 
 fn json_has_search_key(val: &serde_json::Value) -> bool {
@@ -257,6 +259,10 @@ fn json_has_search_key(val: &serde_json::Value) -> bool {
         .and_then(|v| v.as_str())
         .is_some_and(|v| !v.is_empty());
     tavily || brave
+}
+
+fn env_has_search_key(tavily: Option<&str>, brave: Option<&str>) -> bool {
+    tavily.is_some_and(|v| !v.is_empty()) || brave.is_some_and(|v| !v.is_empty())
 }
 
 #[cfg(test)]
@@ -306,6 +312,31 @@ mod tests {
             "brave_api_key": null
         });
         assert!(!json_has_search_key(&val));
+    }
+
+    #[test]
+    fn env_tavily_key_present() {
+        assert!(env_has_search_key(Some("tvly-abc123"), None));
+    }
+
+    #[test]
+    fn env_brave_key_present() {
+        assert!(env_has_search_key(None, Some("BSA-abc123")));
+    }
+
+    #[test]
+    fn env_both_keys_present() {
+        assert!(env_has_search_key(Some("tvly-abc"), Some("BSA-abc")));
+    }
+
+    #[test]
+    fn env_empty_keys_returns_false() {
+        assert!(!env_has_search_key(Some(""), Some("")));
+    }
+
+    #[test]
+    fn env_no_keys_returns_false() {
+        assert!(!env_has_search_key(None, None));
     }
 
     #[test]

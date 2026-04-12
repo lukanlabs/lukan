@@ -249,12 +249,13 @@ fn has_search_key() -> bool {
 }
 
 fn json_has_search_key(val: &serde_json::Value) -> bool {
+    // Credentials are serialized with camelCase (serde rename_all = "camelCase")
     let tavily = val
-        .get("tavily_api_key")
+        .get("tavilyApiKey")
         .and_then(|v| v.as_str())
         .is_some_and(|v| !v.is_empty());
     let brave = val
-        .get("brave_api_key")
+        .get("braveApiKey")
         .and_then(|v| v.as_str())
         .is_some_and(|v| !v.is_empty());
     tavily || brave
@@ -270,21 +271,21 @@ mod tests {
 
     #[test]
     fn json_has_tavily_key() {
-        let val = serde_json::json!({ "tavily_api_key": "tvly-abc123" });
+        let val = serde_json::json!({ "tavilyApiKey": "tvly-abc123" });
         assert!(json_has_search_key(&val));
     }
 
     #[test]
     fn json_has_brave_key() {
-        let val = serde_json::json!({ "brave_api_key": "BSAabc123" });
+        let val = serde_json::json!({ "braveApiKey": "BSAabc123" });
         assert!(json_has_search_key(&val));
     }
 
     #[test]
     fn json_has_both_keys() {
         let val = serde_json::json!({
-            "tavily_api_key": "tvly-abc",
-            "brave_api_key": "BSA-abc"
+            "tavilyApiKey": "tvly-abc",
+            "braveApiKey": "BSA-abc"
         });
         assert!(json_has_search_key(&val));
     }
@@ -292,23 +293,23 @@ mod tests {
     #[test]
     fn json_empty_keys_returns_false() {
         let val = serde_json::json!({
-            "tavily_api_key": "",
-            "brave_api_key": ""
+            "tavilyApiKey": "",
+            "braveApiKey": ""
         });
         assert!(!json_has_search_key(&val));
     }
 
     #[test]
     fn json_missing_keys_returns_false() {
-        let val = serde_json::json!({ "anthropic_api_key": "sk-ant-abc" });
+        let val = serde_json::json!({ "anthropicApiKey": "sk-ant-abc" });
         assert!(!json_has_search_key(&val));
     }
 
     #[test]
     fn json_null_keys_returns_false() {
         let val = serde_json::json!({
-            "tavily_api_key": null,
-            "brave_api_key": null
+            "tavilyApiKey": null,
+            "braveApiKey": null
         });
         assert!(!json_has_search_key(&val));
     }

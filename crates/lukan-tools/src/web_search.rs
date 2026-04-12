@@ -19,7 +19,7 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search the web for information. Uses Tavily if TAVILY_API_KEY is set, Brave Search if BRAVE_API_KEY is set, or DuckDuckGo as a free fallback."
+        "Search the web for information. Uses Tavily if TAVILY_API_KEY is set, or Brave Search if BRAVE_API_KEY is set."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -69,7 +69,9 @@ impl Tool for WebSearchTool {
             return search_brave(&query, count, key).await;
         }
 
-        search_duckduckgo(&query, count).await
+        Ok(ToolResult::error(
+            "No search API key configured. Set TAVILY_API_KEY or BRAVE_API_KEY in your credentials.",
+        ))
     }
 }
 
@@ -214,143 +216,6 @@ async fn search_brave(query: &str, count: usize, api_key: &str) -> anyhow::Resul
             )))
         }
     }
-}
-
-async fn search_duckduckgo(query: &str, count: usize) -> anyhow::Result<ToolResult> {
-    let client = reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .build()?;
-
-    let resp = client
-        .post("https://lite.duckduckgo.com/lite/")
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body(format!("q={}", urlencoding::encode(query)))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Ok(ToolResult::error(format!("DuckDuckGo request failed: {e}"))),
-    };
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        return Ok(ToolResult::error(format!("DuckDuckGo error: {}", status)));
-    }
-
-    let html = match resp.text().await {
-        Ok(t) => t,
-        Err(e) => {
-            return Ok(ToolResult::error(format!(
-                "Failed to read DDG response: {e}"
-            )));
-        }
-    };
-
-    let results = parse_ddg_links(&html, count);
-
-    if results.is_empty() {
-        return Ok(ToolResult::success("No results found."));
-    }
-
-    let formatted: Vec<String> = results
-        .iter()
-        .enumerate()
-        .map(|(i, (title, url, snippet))| {
-            format!("{}. {}\n   {}\n   {}", i + 1, title, url, snippet)
-        })
-        .collect();
-
-    Ok(ToolResult::success(truncate(
-        &formatted.join("\n\n"),
-        MAX_CONTENT,
-    )))
-}
-
-fn parse_ddg_links(html: &str, max: usize) -> Vec<(String, String, String)> {
-    let mut results = Vec::new();
-
-    // Find all result-link anchors
-    let mut search = html;
-    let mut snippets: Vec<String> = Vec::new();
-
-    // Parse snippets first
-    let mut s = html;
-    while let Some(pos) = s.find("result-snippet") {
-        s = &s[pos..];
-        if let Some(start) = s.find('>') {
-            let rest = &s[start + 1..];
-            if let Some(end) = rest.find("</td>") {
-                snippets.push(strip_tags(&rest[..end]));
-            }
-        }
-        s = &s[1..];
-    }
-
-    // Parse links
-    let mut si = 0;
-    while let Some(pos) = search.find("result-link") {
-        search = &search[pos..];
-        // Find href
-        if let Some(href_pos) = search.find("href=\"") {
-            let after_href = &search[href_pos + 6..];
-            if let Some(href_end) = after_href.find('"') {
-                let url = after_href[..href_end].to_string();
-                // Find inner text
-                if let Some(gt) = search.find('>') {
-                    let after_gt = &search[gt + 1..];
-                    if let Some(end) = after_gt.find("</a>") {
-                        let title = strip_tags(&after_gt[..end]);
-                        let snippet = snippets.get(si).cloned().unwrap_or_default();
-                        results.push((title, url, snippet));
-                        si += 1;
-                        if results.len() >= max {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        search = &search[1..];
-    }
-
-    results
-}
-
-fn strip_tags(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-    let mut last_was_space = false;
-
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if in_tag => {}
-            c if c.is_whitespace() => {
-                if !last_was_space {
-                    result.push(' ');
-                    last_was_space = true;
-                }
-            }
-            c => {
-                result.push(c);
-                last_was_space = false;
-            }
-        }
-    }
-
-    // Decode common HTML entities
-    result
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&nbsp;", " ")
-        .replace("&#39;", "'")
-        .trim()
-        .to_string()
 }
 
 fn truncate(text: &str, max: usize) -> String {

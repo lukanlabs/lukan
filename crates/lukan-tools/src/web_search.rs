@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use lukan_core::config::credentials::CredentialsManager;
+use lukan_core::config::paths::LukanPaths;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
@@ -23,9 +24,7 @@ impl Tool for WebSearchTool {
     }
 
     fn is_available(&self) -> bool {
-        let has_tavily = std::env::var("TAVILY_API_KEY").is_ok_and(|v| !v.is_empty());
-        let has_brave = std::env::var("BRAVE_API_KEY").is_ok_and(|v| !v.is_empty());
-        has_tavily || has_brave
+        has_search_key()
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -229,5 +228,96 @@ fn truncate(text: &str, max: usize) -> String {
         text.to_string()
     } else {
         format!("{}\n\n... (truncated)", &text[..max])
+    }
+}
+
+/// Check if any search API key is available, reading credentials.json first
+/// then falling back to environment variables.
+fn has_search_key() -> bool {
+    // Try credentials.json first (sync read)
+    if let Ok(content) = std::fs::read_to_string(LukanPaths::credentials_file())
+        && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
+    {
+        if json_has_search_key(&val) {
+            return true;
+        }
+    }
+    // Fallback to env vars
+    std::env::var("TAVILY_API_KEY").is_ok_and(|v| !v.is_empty())
+        || std::env::var("BRAVE_API_KEY").is_ok_and(|v| !v.is_empty())
+}
+
+fn json_has_search_key(val: &serde_json::Value) -> bool {
+    let tavily = val
+        .get("tavily_api_key")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.is_empty());
+    let brave = val
+        .get("brave_api_key")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.is_empty());
+    tavily || brave
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_has_tavily_key() {
+        let val = serde_json::json!({ "tavily_api_key": "tvly-abc123" });
+        assert!(json_has_search_key(&val));
+    }
+
+    #[test]
+    fn json_has_brave_key() {
+        let val = serde_json::json!({ "brave_api_key": "BSAabc123" });
+        assert!(json_has_search_key(&val));
+    }
+
+    #[test]
+    fn json_has_both_keys() {
+        let val = serde_json::json!({
+            "tavily_api_key": "tvly-abc",
+            "brave_api_key": "BSA-abc"
+        });
+        assert!(json_has_search_key(&val));
+    }
+
+    #[test]
+    fn json_empty_keys_returns_false() {
+        let val = serde_json::json!({
+            "tavily_api_key": "",
+            "brave_api_key": ""
+        });
+        assert!(!json_has_search_key(&val));
+    }
+
+    #[test]
+    fn json_missing_keys_returns_false() {
+        let val = serde_json::json!({ "anthropic_api_key": "sk-ant-abc" });
+        assert!(!json_has_search_key(&val));
+    }
+
+    #[test]
+    fn json_null_keys_returns_false() {
+        let val = serde_json::json!({
+            "tavily_api_key": null,
+            "brave_api_key": null
+        });
+        assert!(!json_has_search_key(&val));
+    }
+
+    #[test]
+    fn tool_name_is_web_search() {
+        assert_eq!(WebSearchTool.name(), "WebSearch");
+    }
+
+    #[test]
+    fn tool_schema_requires_query() {
+        let schema = WebSearchTool.input_schema();
+        let required = schema["required"].as_array().unwrap();
+        let fields: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(fields.contains(&"query"));
     }
 }

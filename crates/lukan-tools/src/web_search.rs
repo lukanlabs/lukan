@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use lukan_core::config::credentials::CredentialsManager;
+use lukan_core::config::paths::LukanPaths;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
@@ -23,9 +24,7 @@ impl Tool for WebSearchTool {
     }
 
     fn is_available(&self) -> bool {
-        let has_tavily = std::env::var("TAVILY_API_KEY").is_ok_and(|v| !v.is_empty());
-        let has_brave = std::env::var("BRAVE_API_KEY").is_ok_and(|v| !v.is_empty());
-        has_tavily || has_brave
+        has_search_key()
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -229,5 +228,127 @@ fn truncate(text: &str, max: usize) -> String {
         text.to_string()
     } else {
         format!("{}\n\n... (truncated)", &text[..max])
+    }
+}
+
+/// Check if any search API key is available, reading credentials.json first
+/// then falling back to environment variables.
+fn has_search_key() -> bool {
+    // Try credentials.json first (sync read)
+    if let Ok(content) = std::fs::read_to_string(LukanPaths::credentials_file())
+        && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
+        && json_has_search_key(&val)
+    {
+        return true;
+    }
+    // Fallback to env vars
+    env_has_search_key(
+        std::env::var("TAVILY_API_KEY").ok().as_deref(),
+        std::env::var("BRAVE_API_KEY").ok().as_deref(),
+    )
+}
+
+fn json_has_search_key(val: &serde_json::Value) -> bool {
+    // Credentials are serialized with camelCase (serde rename_all = "camelCase")
+    let tavily = val
+        .get("tavilyApiKey")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.is_empty());
+    let brave = val
+        .get("braveApiKey")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.is_empty());
+    tavily || brave
+}
+
+fn env_has_search_key(tavily: Option<&str>, brave: Option<&str>) -> bool {
+    tavily.is_some_and(|v| !v.is_empty()) || brave.is_some_and(|v| !v.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_has_tavily_key() {
+        let val = serde_json::json!({ "tavilyApiKey": "tvly-abc123" });
+        assert!(json_has_search_key(&val));
+    }
+
+    #[test]
+    fn json_has_brave_key() {
+        let val = serde_json::json!({ "braveApiKey": "BSAabc123" });
+        assert!(json_has_search_key(&val));
+    }
+
+    #[test]
+    fn json_has_both_keys() {
+        let val = serde_json::json!({
+            "tavilyApiKey": "tvly-abc",
+            "braveApiKey": "BSA-abc"
+        });
+        assert!(json_has_search_key(&val));
+    }
+
+    #[test]
+    fn json_empty_keys_returns_false() {
+        let val = serde_json::json!({
+            "tavilyApiKey": "",
+            "braveApiKey": ""
+        });
+        assert!(!json_has_search_key(&val));
+    }
+
+    #[test]
+    fn json_missing_keys_returns_false() {
+        let val = serde_json::json!({ "anthropicApiKey": "sk-ant-abc" });
+        assert!(!json_has_search_key(&val));
+    }
+
+    #[test]
+    fn json_null_keys_returns_false() {
+        let val = serde_json::json!({
+            "tavilyApiKey": null,
+            "braveApiKey": null
+        });
+        assert!(!json_has_search_key(&val));
+    }
+
+    #[test]
+    fn env_tavily_key_present() {
+        assert!(env_has_search_key(Some("tvly-abc123"), None));
+    }
+
+    #[test]
+    fn env_brave_key_present() {
+        assert!(env_has_search_key(None, Some("BSA-abc123")));
+    }
+
+    #[test]
+    fn env_both_keys_present() {
+        assert!(env_has_search_key(Some("tvly-abc"), Some("BSA-abc")));
+    }
+
+    #[test]
+    fn env_empty_keys_returns_false() {
+        assert!(!env_has_search_key(Some(""), Some("")));
+    }
+
+    #[test]
+    fn env_no_keys_returns_false() {
+        assert!(!env_has_search_key(None, None));
+    }
+
+    #[test]
+    fn tool_name_is_web_search() {
+        assert_eq!(WebSearchTool.name(), "WebSearch");
+    }
+
+    #[test]
+    fn tool_schema_requires_query() {
+        let schema = WebSearchTool.input_schema();
+        let required = schema["required"].as_array().unwrap();
+        let fields: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(fields.contains(&"query"));
     }
 }

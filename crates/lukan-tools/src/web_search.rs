@@ -237,10 +237,9 @@ fn has_search_key() -> bool {
     // Try credentials.json first (sync read)
     if let Ok(content) = std::fs::read_to_string(LukanPaths::credentials_file())
         && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
+        && json_has_search_key(&val)
     {
-        if json_has_search_key(&val) {
-            return true;
-        }
+        return true;
     }
     // Fallback to env vars
     env_has_search_key(

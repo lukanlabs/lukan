@@ -175,19 +175,13 @@ export class RelayTransport implements Transport {
           this.totpCode = code;
         }
       } else if (preflight.status === 403) {
-        const data = await preflight.json().catch(() => ({}));
-        if (data.error === "not_registered") {
-          throw new Error(
-            "Account not registered. Create an account at cloud.lukan.ai to use remote.",
-          );
-        }
+        const data = await preflight.json().catch(() => ({})) as { message?: string };
+        if (data.message) throw new Error(data.message);
       }
     } catch (e) {
-      if (
-        e instanceof Error &&
-        (e.message === "TOTP verification cancelled" ||
-          e.message.includes("not registered"))
-      )
+      // Re-throw any app-level error; swallow only network failures (TypeError)
+      // so we fall through and let the WS attempt itself fail for older relays
+      if (e instanceof Error && !(e instanceof TypeError))
         throw e;
       // Preflight failed — try connecting anyway (relay might not support preflight)
     }

@@ -303,9 +303,12 @@ pub async fn set_active_provider(
             }
         };
 
+    // Strip the provider prefix only if the full "provider:model" entry was sent.
+    // Models with colons in their IDs (e.g. Ollama's "qwen3.5:9b") must not be split blindly.
     let model_str = model_raw.map(|m| {
-        if let Some((_prefix, raw)) = m.split_once(':') {
-            raw.to_string()
+        let prefix = format!("{provider_str}:");
+        if m.starts_with(&prefix) {
+            m[prefix.len()..].to_string()
         } else {
             m
         }

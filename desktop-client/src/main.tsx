@@ -23,7 +23,7 @@ function Root() {
   const [ready, setReady] = useState(false);
   const [projectSelected, setProjectSelected] = useState(!IS_TAURI);
   const [loginMessage, setLoginMessage] = useState("");
-  const [transportError, setTransportError] = useState(false);
+  const [transportError, setTransportError] = useState<string | null>(null);
   const [devices, setDevices] = useState<string[]>([]);
 
   // In relay mode, check if we already have a device in the URL
@@ -96,8 +96,9 @@ function Root() {
       return;
     initTransport()
       .then(() => setReady(true))
-      .catch(() => {
-        setTransportError(true);
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : "";
+        setTransportError(msg || null);
       });
   }, [authenticated, ready, transportError, needsDevicePicker]);
 
@@ -107,7 +108,7 @@ function Root() {
       resetTransport();
       setAuthenticated(false);
       setReady(false);
-      setTransportError(false);
+      setTransportError(null);
       setLoginMessage("Session expired. Please log in again.");
     };
     window.addEventListener("auth-expired", handleExpired);
@@ -118,18 +119,17 @@ function Root() {
   if (checking) return null;
 
   // Transport error
-  if (transportError) {
+  if (transportError !== null) {
     return (
       <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-300">
         <div className="text-center space-y-4 max-w-md px-4">
           <p className="text-lg font-medium">Connection failed</p>
           <p className="text-sm text-zinc-500">
-            Could not connect to the daemon. Make sure it is running on your
-            machine.
+            {transportError || "Could not connect to the daemon. Make sure it is running on your machine."}
           </p>
           <button
             onClick={() => {
-              setTransportError(false);
+              setTransportError(null);
               setReady(false);
               setAuthenticated(false);
               setChecking(true);

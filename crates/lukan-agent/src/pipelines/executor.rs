@@ -380,6 +380,9 @@ pub async fn execute_pipeline_full(
 
                 // Save immediately after each step completes (don't wait for entire level)
                 PipelineManager::save_run(&run).await.ok();
+                // Sync shared_run_state so background savers of still-running steps
+                // don't overwrite the file with stale data (race condition fix)
+                *shared_run_state.lock().await = run.clone();
             }
         }
 

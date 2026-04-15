@@ -105,8 +105,7 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
             .collect(),
     );
 
-    let session_id = agent.session_id().to_string();
-    eprintln!("  Session: {}…", &session_id[..8.min(session_id.len())]);
+    eprintln!("  Resume with: lukan -c");
     eprintln!();
 
     // Supervisor conversation history (persists across turns for context)
@@ -140,12 +139,12 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
         }
         SupervisorAction::Done(summary) => {
             eprintln!("\n\x1b[1;32m✓ Supervisor: {summary}\x1b[0m");
-            eprintln!("\n  Session: {}…", &session_id[..8.min(session_id.len())]);
+            eprintln!("\n  Resume with: lukan -c");
             return Ok(());
         }
         SupervisorAction::Failed(reason) => {
             eprintln!("\n\x1b[1;31m✗ Supervisor: {reason}\x1b[0m");
-            eprintln!("\n  Session: {}…", &session_id[..8.min(session_id.len())]);
+            eprintln!("\n  Resume with: lukan -c");
             return Ok(());
         }
     };
@@ -203,8 +202,7 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
         }
     }
 
-    eprintln!("\n  Session: {session_id}");
-    eprintln!("  Resume: lukan -c");
+    eprintln!("\n  Resume with: lukan -c");
     Ok(())
 }
 

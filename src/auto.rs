@@ -94,6 +94,7 @@ pub async fn run_auto(goal: &str, max_turns: usize) -> Result<()> {
         skip_session_save: false,
         vision_provider: None,
         extra_env: resolved.credentials.flatten_skill_env(),
+        compaction_threshold: None,
     };
 
     let mut agent = lukan_agent::AgentLoop::new(agent_config).await?;

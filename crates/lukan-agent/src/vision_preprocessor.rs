@@ -367,12 +367,26 @@ pub(crate) async fn extract_image_urls(text: &str) -> (String, Vec<ContentBlock>
     for url in &urls {
         match client.get(url).send().await {
             Ok(resp) if resp.status().is_success() => {
-                let media_type = resp
+                let content_type = resp
                     .headers()
                     .get("content-type")
                     .and_then(|v| v.to_str().ok())
-                    .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-                    .or_else(|| media_type_from_url(url));
+                    .map(|s| s.split(';').next().unwrap_or(s).trim().to_string());
+
+                // Skip if response is not an image (e.g. HTML 404 pages served as 200)
+                let is_image = content_type
+                    .as_deref()
+                    .map(|ct| ct.starts_with("image/"))
+                    .unwrap_or(false);
+                if !is_image {
+                    warn!(
+                        "Skipping {url}: content-type is {:?}, not an image",
+                        content_type
+                    );
+                    continue;
+                }
+
+                let media_type = content_type.or_else(|| media_type_from_url(url));
 
                 match resp.bytes().await {
                     Ok(bytes) => {

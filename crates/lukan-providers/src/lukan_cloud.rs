@@ -302,7 +302,7 @@ impl Provider for LukanCloudProvider {
         let mut stream = response.bytes_stream();
         use futures::StreamExt;
 
-        let chunk_timeout = std::time::Duration::from_secs(60);
+        let chunk_timeout = std::time::Duration::from_secs(120);
         while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next())
             .await
             .context("Lukan Cloud stream timed out (no data for 60s)")?
@@ -385,7 +385,13 @@ impl Provider for LukanCloudProvider {
 
                             AnthropicStreamEvent::MessageDelta { delta, usage } => {
                                 if let Some(u) = usage {
-                                    output_tokens = u.output_tokens.unwrap_or(0);
+                                    output_tokens = u.output_tokens.unwrap_or(output_tokens);
+                                    if let Some(it) = u.input_tokens {
+                                        input_tokens = it;
+                                    }
+                                    if let Some(cr) = u.cache_read_input_tokens {
+                                        cache_read_tokens = cr;
+                                    }
                                 }
                                 let stop_reason =
                                     Self::map_stop_reason(delta.stop_reason.as_deref());
@@ -480,6 +486,13 @@ struct AnthropicInputUsage {
 #[derive(Debug, Deserialize)]
 struct AnthropicOutputUsage {
     output_tokens: Option<u64>,
+    /// Some proxies (e.g. lukan-cloud translating Cloudflare AI Gateway streams)
+    /// deliver the real prompt-token count in `message_delta` because the upstream
+    /// sends it in chunks that arrive after the initial `message_start`.
+    #[serde(default)]
+    input_tokens: Option<u64>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

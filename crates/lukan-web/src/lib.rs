@@ -1,6 +1,7 @@
 mod auth;
 mod auth_middleware;
 mod protocol;
+mod rest_auto;
 mod rest_browser;
 mod rest_config;
 mod rest_credentials;

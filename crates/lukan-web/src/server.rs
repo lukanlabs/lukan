@@ -15,7 +15,7 @@ use crate::state::AppState;
 use crate::static_files;
 use crate::ws_handler::ws_upgrade_handler;
 use crate::{
-    rest_browser, rest_config, rest_credentials, rest_events, rest_files, rest_memory,
+    rest_auto, rest_browser, rest_config, rest_credentials, rest_events, rest_files, rest_memory,
     rest_pipelines, rest_plugins, rest_processes, rest_providers, rest_workers,
 };
 
@@ -229,6 +229,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/transcription/transcribe",
             post(rest_plugins::transcribe_audio),
         )
+        // Autonomous agent (cloud-agent relay trigger)
+        .route("/auto/run", post(rest_auto::start_auto_run))
+        .route("/auto/jobs/:id", get(rest_auto::get_auto_job))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()

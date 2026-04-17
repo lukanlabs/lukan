@@ -1352,38 +1352,36 @@ impl App {
                     self.cmd_palette_idx = 0;
                     self.esc_pending = false;
                 }
-                KeyCode::Left
-                    if self.cursor_pos > 0 => {
-                        if let Some((ps, pe, _)) = self.paste_info
-                            && self.cursor_pos > ps
-                            && self.cursor_pos <= pe
-                        {
-                            // Jump over paste block
-                            self.cursor_pos = ps;
-                        } else {
-                            self.cursor_pos = self.input[..self.cursor_pos]
-                                .char_indices()
-                                .next_back()
-                                .map(|(i, _)| i)
-                                .unwrap_or(0);
-                        }
+                KeyCode::Left if self.cursor_pos > 0 => {
+                    if let Some((ps, pe, _)) = self.paste_info
+                        && self.cursor_pos > ps
+                        && self.cursor_pos <= pe
+                    {
+                        // Jump over paste block
+                        self.cursor_pos = ps;
+                    } else {
+                        self.cursor_pos = self.input[..self.cursor_pos]
+                            .char_indices()
+                            .next_back()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
                     }
-                KeyCode::Right
-                    if self.cursor_pos < self.input.len() => {
-                        if let Some((ps, pe, _)) = self.paste_info
-                            && self.cursor_pos >= ps
-                            && self.cursor_pos < pe
-                        {
-                            // Jump over paste block
-                            self.cursor_pos = pe;
-                        } else {
-                            self.cursor_pos = self.input[self.cursor_pos..]
-                                .char_indices()
-                                .nth(1)
-                                .map(|(i, _)| self.cursor_pos + i)
-                                .unwrap_or(self.input.len());
-                        }
+                }
+                KeyCode::Right if self.cursor_pos < self.input.len() => {
+                    if let Some((ps, pe, _)) = self.paste_info
+                        && self.cursor_pos >= ps
+                        && self.cursor_pos < pe
+                    {
+                        // Jump over paste block
+                        self.cursor_pos = pe;
+                    } else {
+                        self.cursor_pos = self.input[self.cursor_pos..]
+                            .char_indices()
+                            .nth(1)
+                            .map(|(i, _)| self.cursor_pos + i)
+                            .unwrap_or(self.input.len());
                     }
+                }
                 KeyCode::Home => self.cursor_pos = 0,
                 KeyCode::End => self.cursor_pos = self.input.len(),
                 _ => {}
@@ -1402,32 +1400,29 @@ impl App {
                     }
                     self.cursor_pos += clen;
                 }
-                KeyCode::Backspace
-                    if self.cursor_pos > 0 => {
-                        let prev = self.input[..self.cursor_pos]
-                            .char_indices()
-                            .next_back()
-                            .map(|(i, _)| i)
-                            .unwrap_or(0);
-                        self.input.drain(prev..self.cursor_pos);
-                        self.cursor_pos = prev;
-                    }
-                KeyCode::Left
-                    if self.cursor_pos > 0 => {
-                        self.cursor_pos = self.input[..self.cursor_pos]
-                            .char_indices()
-                            .next_back()
-                            .map(|(i, _)| i)
-                            .unwrap_or(0);
-                    }
-                KeyCode::Right
-                    if self.cursor_pos < self.input.len() => {
-                        self.cursor_pos = self.input[self.cursor_pos..]
-                            .char_indices()
-                            .nth(1)
-                            .map(|(i, _)| self.cursor_pos + i)
-                            .unwrap_or(self.input.len());
-                    }
+                KeyCode::Backspace if self.cursor_pos > 0 => {
+                    let prev = self.input[..self.cursor_pos]
+                        .char_indices()
+                        .next_back()
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    self.input.drain(prev..self.cursor_pos);
+                    self.cursor_pos = prev;
+                }
+                KeyCode::Left if self.cursor_pos > 0 => {
+                    self.cursor_pos = self.input[..self.cursor_pos]
+                        .char_indices()
+                        .next_back()
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                }
+                KeyCode::Right if self.cursor_pos < self.input.len() => {
+                    self.cursor_pos = self.input[self.cursor_pos..]
+                        .char_indices()
+                        .nth(1)
+                        .map(|(i, _)| self.cursor_pos + i)
+                        .unwrap_or(self.input.len());
+                }
                 KeyCode::Home => self.cursor_pos = 0,
                 KeyCode::End => self.cursor_pos = self.input.len(),
                 _ => {}

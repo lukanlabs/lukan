@@ -1064,9 +1064,7 @@ async fn execute_step_live(
                 StreamEvent::ToolUseStart { name, .. } => {
                     tool_log.push_str(&format!("→ {name}\n"));
                 }
-                StreamEvent::ToolResult { name, is_error, .. }
-                    if *is_error == Some(true) =>
-                {
+                StreamEvent::ToolResult { name, is_error, .. } if *is_error == Some(true) => {
                     tool_log.push_str(&format!("  ✗ {name} failed\n"));
                 }
                 StreamEvent::Usage {

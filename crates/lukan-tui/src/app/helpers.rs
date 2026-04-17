@@ -417,14 +417,12 @@ impl App {
         let custom_idx = option_count - 1; // last index = custom
 
         match code {
-            KeyCode::Up
-                if state.selections[qi] > 0 => {
-                    state.selections[qi] -= 1;
-                }
-            KeyCode::Down
-                if state.selections[qi] + 1 < option_count => {
-                    state.selections[qi] += 1;
-                }
+            KeyCode::Up if state.selections[qi] > 0 => {
+                state.selections[qi] -= 1;
+            }
+            KeyCode::Down if state.selections[qi] + 1 < option_count => {
+                state.selections[qi] += 1;
+            }
             KeyCode::Char(' ') => {
                 if state.selections[qi] == custom_idx {
                     // Enter custom text editing mode
@@ -436,14 +434,12 @@ impl App {
                     }
                 }
             }
-            KeyCode::Tab
-                if state.current_question + 1 < state.questions.len() => {
-                    state.current_question += 1;
-                }
-            KeyCode::BackTab
-                if state.current_question > 0 => {
-                    state.current_question -= 1;
-                }
+            KeyCode::Tab if state.current_question + 1 < state.questions.len() => {
+                state.current_question += 1;
+            }
+            KeyCode::BackTab if state.current_question > 0 => {
+                state.current_question -= 1;
+            }
             KeyCode::Enter => {
                 if state.selections[qi] == custom_idx && !state.editing_custom {
                     // Enter custom text editing mode on Enter too

@@ -715,9 +715,9 @@ impl Screen {
         let r = self.cursor_row as usize;
         let c = self.cursor_col as usize;
         match mode {
-            0 => {
+            0
                 // Erase below (including cursor position to end)
-                if r < self.grid.len() {
+                if r < self.grid.len() => {
                     for cell in &mut self.grid[r][c..] {
                         *cell = Cell::default();
                     }
@@ -727,7 +727,6 @@ impl Screen {
                         }
                     }
                 }
-            }
             1 => {
                 // Erase above (including start to cursor position)
                 for row in &mut self.grid[..r] {

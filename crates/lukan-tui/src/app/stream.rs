@@ -223,11 +223,10 @@ impl App {
                     };
                     for block in blocks {
                         match block {
-                            ContentBlock::Text { text } => {
-                                if !text.trim().is_empty() {
+                            ContentBlock::Text { text }
+                                if !text.trim().is_empty() => {
                                     self.messages.push(ChatMessage::new(display_role, text));
                                 }
-                            }
                             ContentBlock::ToolUse { name, input, .. } => {
                                 let summary = summarize_tool_input(name, input);
                                 self.messages.push(ChatMessage::new(

@@ -299,11 +299,10 @@ impl App {
 
         match state.mode {
             PlanReviewMode::List => match code {
-                KeyCode::Up => {
-                    if state.selected > 0 {
+                KeyCode::Up
+                    if state.selected > 0 => {
                         state.selected -= 1;
                     }
-                }
                 KeyCode::Down => {
                     // tasks + 2 action items (accept, request changes)
                     let max = state.tasks.len();
@@ -311,12 +310,11 @@ impl App {
                         state.selected += 1;
                     }
                 }
-                KeyCode::Enter => {
+                KeyCode::Enter
                     // View task detail
-                    if state.selected < state.tasks.len() {
+                    if state.selected < state.tasks.len() => {
                         state.mode = PlanReviewMode::Detail;
                     }
-                }
                 KeyCode::Char('a') => {
                     // Accept plan
                     if let Some(state) = self.plan_review.take() {
@@ -419,16 +417,14 @@ impl App {
         let custom_idx = option_count - 1; // last index = custom
 
         match code {
-            KeyCode::Up => {
-                if state.selections[qi] > 0 {
+            KeyCode::Up
+                if state.selections[qi] > 0 => {
                     state.selections[qi] -= 1;
                 }
-            }
-            KeyCode::Down => {
-                if state.selections[qi] + 1 < option_count {
+            KeyCode::Down
+                if state.selections[qi] + 1 < option_count => {
                     state.selections[qi] += 1;
                 }
-            }
             KeyCode::Char(' ') => {
                 if state.selections[qi] == custom_idx {
                     // Enter custom text editing mode
@@ -440,16 +436,14 @@ impl App {
                     }
                 }
             }
-            KeyCode::Tab => {
-                if state.current_question + 1 < state.questions.len() {
+            KeyCode::Tab
+                if state.current_question + 1 < state.questions.len() => {
                     state.current_question += 1;
                 }
-            }
-            KeyCode::BackTab => {
-                if state.current_question > 0 {
+            KeyCode::BackTab
+                if state.current_question > 0 => {
                     state.current_question -= 1;
                 }
-            }
             KeyCode::Enter => {
                 if state.selections[qi] == custom_idx && !state.editing_custom {
                     // Enter custom text editing mode on Enter too

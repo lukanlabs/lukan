@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{delete, get, post, put},
 };
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::auth_middleware::require_auth;
 use crate::state::AppState;
@@ -21,8 +21,28 @@ use crate::{
 
 /// Build the Axum router with all routes
 pub fn create_router(state: Arc<AppState>) -> Router {
+    // Restrict CORS to loopback + desktop-client origins.
+    //
+    // The daemon's API can write files and run autonomous tasks, so we must not
+    // let arbitrary websites the user visits make cross-origin requests to it
+    // (even with bind 127.0.0.1, the user's own browser IS 127.0.0.1).
+    //
+    // Allowed origins:
+    //   - http://localhost:* and http://127.0.0.1:* → local browser + plugin UIs
+    //   - tauri://* and http://tauri.localhost      → Tauri desktop-client
+    // Server-to-server callers (relay bridge) don't send an Origin header,
+    // so CORS is bypassed entirely for those requests — relay flow unaffected.
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::predicate(|origin, _req| {
+            let Ok(s) = origin.to_str() else { return false };
+            s.starts_with("http://localhost:")
+                || s.starts_with("http://127.0.0.1:")
+                || s.starts_with("https://localhost:")
+                || s.starts_with("https://127.0.0.1:")
+                || s.starts_with("tauri://")
+                || s == "http://tauri.localhost"
+                || s.starts_with("http://tauri.localhost:")
+        }))
         .allow_methods(Any)
         .allow_headers(Any);
 
@@ -231,7 +251,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         // Autonomous agent (cloud-agent relay trigger)
         .route("/auto/run", post(rest_auto::start_auto_run))
-        .route("/auto/jobs/:id", get(rest_auto::get_auto_job))
+        .route("/auto/jobs/{id}", get(rest_auto::get_auto_job))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()

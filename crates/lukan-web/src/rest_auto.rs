@@ -162,7 +162,11 @@ async fn run_auto_job(
         job_id,
         &format!(
             "Max turns: {}",
-            if unlimited { "unlimited".into() } else { max_turns.to_string() }
+            if unlimited {
+                "unlimited".into()
+            } else {
+                max_turns.to_string()
+            }
         ),
     )
     .await;
@@ -419,7 +423,12 @@ async fn run_agent_turn(
                 StreamEvent::ToolUseStart { name, .. } => {
                     append(&jid, &format!("  ● {name}")).await;
                 }
-                StreamEvent::ToolResult { name, content, is_error, .. } => {
+                StreamEvent::ToolResult {
+                    name,
+                    content,
+                    is_error,
+                    ..
+                } => {
                     let failed = is_error == &Some(true);
                     if failed {
                         had_error = true;
@@ -427,12 +436,7 @@ async fn run_agent_turn(
                     let icon = if failed { "✗" } else { "✓" };
                     let preview = truncate_str(content, 200);
                     append(&jid, &format!("    {icon} {name}: {preview}")).await;
-                    tools_used.push(format!(
-                        "{} {} ({})",
-                        icon,
-                        name,
-                        truncate_str(content, 80)
-                    ));
+                    tools_used.push(format!("{} {} ({})", icon, name, truncate_str(content, 80)));
                 }
                 StreamEvent::Error { error } => {
                     append(&jid, &format!("  ✗ Error: {error}")).await;
@@ -447,7 +451,11 @@ async fn run_agent_turn(
         } else {
             tools_used.join("\n")
         };
-        TurnResult { text, tool_summary, had_error }
+        TurnResult {
+            text,
+            tool_summary,
+            had_error,
+        }
     });
 
     match tokio::time::timeout(
@@ -458,7 +466,11 @@ async fn run_agent_turn(
     {
         Ok(result) => result?,
         Err(_) => {
-            append(job_id, &format!("⚠ Turn timed out after {TURN_TIMEOUT_SECS}s")).await;
+            append(
+                job_id,
+                &format!("⚠ Turn timed out after {TURN_TIMEOUT_SECS}s"),
+            )
+            .await;
         }
     }
 

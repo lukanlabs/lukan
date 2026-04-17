@@ -266,7 +266,7 @@ impl Provider for AnthropicProvider {
         let mut stream = response.bytes_stream();
         use futures::StreamExt;
 
-        let chunk_timeout = std::time::Duration::from_secs(60);
+        let chunk_timeout = std::time::Duration::from_secs(120);
         while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next())
             .await
             .context("Provider stream timed out (no data for 60s)")?

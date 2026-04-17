@@ -270,7 +270,7 @@ async fn search_memory_files_inner(cwd: &Path, query: &str) -> (Vec<MemoryFile>,
         })
         .collect();
 
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|x| std::cmp::Reverse(x.0));
     scored.truncate(KEYWORD_CANDIDATES);
 
     let candidates: Vec<MemoryFile> = scored.into_iter().map(|(_, mf)| mf).collect();

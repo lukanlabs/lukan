@@ -229,11 +229,10 @@ impl OpenAiCompatBase {
                         MessageContent::Blocks(blocks) => {
                             for block in blocks {
                                 match block {
-                                    ContentBlock::Text { text } => {
-                                        if !text.is_empty() {
-                                            text_parts.push(text.clone());
-                                        }
+                                    ContentBlock::Text { text } if !text.is_empty() => {
+                                        text_parts.push(text.clone());
                                     }
+                                    ContentBlock::Text { .. } => {}
                                     ContentBlock::ToolUse { id, name, input } => {
                                         tool_calls.push(serde_json::json!({
                                             "id": id,
@@ -287,12 +286,11 @@ impl OpenAiCompatBase {
 
         for block in blocks {
             match block {
-                ContentBlock::Text { text } => {
-                    if !text.is_empty() {
-                        parts.push(serde_json::json!({ "type": "text", "text": text }));
-                        has_non_tool = true;
-                    }
+                ContentBlock::Text { text } if !text.is_empty() => {
+                    parts.push(serde_json::json!({ "type": "text", "text": text }));
+                    has_non_tool = true;
                 }
+                ContentBlock::Text { .. } => {}
                 ContentBlock::Image {
                     source,
                     data,

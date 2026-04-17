@@ -343,26 +343,26 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
             );
 
             match current_event.as_str() {
-                "response.output_item.added" => {
-                    if data["item"]["type"].as_str() == Some("function_call") {
-                        let item = &data["item"];
-                        let item_id = item["id"].as_str().unwrap_or("").to_string();
-                        let call_id = item["call_id"]
-                            .as_str()
-                            .or_else(|| item["id"].as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let name = item["name"].as_str().unwrap_or("").to_string();
+                "response.output_item.added"
+                    if data["item"]["type"].as_str() == Some("function_call") =>
+                {
+                    let item = &data["item"];
+                    let item_id = item["id"].as_str().unwrap_or("").to_string();
+                    let call_id = item["call_id"]
+                        .as_str()
+                        .or_else(|| item["id"].as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let name = item["name"].as_str().unwrap_or("").to_string();
 
-                        last_item_id.clone_from(&item_id);
-                        tool_calls.insert(item_id.clone(), (call_id.clone(), name.clone()));
-                        arg_buffers.insert(item_id, String::new());
-                        has_tool_calls = true;
+                    last_item_id.clone_from(&item_id);
+                    tool_calls.insert(item_id.clone(), (call_id.clone(), name.clone()));
+                    arg_buffers.insert(item_id, String::new());
+                    has_tool_calls = true;
 
-                        tx.send(StreamEvent::ToolUseStart { id: call_id, name })
-                            .await
-                            .ok();
-                    }
+                    tx.send(StreamEvent::ToolUseStart { id: call_id, name })
+                        .await
+                        .ok();
                 }
 
                 "response.output_text.delta" => {
@@ -455,32 +455,32 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                     }
                 }
 
-                "response.output_item.done" => {
-                    if data["item"]["type"].as_str() == Some("function_call") {
-                        let item = &data["item"];
-                        let item_id = item["id"].as_str().unwrap_or("").to_string();
+                "response.output_item.done"
+                    if data["item"]["type"].as_str() == Some("function_call") =>
+                {
+                    let item = &data["item"];
+                    let item_id = item["id"].as_str().unwrap_or("").to_string();
 
-                        let (call_id, name) = tool_calls
-                            .remove(&item_id)
-                            .unwrap_or_else(|| (item_id.clone(), String::new()));
+                    let (call_id, name) = tool_calls
+                        .remove(&item_id)
+                        .unwrap_or_else(|| (item_id.clone(), String::new()));
 
-                        // Get arguments: prefer item.arguments, fall back to accumulated buffer
-                        let raw_args = item["arguments"]
-                            .as_str()
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| arg_buffers.remove(&item_id).unwrap_or_default());
+                    // Get arguments: prefer item.arguments, fall back to accumulated buffer
+                    let raw_args = item["arguments"]
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| arg_buffers.remove(&item_id).unwrap_or_default());
 
-                        let input = parse_tool_input(&raw_args);
-                        arg_buffers.remove(&item_id);
+                    let input = parse_tool_input(&raw_args);
+                    arg_buffers.remove(&item_id);
 
-                        tx.send(StreamEvent::ToolUseEnd {
-                            id: call_id,
-                            name,
-                            input,
-                        })
-                        .await
-                        .ok();
-                    }
+                    tx.send(StreamEvent::ToolUseEnd {
+                        id: call_id,
+                        name,
+                        input,
+                    })
+                    .await
+                    .ok();
                 }
 
                 "response.completed" => {

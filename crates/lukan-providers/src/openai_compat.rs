@@ -447,7 +447,7 @@ impl OpenAiCompatBase {
         let mut stream = response.bytes_stream();
         use futures::StreamExt;
 
-        let chunk_timeout = std::time::Duration::from_secs(60);
+        let chunk_timeout = std::time::Duration::from_secs(120);
         let mut stream_done = false;
         while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next())
             .await

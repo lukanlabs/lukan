@@ -1,6 +1,7 @@
 mod auth;
 mod auth_middleware;
 mod protocol;
+mod rest_auto;
 mod rest_browser;
 mod rest_config;
 mod rest_credentials;
@@ -146,7 +147,13 @@ pub async fn start_daemon_server_with_opts(
     let actual_port = listener.local_addr()?.port();
     tracing::info!("Web server listening on {host}:{actual_port}");
 
-    let handle = tokio::spawn(async move { axum::serve(listener, router).await });
+    let handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+    });
 
     Ok((actual_port, handle))
 }

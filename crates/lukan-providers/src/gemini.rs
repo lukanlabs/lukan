@@ -101,10 +101,8 @@ impl GeminiProvider {
                 let mut parts = Vec::new();
                 for block in blocks {
                     match block {
-                        ContentBlock::Text { text } => {
-                            if !text.is_empty() {
-                                parts.push(serde_json::json!({ "text": text }));
-                            }
+                        ContentBlock::Text { text } if !text.is_empty() => {
+                            parts.push(serde_json::json!({ "text": text }));
                         }
                         ContentBlock::Image {
                             source,
@@ -157,10 +155,8 @@ impl GeminiProvider {
                 let mut parts = Vec::new();
                 for block in blocks {
                     match block {
-                        ContentBlock::Text { text } => {
-                            if !text.is_empty() {
-                                parts.push(serde_json::json!({ "text": text }));
-                            }
+                        ContentBlock::Text { text } if !text.is_empty() => {
+                            parts.push(serde_json::json!({ "text": text }));
                         }
                         ContentBlock::ToolUse { id: _, name, input } => {
                             // Extract thought_signature if present, pass clean args
@@ -180,14 +176,12 @@ impl GeminiProvider {
                             }
                             parts.push(part);
                         }
-                        ContentBlock::Thinking { text } => {
-                            // Include thinking as thought parts for models that require it
-                            if !text.is_empty() {
-                                parts.push(serde_json::json!({
-                                    "thought": true,
-                                    "text": text
-                                }));
-                            }
+                        // Include thinking as thought parts for models that require it
+                        ContentBlock::Thinking { text } if !text.is_empty() => {
+                            parts.push(serde_json::json!({
+                                "thought": true,
+                                "text": text
+                            }));
                         }
                         _ => {}
                     }

@@ -41,9 +41,10 @@ struct Cli {
     #[arg(long, short = 'c')]
     r#continue: bool,
 
-    /// Bind daemon to localhost only (not accessible from the network)
+    /// Bind daemon to all interfaces (0.0.0.0) for LAN access.
+    /// By default the daemon binds to 127.0.0.1 only (safer).
     #[arg(long)]
-    local_only: bool,
+    bind_all: bool,
 }
 
 #[derive(Subcommand)]
@@ -204,11 +205,11 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Set LUKAN_LOCAL_ONLY env var if --local-only flag is set.
+    // Set LUKAN_BIND_ALL env var if --bind-all flag is set.
     // ensure_daemon_running() will auto-restart the daemon if the mode changed.
-    if cli.local_only {
+    if cli.bind_all {
         // SAFETY: set_var is called once at startup before any threads are spawned
-        unsafe { std::env::set_var("LUKAN_LOCAL_ONLY", "1") };
+        unsafe { std::env::set_var("LUKAN_BIND_ALL", "1") };
     }
 
     // Ensure config dirs exist

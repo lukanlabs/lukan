@@ -18,6 +18,26 @@ struct DaemonLock {
     local_only: bool,
 }
 
+/// Resolve whether the daemon should bind to localhost only.
+///
+/// Default is `true` (bind 127.0.0.1) for security — the daemon exposes an
+/// authenticated API that can write files and run autonomous tasks, so it
+/// should not be reachable from other machines on the LAN unless the user
+/// explicitly opts in.
+///
+/// Opt in to LAN binding (0.0.0.0) with either:
+/// - `LUKAN_BIND_ALL=1` env var
+/// - `bindAll: true` in config.json
+fn resolve_local_only() -> bool {
+    let bind_all = std::env::var("LUKAN_BIND_ALL").is_ok_and(|v| v == "1")
+        || std::fs::read_to_string(LukanPaths::config_file())
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("bindAll").and_then(|v| v.as_bool()))
+            .unwrap_or(false);
+    !bind_all
+}
+
 #[derive(Subcommand)]
 pub enum DaemonCommands {
     /// Start the worker daemon (foreground by default)
@@ -35,15 +55,9 @@ pub enum DaemonCommands {
 pub async fn handle_daemon_command(command: DaemonCommands) -> Result<()> {
     match command {
         DaemonCommands::Start { detach } => {
-            // Read local_only from config or LUKAN_LOCAL_ONLY env var
-            let local_only = std::env::var("LUKAN_LOCAL_ONLY").is_ok_and(|v| v == "1")
-                || std::fs::read_to_string(LukanPaths::config_file())
-                    .ok()
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                    .and_then(|v| v.get("localOnly").and_then(|v| v.as_bool()))
-                    .unwrap_or(false);
+            let local_only = resolve_local_only();
             if detach {
-                start_detached_with_opts(local_only)?;
+                start_detached()?;
             } else {
                 run_daemon_with_opts(local_only).await?;
             }
@@ -275,7 +289,9 @@ async fn run_daemon_with_opts(local_only: bool) -> Result<()> {
 }
 
 /// Spawn the daemon as a detached background process.
-fn start_detached_with_opts(local_only: bool) -> Result<()> {
+/// The child inherits env vars (LUKAN_BIND_ALL) and reads the same config file
+/// (bindAll), so bind mode resolves identically to the parent.
+fn start_detached() -> Result<()> {
     if is_daemon_running() {
         let pid = read_pid_file().unwrap_or(0);
         println!("  Daemon already running (PID {pid})");
@@ -297,9 +313,6 @@ fn start_detached_with_opts(local_only: bool) -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(log_file.try_clone()?)
         .stderr(log_file);
-    if local_only {
-        cmd.env("LUKAN_LOCAL_ONLY", "1");
-    }
     let child = cmd.spawn().context("Failed to spawn daemon process")?;
 
     println!("  Daemon started (PID {})", child.id());
@@ -350,25 +363,14 @@ pub fn stop_daemon() -> Result<()> {
 
 /// Restart the daemon (start detached after stop).
 pub fn restart_daemon() -> Result<()> {
-    let local_only = std::env::var("LUKAN_LOCAL_ONLY").is_ok_and(|v| v == "1")
-        || std::fs::read_to_string(LukanPaths::config_file())
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.get("localOnly").and_then(|v| v.as_bool()))
-            .unwrap_or(false);
-    start_detached_with_opts(local_only)
+    start_detached()
 }
 
 /// Ensure the daemon is running; start it detached if not.
 /// Returns the port the daemon's web server is listening on.
 /// Called automatically from UIs and CLI worker commands.
 pub fn ensure_daemon_running() -> Result<u16> {
-    let want_local = std::env::var("LUKAN_LOCAL_ONLY").is_ok_and(|v| v == "1")
-        || std::fs::read_to_string(LukanPaths::config_file())
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.get("localOnly").and_then(|v| v.as_bool()))
-            .unwrap_or(false);
+    let want_local = resolve_local_only();
 
     // Check lock file first (new format with port)
     if let Some(lock) = read_lock_file() {
@@ -412,14 +414,13 @@ pub fn ensure_daemon_running() -> Result<u16> {
         .try_clone()
         .context("Cannot auto-start daemon: failed to clone log file handle")?;
 
+    // Child inherits env vars and reads same config file, so no explicit
+    // propagation of bind mode is needed.
     let mut cmd = std::process::Command::new(&self_exe);
     cmd.args(["daemon", "start"])
         .stdin(std::process::Stdio::null())
         .stdout(log_clone)
         .stderr(log_file);
-    if want_local {
-        cmd.env("LUKAN_LOCAL_ONLY", "1");
-    }
     let child = cmd.spawn().context("Failed to auto-start daemon")?;
 
     info!(pid = child.id(), "Auto-started daemon");

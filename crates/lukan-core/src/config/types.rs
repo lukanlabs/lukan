@@ -85,9 +85,10 @@ pub struct AppConfig {
     /// MCP (Model Context Protocol) server configurations
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
-    /// Bind daemon to localhost only (not accessible from the network)
+    /// Bind daemon to all interfaces (0.0.0.0) for LAN access.
+    /// Default is false (binds to 127.0.0.1 only).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub local_only: bool,
+    pub bind_all: bool,
     /// Per-model settings (keyed by model ID, e.g. "gpt-5.4", "kimi-k2.5")
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub model_settings: HashMap<String, ModelSettings>,
@@ -151,7 +152,7 @@ impl Default for AppConfig {
             browser_cdp_url: None,
             disabled_tools: None,
             mcp_servers: HashMap::new(),
-            local_only: false,
+            bind_all: false,
             zai_base_url: None,
             model_settings: HashMap::new(),
             silent_tools: default_silent_tools(),

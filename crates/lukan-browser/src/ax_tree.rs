@@ -330,17 +330,14 @@ fn build_state_string(node: &Value) -> String {
         let val = prop.get("value").and_then(|v| v.get("value"));
 
         match name {
-            "checked" => {
+            "checked"
                 if val.and_then(|v| v.as_str()) == Some("true")
-                    || val.and_then(|v| v.as_bool()) == Some(true)
-                {
-                    parts.push("checked");
-                }
+                    || val.and_then(|v| v.as_bool()) == Some(true) =>
+            {
+                parts.push("checked");
             }
-            "selected" => {
-                if val.and_then(|v| v.as_bool()) == Some(true) {
-                    parts.push("selected");
-                }
+            "selected" if val.and_then(|v| v.as_bool()) == Some(true) => {
+                parts.push("selected");
             }
             "expanded" => {
                 if val.and_then(|v| v.as_bool()) == Some(true) {
@@ -349,15 +346,11 @@ fn build_state_string(node: &Value) -> String {
                     parts.push("collapsed");
                 }
             }
-            "disabled" => {
-                if val.and_then(|v| v.as_bool()) == Some(true) {
-                    parts.push("disabled");
-                }
+            "disabled" if val.and_then(|v| v.as_bool()) == Some(true) => {
+                parts.push("disabled");
             }
-            "required" => {
-                if val.and_then(|v| v.as_bool()) == Some(true) {
-                    parts.push("required");
-                }
+            "required" if val.and_then(|v| v.as_bool()) == Some(true) => {
+                parts.push("required");
             }
             "value" => {
                 if let Some(Value::String(s)) = val

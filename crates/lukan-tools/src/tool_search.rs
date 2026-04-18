@@ -99,12 +99,48 @@ pub struct ToolSearchResult {
     score: usize,
 }
 
+fn parse_tool_name(name: &str) -> (Vec<String>, String) {
+    if let Some(without_prefix) = name.strip_prefix("mcp__") {
+        let normalized = without_prefix.to_lowercase();
+        let parts = normalized
+            .split("__")
+            .flat_map(|p| p.split('_'))
+            .filter(|p| !p.is_empty())
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        let full = normalized.replace("__", " ").replace('_', " ");
+        return (parts, full);
+    }
+
+    let spaced = name
+        .replace(|c: char| c == '_', " ")
+        .chars()
+        .enumerate()
+        .fold(String::new(), |mut acc, (idx, ch)| {
+            if idx > 0 && ch.is_uppercase() {
+                acc.push(' ');
+            }
+            acc.push(ch);
+            acc
+        })
+        .to_lowercase();
+
+    let parts = spaced
+        .split_whitespace()
+        .filter(|p| !p.is_empty())
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+    let full = parts.join(" ");
+    (parts, full)
+}
+
 pub fn search_deferred_tools(
     registry: &ToolRegistry,
     query: &str,
     max_results: usize,
 ) -> Vec<ToolSearchResult> {
-    let terms: Vec<String> = query
+    let query_normalized = query.trim().to_lowercase();
+    let terms: Vec<String> = query_normalized
         .split_whitespace()
         .map(|t| t.trim().to_lowercase())
         .filter(|t| !t.is_empty())
@@ -114,31 +150,74 @@ pub fn search_deferred_tools(
         return Vec::new();
     }
 
-    let mut results: Vec<ToolSearchResult> = registry
-        .tools
-        .values()
-        .filter(|tool| tool.is_deferred())
+    let deferred_tools: Vec<_> = registry.tools.values().filter(|tool| tool.is_deferred()).collect();
+
+    if let Some(exact) = deferred_tools.iter().find(|tool| tool.name().eq_ignore_ascii_case(&query_normalized)) {
+        return vec![ToolSearchResult {
+            name: exact.name().to_string(),
+            description: exact.description().to_string(),
+            search_hint: exact.search_hint().map(|s| s.to_string()),
+            score: usize::MAX,
+        }];
+    }
+
+    if query_normalized.starts_with("mcp__") {
+        let prefix_matches: Vec<ToolSearchResult> = deferred_tools
+            .iter()
+            .filter(|tool| tool.name().to_lowercase().starts_with(&query_normalized))
+            .take(max_results)
+            .map(|tool| ToolSearchResult {
+                name: tool.name().to_string(),
+                description: tool.description().to_string(),
+                search_hint: tool.search_hint().map(|s| s.to_string()),
+                score: usize::MAX - 1,
+            })
+            .collect();
+        if !prefix_matches.is_empty() {
+            return prefix_matches;
+        }
+    }
+
+    let mut results: Vec<ToolSearchResult> = deferred_tools
+        .into_iter()
         .filter_map(|tool| {
             let name = tool.name().to_string();
             let description = tool.description().to_string();
             let search_hint = tool.search_hint().map(|s| s.to_string());
-
-            let haystacks = [
-                name.to_lowercase(),
-                description.to_lowercase(),
-                search_hint.clone().unwrap_or_default().to_lowercase(),
-            ];
+            let (name_parts, name_full) = parse_tool_name(&name);
+            let description_lower = description.to_lowercase();
+            let hint_lower = search_hint.clone().unwrap_or_default().to_lowercase();
 
             let mut score = 0usize;
+
+            if name_full == query_normalized {
+                score += 1000;
+            }
+            if name.to_lowercase() == query_normalized {
+                score += 1000;
+            }
+            if name_full.contains(&query_normalized) {
+                score += 50;
+            }
+            if hint_lower.contains(&query_normalized) {
+                score += 30;
+            }
+            if description_lower.contains(&query_normalized) {
+                score += 20;
+            }
+
             for term in &terms {
-                if haystacks[0].contains(term) {
-                    score += 3;
+                if name_parts.iter().any(|p| p == term) {
+                    score += 20;
                 }
-                if haystacks[1].contains(term) {
-                    score += 2;
+                if name_full.contains(term) {
+                    score += 10;
                 }
-                if haystacks[2].contains(term) {
-                    score += 2;
+                if hint_lower.contains(term) {
+                    score += 8;
+                }
+                if description_lower.contains(term) {
+                    score += 4;
                 }
             }
 

@@ -69,15 +69,23 @@ impl Tool for DeferredMcpTool {
     }
 }
 
+
 #[test]
-fn search_deferred_tools_can_find_plugin_and_mcp_entries() {
+fn search_deferred_tools_prioritizes_exact_name_match() {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(DeferredPluginTool));
+
+    let results = search_deferred_tools(&registry, "PluginSpecialTool", 5);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "PluginSpecialTool");
+}
+
+#[test]
+fn search_deferred_tools_understands_mcp_name_parts() {
+    let mut registry = ToolRegistry::new();
     registry.register(Box::new(DeferredMcpTool));
 
-    let plugin_results = search_deferred_tools(&registry, "plugin specialized", 5);
-    assert!(plugin_results.iter().any(|r| r.name == "PluginSpecialTool"));
-
-    let mcp_results = search_deferred_tools(&registry, "github issue", 5);
-    assert!(mcp_results.iter().any(|r| r.name == "mcp__github__open_issue"));
+    let results = search_deferred_tools(&registry, "github open issue", 5);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "mcp__github__open_issue");
 }

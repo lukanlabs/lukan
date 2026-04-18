@@ -241,6 +241,13 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Validate tool input before execution.
+    /// Returns `Ok(())` when the input is acceptable, or a user-facing error
+    /// message when execution should be blocked early.
+    fn validate_input(&self, _input: &serde_json::Value, _ctx: &ToolContext) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Execute the tool with parsed JSON input
     async fn execute(
         &self,
@@ -290,7 +297,12 @@ impl ToolRegistry {
         ctx: &ToolContext,
     ) -> anyhow::Result<ToolResult> {
         match self.get(name) {
-            Some(tool) => tool.execute(input, ctx).await,
+            Some(tool) => {
+                if let Err(msg) = tool.validate_input(&input, ctx) {
+                    return Ok(ToolResult::error(msg));
+                }
+                tool.execute(input, ctx).await
+            }
             None => Ok(ToolResult::error(format!("Unknown tool: {name}"))),
         }
     }

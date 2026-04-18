@@ -208,6 +208,21 @@ async fn read_file_auto_tails_background_log_without_explicit_offset() {
 }
 
 #[tokio::test]
+async fn read_file_blocks_special_device_paths_in_validation() {
+    let dir = test_dir("device-path");
+    let ctx = make_tool_context(&dir);
+    let registry = create_default_registry();
+
+    let result = registry
+        .execute("ReadFiles", json!({"file_path": "/dev/zero"}), &ctx)
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert!(result.content.contains("special device path"));
+}
+
+#[tokio::test]
 async fn read_file_returns_error_for_missing_file() {
     let dir = test_dir("missing-file");
     let file_path = dir.join("missing.txt");
@@ -222,5 +237,5 @@ async fn read_file_returns_error_for_missing_file() {
         .unwrap();
 
     assert!(result.is_error);
-    assert!(result.content.contains("Failed to read file"));
+    assert!(result.content.contains("No such file or directory"));
 }

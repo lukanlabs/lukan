@@ -185,6 +185,26 @@ async fn glob_respects_max_results_and_reports_truncation() {
 }
 
 #[tokio::test]
+async fn glob_returns_error_when_base_directory_does_not_exist() {
+    let dir = test_dir("missing-base");
+    let missing = dir.join("does-not-exist");
+    let ctx = make_tool_context(&dir);
+    let registry = create_default_registry();
+
+    let result = registry
+        .execute(
+            "Glob",
+            json!({"pattern": "**/*.rs", "path": missing.to_string_lossy()}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert!(result.content.contains("Base directory does not exist"));
+}
+
+#[tokio::test]
 async fn glob_returns_no_files_matched_when_empty() {
     let dir = test_dir("no-matches");
     std::fs::write(dir.join("README.md"), "hi\n").unwrap();

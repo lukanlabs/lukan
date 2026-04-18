@@ -38,6 +38,38 @@ impl Tool for FakeTool {
     }
 }
 
+struct ValidatingTool;
+
+#[async_trait]
+impl Tool for ValidatingTool {
+    fn name(&self) -> &str {
+        "ValidatingTool"
+    }
+
+    fn description(&self) -> &str {
+        "tool with validation"
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type": "object"})
+    }
+
+    fn validate_input(&self, input: &serde_json::Value, _ctx: &lukan_tools::ToolContext) -> Result<(), String> {
+        match input.get("allowed").and_then(|v| v.as_bool()) {
+            Some(true) => Ok(()),
+            _ => Err("validation failed".to_string()),
+        }
+    }
+
+    async fn execute(
+        &self,
+        _input: serde_json::Value,
+        _ctx: &lukan_tools::ToolContext,
+    ) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult::success("executed"))
+    }
+}
+
 #[test]
 fn metadata_defaults_for_fake_tool_are_conservative() {
     let tool = FakeTool {
@@ -106,6 +138,38 @@ async fn execute_unknown_tool_returns_error_result() {
 
     assert!(result.is_error);
     assert!(result.content.contains("Unknown tool: MissingTool"));
+}
+
+#[tokio::test]
+async fn execute_returns_validation_error_before_running_tool() {
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(ValidatingTool));
+    let cwd = std::env::temp_dir();
+    let ctx = make_tool_context(&cwd);
+
+    let result = registry
+        .execute("ValidatingTool", json!({"allowed": false}), &ctx)
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert!(result.content.contains("validation failed"));
+}
+
+#[tokio::test]
+async fn execute_runs_validating_tool_when_input_is_valid() {
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(ValidatingTool));
+    let cwd = std::env::temp_dir();
+    let ctx = make_tool_context(&cwd);
+
+    let result = registry
+        .execute("ValidatingTool", json!({"allowed": true}), &ctx)
+        .await
+        .unwrap();
+
+    assert!(!result.is_error);
+    assert_eq!(result.content, "executed");
 }
 
 #[test]

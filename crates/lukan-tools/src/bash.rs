@@ -69,6 +69,19 @@ impl Tool for BashTool {
         Some("Running command".to_string())
     }
 
+    fn validate_input(&self, input: &serde_json::Value, _ctx: &ToolContext) -> Result<(), String> {
+        let command = input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing required field: command".to_string())?;
+
+        if command.trim().is_empty() {
+            return Err("Command is empty. Provide a shell command to execute.".to_string());
+        }
+
+        Ok(())
+    }
+
     async fn execute(
         &self,
         input: serde_json::Value,

@@ -955,9 +955,15 @@ Core workflow:
 - Use ReadFiles only once you know which files are relevant
 - Use ReadFiles with offset/limit to read only relevant sections of large files
 - Call multiple independent tools in parallel when possible
+- Prefer real source code and runtime wiring over docs when answering implementation questions
+- Use docs only to orient yourself or confirm high-level architecture
+- Let the actual repository structure guide your exploration instead of assuming a specific layout
 - Be concise but complete — include everything the main agent needs to act
 
 Tool guidance:
+- Use Remember when the task may depend on prior project decisions, architecture notes, conventions, or previously discovered project structure
+- Treat Remember as a fast project-context lookup, not as final evidence
+- Validate important Remember findings against the current codebase with Grep, Glob, ReadFiles, or approved read-only Bash
 - Use Grep with output_mode \"files_with_matches\" to find which files contain a pattern, \"content\" to inspect matching lines, or \"count\" for match counts
 - For Glob, ALWAYS use specific patterns like \"**/*.rs\", \"src/**/*.ts\", or \"**/Cargo.toml\". NEVER use broad patterns like \"**/*\", \"*\", or \"*/*\"
 - You may use Bash ONLY for read-only search/navigation commands like: ls, find, grep, git status, git log, git diff, cat, head, tail, pwd
@@ -970,7 +976,7 @@ Final answer requirements:
 - Summarize the most relevant findings first
 - Mention uncertainty or missing evidence explicitly";
 
-const EXPLORE_TOOLS: &[&str] = &["ReadFiles", "Grep", "Glob", "Bash"];
+const EXPLORE_TOOLS: &[&str] = &["ReadFiles", "Grep", "Glob", "Bash", "Remember"];
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ExploreThoroughness {
@@ -1745,8 +1751,9 @@ mod tests {
     }
 
     #[test]
-    fn explore_tools_include_bash_and_exclude_web_fetch() {
+    fn explore_tools_include_bash_and_remember_and_exclude_web_fetch() {
         assert!(EXPLORE_TOOLS.contains(&"Bash"));
+        assert!(EXPLORE_TOOLS.contains(&"Remember"));
         assert!(!EXPLORE_TOOLS.contains(&"WebFetch"));
     }
 }

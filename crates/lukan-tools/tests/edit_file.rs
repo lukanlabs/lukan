@@ -214,6 +214,33 @@ async fn successful_edit_updates_disk_contents() {
 }
 
 #[tokio::test]
+async fn edit_file_validation_rejects_empty_old_text() {
+    let dir = test_dir("empty-old-text");
+    let file_path = dir.join("sample.txt");
+    tokio::fs::write(&file_path, "hello world").await.unwrap();
+
+    let ctx = make_tool_context(&dir);
+    mark_file_as_read(&ctx, &file_path).await;
+    let registry = create_default_registry();
+
+    let result = registry
+        .execute(
+            "EditFile",
+            json!({
+                "file_path": file_path.to_string_lossy(),
+                "old_text": "",
+                "new_text": "goodbye"
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert!(result.content.contains("old_text cannot be empty"));
+}
+
+#[tokio::test]
 async fn successful_edit_returns_diff_output() {
     let dir = test_dir("diff-output");
     let file_path = dir.join("sample.txt");

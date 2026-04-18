@@ -205,6 +205,12 @@ impl AgentLoop {
         config
             .tools
             .register(Box::new(crate::sub_agent::ExploreTool));
+        config
+            .tools
+            .register(Box::new(crate::subagent_worktree_tools::SubagentWorktreeListTool));
+        config
+            .tools
+            .register(Box::new(crate::subagent_worktree_tools::SubagentWorktreeCleanupTool));
 
         // Build sandbox config for sub-agents from registry settings
         let sub_agent_sandbox = if config.tools.is_sandbox_enabled() {
@@ -292,6 +298,12 @@ impl AgentLoop {
         config
             .tools
             .register(Box::new(crate::sub_agent::ExploreTool));
+        config
+            .tools
+            .register(Box::new(crate::subagent_worktree_tools::SubagentWorktreeListTool));
+        config
+            .tools
+            .register(Box::new(crate::subagent_worktree_tools::SubagentWorktreeCleanupTool));
 
         // Build sandbox config for sub-agents from registry settings
         let sub_agent_sandbox = if config.tools.is_sandbox_enabled() {

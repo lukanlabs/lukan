@@ -5,6 +5,7 @@
 //! - `SubAgentManager` tracks running/completed sub-agents
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -19,13 +20,85 @@ use tracing::{error, info};
 
 use crate::message_history::MessageHistory;
 use crate::permission_matcher::PLANNER_TOOL_WHITELIST;
+use crate::subagent_worktrees::{
+    WorktreeCleanupStatus, WorktreeRecord, create_worktree, find_git_root, remove_worktree,
+    upsert_record, worktree_has_changes,
+};
 
 // ── Global Manager ────────────────────────────────────────────────────────
 
-static MANAGER: std::sync::LazyLock<RwLock<SubAgentManager>> =
-    std::sync::LazyLock::new(|| RwLock::new(SubAgentManager::new()));
+#[derive(Debug, Clone)]
+pub struct SubAgentIsolationContext {
+    pub cwd: PathBuf,
+    pub allowed_paths: Option<Vec<PathBuf>>,
+    pub worktree_path: Option<PathBuf>,
+    pub worktree_branch: Option<String>,
+    pub git_root: Option<PathBuf>,
+    pub worktree_head_commit: Option<String>,
+}
 
-/// Configure the sub-agent manager with the parent's provider info
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubAgentIsolationMode {
+    Shared,
+    Worktree,
+}
+
+impl SubAgentIsolationMode {
+    fn from_input(input: Option<&str>) -> Self {
+        match input.unwrap_or("shared").trim().to_ascii_lowercase().as_str() {
+            "worktree" => Self::Worktree,
+            _ => Self::Shared,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Shared => "shared",
+            Self::Worktree => "worktree",
+        }
+    }
+}
+
+
+fn build_subagent_worktree_notice(parent_cwd: &Path, worktree_cwd: &Path) -> String {
+    format!(
+        "You inherited context from a parent agent working in {}. You are operating in an isolated git worktree at {} — same repository, same relative file structure, separate working copy. Paths from the inherited context refer to the parent's working directory, so translate them to your worktree root and re-read files before editing if they may be stale. Your changes stay in this worktree and do not affect the parent's files unless explicitly applied later.",
+        parent_cwd.display(),
+        worktree_cwd.display()
+    )
+}
+
+fn resolve_subagent_isolation(
+    cwd: &Path,
+    allowed_paths: Option<Vec<PathBuf>>,
+    mode: SubAgentIsolationMode,
+    agent_id: &str,
+) -> anyhow::Result<SubAgentIsolationContext> {
+    match mode {
+        SubAgentIsolationMode::Shared => Ok(SubAgentIsolationContext {
+            cwd: cwd.to_path_buf(),
+            allowed_paths,
+            worktree_path: None,
+            worktree_branch: None,
+            git_root: None,
+            worktree_head_commit: None,
+        }),
+        SubAgentIsolationMode::Worktree => {
+            let repo_root = find_git_root(cwd)
+                .ok_or_else(|| anyhow::anyhow!("Worktree isolation requires a git repository."))?;
+            let (worktree_path, worktree_branch, head_commit) = create_worktree(&repo_root, agent_id)?;
+            Ok(SubAgentIsolationContext {
+                cwd: worktree_path.clone(),
+                allowed_paths: Some(vec![worktree_path.clone()]),
+                worktree_path: Some(worktree_path),
+                worktree_branch: Some(worktree_branch),
+                git_root: Some(repo_root),
+                worktree_head_commit: Some(head_commit),
+            })
+        }
+    }
+}
+
 pub async fn configure(
     provider: Arc<dyn Provider>,
     system_prompt: SystemPrompt,
@@ -57,7 +130,9 @@ pub async fn set_tool_filter(filter: Option<Vec<String>>) {
     mgr.tool_filter = filter;
 }
 
-// ── Manager ───────────────────────────────────────────────────────────────
+static MANAGER: std::sync::LazyLock<RwLock<SubAgentManager>> =
+    std::sync::LazyLock::new(|| RwLock::new(SubAgentManager::new()));
+
 
 /// Real-time update pushed from a running sub-agent to the TUI
 #[derive(Debug, Clone)]
@@ -154,6 +229,11 @@ pub struct SubAgentEntry {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub error: Option<String>,
+    pub isolation: String,
+    pub worktree_path: Option<PathBuf>,
+    pub worktree_branch: Option<String>,
+    pub git_root: Option<PathBuf>,
+    pub cleanup_status: Option<String>,
     /// Full chat conversation for the spectator view
     pub chat_messages: Vec<SubAgentChatMsg>,
 }
@@ -183,6 +263,7 @@ async fn spawn_sub_agent(
     task: String,
     timeout_ms: u64,
     max_turns: usize,
+    isolation: SubAgentIsolationMode,
     cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> anyhow::Result<String> {
     let id = {
@@ -220,6 +301,9 @@ async fn spawn_sub_agent(
         (provider, sp, cwd, pn, mn, sandbox, allowed_paths, stream_tx)
     };
 
+    let parent_cwd = cwd.clone();
+    let isolation_ctx = resolve_subagent_isolation(&cwd, allowed_paths, isolation, &id)?;
+
     let entry = SubAgentEntry {
         id: id.clone(),
         task: task.clone(),
@@ -232,6 +316,11 @@ async fn spawn_sub_agent(
         input_tokens: 0,
         output_tokens: 0,
         error: None,
+        isolation: isolation.as_str().to_string(),
+        worktree_path: isolation_ctx.worktree_path.clone(),
+        worktree_branch: isolation_ctx.worktree_branch.clone(),
+        git_root: isolation_ctx.git_root.clone(),
+        cleanup_status: None,
         chat_messages: Vec::new(),
     };
 
@@ -262,9 +351,9 @@ async fn spawn_sub_agent(
             max_turns,
             provider,
             system_prompt,
-            cwd,
+            parent_cwd,
+            isolation_ctx,
             sandbox,
-            allowed_paths,
             Some(sub_cancel),
             stream_broadcast_tx,
         )
@@ -282,13 +371,16 @@ async fn run_sub_agent(
     max_turns: usize,
     provider: Arc<dyn Provider>,
     system_prompt: SystemPrompt,
-    cwd: std::path::PathBuf,
+    parent_cwd: PathBuf,
+    isolation_ctx: SubAgentIsolationContext,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
-    allowed_paths: Option<Vec<std::path::PathBuf>>,
     cancel: Option<tokio_util::sync::CancellationToken>,
     stream_broadcast_tx: broadcast::Sender<StreamEvent>,
 ) {
     let mut history = MessageHistory::new();
+    if let Some(worktree_path) = &isolation_ctx.worktree_path {
+        history.add_user_message(&build_subagent_worktree_notice(&parent_cwd, worktree_path));
+    }
     history.add_user_message(&task);
 
     // Get the update channel sender (if TUI is subscribed)
@@ -518,12 +610,12 @@ async fn run_sub_agent(
         for (_tool_id, name, input) in &pending_tools {
             let reg = Arc::clone(&tools);
             let rf = Arc::clone(&read_files);
-            let c = cwd.clone();
+            let c = isolation_ctx.cwd.clone();
             let n = name.clone();
             let inp = input.clone();
 
             let sandbox_cfg = sandbox.clone();
-            let ap = allowed_paths.clone();
+            let ap = isolation_ctx.allowed_paths.clone();
             let cancel_token = cancel.clone();
             let sa_id = id.clone();
             handles.push(tokio::spawn(async move {
@@ -695,6 +787,65 @@ async fn run_sub_agent(
         ));
     }
 
+    let cleanup_status = if isolation_ctx.worktree_path.is_some() {
+        if let (Some(worktree_path), Some(worktree_branch), Some(git_root), Some(head_commit)) = (
+            isolation_ctx.worktree_path.as_ref(),
+            isolation_ctx.worktree_branch.as_ref(),
+            isolation_ctx.git_root.as_ref(),
+            isolation_ctx.worktree_head_commit.as_ref(),
+        ) {
+            if !worktree_has_changes(worktree_path, head_commit) {
+                if remove_worktree(worktree_path, worktree_branch, git_root) {
+                    Some(WorktreeCleanupStatus::AutoremovedClean.as_str().to_string())
+                } else {
+                    Some(WorktreeCleanupStatus::PreservedCleanupFailed.as_str().to_string())
+                }
+            } else {
+                Some(WorktreeCleanupStatus::PreservedChanges.as_str().to_string())
+            }
+        } else {
+            Some(WorktreeCleanupStatus::PreservedCleanupFailed.as_str().to_string())
+        }
+    } else {
+        None
+    };
+
+    if let (Some(worktree_path), Some(worktree_branch), Some(git_root), Some(head_commit)) = (
+        isolation_ctx.worktree_path.clone(),
+        isolation_ctx.worktree_branch.clone(),
+        isolation_ctx.git_root.clone(),
+        isolation_ctx.worktree_head_commit.clone(),
+    ) {
+        let record_git_root = git_root.clone();
+        let _ = upsert_record(
+            &record_git_root,
+            WorktreeRecord {
+                agent_id: id.clone(),
+                task: task.clone(),
+                isolation: "worktree".to_string(),
+                worktree_path,
+                worktree_branch,
+                git_root,
+                head_commit,
+                started_at: Utc::now(),
+                completed_at: Some(Utc::now()),
+                cleanup_status: match cleanup_status.as_deref() {
+                    Some("autoremoved (clean)") => WorktreeCleanupStatus::AutoremovedClean,
+                    Some("preserved (changes detected)") => WorktreeCleanupStatus::PreservedChanges,
+                    Some("preserved (cleanup failed)") => WorktreeCleanupStatus::PreservedCleanupFailed,
+                    _ => WorktreeCleanupStatus::Pending,
+                },
+            },
+        );
+    }
+
+    {
+        let mut mgr = MANAGER.write().await;
+        if let Some(entry) = mgr.entries.get_mut(&id) {
+            entry.cleanup_status = cleanup_status;
+        }
+    }
+
     info!(id, turns, "Sub-agent completed");
 }
 
@@ -722,6 +873,11 @@ pub async fn upsert_from_update(update: &SubAgentUpdate) {
             input_tokens: 0,
             output_tokens: 0,
             error: None,
+            isolation: "shared".to_string(),
+            worktree_path: None,
+            worktree_branch: None,
+            git_root: None,
+            cleanup_status: None,
             chat_messages: Vec::new(),
         });
     if !update.task.is_empty() {
@@ -819,6 +975,12 @@ impl Tool for SubAgentTool {
                     "type": "integer",
                     "description": "Maximum LLM turns before stopping (default: 20)",
                     "default": 20
+                },
+                "isolation": {
+                    "type": "string",
+                    "description": "Execution isolation for the sub-agent: shared checkout (default) or isolated git worktree for coding work.",
+                    "enum": ["shared", "worktree"],
+                    "default": "shared"
                 }
             },
             "required": ["task"]
@@ -843,10 +1005,15 @@ impl Tool for SubAgentTool {
 
         let max_turns = input.get("maxTurns").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
-        match spawn_sub_agent(task.clone(), timeout, max_turns, ctx.cancel.clone()).await {
+        let isolation = SubAgentIsolationMode::from_input(
+            input.get("isolation").and_then(|v| v.as_str()),
+        );
+
+        match spawn_sub_agent(task.clone(), timeout, max_turns, isolation, ctx.cancel.clone()).await {
             Ok(id) => Ok(ToolResult::success(format!(
-                "Sub-agent spawned (ID: {id})\nTask: {task}\n\n\
-                 Running in background. Use SubAgentResult(\"{id}\") to check status/results."
+                "Sub-agent spawned (ID: {id})\nTask: {task}\nIsolation: {}\n\n\
+                 Running in background. Use SubAgentResult(\"{id}\") to check status/results.",
+                isolation.as_str()
             ))),
             Err(e) => Ok(ToolResult::error(format!("SubAgent error: {e}"))),
         }
@@ -1679,8 +1846,28 @@ fn format_sub_agent_result(entry: &SubAgentEntry) -> ToolResult {
     }
 
     let header = format!(
-        "Status: {}\nTurns: {}/{}\nElapsed: {}\nTask: {}",
-        entry.status, entry.turns, entry.max_turns, elapsed, entry.task
+        "Status: {}\nTurns: {}/{}\nElapsed: {}\nTask: {}\nIsolation: {}{}{}{}",
+        entry.status,
+        entry.turns,
+        entry.max_turns,
+        elapsed,
+        entry.task,
+        entry.isolation,
+        entry
+            .worktree_path
+            .as_ref()
+            .map(|p| format!("\nWorktree: {}", p.display()))
+            .unwrap_or_default(),
+        entry
+            .worktree_branch
+            .as_ref()
+            .map(|b| format!("\nWorktree branch: {b}"))
+            .unwrap_or_default(),
+        entry
+            .cleanup_status
+            .as_ref()
+            .map(|s| format!("\nCleanup: {s}"))
+            .unwrap_or_default()
     );
 
     let content = if output.trim().is_empty() {
@@ -1699,6 +1886,71 @@ fn format_sub_agent_result(entry: &SubAgentEntry) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subagent_isolation_defaults_to_shared() {
+        assert_eq!(
+            SubAgentIsolationMode::from_input(None),
+            SubAgentIsolationMode::Shared
+        );
+        assert_eq!(
+            SubAgentIsolationMode::from_input(Some("unknown")),
+            SubAgentIsolationMode::Shared
+        );
+    }
+
+    #[test]
+    fn subagent_isolation_parses_worktree() {
+        assert_eq!(
+            SubAgentIsolationMode::from_input(Some("worktree")),
+            SubAgentIsolationMode::Worktree
+        );
+    }
+
+    #[test]
+    fn subagent_tool_schema_supports_isolation() {
+        let schema = SubAgentTool.input_schema();
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        let isolation = props.get("isolation").and_then(|v| v.as_object()).unwrap();
+        let variants = isolation
+            .get("enum")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert!(variants.iter().any(|v| v.as_str() == Some("shared")));
+        assert!(variants.iter().any(|v| v.as_str() == Some("worktree")));
+    }
+
+    #[test]
+    fn resolve_shared_isolation_keeps_original_context() {
+        let cwd = std::env::temp_dir().join("lukan-subagent-shared-test");
+        let allowed = Some(vec![cwd.clone()]);
+        let ctx = resolve_subagent_isolation(
+            &cwd,
+            allowed.clone(),
+            SubAgentIsolationMode::Shared,
+            "abc123",
+        )
+        .unwrap();
+        assert_eq!(ctx.cwd, cwd);
+        assert_eq!(ctx.allowed_paths, allowed);
+        assert!(ctx.worktree_path.is_none());
+    }
+
+    #[test]
+    fn worktree_cleanup_is_skipped_without_worktree_context() {
+        let ctx = SubAgentIsolationContext {
+            cwd: std::env::temp_dir(),
+            allowed_paths: None,
+            worktree_path: None,
+            worktree_branch: None,
+            git_root: None,
+            worktree_head_commit: None,
+        };
+        assert!(ctx.worktree_path.is_none());
+    }
 
     #[test]
     fn explore_thoroughness_defaults_to_medium() {

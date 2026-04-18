@@ -332,12 +332,16 @@ impl ToolRegistry {
         defs.retain(|d| d.deferred);
         defs
     }
-    /// Get tool definitions for the LLM, excluding deferred tools.
+    /// Get tool definitions for the LLM, excluding deferred tools unless a tool is explicitly marked to always load.
     pub fn default_definitions(&self) -> Vec<ToolDefinition> {
         let mut defs = self.definitions();
-        defs.retain(|d| !d.deferred);
+        defs.retain(|d| !d.deferred || should_always_load_tool(&d.name));
         defs
     }
+}
+
+fn should_always_load_tool(name: &str) -> bool {
+    matches!(name, "ToolSearch")
 }
 
 impl Default for ToolRegistry {

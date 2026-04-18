@@ -79,6 +79,8 @@ pub(super) fn scroll_overflow(
 
 // ── Tool Result Formatting ────────────────────────────────────────────────
 
+const TOOL_RESULT_PREVIEW_CHARS: usize = 240;
+
 /// Format tool result with tool-aware compact summaries.
 /// ReadFile/Grep/Glob show a one-line summary instead of content.
 pub(super) fn format_tool_result_named(name: &str, content: &str, is_error: bool) -> String {
@@ -104,8 +106,33 @@ pub(super) fn format_tool_result_named(name: &str, content: &str, is_error: bool
             let file_count = content.lines().filter(|l| !l.trim().is_empty()).count();
             format!("  ⎿  {file_count} files")
         }
+        "WebFetch" | "WebSearch" => format_web_preview(content),
         _ => format_tool_result(content, false),
     }
+}
+
+fn format_web_preview(content: &str) -> String {
+    let preview = single_line_preview(content, TOOL_RESULT_PREVIEW_CHARS);
+    if preview.is_empty() {
+        "  ⎿  (no output)".to_string()
+    } else {
+        format!("  ⎿  {preview}")
+    }
+}
+
+fn single_line_preview(content: &str, max_chars: usize) -> String {
+    let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return String::new();
+    }
+
+    let char_count = normalized.chars().count();
+    if char_count <= max_chars {
+        return normalized;
+    }
+
+    let truncated: String = normalized.chars().take(max_chars).collect();
+    format!("{}...", truncated.trim_end())
 }
 
 /// Format tool result with ⎿ prefix on each line, like Claude Code
@@ -127,6 +154,30 @@ pub(super) fn format_tool_result(content: &str, is_error: bool) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_fetch_result_is_compacted_to_single_line_preview() {
+        let content = "Title\n\nFirst paragraph with useful context.\nSecond paragraph with more details.";
+        let formatted = format_tool_result_named("WebFetch", content, false);
+        assert_eq!(
+            formatted,
+            "  ⎿  Title First paragraph with useful context. Second paragraph with more details."
+        );
+    }
+
+    #[test]
+    fn web_search_result_is_truncated_with_ellipsis() {
+        let content = format!("Result {}", "x".repeat(400));
+        let formatted = format_tool_result_named("WebSearch", &content, false);
+        assert!(formatted.starts_with("  ⎿  Result "));
+        assert!(formatted.ends_with("..."));
+        assert_eq!(formatted.lines().count(), 1);
+    }
 }
 
 // ── Welcome Banner ────────────────────────────────────────────────────────

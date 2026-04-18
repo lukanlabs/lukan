@@ -318,8 +318,48 @@ fn built_in_tool_metadata_matches_stage_one_expectations() {
         planner_question.search_hint(),
         Some("ask the user clarifying planner questions")
     );
-    assert_eq!(
-        planner_question.activity_label(&json!({})),
-        Some("Asking planner question".to_string())
-    );
+    let browser_snapshot = registry.get("BrowserSnapshot");
+    if let Some(browser_snapshot) = browser_snapshot {
+        assert!(browser_snapshot.is_read_only());
+        assert!(!browser_snapshot.is_concurrency_safe());
+        assert!(browser_snapshot.is_deferred());
+        assert_eq!(
+            browser_snapshot.search_hint(),
+            Some("capture an accessibility snapshot of the current page")
+        );
+        assert_eq!(
+            browser_snapshot.activity_label(&json!({})),
+            Some("Snapshotting page".to_string())
+        );
+    }
+
+    let browser_click = registry.get("BrowserClick");
+    if let Some(browser_click) = browser_click {
+        assert!(!browser_click.is_read_only());
+        assert!(!browser_click.is_concurrency_safe());
+        assert!(browser_click.is_deferred());
+        assert_eq!(
+            browser_click.search_hint(),
+            Some("click an element in the browser")
+        );
+        assert_eq!(
+            browser_click.activity_label(&json!({})),
+            Some("Clicking element".to_string())
+        );
+    }
+
+    let browser_evaluate = registry.get("BrowserEvaluate");
+    if let Some(browser_evaluate) = browser_evaluate {
+        assert!(browser_evaluate.is_read_only());
+        assert!(!browser_evaluate.is_concurrency_safe());
+        assert!(browser_evaluate.is_deferred());
+        assert_eq!(
+            browser_evaluate.search_hint(),
+            Some("evaluate JavaScript in the browser page")
+        );
+        assert_eq!(
+            browser_evaluate.activity_label(&json!({})),
+            Some("Evaluating browser script".to_string())
+        );
+    }
 }

@@ -2,6 +2,10 @@
   {
     "name": "EmailList",
     "description": "List emails from a mailbox folder. Returns sender, subject, date, and UID for each email. Use unseen=true to see only unread emails.",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "list emails from a mailbox folder",
+    "activityLabel": "Listing emails",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -24,6 +28,10 @@
   {
     "name": "EmailRead",
     "description": "Read the full content of an email by its UID. Returns headers and body text.",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "read an email by uid",
+    "activityLabel": "Reading email",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -42,6 +50,10 @@
   {
     "name": "EmailSend",
     "description": "Send a new email via SMTP. Supports file attachments.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "send a new email",
+    "activityLabel": "Sending email",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -69,6 +81,10 @@
   {
     "name": "EmailReply",
     "description": "Reply to an email by UID. Sends via SMTP with threading headers (In-Reply-To, References). Supports file attachments.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "reply to an email",
+    "activityLabel": "Replying to email",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -96,6 +112,10 @@
   {
     "name": "EmailFolders",
     "description": "List available IMAP mailbox folders. Use this to discover folder names (e.g. '[Gmail]/Sent Mail') before listing emails in a non-INBOX folder.",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "list email folders",
+    "activityLabel": "Listing email folders",
     "inputSchema": {
       "type": "object",
       "properties": {},
@@ -105,6 +125,10 @@
   {
     "name": "EmailConfirm",
     "description": "Confirm and send a pending email draft by its ID. Use after the user approves an email preview from EmailSend or EmailReply.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "confirm and send a pending email draft",
+    "activityLabel": "Confirming email draft",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -119,6 +143,10 @@
   {
     "name": "EmailCancel",
     "description": "Cancel and discard a pending email draft by its ID.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "cancel a pending email draft",
+    "activityLabel": "Cancelling email draft",
     "inputSchema": {
       "type": "object",
       "properties": {

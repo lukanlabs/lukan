@@ -17,9 +17,9 @@ use lukan_core::models::tools::ToolResult;
 use crate::ToolRegistry;
 
 macro_rules! browser_tool_metadata {
-    () => {
+    ($hint:expr, $label:expr, read_only = $read_only:expr) => {
         fn is_read_only(&self) -> bool {
-            false
+            $read_only
         }
 
         fn is_concurrency_safe(&self) -> bool {
@@ -28,6 +28,14 @@ macro_rules! browser_tool_metadata {
 
         fn is_deferred(&self) -> bool {
             true
+        }
+
+        fn search_hint(&self) -> Option<&str> {
+            Some($hint)
+        }
+
+        fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+            Some($label.to_string())
         }
     };
 }

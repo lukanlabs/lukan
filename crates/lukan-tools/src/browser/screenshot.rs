@@ -17,7 +17,7 @@ impl Tool for BrowserScreenshot {
         "Take a screenshot of the current page. Returns a JPEG image."
     }
 
-    browser_tool_metadata!();
+    browser_tool_metadata!("capture a screenshot of the current page", "Taking screenshot", read_only = true);
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

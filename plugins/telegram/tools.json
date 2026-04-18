@@ -2,6 +2,10 @@
   {
     "name": "TelegramSend",
     "description": "Send a text message to any Telegram chat. Supports Markdown formatting. Auto-splits messages exceeding 4096 chars.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "send a Telegram message",
+    "activityLabel": "Sending Telegram message",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -20,6 +24,10 @@
   {
     "name": "TelegramSendMedia",
     "description": "Send a media file (photo, document, audio, video) to a Telegram chat.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "send media to Telegram",
+    "activityLabel": "Sending Telegram media",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -47,6 +55,10 @@
   {
     "name": "TelegramGetChats",
     "description": "List Telegram chats the bot has interacted with. Returns chat names, IDs, and types from message history.",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "list Telegram chats",
+    "activityLabel": "Listing Telegram chats",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -61,6 +73,10 @@
   {
     "name": "TelegramReadMessages",
     "description": "Read recent messages from a Telegram chat. Returns message history with sender, text, and timestamp.",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "read messages from a Telegram chat",
+    "activityLabel": "Reading Telegram messages",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -79,6 +95,10 @@
   {
     "name": "TelegramGetChatInfo",
     "description": "Get details about a Telegram chat (name, type, member count, description).",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "get Telegram chat information",
+    "activityLabel": "Inspecting Telegram chat",
     "inputSchema": {
       "type": "object",
       "properties": {

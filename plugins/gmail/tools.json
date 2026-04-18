@@ -2,6 +2,10 @@
   {
     "name": "GmailSearch",
     "description": "Search or list Gmail emails using Gmail search syntax (e.g. 'is:unread', 'from:user@example.com', 'subject:meeting')",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "search Gmail messages by query",
+    "activityLabel": "Searching Gmail",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -25,6 +29,10 @@
   {
     "name": "GmailRead",
     "description": "Read the full content of a Gmail email by its message ID",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "read a Gmail message by id",
+    "activityLabel": "Reading Gmail message",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -39,6 +47,10 @@
   {
     "name": "GmailSend",
     "description": "Send a new email via Gmail",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "send a new Gmail email",
+    "activityLabel": "Sending Gmail email",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -69,6 +81,10 @@
   {
     "name": "GmailReply",
     "description": "Reply to an existing Gmail thread. Automatically extracts threadId, subject, and recipient from the original message.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "reply to a Gmail thread",
+    "activityLabel": "Replying in Gmail",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -87,6 +103,10 @@
   {
     "name": "GmailModify",
     "description": "Modify a Gmail message's labels/state (mark read/unread, archive, trash, star) or apply/remove custom labels",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "modify Gmail labels or message state",
+    "activityLabel": "Modifying Gmail message",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -116,6 +136,10 @@
   {
     "name": "GmailLabelsList",
     "description": "List all Gmail labels (both system and user-created)",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "list Gmail labels",
+    "activityLabel": "Listing Gmail labels",
     "inputSchema": {
       "type": "object",
       "properties": {}
@@ -124,6 +148,10 @@
   {
     "name": "GmailLabelsCreate",
     "description": "Create a new Gmail label (like a folder) to organize emails",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "create a Gmail label",
+    "activityLabel": "Creating Gmail label",
     "inputSchema": {
       "type": "object",
       "properties": {

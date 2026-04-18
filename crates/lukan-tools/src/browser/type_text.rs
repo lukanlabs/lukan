@@ -18,7 +18,7 @@ impl Tool for BrowserType {
         "Type text into an input field identified by its [ref] number from the accessibility snapshot."
     }
 
-    browser_tool_metadata!();
+    browser_tool_metadata!("type text into a browser element", "Typing in browser", read_only = false);
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

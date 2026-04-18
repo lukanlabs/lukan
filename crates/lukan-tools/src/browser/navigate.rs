@@ -19,7 +19,7 @@ impl Tool for BrowserNavigate {
         "Navigate the browser to a URL. Returns an accessibility snapshot of the page."
     }
 
-    browser_tool_metadata!();
+    browser_tool_metadata!("navigate and inspect pages in the browser", "Navigating browser", read_only = false);
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

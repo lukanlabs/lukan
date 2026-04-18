@@ -18,7 +18,7 @@ impl Tool for BrowserSavePDF {
          (no print dialog). Returns the file path where the PDF was saved."
     }
 
-    browser_tool_metadata!();
+    browser_tool_metadata!("save the current page as PDF", "Saving PDF", read_only = true);
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

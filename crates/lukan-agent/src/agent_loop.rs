@@ -853,6 +853,22 @@ impl AgentLoop {
             // Also hide tools disabled at runtime by the TUI
             tool_defs.retain(|d| !self.disabled_tools.contains(&d.name));
 
+            if !tool_defs.iter().any(|d| d.name == "ToolSearch")
+                && self.tools.get("ToolSearch").is_some()
+                && !self.disabled_tools.contains("ToolSearch")
+                && (self.tools.deferred_definitions().iter().any(|d| !self.disabled_tools.contains(&d.name)))
+            {
+                if let Some(tool_search_def) = self
+                    .tools
+                    .definitions()
+                    .into_iter()
+                    .find(|d| d.name == "ToolSearch")
+                {
+                    tool_defs.push(tool_search_def);
+                    tool_defs.sort_by(|a, b| a.name.cmp(&b.name));
+                }
+            }
+
             // Preprocess images for non-vision providers
             let messages = crate::vision_preprocessor::preprocess_images(
                 self.history.messages(),
@@ -1136,10 +1152,15 @@ impl AgentLoop {
             if !needs_approval.is_empty() {
                 let approval_requests: Vec<ToolApprovalRequest> = needs_approval
                     .iter()
-                    .map(|t| ToolApprovalRequest {
-                        id: t.id.clone(),
-                        name: t.name.clone(),
-                        input: t.input.clone(),
+                    .map(|t| {
+                        let tool_meta = self.tools.get(&t.name);
+                        ToolApprovalRequest {
+                            id: t.id.clone(),
+                            name: t.name.clone(),
+                            input: t.input.clone(),
+                            activity_label: tool_meta.and_then(|tool| tool.activity_label(&t.input)),
+                            read_only: tool_meta.map(|tool| tool.is_read_only()),
+                        }
                     })
                     .collect();
 

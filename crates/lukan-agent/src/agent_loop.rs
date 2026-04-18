@@ -849,21 +849,24 @@ impl AgentLoop {
             // In planner mode, only expose read-only tools to the LLM
             if self.permission_matcher.mode() == PermissionMode::Planner {
                 tool_defs.retain(|d| {
-                    PLANNER_TOOL_WHITELIST.contains(&d.name.as_str())
-                        && self
-                            .tools
-                            .get(&d.name)
-                            .map(|tool| tool.is_read_only())
-                            .unwrap_or(false)
+                    PLANNER_TOOL_WHITELIST.contains(&d.name.as_str()) && d.read_only
                 });
             }
             // Also hide tools disabled at runtime by the TUI
             tool_defs.retain(|d| !self.disabled_tools.contains(&d.name));
 
+            let has_deferred_available = self
+                .tools
+                .deferred_definitions()
+                .iter()
+                .any(|d| !self.disabled_tools.contains(&d.name));
+            let has_read_only_core = tool_defs.iter().any(|d| d.read_only);
+
             if !tool_defs.iter().any(|d| d.name == "ToolSearch")
                 && self.tools.get("ToolSearch").is_some()
                 && !self.disabled_tools.contains("ToolSearch")
-                && (self.tools.deferred_definitions().iter().any(|d| !self.disabled_tools.contains(&d.name)))
+                && has_deferred_available
+                && has_read_only_core
             {
                 if let Some(tool_search_def) = self
                     .tools

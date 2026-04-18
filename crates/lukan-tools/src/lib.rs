@@ -319,6 +319,8 @@ impl ToolRegistry {
                 description: t.description().to_string(),
                 input_schema: t.input_schema(),
                 deferred: t.is_deferred(),
+                read_only: t.is_read_only(),
+                search_hint: t.search_hint().map(|s| s.to_string()),
             })
             .collect();
         defs.sort_by(|a, b| a.name.cmp(&b.name));

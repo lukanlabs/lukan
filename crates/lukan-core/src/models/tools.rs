@@ -11,6 +11,10 @@ pub struct ToolDefinition {
     pub input_schema: serde_json::Value,
     #[serde(default)]
     pub deferred: bool,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_hint: Option<String>,
 }
 
 /// Result from executing a tool

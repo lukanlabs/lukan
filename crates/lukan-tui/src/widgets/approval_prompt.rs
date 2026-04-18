@@ -48,11 +48,16 @@ impl Widget for ApprovalPromptWidget<'_> {
             let pointer = if is_selected { "▸ " } else { "  " };
             let checkbox = if is_checked { "[x] " } else { "[ ] " };
 
-            let summary = tool
+            let raw_summary = tool
                 .activity_label
                 .clone()
                 .or_else(|| tool.search_hint.clone())
                 .unwrap_or_else(|| summarize_tool_input(&tool.name, &tool.input));
+            let summary = if matches!(tool.name.as_str(), "Bash" | "ReadFiles" | "WriteFile" | "EditFile" | "WebFetch" | "Explore" | "SubAgent") {
+                summarize_tool_input(&tool.name, &tool.input)
+            } else {
+                raw_summary
+            };
             let metadata_suffix = match (tool.read_only, tool.search_hint.as_deref()) {
                 (Some(true), Some(hint)) => format!(" [read-only · {hint}]"),
                 (Some(true), None) => " [read-only]".to_string(),

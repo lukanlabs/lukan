@@ -1,8 +1,18 @@
 use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
+use regex::Regex;
 use serde_json::json;
 
 use crate::{Tool, ToolContext, ToolRegistry};
+
+#[derive(Debug, Clone)]
+pub struct ToolSearchResult {
+    pub name: String,
+    pub description: String,
+    pub search_hint: Option<String>,
+    pub source: Option<String>,
+    score: usize,
+}
 
 pub struct ToolSearchTool;
 
@@ -66,8 +76,7 @@ impl Tool for ToolSearchTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(5) as usize;
 
-        let mut registry = crate::create_default_registry();
-        registry.register(Box::new(ToolSearchTool));
+        let registry = crate::create_default_registry();
         let results = search_deferred_tools(&registry, &query, max_results);
 
         if results.is_empty() {
@@ -77,26 +86,22 @@ impl Tool for ToolSearchTool {
         let mut output = format!("Found {} deferred tool(s):\n", results.len());
         for tool in results {
             output.push_str(&format!(
-                "\n- {}\n  Description: {}{}\n",
+                "\n- {}\n  Description: {}{}{}\n",
                 tool.name,
                 tool.description,
                 tool.search_hint
                     .as_deref()
                     .map(|h| format!("\n  Search hint: {h}"))
+                    .unwrap_or_default(),
+                tool.source
+                    .as_deref()
+                    .map(|s| format!("\n  Source: {s}"))
                     .unwrap_or_default()
             ));
         }
 
         Ok(ToolResult::success(output))
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolSearchResult {
-    pub name: String,
-    pub description: String,
-    pub search_hint: Option<String>,
-    score: usize,
 }
 
 fn parse_tool_name(name: &str) -> (Vec<String>, String) {
@@ -113,7 +118,7 @@ fn parse_tool_name(name: &str) -> (Vec<String>, String) {
     }
 
     let spaced = name
-        .replace(|c: char| c == '_', " ")
+        .replace('_', " ")
         .chars()
         .enumerate()
         .fold(String::new(), |mut acc, (idx, ch)| {
@@ -134,6 +139,27 @@ fn parse_tool_name(name: &str) -> (Vec<String>, String) {
     (parts, full)
 }
 
+fn compile_term_patterns(terms: &[String]) -> Vec<(String, Regex)> {
+    terms
+        .iter()
+        .filter_map(|term| {
+            Regex::new(&format!(r"\b{}\b", regex::escape(term)))
+                .ok()
+                .map(|re| (term.clone(), re))
+        })
+        .collect()
+}
+
+fn build_result(tool: &dyn Tool, score: usize) -> ToolSearchResult {
+    ToolSearchResult {
+        name: tool.name().to_string(),
+        description: tool.description().to_string(),
+        search_hint: tool.search_hint().map(|s| s.to_string()),
+        source: tool.source().map(|s| s.to_string()),
+        score,
+    }
+}
+
 pub fn search_deferred_tools(
     registry: &ToolRegistry,
     query: &str,
@@ -150,15 +176,37 @@ pub fn search_deferred_tools(
         return Vec::new();
     }
 
-    let deferred_tools: Vec<_> = registry.tools.values().filter(|tool| tool.is_deferred()).collect();
+    let deferred_tools: Vec<_> = registry
+        .tools
+        .values()
+        .filter(|tool| tool.is_deferred())
+        .collect();
 
-    if let Some(exact) = deferred_tools.iter().find(|tool| tool.name().eq_ignore_ascii_case(&query_normalized)) {
-        return vec![ToolSearchResult {
-            name: exact.name().to_string(),
-            description: exact.description().to_string(),
-            search_hint: exact.search_hint().map(|s| s.to_string()),
-            score: usize::MAX,
-        }];
+    if let Some(exact) = deferred_tools
+        .iter()
+        .find(|tool| tool.name().eq_ignore_ascii_case(&query_normalized))
+    {
+        return vec![build_result(exact.as_ref(), usize::MAX)];
+    }
+
+    if let Some(select_query) = query_normalized.strip_prefix("select:") {
+        let requested: Vec<String> = select_query
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let mut found = Vec::new();
+        for name in requested {
+            if let Some(tool) = deferred_tools
+                .iter()
+                .find(|tool| tool.name().eq_ignore_ascii_case(&name))
+            {
+                found.push(build_result(tool.as_ref(), usize::MAX - 1));
+            }
+        }
+        if !found.is_empty() {
+            return found;
+        }
     }
 
     if query_normalized.starts_with("mcp__") {
@@ -166,17 +214,14 @@ pub fn search_deferred_tools(
             .iter()
             .filter(|tool| tool.name().to_lowercase().starts_with(&query_normalized))
             .take(max_results)
-            .map(|tool| ToolSearchResult {
-                name: tool.name().to_string(),
-                description: tool.description().to_string(),
-                search_hint: tool.search_hint().map(|s| s.to_string()),
-                score: usize::MAX - 1,
-            })
+            .map(|tool| build_result(tool.as_ref(), usize::MAX - 2))
             .collect();
         if !prefix_matches.is_empty() {
             return prefix_matches;
         }
     }
+
+    let term_patterns = compile_term_patterns(&terms);
 
     let mut results: Vec<ToolSearchResult> = deferred_tools
         .into_iter()
@@ -184,9 +229,11 @@ pub fn search_deferred_tools(
             let name = tool.name().to_string();
             let description = tool.description().to_string();
             let search_hint = tool.search_hint().map(|s| s.to_string());
+            let source = tool.source().map(|s| s.to_string());
             let (name_parts, name_full) = parse_tool_name(&name);
             let description_lower = description.to_lowercase();
             let hint_lower = search_hint.clone().unwrap_or_default().to_lowercase();
+            let source_lower = source.clone().unwrap_or_default().to_lowercase();
 
             let mut score = 0usize;
 
@@ -205,6 +252,9 @@ pub fn search_deferred_tools(
             if description_lower.contains(&query_normalized) {
                 score += 20;
             }
+            if source_lower.contains(&query_normalized) {
+                score += 25;
+            }
 
             for term in &terms {
                 if name_parts.iter().any(|p| p == term) {
@@ -219,6 +269,20 @@ pub fn search_deferred_tools(
                 if description_lower.contains(term) {
                     score += 4;
                 }
+                if source_lower.contains(term) {
+                    score += 6;
+                }
+                if let Some((_, re)) = term_patterns.iter().find(|(t, _)| t == term) {
+                    if re.is_match(&hint_lower) {
+                        score += 4;
+                    }
+                    if re.is_match(&description_lower) {
+                        score += 2;
+                    }
+                    if re.is_match(&source_lower) {
+                        score += 3;
+                    }
+                }
             }
 
             if score == 0 {
@@ -229,6 +293,7 @@ pub fn search_deferred_tools(
                 name,
                 description,
                 search_hint,
+                source,
                 score,
             })
         })

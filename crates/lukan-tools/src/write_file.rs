@@ -37,6 +37,22 @@ impl Tool for WriteFileTool {
         })
     }
 
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("write a file to disk")
+    }
+
+    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+        Some("Writing file".to_string())
+    }
+
     async fn execute(
         &self,
         input: serde_json::Value,

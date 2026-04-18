@@ -127,6 +127,22 @@ impl Tool for LoadSkillTool {
         })
     }
 
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("load project-specific skill instructions")
+    }
+
+    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+        Some("Loading skill".to_string())
+    }
+
     async fn execute(
         &self,
         input: serde_json::Value,

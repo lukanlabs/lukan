@@ -212,6 +212,35 @@ pub trait Tool: Send + Sync {
         true
     }
 
+    /// Whether the tool is read-only from the user's perspective.
+    /// This metadata is intended for future orchestration, permissions,
+    /// and smarter tool selection.
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    /// Whether multiple invocations of the tool are safe to run concurrently.
+    /// This metadata is intended for future scheduling decisions.
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    /// Short discoverability hint for future tool search / ranking.
+    fn search_hint(&self) -> Option<&str> {
+        None
+    }
+
+    /// Human-friendly activity label for future UI / tracing.
+    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+        None
+    }
+
+    /// Whether the tool should be hidden from the default tool set and only
+    /// surfaced through future deferred/discovery flows.
+    fn is_deferred(&self) -> bool {
+        false
+    }
+
     /// Execute the tool with parsed JSON input
     async fn execute(
         &self,

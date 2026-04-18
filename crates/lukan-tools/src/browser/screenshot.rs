@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
-use super::get_manager;
+use super::{browser_tool_metadata, get_manager};
 use crate::{Tool, ToolContext};
 
 pub struct BrowserScreenshot;
@@ -16,6 +16,8 @@ impl Tool for BrowserScreenshot {
     fn description(&self) -> &str {
         "Take a screenshot of the current page. Returns a JPEG image."
     }
+
+    browser_tool_metadata!();
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

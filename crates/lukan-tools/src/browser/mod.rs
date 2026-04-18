@@ -16,6 +16,24 @@ use lukan_core::models::tools::ToolResult;
 
 use crate::ToolRegistry;
 
+macro_rules! browser_tool_metadata {
+    () => {
+        fn is_read_only(&self) -> bool {
+            false
+        }
+
+        fn is_concurrency_safe(&self) -> bool {
+            false
+        }
+
+        fn is_deferred(&self) -> bool {
+            true
+        }
+    };
+}
+
+pub(crate) use browser_tool_metadata;
+
 /// Register all browser tools into the given registry.
 pub fn register_browser_tools(registry: &mut ToolRegistry) {
     registry.register(Box::new(navigate::BrowserNavigate));

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
-use super::get_manager;
+use super::{browser_tool_metadata, get_manager};
 use crate::{Tool, ToolContext};
 
 pub struct BrowserSavePDF;
@@ -17,6 +17,8 @@ impl Tool for BrowserSavePDF {
         "Save the current page as a PDF file. The PDF is generated directly via CDP \
          (no print dialog). Returns the file path where the PDF was saved."
     }
+
+    browser_tool_metadata!();
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

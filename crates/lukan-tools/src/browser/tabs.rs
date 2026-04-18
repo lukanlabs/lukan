@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
-use super::get_manager;
+use super::{browser_tool_metadata, get_manager};
 use crate::{Tool, ToolContext};
 
 pub struct BrowserTabs;
@@ -16,6 +16,8 @@ impl Tool for BrowserTabs {
     fn description(&self) -> &str {
         "List all open browser tabs. Use the tab numbers with BrowserSwitchTab."
     }
+
+    browser_tool_metadata!();
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

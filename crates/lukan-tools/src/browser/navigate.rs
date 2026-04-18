@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
-use super::{get_manager, wrap_untrusted};
+use super::{browser_tool_metadata, get_manager, wrap_untrusted};
 use crate::{Tool, ToolContext};
 
 pub struct BrowserNavigate;
@@ -18,6 +18,8 @@ impl Tool for BrowserNavigate {
     fn description(&self) -> &str {
         "Navigate the browser to a URL. Returns an accessibility snapshot of the page."
     }
+
+    browser_tool_metadata!();
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

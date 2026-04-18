@@ -3,7 +3,7 @@ use lukan_browser::ax_tree;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
-use super::{get_manager, wrap_untrusted};
+use super::{browser_tool_metadata, get_manager, wrap_untrusted};
 use crate::{Tool, ToolContext};
 
 pub struct BrowserType;
@@ -17,6 +17,8 @@ impl Tool for BrowserType {
     fn description(&self) -> &str {
         "Type text into an input field identified by its [ref] number from the accessibility snapshot."
     }
+
+    browser_tool_metadata!();
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

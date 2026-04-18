@@ -3,7 +3,7 @@ use lukan_core::models::tools::ToolResult;
 use regex::Regex;
 use serde_json::json;
 
-use super::get_manager;
+use super::{browser_tool_metadata, get_manager};
 use crate::{Tool, ToolContext};
 
 const MAX_RESULT_LEN: usize = 10_000;
@@ -90,6 +90,8 @@ impl Tool for BrowserEvaluate {
     fn description(&self) -> &str {
         "Evaluate a JavaScript expression in the browser. Only safe, read-only expressions are allowed (no network, cookies, storage, etc.)."
     }
+
+    browser_tool_metadata!();
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

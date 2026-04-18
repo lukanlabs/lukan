@@ -6,7 +6,7 @@ use serde_json::json;
 use test_helpers::make_tool_context;
 
 #[test]
-fn default_registry_exposes_tool_search_and_marks_web_search_deferred() {
+fn default_registry_exposes_tool_search_and_reflects_runtime_deferred_tools() {
     let registry = create_default_registry();
 
     let tool_search = registry.get("ToolSearch").expect("ToolSearch should exist");
@@ -14,21 +14,31 @@ fn default_registry_exposes_tool_search_and_marks_web_search_deferred() {
     assert!(tool_search.is_concurrency_safe());
 
     let deferred = registry.deferred_definitions();
-    assert!(deferred.iter().any(|d| d.name == "WebSearch"));
+    let web_search_registered = registry.get("WebSearch").is_some();
+
+    assert_eq!(
+        deferred.iter().any(|d| d.name == "WebSearch"),
+        web_search_registered
+    );
     assert!(!registry.default_definitions().iter().any(|d| d.name == "WebSearch"));
 }
 
 #[test]
-fn search_deferred_tools_finds_web_search_by_keywords() {
+fn search_deferred_tools_matches_current_runtime_registration() {
     let registry = create_default_registry();
     let results = search_deferred_tools(&registry, "web search information", 5);
+    let web_search_registered = registry.get("WebSearch").is_some();
 
-    assert!(!results.is_empty());
-    assert_eq!(results[0].name, "WebSearch");
+    if web_search_registered {
+        assert!(!results.is_empty());
+        assert_eq!(results[0].name, "WebSearch");
+    } else {
+        assert!(results.is_empty());
+    }
 }
 
 #[tokio::test]
-async fn tool_search_returns_matching_deferred_tools() {
+async fn tool_search_returns_runtime_matching_deferred_tools_only() {
     let registry = create_default_registry();
     let tool = registry.get("ToolSearch").unwrap();
     let ctx = make_tool_context(&std::env::temp_dir());
@@ -39,8 +49,11 @@ async fn tool_search_returns_matching_deferred_tools() {
         .unwrap();
 
     assert!(!result.is_error);
-    assert!(result.content.contains("WebSearch"));
-    assert!(result.content.contains("deferred tool"));
+    if registry.get("WebSearch").is_some() {
+        assert!(result.content.contains("WebSearch"));
+    } else {
+        assert_eq!(result.content, "No matching deferred tools found.");
+    }
 }
 
 #[tokio::test]

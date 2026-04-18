@@ -845,7 +845,7 @@ impl AgentLoop {
 
         // Inner loop: call LLM → execute tools → repeat until done
         loop {
-            let mut tool_defs = self.tools.definitions();
+            let mut tool_defs = self.tools.default_definitions();
             // In planner mode, only expose read-only tools to the LLM
             if self.permission_matcher.mode() == PermissionMode::Planner {
                 tool_defs.retain(|d| PLANNER_TOOL_WHITELIST.contains(&d.name.as_str()));

@@ -3,6 +3,7 @@ pub mod bg_processes;
 pub mod browser;
 mod edit_file;
 mod glob_tool;
+pub mod tool_search;
 mod grep;
 pub mod mcp;
 pub mod mcp_tools;
@@ -27,6 +28,7 @@ use lukan_core::models::events::StreamEvent;
 use lukan_core::models::tools::{ToolDefinition, ToolResult};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio_util::sync::CancellationToken;
+pub use tool_search::ToolSearchTool;
 
 /// Context passed to every tool execution
 pub struct ToolContext {
@@ -316,9 +318,22 @@ impl ToolRegistry {
                 name: t.name().to_string(),
                 description: t.description().to_string(),
                 input_schema: t.input_schema(),
+                deferred: t.is_deferred(),
             })
             .collect();
         defs.sort_by(|a, b| a.name.cmp(&b.name));
+        defs
+    }
+
+    pub fn deferred_definitions(&self) -> Vec<ToolDefinition> {
+        let mut defs = self.definitions();
+        defs.retain(|d| d.deferred);
+        defs
+    }
+    /// Get tool definitions for the LLM, excluding deferred tools.
+    pub fn default_definitions(&self) -> Vec<ToolDefinition> {
+        let mut defs = self.definitions();
+        defs.retain(|d| !d.deferred);
         defs
     }
 }
@@ -777,6 +792,8 @@ pub struct ToolInfo {
     pub name: String,
     /// Plugin name if provided by a plugin, null for built-in tools
     pub source: Option<String>,
+    /// Whether the tool is deferred from the default tool set.
+    pub deferred: bool,
 }
 
 /// List all available tools with their source (plugin name or null for built-in).
@@ -797,6 +814,7 @@ fn tool_info_from_registry(registry: ToolRegistry) -> Vec<ToolInfo> {
         .map(|t| ToolInfo {
             name: t.name().to_string(),
             source: t.source().map(|s| s.to_string()),
+            deferred: t.is_deferred(),
         })
         .collect();
     tools.sort_by(|a, b| a.name.cmp(&b.name));
@@ -814,6 +832,7 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(Box::new(glob_tool::GlobTool));
     registry.register(Box::new(web_fetch::WebFetchTool));
     registry.register(Box::new(web_search::WebSearchTool));
+    registry.register(Box::new(tool_search::ToolSearchTool));
     // Memory retrieval
     registry.register(Box::new(remember::RememberTool));
     // Task tools

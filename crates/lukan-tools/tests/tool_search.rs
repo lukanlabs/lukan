@@ -1,0 +1,59 @@
+mod test_helpers;
+
+use lukan_tools::create_default_registry;
+use lukan_tools::tool_search::search_deferred_tools;
+use serde_json::json;
+use test_helpers::make_tool_context;
+
+#[test]
+fn default_registry_exposes_tool_search_and_marks_web_search_deferred() {
+    let registry = create_default_registry();
+
+    let tool_search = registry.get("ToolSearch").expect("ToolSearch should exist");
+    assert!(tool_search.is_read_only());
+    assert!(tool_search.is_concurrency_safe());
+
+    let deferred = registry.deferred_definitions();
+    assert!(deferred.iter().any(|d| d.name == "WebSearch"));
+    assert!(!registry.default_definitions().iter().any(|d| d.name == "WebSearch"));
+}
+
+#[test]
+fn search_deferred_tools_finds_web_search_by_keywords() {
+    let registry = create_default_registry();
+    let results = search_deferred_tools(&registry, "web search information", 5);
+
+    assert!(!results.is_empty());
+    assert_eq!(results[0].name, "WebSearch");
+}
+
+#[tokio::test]
+async fn tool_search_returns_matching_deferred_tools() {
+    let registry = create_default_registry();
+    let tool = registry.get("ToolSearch").unwrap();
+    let ctx = make_tool_context(&std::env::temp_dir());
+
+    let result = tool
+        .execute(json!({"query": "search the web", "max_results": 5}), &ctx)
+        .await
+        .unwrap();
+
+    assert!(!result.is_error);
+    assert!(result.content.contains("WebSearch"));
+    assert!(result.content.contains("deferred tool"));
+}
+
+#[tokio::test]
+async fn tool_search_returns_no_matches_message_when_empty() {
+    let registry = create_default_registry();
+    let tool = registry.get("ToolSearch").unwrap();
+    let ctx = make_tool_context(&std::env::temp_dir());
+
+    let result = tool
+        .execute(json!({"query": "totally-unknown-specialized-capability"}), &ctx)
+        .await
+        .unwrap();
+
+    assert!(!result.is_error);
+    assert_eq!(result.content, "No matching deferred tools found.");
+}

@@ -24,7 +24,7 @@ impl Tool for WebSearchTool {
     }
 
     fn is_available(&self) -> bool {
-        has_search_key()
+        true
     }
 
     fn input_schema(&self) -> serde_json::Value {

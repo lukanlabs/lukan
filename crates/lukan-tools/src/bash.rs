@@ -53,6 +53,22 @@ impl Tool for BashTool {
         })
     }
 
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("run shell commands and terminal tasks")
+    }
+
+    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+        Some("Running command".to_string())
+    }
+
     async fn execute(
         &self,
         input: serde_json::Value,

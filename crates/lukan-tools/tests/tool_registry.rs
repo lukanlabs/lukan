@@ -112,6 +112,42 @@ async fn execute_unknown_tool_returns_error_result() {
 fn built_in_tool_metadata_matches_stage_one_expectations() {
     let registry = lukan_tools::create_default_registry();
 
+    let read = registry.get("ReadFiles").unwrap();
+    assert!(read.is_read_only());
+    assert!(read.is_concurrency_safe());
+    assert_eq!(read.search_hint(), Some("read file contents with numbered lines"));
+    assert_eq!(read.activity_label(&json!({})), Some("Reading file".to_string()));
+
+    let glob = registry.get("Glob").unwrap();
+    assert!(glob.is_read_only());
+    assert!(glob.is_concurrency_safe());
+    assert_eq!(glob.search_hint(), Some("find files by glob pattern"));
+    assert_eq!(glob.activity_label(&json!({})), Some("Finding files".to_string()));
+
+    let edit = registry.get("EditFile").unwrap();
+    assert!(!edit.is_read_only());
+    assert!(!edit.is_concurrency_safe());
+    assert_eq!(
+        edit.search_hint(),
+        Some("edit existing files by exact string replacement")
+    );
+    assert_eq!(edit.activity_label(&json!({})), Some("Editing file".to_string()));
+
+    let bash = registry.get("Bash").unwrap();
+    assert!(!bash.is_read_only());
+    assert!(!bash.is_concurrency_safe());
+    assert_eq!(bash.search_hint(), Some("run shell commands and terminal tasks"));
+    assert_eq!(bash.activity_label(&json!({})), Some("Running command".to_string()));
+
+    let web_fetch = registry.get("WebFetch").unwrap();
+    assert!(web_fetch.is_read_only());
+    assert!(web_fetch.is_concurrency_safe());
+    assert_eq!(web_fetch.search_hint(), Some("fetch content from a URL"));
+    assert_eq!(
+        web_fetch.activity_label(&json!({})),
+        Some("Fetching web page".to_string())
+    );
+
     let grep = registry.get("Grep").unwrap();
     assert!(grep.is_read_only());
     assert!(grep.is_concurrency_safe());

@@ -237,15 +237,60 @@ fn built_in_tool_metadata_matches_stage_one_expectations() {
         Some("Recalling memories".to_string())
     );
 
-    let load_skill = registry.get("LoadSkill").unwrap();
-    assert!(load_skill.is_read_only());
-    assert!(load_skill.is_concurrency_safe());
+    let web_search = registry.get("WebSearch");
+    if let Some(web_search) = web_search {
+        assert!(web_search.is_read_only());
+        assert!(web_search.is_concurrency_safe());
+        assert!(web_search.is_deferred());
+        assert_eq!(web_search.search_hint(), Some("search the web for information"));
+        assert_eq!(
+            web_search.activity_label(&json!({})),
+            Some("Searching web".to_string())
+        );
+    }
+
+    let task_add = registry.get("TaskAdd").unwrap();
+    assert!(!task_add.is_read_only());
+    assert!(!task_add.is_concurrency_safe());
+    assert_eq!(task_add.search_hint(), Some("add tasks to the task list"));
+    assert_eq!(task_add.activity_label(&json!({})), Some("Adding tasks".to_string()));
+
+    let task_list = registry.get("TaskList").unwrap();
+    assert!(task_list.is_read_only());
+    assert!(task_list.is_concurrency_safe());
+    assert_eq!(task_list.search_hint(), Some("list current tasks and statuses"));
+    assert_eq!(task_list.activity_label(&json!({})), Some("Listing tasks".to_string()));
+
+    let task_update = registry.get("TaskUpdate").unwrap();
+    assert!(!task_update.is_read_only());
+    assert!(!task_update.is_concurrency_safe());
+    assert_eq!(task_update.search_hint(), Some("update task status or title"));
     assert_eq!(
-        load_skill.search_hint(),
-        Some("load project-specific skill instructions")
+        task_update.activity_label(&json!({})),
+        Some("Updating tasks".to_string())
+    );
+
+    let submit_plan = registry.get("SubmitPlan").unwrap();
+    assert!(!submit_plan.is_read_only());
+    assert!(!submit_plan.is_concurrency_safe());
+    assert_eq!(
+        submit_plan.search_hint(),
+        Some("submit a structured implementation plan")
     );
     assert_eq!(
-        load_skill.activity_label(&json!({})),
-        Some("Loading skill".to_string())
+        submit_plan.activity_label(&json!({})),
+        Some("Submitting plan".to_string())
+    );
+
+    let planner_question = registry.get("PlannerQuestion").unwrap();
+    assert!(planner_question.is_read_only());
+    assert!(!planner_question.is_concurrency_safe());
+    assert_eq!(
+        planner_question.search_hint(),
+        Some("ask the user clarifying planner questions")
+    );
+    assert_eq!(
+        planner_question.activity_label(&json!({})),
+        Some("Asking planner question".to_string())
     );
 }

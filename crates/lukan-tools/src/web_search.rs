@@ -45,6 +45,26 @@ impl Tool for WebSearchTool {
         })
     }
 
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("search the web for information")
+    }
+
+    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+        Some("Searching web".to_string())
+    }
+
+    fn is_deferred(&self) -> bool {
+        true
+    }
+
     async fn execute(
         &self,
         input: serde_json::Value,

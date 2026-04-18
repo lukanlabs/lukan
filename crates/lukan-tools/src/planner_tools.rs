@@ -60,6 +60,22 @@ impl Tool for SubmitPlanTool {
         })
     }
 
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("submit a structured implementation plan")
+    }
+
+    fn activity_label(&self, _input: &Value) -> Option<String> {
+        Some("Submitting plan".to_string())
+    }
+
     async fn execute(&self, _input: Value, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         // This tool is intercepted by the agent loop before execution.
         Ok(ToolResult::error(
@@ -141,6 +157,22 @@ impl Tool for PlannerQuestionTool {
             },
             "required": ["questions"]
         })
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("ask the user clarifying planner questions")
+    }
+
+    fn activity_label(&self, _input: &Value) -> Option<String> {
+        Some("Asking planner question".to_string())
     }
 
     async fn execute(&self, _input: Value, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

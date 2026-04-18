@@ -929,26 +929,131 @@ impl Tool for SubAgentResultTool {
 
 // ── Explore Sub-Agent ──────────────────────────────────────────────────────
 
-const EXPLORE_SYSTEM_PROMPT: &str = "\
-You are a codebase research agent. Your ONLY job is to explore code and return detailed findings.
-You CANNOT modify files. Use ReadFiles, Grep, and Glob to investigate.
-Be thorough — read all relevant files, trace call chains, check types and interfaces.
-Your output will be used by the main agent to make code changes, so include:
-- Exact file paths and line numbers
+const EXPLORE_SYSTEM_PROMPT_PREFIX: &str = "\
+You are a fast read-only codebase exploration agent.
+Your ONLY job is to search, inspect, and analyze an existing codebase, then return a clear report to the main agent.
+
+=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
+You are STRICTLY PROHIBITED from:
+- Creating new files
+- Modifying existing files
+- Deleting files
+- Moving or copying files
+- Creating temporary files anywhere, including /tmp
+- Using redirect operators (>, >>) or heredocs to write to files
+- Running any command that changes system state
+
+You may ONLY use tools for read-only investigation.
+Your output will be used by the main agent to make changes, so include:
+- Exact file paths and line numbers when relevant
 - Relevant code snippets
 - How components connect to each other
 - Any patterns or conventions you notice
 
-Guidelines:
-- Start with Grep to search for relevant code by content, or Glob to find files by name pattern. Then use ReadFiles to read specific sections.
-- Use Grep with output_mode \"files_with_matches\" to find which files contain a pattern, \"content\" to see matching lines, or \"count\" for match counts.
-- For Glob, ALWAYS use specific patterns like \"**/*.rs\", \"src/**/*.ts\", \"**/Cargo.toml\". NEVER use broad patterns like \"**/*\", \"*\", or \"*/*\" — they waste tokens and return noise.
-- Use ReadFiles with offset/limit to read only the relevant parts of large files.
-- Call multiple independent tools in parallel when possible.
-- Be concise but complete — include everything the main agent needs to act.";
+Core workflow:
+- Start with Grep to search by content or Glob to find files by name pattern
+- Use ReadFiles only once you know which files are relevant
+- Use ReadFiles with offset/limit to read only relevant sections of large files
+- Call multiple independent tools in parallel when possible
+- Be concise but complete — include everything the main agent needs to act
 
-/// Read-only tools available to the Explore sub-agent
-const EXPLORE_TOOLS: &[&str] = &["ReadFiles", "Grep", "Glob", "WebFetch"];
+Tool guidance:
+- Use Grep with output_mode \"files_with_matches\" to find which files contain a pattern, \"content\" to inspect matching lines, or \"count\" for match counts
+- For Glob, ALWAYS use specific patterns like \"**/*.rs\", \"src/**/*.ts\", or \"**/Cargo.toml\". NEVER use broad patterns like \"**/*\", \"*\", or \"*/*\"
+- You may use Bash ONLY for read-only search/navigation commands like: ls, find, grep, git status, git log, git diff, cat, head, tail, pwd
+- NEVER use Bash for mkdir, touch, rm, cp, mv, git add, git commit, npm install, bun install, cargo build, cargo test, python scripts that write files, or anything that changes files or system state";
+
+const EXPLORE_REPORTING_GUIDANCE: &str = "\
+Final answer requirements:
+- Return findings directly as a normal message
+- Do NOT try to create files
+- Summarize the most relevant findings first
+- Mention uncertainty or missing evidence explicitly";
+
+const EXPLORE_TOOLS: &[&str] = &["ReadFiles", "Grep", "Glob", "Bash"];
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ExploreThoroughness {
+    Quick,
+    Medium,
+    Thorough,
+}
+
+impl ExploreThoroughness {
+    fn from_input(input: Option<&str>) -> Self {
+        match input.unwrap_or("medium").trim().to_ascii_lowercase().as_str() {
+            "quick" => Self::Quick,
+            "thorough" | "very thorough" => Self::Thorough,
+            _ => Self::Medium,
+        }
+    }
+
+    fn prompt_guidance(&self) -> &'static str {
+        match self {
+            Self::Quick => "Thoroughness level: quick. Prefer a fast pass over the most likely files and patterns. Stop once you have enough evidence to answer confidently.",
+            Self::Medium => "Thoroughness level: medium. Check the main implementation plus nearby supporting files, types, and call paths before concluding.",
+            Self::Thorough => "Thoroughness level: thorough. Be comprehensive: search alternate names, trace call chains, inspect related types/interfaces, and cross-check multiple implementation points before concluding.",
+        }
+    }
+}
+
+fn build_explore_system_prompt(thoroughness: ExploreThoroughness) -> String {
+    format!(
+        "{}\n\n{}\n\n{}",
+        EXPLORE_SYSTEM_PROMPT_PREFIX,
+        thoroughness.prompt_guidance(),
+        EXPLORE_REPORTING_GUIDANCE
+    )
+}
+
+fn validate_explore_bash_command(command: &str) -> Result<(), String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return Err("Explore Bash command is empty.".to_string());
+    }
+
+    let forbidden_fragments = [
+        ">",
+        ">>",
+        "<<",
+        "| tee",
+        "mkdir",
+        "touch",
+        "rm ",
+        "rm\t",
+        "cp ",
+        "cp\t",
+        "mv ",
+        "mv\t",
+        "git add",
+        "git commit",
+        "git push",
+        "npm install",
+        "bun install",
+        "cargo build",
+        "cargo test",
+        "python -c",
+        "python3 -c",
+    ];
+
+    let lower = trimmed.to_ascii_lowercase();
+    if forbidden_fragments.iter().any(|frag| lower.contains(frag)) {
+        return Err("Explore only allows read-only Bash commands for search/navigation.".to_string());
+    }
+
+    let first = lower
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
+    let allowed_prefixes = ["ls", "find", "grep", "git", "cat", "head", "tail", "pwd"];
+    if !allowed_prefixes.contains(&first) {
+        return Err(format!(
+            "Explore Bash only allows read-only search/navigation commands. Got: {first}"
+        ));
+    }
+
+    Ok(())
+}
 
 /// Extract the main display arg for a tool call (file path, pattern, etc.)
 fn get_display_arg(name: &str, input: &serde_json::Value) -> String {
@@ -963,7 +1068,7 @@ fn get_display_arg(name: &str, input: &serde_json::Value) -> String {
         "ReadFiles" => s("file_path"),
         "Grep" => s("pattern"),
         "Glob" => s("pattern"),
-        "WebFetch" => s("url"),
+        "Bash" => s("command"),
         _ => {
             let j = input.to_string();
             if j.len() > 60 {
@@ -1047,10 +1152,10 @@ fn build_explore_activity(
 /// research-focused system prompt. Emits `ExploreProgress` events
 /// via `progress_tx` for TUI display.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_explore(
+pub(crate) async fn run_explore(
     task: &str,
     timeout_ms: u64,
-    max_turns: usize,
+    thoroughness: ExploreThoroughness,
     progress_tx: Option<mpsc::Sender<StreamEvent>>,
     explore_id: String,
     cancel: Option<tokio_util::sync::CancellationToken>,
@@ -1073,7 +1178,7 @@ pub async fn run_explore(
 
     // Use a research-focused system prompt instead of the parent's
     let system_prompt = SystemPrompt::Structured {
-        cached: vec![EXPLORE_SYSTEM_PROMPT.to_string()],
+        cached: vec![build_explore_system_prompt(thoroughness)],
         dynamic: String::new(),
     };
 
@@ -1120,7 +1225,6 @@ pub async fn run_explore(
 
     let read_files = Arc::new(Mutex::new(std::collections::HashMap::new()));
 
-    let mut turns = 0usize;
     let mut text_output = String::new();
     let mut tool_results_fallback: Vec<String> = Vec::new();
     let mut total_input = 0u64;
@@ -1136,11 +1240,6 @@ pub async fn run_explore(
     let task_display = task.to_string();
 
     'outer: loop {
-        if turns >= max_turns {
-            text_output.push_str("\n[Reached maximum turns]");
-            break;
-        }
-
         // Check cancellation from parent agent
         if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
             text_output.push_str("\n[Cancelled by user]");
@@ -1268,8 +1367,6 @@ pub async fn run_explore(
             history.add_assistant_blocks(blocks);
         }
 
-        turns += 1;
-
         if stop_reason != StopReason::ToolUse || pending_tools.is_empty() {
             break;
         }
@@ -1299,6 +1396,13 @@ pub async fn run_explore(
                 let ap = allowed_paths.clone();
                 let cancel_token = cancel.clone();
                 futs.push(tokio::spawn(async move {
+                    if n == "Bash"
+                        && let Some(command) = inp.get("command").and_then(|v| v.as_str())
+                        && let Err(err) = validate_explore_bash_command(command)
+                    {
+                        return ToolResult::error(err);
+                    }
+
                     let ctx = ToolContext {
                         progress_tx: None,
                         event_tx: None,
@@ -1432,12 +1536,7 @@ impl Tool for ExploreTool {
     }
 
     fn description(&self) -> &str {
-        "Launch a research sub-agent to explore the codebase. The agent uses read-only tools \
-         (ReadFile, Grep, Glob) to investigate and returns detailed findings with file paths \
-         and code snippets. Use for broad searches or multi-step investigations. \
-         IMPORTANT: Always write the task description in English, regardless of the user's language. \
-         Do NOT call this tool multiple times with the same or overlapping tasks — one call per topic. \
-         If you need multiple explorations, make each task distinct and specific."
+        "Launch a fast read-only sub-agent to explore the codebase and return detailed findings with file paths and code snippets. Use for broad searches or multi-step investigations. IMPORTANT: Always write the task description in English, regardless of the user's language. Use thoroughness=quick for a fast pass, medium for normal exploration, or thorough for comprehensive analysis. Do NOT call this tool multiple times with the same or overlapping tasks — one call per topic. If you need multiple explorations, make each task distinct and specific."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -1448,10 +1547,11 @@ impl Tool for ExploreTool {
                     "type": "string",
                     "description": "What to investigate in the codebase (always in English)"
                 },
-                "maxTurns": {
-                    "type": "integer",
-                    "description": "Maximum LLM turns before stopping (default: 15)",
-                    "default": 15
+                "thoroughness": {
+                    "type": "string",
+                    "enum": ["quick", "medium", "thorough"],
+                    "description": "Desired depth of exploration (default: medium)",
+                    "default": "medium"
                 },
                 "timeout": {
                     "type": "integer",
@@ -1479,8 +1579,9 @@ impl Tool for ExploreTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(300_000);
 
-        let max_turns = input.get("maxTurns").and_then(|v| v.as_u64()).unwrap_or(15) as usize;
-
+        let thoroughness = ExploreThoroughness::from_input(
+            input.get("thoroughness").and_then(|v| v.as_str()),
+        );
         // Use the tool_call_id so TUI progress matches the tool_call message
         let explore_id = ctx
             .tool_call_id
@@ -1492,7 +1593,7 @@ impl Tool for ExploreTool {
         match run_explore(
             &task,
             timeout,
-            max_turns,
+            thoroughness,
             progress_tx,
             explore_id,
             ctx.cancel.clone(),
@@ -1586,5 +1687,66 @@ fn format_sub_agent_result(entry: &SubAgentEntry) -> ToolResult {
         ToolResult::error(content)
     } else {
         ToolResult::success(content)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explore_thoroughness_defaults_to_medium() {
+        assert!(matches!(
+            ExploreThoroughness::from_input(None),
+            ExploreThoroughness::Medium
+        ));
+        assert!(matches!(
+            ExploreThoroughness::from_input(Some("unknown")),
+            ExploreThoroughness::Medium
+        ));
+    }
+
+    #[test]
+    fn explore_thoroughness_parses_aliases() {
+        assert!(matches!(
+            ExploreThoroughness::from_input(Some("quick")),
+            ExploreThoroughness::Quick
+        ));
+        assert!(matches!(
+            ExploreThoroughness::from_input(Some("very thorough")),
+            ExploreThoroughness::Thorough
+        ));
+    }
+
+    #[test]
+    fn explore_bash_allows_read_only_search_commands() {
+        assert!(validate_explore_bash_command("find src -name '*.rs'").is_ok());
+        assert!(validate_explore_bash_command("git diff -- crates/lukan-agent").is_ok());
+        assert!(validate_explore_bash_command("pwd").is_ok());
+    }
+
+    #[test]
+    fn explore_bash_blocks_mutating_or_non_search_commands() {
+        assert!(validate_explore_bash_command("mkdir tmp").is_err());
+        assert!(validate_explore_bash_command("grep foo src > out.txt").is_err());
+        assert!(validate_explore_bash_command("cargo test -p lukan-agent").is_err());
+    }
+
+    #[test]
+    fn explore_tool_schema_uses_thoroughness_not_max_turns() {
+        let schema = ExploreTool.input_schema();
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+
+        assert!(props.contains_key("thoroughness"));
+        assert!(!props.contains_key("maxTurns"));
+    }
+
+    #[test]
+    fn explore_tools_include_bash_and_exclude_web_fetch() {
+        assert!(EXPLORE_TOOLS.contains(&"Bash"));
+        assert!(!EXPLORE_TOOLS.contains(&"WebFetch"));
     }
 }

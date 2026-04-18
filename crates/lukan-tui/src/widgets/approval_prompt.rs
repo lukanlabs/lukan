@@ -53,16 +53,27 @@ impl Widget for ApprovalPromptWidget<'_> {
                 .clone()
                 .or_else(|| tool.search_hint.clone())
                 .unwrap_or_else(|| summarize_tool_input(&tool.name, &tool.input));
-            let summary = if matches!(tool.name.as_str(), "Bash" | "ReadFiles" | "WriteFile" | "EditFile" | "WebFetch" | "Explore" | "SubAgent") {
+            let prefer_concrete_summary = matches!(
+                tool.name.as_str(),
+                "Bash" | "ReadFiles" | "WriteFile" | "EditFile" | "WebFetch" | "Explore" | "SubAgent"
+            );
+            let summary = if prefer_concrete_summary {
                 summarize_tool_input(&tool.name, &tool.input)
             } else {
                 raw_summary
             };
-            let metadata_suffix = match (tool.read_only, tool.search_hint.as_deref()) {
-                (Some(true), Some(hint)) => format!(" [read-only · {hint}]"),
-                (Some(true), None) => " [read-only]".to_string(),
-                (Some(false), Some(hint)) => format!(" [{hint}]"),
-                _ => String::new(),
+            let metadata_suffix = if prefer_concrete_summary {
+                match tool.read_only {
+                    Some(true) => " [read-only]".to_string(),
+                    _ => String::new(),
+                }
+            } else {
+                match (tool.read_only, tool.search_hint.as_deref()) {
+                    (Some(true), Some(hint)) => format!(" [read-only · {hint}]"),
+                    (Some(true), None) => " [read-only]".to_string(),
+                    (Some(false), Some(hint)) => format!(" [{hint}]"),
+                    _ => String::new(),
+                }
             };
             let label = format!(
                 "{}{}",

@@ -2,7 +2,7 @@ mod test_helpers;
 
 use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
-use lukan_tools::{Tool, ToolRegistry};
+use lukan_tools::{BashCommandClass, Tool, ToolRegistry, classify_bash_command};
 use serde_json::json;
 use test_helpers::make_tool_context;
 
@@ -173,6 +173,30 @@ async fn execute_runs_validating_tool_when_input_is_valid() {
 }
 
 #[test]
+fn classify_bash_command_covers_common_risk_levels() {
+    assert_eq!(classify_bash_command("git status"), BashCommandClass::Read);
+    assert_eq!(classify_bash_command("find src -name '*.rs'"), BashCommandClass::Search);
+    assert_eq!(classify_bash_command("ls -la"), BashCommandClass::List);
+    assert_eq!(classify_bash_command("curl https://lukan.ai"), BashCommandClass::Network);
+    assert_eq!(classify_bash_command("mkdir tmp"), BashCommandClass::Mutating);
+    assert_eq!(
+        classify_bash_command("git reset --hard HEAD~1"),
+        BashCommandClass::Destructive
+    );
+    assert_eq!(classify_bash_command("echo hello"), BashCommandClass::Unknown);
+}
+
+#[test]
+fn classify_bash_command_detects_mutating_redirections_and_builds() {
+    assert_eq!(classify_bash_command("echo hi > out.txt"), BashCommandClass::Mutating);
+    assert_eq!(
+        classify_bash_command("cargo test -p lukan-agent"),
+        BashCommandClass::Mutating
+    );
+    assert_eq!(classify_bash_command("python -c 'print(1)'"), BashCommandClass::Mutating);
+}
+
+#[test]
 fn built_in_tool_metadata_matches_stage_one_expectations() {
     let registry = lukan_tools::create_default_registry();
 
@@ -200,7 +224,11 @@ fn built_in_tool_metadata_matches_stage_one_expectations() {
     let bash = registry.get("Bash").unwrap();
     assert!(!bash.is_read_only());
     assert!(!bash.is_concurrency_safe());
-    assert_eq!(bash.search_hint(), Some("run shell commands and terminal tasks"));
+    assert_eq!(bash.search_hint(), Some("run shell commands and terminal tasks; read/search/list commands are lower risk than mutating or destructive ones"));
+    assert_eq!(
+        bash.activity_label(&json!({"command": "git status"})),
+        Some("[read] git status".to_string())
+    );
     assert_eq!(bash.activity_label(&json!({})), Some("Running command".to_string()));
 
     let web_fetch = registry.get("WebFetch").unwrap();

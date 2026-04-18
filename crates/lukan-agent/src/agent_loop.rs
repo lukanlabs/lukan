@@ -2526,9 +2526,9 @@ mod tests {
     }
 
     #[test]
-    fn tool_search_errors_do_not_load_deferred_tools() {
-        let result = lukan_core::models::tools::ToolResult::error(
-            "Found 1 deferred tool(s):\n\n- WebFetch\n  Description: Fetch content from a URL\n",
+    fn tool_search_parser_ignores_non_matching_summary_text() {
+        let result = lukan_core::models::tools::ToolResult::success(
+            "Use WebSearch next for discovery, then WebFetch for exact URLs.",
         );
         assert!(selected_deferred_tool_names(&result).is_empty());
     }

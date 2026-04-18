@@ -6,6 +6,7 @@
 
 use globset::GlobBuilder;
 use lukan_core::config::types::{PermissionMode, PermissionsConfig};
+use lukan_tools::{BashCommandClass, classify_bash_command};
 use tokio::sync::watch;
 
 /// Verdict for a tool invocation
@@ -34,6 +35,12 @@ const SAFE_TOOLS: &[&str] = &[
     "LoadSkill",
     "Remember",
     "ToolSearch",
+];
+
+const SAFE_BASH_COMMAND_CLASSES: &[BashCommandClass] = &[
+    BashCommandClass::Read,
+    BashCommandClass::Search,
+    BashCommandClass::List,
 ];
 
 /// Browser tools — only treated as safe when browser mode is enabled
@@ -225,7 +232,17 @@ impl PermissionMatcher {
         match self.effective_mode() {
             // 2. Planner: only allow read-only tools
             PermissionMode::Planner => {
-                if PLANNER_WHITELIST.contains(&tool_name) {
+                if tool_name == "Bash" {
+                    let command = tool_input
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if SAFE_BASH_COMMAND_CLASSES.contains(&classify_bash_command(command)) {
+                        ToolVerdict::Allow
+                    } else {
+                        ToolVerdict::Deny
+                    }
+                } else if PLANNER_WHITELIST.contains(&tool_name) {
                     ToolVerdict::Allow
                 } else {
                     ToolVerdict::Deny
@@ -366,6 +383,18 @@ mod tests {
         );
         assert_eq!(
             matcher.verdict("Bash", &json!({"command": "ls"})),
+            ToolVerdict::Allow
+        );
+        assert_eq!(
+            matcher.verdict("Bash", &json!({"command": "git status"})),
+            ToolVerdict::Allow
+        );
+        assert_eq!(
+            matcher.verdict("Bash", &json!({"command": "cargo test -p lukan-agent"})),
+            ToolVerdict::Deny
+        );
+        assert_eq!(
+            matcher.verdict("Bash", &json!({"command": "rm -rf /tmp/foo"})),
             ToolVerdict::Deny
         );
         assert_eq!(

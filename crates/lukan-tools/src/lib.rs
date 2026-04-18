@@ -1,4 +1,5 @@
 mod bash;
+pub use bash::{BashCommandClass, classify_bash_command};
 pub mod bg_processes;
 pub mod browser;
 mod edit_file;

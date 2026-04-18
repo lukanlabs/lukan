@@ -9,6 +9,107 @@ use tracing::debug;
 use crate::bg_processes;
 use crate::{Tool, ToolContext};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BashCommandClass {
+    Read,
+    Search,
+    List,
+    Network,
+    Mutating,
+    Destructive,
+    Unknown,
+}
+
+impl BashCommandClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Search => "search",
+            Self::List => "list",
+            Self::Network => "network",
+            Self::Mutating => "mutating",
+            Self::Destructive => "destructive",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+pub fn classify_bash_command(command: &str) -> BashCommandClass {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return BashCommandClass::Unknown;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+
+    let destructive_fragments = [
+        "rm -rf",
+        "rm -fr",
+        "mkfs",
+        "dd if=",
+        "shutdown",
+        "reboot",
+        "poweroff",
+        "git reset --hard",
+        "git clean -fd",
+        "git clean -xdf",
+    ];
+    if destructive_fragments.iter().any(|frag| lower.contains(frag)) {
+        return BashCommandClass::Destructive;
+    }
+
+    let mutating_fragments = [
+        ">",
+        ">>",
+        "touch ",
+        "mkdir ",
+        "rmdir ",
+        "mv ",
+        "cp ",
+        "sed -i",
+        "perl -pi",
+        "git add",
+        "git commit",
+        "git stash",
+        "git apply",
+        "npm install",
+        "bun install",
+        "pnpm install",
+        "yarn install",
+        "cargo build",
+        "cargo test",
+        "make ",
+        "python -c",
+        "python3 -c",
+    ];
+    if mutating_fragments.iter().any(|frag| lower.contains(frag)) {
+        return BashCommandClass::Mutating;
+    }
+
+    let first = lower.split_whitespace().next().unwrap_or_default();
+    match first {
+        "ls" | "tree" | "du" | "pwd" => BashCommandClass::List,
+        "find" | "grep" | "rg" | "fd" | "which" | "whereis" => BashCommandClass::Search,
+        "cat" | "head" | "tail" | "less" | "more" | "stat" | "file" | "git" => {
+            if lower.starts_with("git status")
+                || lower.starts_with("git diff")
+                || lower.starts_with("git log")
+                || lower.starts_with("git show")
+                || lower == "git branch"
+                || lower.starts_with("git branch --show-current")
+            {
+                BashCommandClass::Read
+            } else {
+                BashCommandClass::Unknown
+            }
+        }
+        "curl" | "wget" | "ping" | "nslookup" | "dig" | "ssh" | "scp" => {
+            BashCommandClass::Network
+        }
+        _ => BashCommandClass::Unknown,
+    }
+}
+
 const MAX_OUTPUT_BYTES: usize = 30_000;
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 
@@ -62,17 +163,20 @@ impl Tool for BashTool {
     }
 
     fn search_hint(&self) -> Option<&str> {
-        Some("run shell commands and terminal tasks")
+        Some("run shell commands and terminal tasks; read/search/list commands are lower risk than mutating or destructive ones")
     }
 
     fn activity_label(&self, input: &serde_json::Value) -> Option<String> {
-        input
+        let command = input
             .get("command")
             .and_then(|v| v.as_str())
             .map(|cmd| cmd.trim())
-            .filter(|cmd| !cmd.is_empty())
-            .map(|cmd| cmd.to_string())
-            .or_else(|| Some("Running command".to_string()))
+            .filter(|cmd| !cmd.is_empty());
+        let class = command.map(classify_bash_command);
+        match (command, class) {
+            (Some(cmd), Some(class)) => Some(format!("[{}] {cmd}", class.as_str())),
+            _ => Some("Running command".to_string()),
+        }
     }
 
     fn validate_input(&self, input: &serde_json::Value, _ctx: &ToolContext) -> Result<(), String> {

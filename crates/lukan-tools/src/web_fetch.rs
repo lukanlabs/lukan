@@ -57,6 +57,10 @@ impl Tool for WebFetchTool {
         Some("Fetching web page".to_string())
     }
 
+    fn is_deferred(&self) -> bool {
+        true
+    }
+
     fn validate_input(&self, input: &serde_json::Value, _ctx: &ToolContext) -> Result<(), String> {
         let url_str = input
             .get("url")

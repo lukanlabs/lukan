@@ -16,6 +16,8 @@ fn default_registry_exposes_tool_search_and_reflects_runtime_deferred_tools() {
     let deferred = registry.deferred_definitions();
     let web_search_registered = registry.get("WebSearch").is_some();
 
+    assert!(deferred.iter().any(|d| d.name == "WebFetch"));
+    assert!(!registry.default_definitions().iter().any(|d| d.name == "WebFetch"));
     assert_eq!(
         deferred.iter().any(|d| d.name == "WebSearch"),
         web_search_registered
@@ -26,6 +28,9 @@ fn default_registry_exposes_tool_search_and_reflects_runtime_deferred_tools() {
 #[test]
 fn search_deferred_tools_matches_current_runtime_registration() {
     let registry = create_default_registry();
+    let fetch_results = search_deferred_tools(&registry, "fetch url page", 5);
+    assert!(fetch_results.iter().any(|r| r.name == "WebFetch"));
+
     let results = search_deferred_tools(&registry, "web search information", 5);
     let web_search_registered = registry.get("WebSearch").is_some();
 
@@ -42,6 +47,13 @@ async fn tool_search_returns_runtime_matching_deferred_tools_only() {
     let registry = create_default_registry();
     let tool = registry.get("ToolSearch").unwrap();
     let ctx = make_tool_context(&std::env::temp_dir());
+
+    let fetch_result = tool
+        .execute(json!({"query": "fetch a webpage by url", "max_results": 5}), &ctx)
+        .await
+        .unwrap();
+    assert!(!fetch_result.is_error);
+    assert!(fetch_result.content.contains("WebFetch"));
 
     let result = tool
         .execute(json!({"query": "search the web", "max_results": 5}), &ctx)

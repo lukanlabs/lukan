@@ -206,6 +206,7 @@ fn built_in_tool_metadata_matches_stage_one_expectations() {
     let web_fetch = registry.get("WebFetch").unwrap();
     assert!(web_fetch.is_read_only());
     assert!(web_fetch.is_concurrency_safe());
+    assert!(web_fetch.is_deferred());
     assert_eq!(web_fetch.search_hint(), Some("fetch content from a URL"));
     assert_eq!(
         web_fetch.activity_label(&json!({})),

@@ -33,6 +33,7 @@ const SAFE_TOOLS: &[&str] = &[
     "SubmitPlan",
     "LoadSkill",
     "Remember",
+    "ToolSearch",
 ];
 
 /// Browser tools — only treated as safe when browser mode is enabled
@@ -331,6 +332,10 @@ mod tests {
         );
         assert_eq!(
             matcher.verdict("Grep", &json!({"pattern": "foo"})),
+            ToolVerdict::Allow
+        );
+        assert_eq!(
+            matcher.verdict("ToolSearch", &json!({"query": "web search"})),
             ToolVerdict::Allow
         );
         assert_eq!(

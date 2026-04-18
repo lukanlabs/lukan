@@ -65,8 +65,14 @@ impl Tool for BashTool {
         Some("run shell commands and terminal tasks")
     }
 
-    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
-        Some("Running command".to_string())
+    fn activity_label(&self, input: &serde_json::Value) -> Option<String> {
+        input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(|cmd| cmd.trim())
+            .filter(|cmd| !cmd.is_empty())
+            .map(|cmd| cmd.to_string())
+            .or_else(|| Some("Running command".to_string()))
     }
 
     fn validate_input(&self, input: &serde_json::Value, _ctx: &ToolContext) -> Result<(), String> {

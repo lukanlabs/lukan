@@ -543,10 +543,13 @@ impl App {
             }
             StreamEvent::ApprovalRequired { tools } => {
                 let count = tools.len();
+                let all_read_only = !tools.is_empty()
+                    && tools.iter().all(|t| t.read_only.unwrap_or(false));
                 self.approval_prompt = Some(ApprovalPrompt {
                     selections: vec![true; count],
                     selected: 0,
                     tools,
+                    all_read_only,
                 });
             }
             StreamEvent::PlanReview {

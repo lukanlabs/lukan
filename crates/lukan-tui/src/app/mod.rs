@@ -257,6 +257,8 @@ pub(crate) struct ApprovalPrompt {
     pub(crate) selections: Vec<bool>,
     /// Cursor position
     pub(crate) selected: usize,
+    /// Whether all tools in this prompt are read-only according to metadata.
+    pub(crate) all_read_only: bool,
 }
 
 /// Interactive model picker state

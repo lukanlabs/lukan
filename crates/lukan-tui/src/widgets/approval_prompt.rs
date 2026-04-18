@@ -26,9 +26,17 @@ impl Widget for ApprovalPromptWidget<'_> {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            " Tool Approval Required",
+            if self.prompt.all_read_only {
+                " Tool Approval Required (read-only tools)"
+            } else {
+                " Tool Approval Required"
+            },
             Style::default()
-                .fg(Color::Cyan)
+                .fg(if self.prompt.all_read_only {
+                    Color::Green
+                } else {
+                    Color::Cyan
+                })
                 .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(""));
@@ -40,15 +48,25 @@ impl Widget for ApprovalPromptWidget<'_> {
             let pointer = if is_selected { "▸ " } else { "  " };
             let checkbox = if is_checked { "[x] " } else { "[ ] " };
 
-            let summary = summarize_tool_input(&tool.name, &tool.input);
+            let summary = tool
+                .activity_label
+                .clone()
+                .or_else(|| tool.search_hint.clone())
+                .unwrap_or_else(|| summarize_tool_input(&tool.name, &tool.input));
+            let metadata_suffix = match (tool.read_only, tool.search_hint.as_deref()) {
+                (Some(true), Some(hint)) => format!(" [read-only · {hint}]"),
+                (Some(true), None) => " [read-only]".to_string(),
+                (Some(false), Some(hint)) => format!(" [{hint}]"),
+                _ => String::new(),
+            };
             let label = format!(
                 "{}{}",
                 tool.name,
                 if summary.len() > 60 {
                     let end = summary.floor_char_boundary(57);
-                    format!("({}...)", &summary[..end])
+                    format!("({}...){}", &summary[..end], metadata_suffix)
                 } else {
-                    format!("({summary})")
+                    format!("({summary}){metadata_suffix}")
                 }
             );
 

@@ -99,6 +99,35 @@ struct PendingToolCall {
     input: serde_json::Value,
 }
 
+fn selected_deferred_tool_names(result: &lukan_core::models::tools::ToolResult) -> Vec<String> {
+    if result.is_error {
+        return Vec::new();
+    }
+
+    let mut names = Vec::new();
+    let Some(prefix) = result.content.strip_prefix("Found ") else {
+        return names;
+    };
+    if !prefix.contains(" deferred tool(s):") {
+        return names;
+    }
+
+    for line in result.content.lines() {
+        let trimmed = line.trim();
+        if let Some(name) = trimmed.strip_prefix("- ") {
+            let candidate = name.trim();
+            if !candidate.is_empty()
+                && candidate
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+            {
+                names.push(candidate.to_string());
+            }
+        }
+    }
+    names
+}
+
 /// The agent loop that coordinates LLM ↔ Tools
 pub struct AgentLoop {
     provider: Arc<dyn Provider>,
@@ -844,8 +873,18 @@ impl AgentLoop {
         let mut turn_snapshots: Vec<FileSnapshot> = Vec::new();
 
         // Inner loop: call LLM → execute tools → repeat until done
+        let mut loaded_deferred_tools: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         loop {
             let mut tool_defs = self.tools.default_definitions();
+            if !loaded_deferred_tools.is_empty() {
+                for def in self.tools.deferred_definitions() {
+                    if loaded_deferred_tools.contains(&def.name) {
+                        tool_defs.push(def);
+                    }
+                }
+                tool_defs.sort_by(|a, b| a.name.cmp(&b.name));
+            }
             // In planner mode, only expose read-only tools to the LLM
             if self.permission_matcher.mode() == PermissionMode::Planner {
                 tool_defs.retain(|d| {
@@ -1364,6 +1403,14 @@ impl AgentLoop {
                 {
                     self.loaded_skills.insert(name.to_string());
                     self.rebuild_system_prompt().await;
+                }
+
+                if tool.name == "ToolSearch" && !result.is_error {
+                    for name in selected_deferred_tool_names(result) {
+                        if !self.disabled_tools.contains(&name) && self.tools.get(&name).is_some() {
+                            loaded_deferred_tools.insert(name);
+                        }
+                    }
                 }
 
                 // Collect file snapshots for checkpoint
@@ -2463,4 +2510,26 @@ async fn update_behavior_profile(
 
     tracing::info!("Behavior profile update completed");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::selected_deferred_tool_names;
+
+    #[test]
+    fn tool_search_results_become_callable_in_followup_turn() {
+        let result = lukan_core::models::tools::ToolResult::success(
+            "Found 2 deferred tool(s):\n\n- WebSearch\n  Description: Search the web\n\n- WebFetch\n  Description: Fetch content from a URL\n",
+        );
+        let names = selected_deferred_tool_names(&result);
+        assert_eq!(names, vec!["WebSearch", "WebFetch"]);
+    }
+
+    #[test]
+    fn tool_search_errors_do_not_load_deferred_tools() {
+        let result = lukan_core::models::tools::ToolResult::error(
+            "Found 1 deferred tool(s):\n\n- WebFetch\n  Description: Fetch content from a URL\n",
+        );
+        assert!(selected_deferred_tool_names(&result).is_empty());
+    }
 }

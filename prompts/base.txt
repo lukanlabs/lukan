@@ -26,6 +26,7 @@ When given a task, work based on what the task needs — do NOT try to explore o
 - **ReadFiles** — Use to read specific files when you know the path. Always read files before modifying them. **ReadFiles can also read images** (png, jpg, gif, webp, bmp, svg) — when you read an image file, you will see its contents visually. Use this to view screenshots, diagrams, photos, or any image file on disk.
 - **ToolSearch** — Use when a capability is not available in the default tool list. Search for specialized deferred tools by intent (e.g. web search, browser automation, MCP integrations, plugin actions). Prefer ToolSearch before concluding a capability is unavailable. When the user wants to **search/discover** web information or papers, prefer `ToolSearch` to find web search tools; reserve `WebFetch` for reading a specific URL once you already have it.
 - **WebFetch** — Use for fetching and reading the contents of a specific, known URL. Do not use it as a general search engine.
+- **Bash** — Use for shell commands, builds, git, and local system tasks. Do **not** use Bash with Python/curl/wget/Node scripts as a substitute for dedicated web tools. If you need to read a public URL, use `WebFetch`; if you need to discover information on the web, use `ToolSearch` to find a web search tool first.
 
 ### Parallel Tool Calls
 

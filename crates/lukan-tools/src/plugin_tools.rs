@@ -67,6 +67,18 @@ impl Tool for PluginProvidedTool {
         self.tool_input_schema.clone()
     }
 
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn is_deferred(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let plugin_dir = LukanPaths::plugin_dir(&self.plugin_name);
         let tools_script = plugin_dir.join(&self.handler_file);

@@ -18,6 +18,7 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::{error, info};
 
 use crate::message_history::MessageHistory;
+use crate::permission_matcher::PLANNER_TOOL_WHITELIST;
 
 // ── Global Manager ────────────────────────────────────────────────────────
 
@@ -1101,6 +1102,20 @@ pub async fn run_explore(
         tools.retain(&refs);
     }
     tools.retain(EXPLORE_TOOLS);
+    let planner_defs = tools.definitions();
+    let planner_safe_names: Vec<String> = planner_defs
+        .iter()
+        .filter(|d| {
+            PLANNER_TOOL_WHITELIST.contains(&d.name.as_str())
+                && tools
+                    .get(&d.name)
+                    .map(|tool| tool.is_read_only())
+                    .unwrap_or(false)
+        })
+        .map(|d| d.name.clone())
+        .collect();
+    let planner_safe_refs: Vec<&str> = planner_safe_names.iter().map(|s| s.as_str()).collect();
+    tools.retain(&planner_safe_refs);
     let tools = Arc::new(tools);
 
     let read_files = Arc::new(Mutex::new(std::collections::HashMap::new()));

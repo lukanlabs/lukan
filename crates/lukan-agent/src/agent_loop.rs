@@ -848,7 +848,14 @@ impl AgentLoop {
             let mut tool_defs = self.tools.default_definitions();
             // In planner mode, only expose read-only tools to the LLM
             if self.permission_matcher.mode() == PermissionMode::Planner {
-                tool_defs.retain(|d| PLANNER_TOOL_WHITELIST.contains(&d.name.as_str()));
+                tool_defs.retain(|d| {
+                    PLANNER_TOOL_WHITELIST.contains(&d.name.as_str())
+                        && self
+                            .tools
+                            .get(&d.name)
+                            .map(|tool| tool.is_read_only())
+                            .unwrap_or(false)
+                });
             }
             // Also hide tools disabled at runtime by the TUI
             tool_defs.retain(|d| !self.disabled_tools.contains(&d.name));
@@ -1160,6 +1167,7 @@ impl AgentLoop {
                             input: t.input.clone(),
                             activity_label: tool_meta.and_then(|tool| tool.activity_label(&t.input)),
                             read_only: tool_meta.map(|tool| tool.is_read_only()),
+                            search_hint: tool_meta.and_then(|tool| tool.search_hint().map(|s| s.to_string())),
                         }
                     })
                     .collect();

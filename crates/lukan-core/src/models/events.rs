@@ -203,6 +203,8 @@ pub struct ToolApprovalRequest {
     pub activity_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_hint: Option<String>,
 }
 
 /// Response from the UI to an approval request (internal, not serialized over the wire)

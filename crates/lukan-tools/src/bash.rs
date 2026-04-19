@@ -612,9 +612,13 @@ impl BashTool {
                         "Background Bash process already completed. Do not call Bash again and do not call wait_pid. Continue using the agent normally with this final result.\nPID: {pid}\nCommand: {sanitized_command}\nFinal output:\n{compact_log}"
                     )
                 };
+                let display_summary = format!(
+                    "Background Bash process completed. PID: {pid}."
+                );
                 let _ = event_tx
                     .send(lukan_core::models::events::StreamEvent::QueuedMessageInjected {
                         text: summary,
+                        display_text: Some(display_summary),
                     })
                     .await;
                 let _ = event_tx

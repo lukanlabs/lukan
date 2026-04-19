@@ -672,13 +672,14 @@ impl App {
                 let msg = format!("[{level}] {source}: {detail}");
                 self.toast_notifications.push((msg, Instant::now()));
             }
-            StreamEvent::QueuedMessageInjected { text } => {
+            StreamEvent::QueuedMessageInjected { text, display_text } => {
                 // Flush any partial streaming text before inserting the user message
                 if !self.streaming_text.is_empty() {
                     let content = std::mem::take(&mut self.streaming_text);
                     self.messages.push(ChatMessage::new("assistant", content));
                 }
-                self.messages.push(ChatMessage::new("user", &text));
+                let visible_text = display_text.as_deref().unwrap_or(&text);
+                self.messages.push(ChatMessage::new("user", visible_text));
                 // Remove the injected message from the local queue so the UI
                 // stops showing it in the "↳ queued" indicator.
                 let mut queue = self.queued_messages.lock().unwrap();

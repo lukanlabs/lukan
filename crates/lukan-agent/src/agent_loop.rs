@@ -1101,6 +1101,7 @@ impl AgentLoop {
                         let _ = event_tx
                             .send(StreamEvent::QueuedMessageInjected {
                                 text: injected.clone(),
+                                display_text: None,
                             })
                             .await;
                         self.history.add_user_message(&injected);
@@ -1470,6 +1471,7 @@ impl AgentLoop {
                     let _ = event_tx
                         .send(StreamEvent::QueuedMessageInjected {
                             text: injected.clone(),
+                            display_text: None,
                         })
                         .await;
                     self.history.add_user_message(&injected);

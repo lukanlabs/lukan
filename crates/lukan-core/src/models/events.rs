@@ -163,8 +163,13 @@ pub enum StreamEvent {
         detail: String,
     },
 
-    /// A queued user message was injected mid-turn
-    QueuedMessageInjected { text: String },
+    /// A queued user message was injected mid-turn.
+    /// `display_text` is what the UI should show; `text` is the full context injected to the agent.
+    QueuedMessageInjected {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        display_text: Option<String>,
+    },
 
     /// Updated task list (emitted after plan acceptance or task tool calls)
     TasksUpdate { tasks: Vec<TaskInfo> },

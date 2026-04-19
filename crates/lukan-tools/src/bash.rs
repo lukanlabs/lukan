@@ -590,13 +590,21 @@ impl BashTool {
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
 
-                let _log = bg_processes::get_bg_log(pid, 200)
+                let log = bg_processes::get_bg_log(pid, 200)
                     .unwrap_or_else(|| "No log available.".to_string());
-                let summary = format!(
-                    "Bash {} completed: {}",
-                    pid,
-                    command.replace('\n', " ").replace('\r', " ").trim()
-                );
+                let compact_log = log.replace('\r', "").trim().to_string();
+                let summary = if compact_log.is_empty() {
+                    format!(
+                        "Bash {pid} completed: {}\nOutput: (no output captured)",
+                        command.replace('\n', " ").replace('\r', " ").trim()
+                    )
+                } else {
+                    format!(
+                        "Bash {pid} completed: {}\nOutput:\n{}",
+                        command.replace('\n', " ").replace('\r', " ").trim(),
+                        compact_log
+                    )
+                };
                 let _ = event_tx
                     .send(lukan_core::models::events::StreamEvent::QueuedMessageInjected {
                         text: summary,

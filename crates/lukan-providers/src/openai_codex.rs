@@ -629,10 +629,9 @@ fn extract_phantom_tool_call(text: &str) -> Option<(String, Value)> {
 
     // Extract JSON: find first '{' and match braces
     let Some(json_start) = text.find('{') else {
-        // No JSON found — args are garbled. Emit tool call with empty input
-        // so the tool fails gracefully and the agent loop continues.
-        debug!("Phantom tool call '{tool_name}': no JSON args found, using empty input");
-        return Some((tool_name.to_string(), Value::Object(Default::default())));
+        // No JSON found — treat as plain leaked transcript text, not a callable tool.
+        debug!("Discarding phantom tool call '{tool_name}': no JSON args found");
+        return None;
     };
     let json_text = &text[json_start..];
 
@@ -654,9 +653,9 @@ fn extract_phantom_tool_call(text: &str) -> Option<(String, Value)> {
     }
 
     if end == 0 {
-        // Unclosed JSON — also use empty input
-        debug!("Phantom tool call '{tool_name}': unclosed JSON, using empty input");
-        return Some((tool_name.to_string(), Value::Object(Default::default())));
+        // Unclosed JSON — treat as leaked/incomplete transcript instead of inventing a tool call.
+        debug!("Discarding phantom tool call '{tool_name}': unclosed JSON");
+        return None;
     }
 
     let input = parse_tool_input(&json_text[..end]);
@@ -1006,6 +1005,18 @@ mod tests {
         assert!(models.contains(&"gpt-5.4".to_string()));
         assert!(models.contains(&"gpt-5.3-codex".to_string()));
         assert_eq!(models.len(), 12);
+    }
+
+    #[test]
+    fn phantom_tool_calls_without_json_are_discarded() {
+        let text = "assistant to=functions.Bash some leaked transcript without json";
+        assert!(extract_phantom_tool_call(text).is_none());
+    }
+
+    #[test]
+    fn phantom_tool_calls_with_unclosed_json_are_discarded() {
+        let text = "assistant to=functions.Bash json {\"command\": \"pwd\"";
+        assert!(extract_phantom_tool_call(text).is_none());
     }
 
     #[test]

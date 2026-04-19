@@ -107,6 +107,7 @@ pub async fn configure(
     model_name: String,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
     allowed_paths: Option<Vec<std::path::PathBuf>>,
+    session_tab_id: Option<String>,
 ) {
     let mut mgr = MANAGER.write().await;
     mgr.provider = Some(provider);
@@ -116,6 +117,7 @@ pub async fn configure(
     mgr.model_name = Some(model_name);
     mgr.sandbox = sandbox;
     mgr.allowed_paths = allowed_paths;
+    mgr.session_tab_id = session_tab_id;
 }
 
 /// Update the disabled tools for sub-agents (called when parent toggles tools)
@@ -145,6 +147,7 @@ pub struct SubAgentUpdate {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub error: Option<String>,
+    pub tab_id: Option<String>,
 }
 
 struct SubAgentManager {
@@ -158,6 +161,7 @@ struct SubAgentManager {
     model_name: Option<String>,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
     allowed_paths: Option<Vec<std::path::PathBuf>>,
+    session_tab_id: Option<String>,
     /// Tool restrictions inherited from the parent agent (None = all tools allowed)
     tool_filter: Option<Vec<String>>,
     /// Disabled tools inherited from the parent agent (Alt+P toggles)
@@ -183,6 +187,7 @@ impl SubAgentManager {
             model_name: None,
             sandbox: None,
             allowed_paths: None,
+            session_tab_id: None,
             tool_filter: None,
             disabled_tools: std::collections::HashSet::new(),
             update_tx: None,
@@ -279,6 +284,7 @@ async fn spawn_sub_agent(
         sandbox,
         allowed_paths,
         stream_broadcast_tx,
+        session_tab_id,
     ) = {
         let mgr = MANAGER.read().await;
         let provider = mgr
@@ -295,7 +301,8 @@ async fn spawn_sub_agent(
         let sandbox = mgr.sandbox.clone();
         let allowed_paths = mgr.allowed_paths.clone();
         let stream_tx = mgr.stream_broadcast_tx.clone();
-        (provider, sp, cwd, pn, mn, sandbox, allowed_paths, stream_tx)
+        let session_tab_id = mgr.session_tab_id.clone();
+        (provider, sp, cwd, pn, mn, sandbox, allowed_paths, stream_tx, session_tab_id)
     };
 
     let parent_cwd = cwd.clone();
@@ -351,6 +358,7 @@ async fn spawn_sub_agent(
             sandbox,
             Some(sub_cancel),
             stream_broadcast_tx,
+            session_tab_id,
         )
         .await;
     });
@@ -370,6 +378,7 @@ async fn run_sub_agent(
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
     cancel: Option<tokio_util::sync::CancellationToken>,
     stream_broadcast_tx: broadcast::Sender<StreamEvent>,
+    session_tab_id: Option<String>,
 ) {
     let mut history = MessageHistory::new();
     if let Some(worktree_path) = &isolation_ctx.worktree_path {
@@ -565,6 +574,7 @@ async fn run_sub_agent(
                 input_tokens: total_input,
                 output_tokens: total_output,
                 error: None,
+                tab_id: session_tab_id.clone(),
             });
         }
         // Push via stream events (daemon mode → TUI over WebSocket)
@@ -577,6 +587,7 @@ async fn run_sub_agent(
                 total_input,
                 total_output,
                 None,
+                session_tab_id.clone(),
                 &chat_messages,
             ));
         }
@@ -691,6 +702,7 @@ async fn run_sub_agent(
                 input_tokens: total_input,
                 output_tokens: total_output,
                 error: None,
+                tab_id: session_tab_id.clone(),
             });
         }
         // Push via stream events (daemon mode)
@@ -703,6 +715,7 @@ async fn run_sub_agent(
                 total_input,
                 total_output,
                 None,
+                session_tab_id.clone(),
                 &chat_messages,
             ));
         }
@@ -754,6 +767,7 @@ async fn run_sub_agent(
             input_tokens: total_input,
             output_tokens: total_output,
             error: final_error.clone(),
+            tab_id: session_tab_id.clone(),
         });
     }
     // Push via stream events (daemon mode)
@@ -766,6 +780,7 @@ async fn run_sub_agent(
             total_input,
             total_output,
             final_error,
+            session_tab_id.clone(),
             &chat_messages,
         ));
     }
@@ -1763,6 +1778,7 @@ fn build_stream_event(
     input_tokens: u64,
     output_tokens: u64,
     error: Option<String>,
+    tab_id: Option<String>,
     chat_messages: &[SubAgentChatMsg],
 ) -> StreamEvent {
     use lukan_core::models::events::SubAgentChatMessage;
@@ -1774,6 +1790,7 @@ fn build_stream_event(
         input_tokens,
         output_tokens,
         error,
+        tab_id,
         chat_messages: chat_messages
             .iter()
             .map(|m| SubAgentChatMessage {

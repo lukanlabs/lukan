@@ -90,6 +90,8 @@ pub struct AgentConfig {
     pub extra_env: HashMap<String, String>,
     /// Context token threshold for auto-compaction (None = use default 150k)
     pub compaction_threshold: Option<u64>,
+    /// Frontend tab ID when the agent is attached to a daemon/web session.
+    pub tab_id: Option<String>,
 }
 
 /// Pending tool call accumulated from stream events
@@ -232,6 +234,7 @@ impl AgentLoop {
             config.model_name.clone(),
             sub_agent_sandbox,
             config.allowed_paths.clone(),
+            config.tab_id.clone(),
         )
         .await;
 
@@ -324,6 +327,7 @@ impl AgentLoop {
             config.model_name.clone(),
             sub_agent_sandbox,
             config.allowed_paths.clone(),
+            config.tab_id.clone(),
         )
         .await;
 

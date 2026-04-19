@@ -1017,6 +1017,7 @@ async fn execute_step_live(
         vision_provider: None,
         extra_env: config.credentials.flatten_skill_env(),
         compaction_threshold: None,
+        tab_id: None,
     };
 
     let mut agent = AgentLoop::new(agent_config).await?;

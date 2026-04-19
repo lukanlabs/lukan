@@ -179,6 +179,8 @@ pub enum StreamEvent {
         output_tokens: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
         /// Chat messages for the spectator view
         chat_messages: Vec<SubAgentChatMessage>,
     },

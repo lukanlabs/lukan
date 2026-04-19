@@ -198,6 +198,7 @@ impl App {
                 .model_settings
                 .get(&self.config.effective_model().unwrap_or_default())
                 .and_then(|s| s.compaction_threshold),
+            tab_id: self.daemon_tab_id.clone(),
         };
 
         match AgentLoop::load_session(config, &session_id).await {

@@ -739,6 +739,7 @@ impl App {
                 .model_settings
                 .get(&self.config.effective_model().unwrap_or_default())
                 .and_then(|s| s.compaction_threshold),
+            tab_id: self.daemon_tab_id.clone(),
         };
 
         let blocked_env_vars = project_cfg

@@ -2242,6 +2242,7 @@ async fn create_agent(
         .map(Arc::from),
         extra_env: config.credentials.flatten_skill_env(),
         compaction_threshold,
+        tab_id: None,
     };
 
     let mut agent = AgentLoop::new(agent_config).await?;
@@ -2368,6 +2369,7 @@ async fn create_agent_with_session(
         .map(Arc::from),
         extra_env: config.credentials.flatten_skill_env(),
         compaction_threshold,
+        tab_id: None,
     };
 
     let mut agent = AgentLoop::load_session(agent_config, session_id).await?;

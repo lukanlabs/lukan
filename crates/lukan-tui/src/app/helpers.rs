@@ -80,6 +80,7 @@ pub(super) fn scroll_overflow(
 // ── Tool Result Formatting ────────────────────────────────────────────────
 
 const TOOL_RESULT_PREVIEW_CHARS: usize = 240;
+const TOOL_PROGRESS_PREVIEW_CHARS: usize = 240;
 
 /// Format tool result with tool-aware compact summaries.
 /// ReadFile/Grep/Glob show a one-line summary instead of content.
@@ -107,12 +108,38 @@ pub(super) fn format_tool_result_named(name: &str, content: &str, is_error: bool
             format!("  ⎿  {file_count} files")
         }
         "WebFetch" | "WebSearch" => format_web_preview(content),
+        "Bash" => format_bash_preview(content),
         _ => format_tool_result(content, false),
+    }
+}
+
+pub(super) fn format_tool_progress_named(name: &str, content: &str) -> String {
+    match name {
+        "WebFetch" | "WebSearch" | "Bash" => format_progress_preview(content),
+        _ => format!("  ⎿  {content}"),
     }
 }
 
 fn format_web_preview(content: &str) -> String {
     let preview = single_line_preview(content, TOOL_RESULT_PREVIEW_CHARS);
+    if preview.is_empty() {
+        "  ⎿  (no output)".to_string()
+    } else {
+        format!("  ⎿  {preview}")
+    }
+}
+
+fn format_bash_preview(content: &str) -> String {
+    let preview = single_line_preview(content, TOOL_RESULT_PREVIEW_CHARS);
+    if preview.is_empty() {
+        "  ⎿  (no output)".to_string()
+    } else {
+        format!("  ⎿  {preview}")
+    }
+}
+
+fn format_progress_preview(content: &str) -> String {
+    let preview = single_line_preview(content, TOOL_PROGRESS_PREVIEW_CHARS);
     if preview.is_empty() {
         "  ⎿  (no output)".to_string()
     } else {
@@ -175,6 +202,23 @@ mod tests {
         let content = format!("Result {}", "x".repeat(400));
         let formatted = format_tool_result_named("WebSearch", &content, false);
         assert!(formatted.starts_with("  ⎿  Result "));
+        assert!(formatted.ends_with("..."));
+        assert_eq!(formatted.lines().count(), 1);
+    }
+
+    #[test]
+    fn bash_result_is_compacted_to_single_line_preview() {
+        let content = "[{\"number\":1,\"title\":\"A very long pull request title\"}]\nmore text";
+        let formatted = format_tool_result_named("Bash", content, false);
+        assert!(formatted.starts_with("  ⎿  [{\"number\":1"));
+        assert_eq!(formatted.lines().count(), 1);
+    }
+
+    #[test]
+    fn bash_progress_is_truncated_to_single_line_preview() {
+        let content = format!("Running Bash... {}", "x".repeat(400));
+        let formatted = format_tool_progress_named("Bash", &content);
+        assert!(formatted.starts_with("  ⎿  Running Bash... "));
         assert!(formatted.ends_with("..."));
         assert_eq!(formatted.lines().count(), 1);
     }

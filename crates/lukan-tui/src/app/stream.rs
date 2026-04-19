@@ -1,4 +1,4 @@
-use super::helpers::format_tool_result_named;
+use super::helpers::{format_tool_progress_named, format_tool_result_named};
 use super::*;
 
 impl App {
@@ -431,7 +431,7 @@ impl App {
                 if is_silent {
                     return;
                 }
-                self.active_tool = Some(name);
+                self.active_tool = Some(name.clone());
                 let sanitized = sanitize_for_display(&content);
                 let insert_pos = self.tool_insert_position(&id);
 
@@ -449,7 +449,7 @@ impl App {
                     }
                 }
 
-                let mut msg = ChatMessage::new("tool_result", format!("  ⎿  {content}"));
+                let mut msg = ChatMessage::new("tool_result", format_tool_progress_named(&name, &content));
                 msg.tool_id = Some(id);
                 self.messages.insert(insert_pos, msg);
             }

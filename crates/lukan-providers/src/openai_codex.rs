@@ -256,6 +256,7 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
     let mut text_buffer = String::new();
     let mut phantom_buffer = String::new();
     let mut phantom_suppressed = false;
+    let mut phantom_tool_index: usize = 0;
 
     let chunk_timeout = std::time::Duration::from_secs(120);
     while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next())
@@ -309,7 +310,8 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
             if current_event != "response.output_text.delta" && !phantom_buffer.is_empty() {
                 if let Some((name, input)) = extract_phantom_tool_call(&phantom_buffer) {
                     debug!("Recovered phantom tool call: {name}");
-                    let call_id = format!("phantom_{}", uuid::Uuid::new_v4());
+                    let call_id = format!("phantom_{}", phantom_tool_index);
+                    phantom_tool_index += 1;
                     has_tool_calls = true;
                     tx.send(StreamEvent::ToolUseStart {
                         id: call_id.clone(),
@@ -566,7 +568,7 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
     if !phantom_buffer.is_empty() {
         if let Some((name, input)) = extract_phantom_tool_call(&phantom_buffer) {
             debug!("Recovered phantom tool call at end: {name}");
-            let call_id = format!("phantom_{}", uuid::Uuid::new_v4());
+            let call_id = format!("phantom_{}", phantom_tool_index);
             has_tool_calls = true;
             tx.send(StreamEvent::ToolUseStart {
                 id: call_id.clone(),
@@ -1004,5 +1006,21 @@ mod tests {
         assert!(models.contains(&"gpt-5.4".to_string()));
         assert!(models.contains(&"gpt-5.3-codex".to_string()));
         assert_eq!(models.len(), 12);
+    }
+
+    #[test]
+    fn phantom_tool_calls_use_stable_call_ids() {
+        let assistant = Message::assistant_blocks(vec![ContentBlock::ToolUse {
+            id: "phantom_0".to_string(),
+            name: "Bash".to_string(),
+            input: json!({"command": "pwd"}),
+        }]);
+        let tool_result = Message::tool_result("phantom_0", "/tmp/project", false);
+        let items = convert_messages(&[assistant, tool_result]);
+        assert_eq!(items[0]["type"], "function_call");
+        assert_eq!(items[0]["call_id"], "phantom_0");
+        assert_eq!(items[1]["type"], "function_call_output");
+        assert_eq!(items[1]["call_id"], "phantom_0");
+        assert_eq!(items[1]["output"], "/tmp/project");
     }
 }

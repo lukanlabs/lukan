@@ -955,6 +955,9 @@ mod tests {
                 "type": "object",
                 "properties": { "command": { "type": "string" } }
             }),
+            deferred: false,
+            read_only: false,
+            search_hint: None,
         }];
         let result = base.convert_tools(&tools);
         assert_eq!(result.len(), 1);
@@ -979,6 +982,9 @@ mod tests {
                     "val": { "type": "string", "minLength": 1, "pattern": "^[a-z]$" }
                 }
             }),
+            deferred: false,
+            read_only: false,
+            search_hint: None,
         }];
         let result = base.convert_tools(&tools);
         let params = &result[0]["function"]["parameters"];
@@ -1001,6 +1007,9 @@ mod tests {
                     "val": { "type": "string", "minLength": 1 }
                 }
             }),
+            deferred: false,
+            read_only: false,
+            search_hint: None,
         }];
         let result = base.convert_tools(&tools);
         let params = &result[0]["function"]["parameters"];

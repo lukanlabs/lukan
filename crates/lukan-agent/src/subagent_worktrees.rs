@@ -79,7 +79,11 @@ pub fn find_git_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
-pub fn create_worktree(repo_root: &Path, agent_id: &str) -> anyhow::Result<(PathBuf, String, String)> {
+pub fn create_worktree_from_base(
+    repo_root: &Path,
+    agent_id: &str,
+    base_ref: &str,
+) -> anyhow::Result<(PathBuf, String, String)> {
     let repo_root = canonical_project_root(repo_root);
     let slug = sanitize_branch_fragment(agent_id);
     let branch = format!("lukan-subagent-{slug}");
@@ -89,11 +93,11 @@ pub fn create_worktree(repo_root: &Path, agent_id: &str) -> anyhow::Result<(Path
     let add = std::process::Command::new("git")
         .arg("worktree")
         .arg("add")
-        .arg("-b")
+        .arg("-B")
         .arg(&branch)
         .arg(&worktree_root)
-        .arg("HEAD")
-        .current_dir(repo_root)
+        .arg(base_ref)
+        .current_dir(&repo_root)
         .output()?;
 
     if !add.status.success() {
@@ -113,6 +117,10 @@ pub fn create_worktree(repo_root: &Path, agent_id: &str) -> anyhow::Result<(Path
     let head_commit = String::from_utf8_lossy(&head.stdout).trim().to_string();
 
     Ok((worktree_root, branch, head_commit))
+}
+
+pub fn create_worktree(repo_root: &Path, agent_id: &str) -> anyhow::Result<(PathBuf, String, String)> {
+    create_worktree_from_base(repo_root, agent_id, "HEAD")
 }
 
 pub fn remove_worktree(worktree_path: &Path, worktree_branch: &str, git_root: &Path) -> bool {

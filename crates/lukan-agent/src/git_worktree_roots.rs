@@ -71,14 +71,13 @@ pub fn resolve_base_ref(repo_root: &Path) -> Result<String> {
         return Ok(origin_ref);
     }
 
-    let fetch_ok = std::process::Command::new("git")
+    let fetch = std::process::Command::new("git")
         .args(["fetch", "origin", &default_branch])
         .current_dir(repo_root)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "")
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .output();
+    let fetch_ok = fetch.map(|out| out.status.success()).unwrap_or(false);
     if fetch_ok {
         Ok(format!("origin/{default_branch}"))
     } else {

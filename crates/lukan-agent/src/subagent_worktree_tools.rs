@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::Utc;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
@@ -131,6 +130,7 @@ impl Tool for SubagentWorktreeCleanupTool {
 mod tests {
     use super::*;
     use crate::subagent_worktrees::{WorktreeRecord, save_records};
+    use chrono::Utc;
     use std::path::PathBuf;
 
     #[tokio::test]

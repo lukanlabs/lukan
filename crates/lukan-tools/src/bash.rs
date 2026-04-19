@@ -417,11 +417,13 @@ impl Tool for BashTool {
 
                         Ok(ToolResult::success(format!(
                             "The user pressed Alt+B to send this command to background. \
-                             The process is still running — do NOT kill or restart it.\n\
+                             The process is still running — do NOT kill or restart it. \
+                             IMPORTANT: do NOT automatically call Bash({{ wait_pid: {child_pid} }}) and do NOT keep following this background job unless the user explicitly asks you to check it later. \
+                             Stop here so the chat stays free for other work.\n\
                              PID: {child_pid}\n\
                              Log file: {log_display}\n\
-                             To check output later: ReadFiles(\"{log_display}\")\n\
-                             To wait for completion: Bash({{ wait_pid: {child_pid} }})\n\
+                             If the user later asks to inspect output, you may use ReadFiles(\"{log_display}\").\n\
+                             If the user later explicitly asks you to wait for completion, you may use Bash({{ wait_pid: {child_pid} }}).\n\
                              To stop (only if user asks): Bash({{ command: \"kill {child_pid}\" }})"
                         )))
                     } else {

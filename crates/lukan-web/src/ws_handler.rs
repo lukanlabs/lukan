@@ -137,25 +137,18 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
                 continue;
             }
             Ok(bash_ev) = bash_completion_rx.recv() => {
-                // Forward bash background completion notices only to the matching session/tab
-                let target_tab_id = match &bash_ev {
-                    lukan_core::models::events::StreamEvent::BashBackgroundCompletion { tab_id, .. } => tab_id.clone(),
-                    _ => None,
-                };
+                // Forward bash background completion notices to the matching session/tab.
+                let target_tab_id = bash_ev
+                    .get("tabId")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 let should_forward = match (&target_tab_id, &active_session_id) {
                     (Some(target), Some(active)) => target == active,
                     _ => false,
                 };
                 if authenticated && should_forward {
-                    if let Ok(mut value) = serde_json::to_value(&bash_ev) {
-                        if let serde_json::Value::Object(ref mut map) = value {
-                            if let Some(active) = active_session_id.clone() {
-                                map.insert("savedSessionId".to_string(), serde_json::Value::String(active));
-                            }
-                        }
-                        if let Ok(json) = serde_json::to_string(&value) {
-                            let _ = ws_tx.send(Message::Text(json.into())).await;
-                        }
+                    if let Ok(json) = serde_json::to_string(&bash_ev) {
+                        let _ = ws_tx.send(Message::Text(json.into())).await;
                     }
                 }
                 continue;

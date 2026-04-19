@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use tokio::sync::broadcast;
 
 static SESSION_COMPLETIONS: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
-static COMPLETION_BROADCAST_TX: OnceLock<broadcast::Sender<lukan_core::models::events::StreamEvent>> = OnceLock::new();
+static COMPLETION_BROADCAST_TX: OnceLock<broadcast::Sender<serde_json::Value>> = OnceLock::new();
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -83,18 +83,18 @@ fn session_completions() -> &'static Mutex<HashMap<String, Vec<String>>> {
     SESSION_COMPLETIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn completion_broadcast_tx() -> &'static broadcast::Sender<lukan_core::models::events::StreamEvent> {
+fn completion_broadcast_tx() -> &'static broadcast::Sender<serde_json::Value> {
     COMPLETION_BROADCAST_TX.get_or_init(|| {
         let (tx, _) = broadcast::channel(256);
         tx
     })
 }
 
-pub fn subscribe_completion_events() -> broadcast::Receiver<lukan_core::models::events::StreamEvent> {
+pub fn subscribe_completion_events() -> broadcast::Receiver<serde_json::Value> {
     completion_broadcast_tx().subscribe()
 }
 
-pub fn broadcast_completion_event(event: lukan_core::models::events::StreamEvent) {
+pub fn broadcast_completion_event(event: serde_json::Value) {
     let _ = completion_broadcast_tx().send(event);
 }
 

@@ -621,14 +621,19 @@ impl BashTool {
                     "display_text": display_summary,
                 })
                 .to_string();
-                let completion_event = lukan_core::models::events::StreamEvent::BashBackgroundCompletion {
-                    pid,
+                let completion_event = lukan_core::models::events::StreamEvent::QueuedMessageInjected {
                     text: summary.clone(),
                     display_text: Some(display_summary.clone()),
-                    tab_id: tab_id.clone(),
                 };
-                let _ = event_tx.send(completion_event.clone()).await;
-                crate::bg_processes::broadcast_completion_event(completion_event);
+                let _ = event_tx.send(completion_event).await;
+                let completion_broadcast = serde_json::json!({
+                    "type": "queued_message_injected",
+                    "text": summary.clone(),
+                    "displayText": display_summary.clone(),
+                    "tabId": tab_id.clone(),
+                    "savedSessionId": tab_id.clone(),
+                });
+                crate::bg_processes::broadcast_completion_event(completion_broadcast);
                 if let Some(tab_id) = tab_id {
                     let _ = crate::bg_processes::enqueue_session_completion(&tab_id, queue_payload.clone());
                 }

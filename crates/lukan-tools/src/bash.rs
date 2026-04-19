@@ -589,8 +589,9 @@ impl BashTool {
 
         if let (Some(event_tx), Some(tool_call_id)) = (ctx.event_tx.as_ref(), ctx.tool_call_id.as_ref()) {
             let event_tx = event_tx.clone();
-            let tool_call_id = tool_call_id.clone();
+            let _tool_call_id = tool_call_id.clone();
             let command = command.to_string();
+            let tab_id = ctx.tab_id.clone();
             tokio::spawn(async move {
                 loop {
                     if !bg_processes::is_process_alive(pid) {
@@ -615,19 +616,20 @@ impl BashTool {
                 let display_summary = format!(
                     "Background Bash process completed. PID: {pid}."
                 );
+                let queue_payload = serde_json::json!({
+                    "text": summary,
+                    "display_text": display_summary,
+                })
+                .to_string();
                 let _ = event_tx
                     .send(lukan_core::models::events::StreamEvent::QueuedMessageInjected {
-                        text: summary,
-                        display_text: Some(display_summary),
+                        text: summary.clone(),
+                        display_text: Some(display_summary.clone()),
                     })
                     .await;
-                let _ = event_tx
-                    .send(lukan_core::models::events::StreamEvent::ToolProgress {
-                        id: tool_call_id,
-                        name: "Bash".to_string(),
-                        content: "Background Bash process finished; injected result into agent context.".to_string(),
-                    })
-                    .await;
+                if let Some(tab_id) = tab_id {
+                    let _ = crate::bg_processes::enqueue_session_completion(&tab_id, queue_payload);
+                }
             });
         }
 

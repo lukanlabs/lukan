@@ -356,15 +356,37 @@ async fn dispatch_message(
 
         ClientMessage::QueueMessage {
             content,
+            display_content,
             session_id,
         } => {
             let tab = session_id.unwrap_or_default();
+            let queue_entry = if let Some(display_content) = display_content {
+                serde_json::json!({
+                    "text": content,
+                    "display_text": display_content,
+                })
+                .to_string()
+            } else {
+                content.clone()
+            };
             // Push into the session's queued_messages (read by the running agent turn)
             let mut sessions = state.sessions.lock().await;
             if let Some(session) = sessions.get_mut(&tab) {
-                session.queued_messages.lock().unwrap().push(content.clone());
+                session.queued_messages.lock().unwrap().push(queue_entry);
             }
             drop(sessions);
+
+            let background_completions = lukan_tools::bg_processes::take_session_completions(&tab);
+            if !background_completions.is_empty() {
+                let mut sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get_mut(&tab) {
+                    session
+                        .queued_messages
+                        .lock()
+                        .unwrap()
+                        .extend(background_completions);
+                }
+            }
 
             let should_start_turn = {
                 let processing = state.processing_sessions.lock().await;

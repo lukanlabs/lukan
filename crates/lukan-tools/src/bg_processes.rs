@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
+static SESSION_COMPLETIONS: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -72,6 +74,23 @@ fn tracker() -> &'static Mutex<BgTracker> {
         debug!(count = processes.len(), "Loaded persisted bg processes");
         Mutex::new(BgTracker { processes })
     })
+}
+
+fn session_completions() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    SESSION_COMPLETIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn enqueue_session_completion(tab_id: &str, payload: String) {
+    let mut completions = session_completions().lock().unwrap();
+    completions.entry(tab_id.to_string()).or_default().push(payload);
+}
+
+pub fn take_session_completions(tab_id: &str) -> Vec<String> {
+    session_completions()
+        .lock()
+        .unwrap()
+        .remove(tab_id)
+        .unwrap_or_default()
 }
 
 /// Register a new background process

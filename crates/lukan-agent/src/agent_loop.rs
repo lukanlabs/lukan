@@ -1098,13 +1098,25 @@ impl AgentLoop {
                     let messages: Vec<String> = queue.lock().unwrap().drain(..).collect();
                     if !messages.is_empty() {
                         let injected = messages.join("\n");
+                        let parsed = serde_json::from_str::<serde_json::Value>(&injected).ok();
+                        let full_text = parsed
+                            .as_ref()
+                            .and_then(|v| v.get("text"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&injected)
+                            .to_string();
+                        let display_text = parsed
+                            .as_ref()
+                            .and_then(|v| v.get("display_text"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
                         let _ = event_tx
                             .send(StreamEvent::QueuedMessageInjected {
-                                text: injected.clone(),
-                                display_text: None,
+                                text: full_text.clone(),
+                                display_text,
                             })
                             .await;
-                        self.history.add_user_message(&injected);
+                        self.history.add_user_message(&full_text);
                         continue;
                     }
                 }
@@ -1468,13 +1480,25 @@ impl AgentLoop {
                 let messages: Vec<String> = queue.lock().unwrap().drain(..).collect();
                 if !messages.is_empty() {
                     let injected = messages.join("\n");
+                    let parsed = serde_json::from_str::<serde_json::Value>(&injected).ok();
+                    let full_text = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("text"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&injected)
+                        .to_string();
+                    let display_text = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("display_text"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     let _ = event_tx
                         .send(StreamEvent::QueuedMessageInjected {
-                            text: injected.clone(),
-                            display_text: None,
+                            text: full_text.clone(),
+                            display_text,
                         })
                         .await;
-                    self.history.add_user_message(&injected);
+                    self.history.add_user_message(&full_text);
                 }
             }
 

@@ -578,6 +578,39 @@ impl BashTool {
             ctx.tab_id.clone(),
         );
 
+        if let (Some(event_tx), Some(tool_call_id)) = (ctx.event_tx.as_ref(), ctx.tool_call_id.as_ref()) {
+            let event_tx = event_tx.clone();
+            let tool_call_id = tool_call_id.clone();
+            let command = command.to_string();
+            let log_display = log_display.clone();
+            tokio::spawn(async move {
+                loop {
+                    if !bg_processes::is_process_alive(pid) {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+
+                let log = bg_processes::get_bg_log(pid, 200)
+                    .unwrap_or_else(|| "No log available.".to_string());
+                let summary = format!(
+                    "Background Bash process finished.\nPID: {pid}\nCommand: {command}\nLog file: {log_display}\nOutput:\n{log}"
+                );
+                let _ = event_tx
+                    .send(lukan_core::models::events::StreamEvent::QueuedMessageInjected {
+                        text: summary,
+                    })
+                    .await;
+                let _ = event_tx
+                    .send(lukan_core::models::events::StreamEvent::ToolProgress {
+                        id: tool_call_id,
+                        name: "Bash".to_string(),
+                        content: "Background Bash process finished; injected result into agent context.".to_string(),
+                    })
+                    .await;
+            });
+        }
+
         Ok(ToolResult::success(format!(
             "Background process started. PID: {pid}\n\
              Log file: {log_display}\n\

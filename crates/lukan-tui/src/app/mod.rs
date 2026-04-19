@@ -171,8 +171,6 @@ pub struct App {
     planner_answer_tx: Option<mpsc::Sender<String>>,
     /// Messages queued while the agent was streaming (shared with agent)
     queued_messages: Arc<std::sync::Mutex<Vec<String>>>,
-    /// Final subagent completion events already forwarded to avoid duplicate auto-injection.
-    forwarded_subagent_completions: HashSet<String>,
     /// Whether the task panel is visible (toggled with Alt+T)
     task_panel_visible: bool,
     /// Cached task entries for the task panel
@@ -410,7 +408,6 @@ impl App {
             planner_question: None,
             planner_answer_tx: None,
             queued_messages: Arc::new(std::sync::Mutex::new(Vec::new())),
-            forwarded_subagent_completions: HashSet::new(),
             task_panel_visible: false,
             task_panel_entries: Vec::new(),
             task_panel_needs_refresh: false,

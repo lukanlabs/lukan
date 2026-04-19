@@ -2,97 +2,6 @@ use super::helpers::{format_tool_progress_named, format_tool_result_named};
 use super::*;
 
 impl App {
-    fn truncate_single_line(text: &str, max_chars: usize) -> String {
-        let collapsed = text.replace('\n', " ").replace('\r', " ");
-        let collapsed = collapsed.trim();
-        if collapsed.chars().count() <= max_chars {
-            return collapsed.to_string();
-        }
-        let truncated: String = collapsed.chars().take(max_chars.saturating_sub(1)).collect();
-        format!("{}…", truncated.trim_end())
-    }
-
-    fn build_subagent_completion_message(update: &SubAgentUpdate) -> String {
-        let status_line = match update.status.as_str() {
-            "completed" => "Background subagent completed successfully.",
-            "error" => "Background subagent failed.",
-            "aborted" => "Background subagent was aborted.",
-            other => return format!("Background subagent status changed: {other}."),
-        };
-
-        let mut lines = vec![
-            status_line.to_string(),
-            format!("SubAgent ID: {}", update.id),
-            format!("Task: {}", update.task.trim()),
-        ];
-
-        let summary = update
-            .chat_messages
-            .iter()
-            .rev()
-            .find_map(|msg| match msg.role.as_str() {
-                "assistant" | "tool_result" => {
-                    let text = msg.content.trim();
-                    (!text.is_empty()).then_some(text)
-                }
-                _ => None,
-            });
-
-        match update.status.as_str() {
-            "completed" => {
-                if let Some(text) = summary {
-                    lines.push(format!("Result: {}", Self::truncate_single_line(text, 500)));
-                }
-            }
-            "error" => {
-                if let Some(error) = update.error.as_deref().filter(|e| !e.trim().is_empty()) {
-                    lines.push(format!("Error: {}", Self::truncate_single_line(error.trim(), 500)));
-                } else if let Some(text) = summary {
-                    lines.push(format!("Result: {}", Self::truncate_single_line(text, 500)));
-                }
-            }
-            "aborted" => {
-                if let Some(text) = summary {
-                    lines.push(format!("Last update: {}", Self::truncate_single_line(text, 500)));
-                }
-            }
-            _ => {}
-        }
-
-        lines.join("\n")
-    }
-
-    fn maybe_forward_subagent_completion(&mut self, update: &SubAgentUpdate) {
-        if !matches!(update.status.as_str(), "completed" | "error" | "aborted") {
-            return;
-        }
-
-        let dedupe_key = format!("{}:{}:{}", update.id, update.status, update.turns);
-        if !self
-            .forwarded_subagent_completions
-            .insert(dedupe_key)
-        {
-            return;
-        }
-
-        let message = Self::build_subagent_completion_message(update);
-
-        if let Some(ref daemon) = self.daemon_tx {
-            let _ = daemon.send(&crate::ws_client::OutMessage::QueueMessage {
-                content: message.clone(),
-                session_id: self.daemon_tab_id.clone(),
-            });
-        }
-
-        self.queued_messages.lock().unwrap().push(message.clone());
-
-        if !self.is_streaming {
-            self.messages.push(ChatMessage::new("user", &message));
-            self.input.clear();
-            self.cursor_pos = 0;
-            self.pending_queue_submit = true;
-        }
-    }
     pub(super) fn handle_subagent_update(&mut self, update: SubAgentUpdate) {
         // Upsert into global manager so Alt+S can find daemon subagents
         let update_for_upsert = update.clone();
@@ -111,7 +20,6 @@ impl App {
                 "system",
                 format!("SubAgent {} {}: {}", update.id, update.status, task_preview),
             ));
-            self.maybe_forward_subagent_completion(&update);
         }
 
         if let Some(ref mut picker) = self.subagent_picker {

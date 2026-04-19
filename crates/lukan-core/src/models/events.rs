@@ -175,7 +175,6 @@ pub enum StreamEvent {
         task: String,
         status: String,
         turns: u32,
-        max_turns: u32,
         input_tokens: u64,
         output_tokens: u64,
         #[serde(skip_serializing_if = "Option::is_none")]

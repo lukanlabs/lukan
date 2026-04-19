@@ -142,7 +142,6 @@ pub struct SubAgentUpdate {
     pub chat_messages: Vec<SubAgentChatMsg>,
     pub status: String,
     pub turns: usize,
-    pub max_turns: usize,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub error: Option<String>,
@@ -224,7 +223,6 @@ pub struct SubAgentEntry {
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub turns: usize,
-    pub max_turns: usize,
     pub text_output: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -262,7 +260,6 @@ impl std::fmt::Display for SubAgentStatus {
 async fn spawn_sub_agent(
     task: String,
     timeout_ms: u64,
-    max_turns: usize,
     isolation: SubAgentIsolationMode,
     cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> anyhow::Result<String> {
@@ -311,7 +308,6 @@ async fn spawn_sub_agent(
         started_at: Utc::now(),
         completed_at: None,
         turns: 0,
-        max_turns,
         text_output: String::new(),
         input_tokens: 0,
         output_tokens: 0,
@@ -348,7 +344,6 @@ async fn spawn_sub_agent(
             agent_id,
             task,
             timeout_ms,
-            max_turns,
             provider,
             system_prompt,
             parent_cwd,
@@ -368,7 +363,6 @@ async fn run_sub_agent(
     id: String,
     task: String,
     timeout_ms: u64,
-    max_turns: usize,
     provider: Arc<dyn Provider>,
     system_prompt: SystemPrompt,
     parent_cwd: PathBuf,
@@ -432,11 +426,6 @@ async fn run_sub_agent(
     tokio::pin!(timeout);
 
     'outer: loop {
-        if turns >= max_turns {
-            final_status = SubAgentStatus::Aborted;
-            text_output.push_str("\n[Reached maximum turns]");
-            break;
-        }
 
         // Check cancellation from parent agent
         if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
@@ -573,7 +562,6 @@ async fn run_sub_agent(
                 chat_messages: chat_messages.clone(),
                 status: "running".to_string(),
                 turns,
-                max_turns,
                 input_tokens: total_input,
                 output_tokens: total_output,
                 error: None,
@@ -586,7 +574,6 @@ async fn run_sub_agent(
                 &task,
                 "running",
                 turns,
-                max_turns,
                 total_input,
                 total_output,
                 None,
@@ -701,7 +688,6 @@ async fn run_sub_agent(
                 chat_messages: chat_messages.clone(),
                 status: "running".to_string(),
                 turns,
-                max_turns,
                 input_tokens: total_input,
                 output_tokens: total_output,
                 error: None,
@@ -714,7 +700,6 @@ async fn run_sub_agent(
                 &task,
                 "running",
                 turns,
-                max_turns,
                 total_input,
                 total_output,
                 None,
@@ -766,7 +751,6 @@ async fn run_sub_agent(
             chat_messages: chat_messages.clone(),
             status: final_status_str.clone(),
             turns,
-            max_turns,
             input_tokens: total_input,
             output_tokens: total_output,
             error: final_error.clone(),
@@ -779,7 +763,6 @@ async fn run_sub_agent(
             &task,
             &final_status_str,
             turns,
-            max_turns,
             total_input,
             total_output,
             final_error,
@@ -868,7 +851,6 @@ pub async fn upsert_from_update(update: &SubAgentUpdate) {
             started_at: Utc::now(),
             completed_at: None,
             turns: 0,
-            max_turns: update.max_turns,
             text_output: String::new(),
             input_tokens: 0,
             output_tokens: 0,
@@ -884,7 +866,6 @@ pub async fn upsert_from_update(update: &SubAgentUpdate) {
         entry.task = update.task.clone();
     }
     entry.turns = update.turns;
-    entry.max_turns = update.max_turns;
     entry.input_tokens = update.input_tokens;
     entry.output_tokens = update.output_tokens;
     entry.error = update.error.clone();
@@ -971,11 +952,6 @@ impl Tool for SubAgentTool {
                     "description": "Timeout in milliseconds (default: 120000)",
                     "default": 120000
                 },
-                "maxTurns": {
-                    "type": "integer",
-                    "description": "Maximum LLM turns before stopping (default: 20)",
-                    "default": 20
-                },
                 "isolation": {
                     "type": "string",
                     "description": "Execution isolation for the sub-agent: shared checkout (default) or isolated git worktree for coding work.",
@@ -1003,13 +979,11 @@ impl Tool for SubAgentTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(120_000);
 
-        let max_turns = input.get("maxTurns").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
-
         let isolation = SubAgentIsolationMode::from_input(
             input.get("isolation").and_then(|v| v.as_str()),
         );
 
-        match spawn_sub_agent(task.clone(), timeout, max_turns, isolation, ctx.cancel.clone()).await {
+        match spawn_sub_agent(task.clone(), timeout, isolation, ctx.cancel.clone()).await {
             Ok(id) => Ok(ToolResult::success(format!(
                 "Sub-agent spawned (ID: {id})\nTask: {task}\nIsolation: {}\n\n\
                  Running in background. Use SubAgentResult(\"{id}\") to check status/results.",
@@ -1786,7 +1760,6 @@ fn build_stream_event(
     task: &str,
     status: &str,
     turns: usize,
-    max_turns: usize,
     input_tokens: u64,
     output_tokens: u64,
     error: Option<String>,
@@ -1798,7 +1771,6 @@ fn build_stream_event(
         task: task.to_string(),
         status: status.to_string(),
         turns: turns as u32,
-        max_turns: max_turns as u32,
         input_tokens,
         output_tokens,
         error,
@@ -1846,10 +1818,9 @@ fn format_sub_agent_result(entry: &SubAgentEntry) -> ToolResult {
     }
 
     let header = format!(
-        "Status: {}\nTurns: {}/{}\nElapsed: {}\nTask: {}\nIsolation: {}{}{}{}",
+        "Status: {}\nTurns: {}\nElapsed: {}\nTask: {}\nIsolation: {}{}{}{}",
         entry.status,
         entry.turns,
-        entry.max_turns,
         elapsed,
         entry.task,
         entry.isolation,

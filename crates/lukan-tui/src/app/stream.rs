@@ -118,7 +118,7 @@ impl App {
             // Update detail view if viewing this specific agent
             if picker.view == SubAgentPickerView::ChatDetail && picker.detail_id == update.id {
                 picker.detail_status = update.status.clone();
-                picker.detail_turns = format!("{}/{}", update.turns, update.max_turns);
+                picker.detail_turns = format!("{}", update.turns);
                 picker.detail_tokens = format!(
                     "{}in/{}out tokens",
                     update.input_tokens, update.output_tokens
@@ -738,7 +738,6 @@ impl App {
                 task,
                 status,
                 turns,
-                max_turns,
                 input_tokens,
                 output_tokens,
                 error,
@@ -750,7 +749,6 @@ impl App {
                     task,
                     status,
                     turns: turns as usize,
-                    max_turns: max_turns as usize,
                     input_tokens,
                     output_tokens,
                     error,

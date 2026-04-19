@@ -147,6 +147,21 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
                     _ => false,
                 };
                 if authenticated && should_forward {
+                    if let Some(text) = bash_ev.get("text").and_then(|v| v.as_str()) {
+                        let queue_payload = serde_json::json!({
+                            "text": text,
+                            "display_text": bash_ev
+                                .get("displayText")
+                                .and_then(|v| v.as_str()),
+                        })
+                        .to_string();
+                        if let Some(tab_id) = target_tab_id.as_deref() {
+                            let mut sessions = state.sessions.lock().await;
+                            if let Some(session) = sessions.get_mut(tab_id) {
+                                session.queued_messages.lock().unwrap().push(queue_payload);
+                            }
+                        }
+                    }
                     if let Ok(json) = serde_json::to_string(&bash_ev) {
                         let _ = ws_tx.send(Message::Text(json.into())).await;
                     }

@@ -587,8 +587,7 @@ impl BashTool {
             ctx.tab_id.clone(),
         );
 
-        if let (Some(event_tx), Some(tool_call_id)) = (ctx.event_tx.as_ref(), ctx.tool_call_id.as_ref()) {
-            let event_tx = event_tx.clone();
+        if let Some(tool_call_id) = ctx.tool_call_id.as_ref() {
             let _tool_call_id = tool_call_id.clone();
             let command = command.to_string();
             let tab_id = ctx.tab_id.clone();
@@ -621,13 +620,9 @@ impl BashTool {
                     "display_text": display_summary,
                 })
                 .to_string();
-                let completion_event = lukan_core::models::events::StreamEvent::QueuedMessageInjected {
-                    text: summary.clone(),
-                    display_text: Some(display_summary.clone()),
-                };
-                let _ = event_tx.send(completion_event).await;
                 let completion_broadcast = serde_json::json!({
-                    "type": "queued_message_injected",
+                    "type": "bash_background_completion",
+                    "pid": pid,
                     "text": summary.clone(),
                     "displayText": display_summary.clone(),
                     "tabId": tab_id.clone(),

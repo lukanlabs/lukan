@@ -150,10 +150,7 @@ impl Tool for BashTool {
                     "description": "Wait for a background process (by PID) to finish and return its output"
                 }
             },
-            "anyOf": [
-                { "required": ["command"] },
-                { "required": ["wait_pid"] }
-            ]
+            "required": []
         })
     }
 

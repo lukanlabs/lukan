@@ -963,6 +963,7 @@ impl App {
                 if let Some(ref daemon) = self.daemon_tx {
                     let _ = daemon.send(&crate::ws_client::OutMessage::QueueMessage {
                         content: text.clone(),
+                        display_content: None,
                         session_id: self.daemon_tab_id.clone(),
                     });
                 }

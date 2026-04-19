@@ -628,7 +628,7 @@ impl BashTool {
                     })
                     .await;
                 if let Some(tab_id) = tab_id {
-                    let _ = crate::bg_processes::enqueue_session_completion(&tab_id, queue_payload);
+                    let _ = crate::bg_processes::enqueue_session_completion(&tab_id, queue_payload.clone());
                 }
             });
         }

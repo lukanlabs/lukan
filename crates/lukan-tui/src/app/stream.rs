@@ -32,7 +32,8 @@ impl App {
 
         if let Some(ref daemon) = self.daemon_tx {
             let _ = daemon.send(&crate::ws_client::OutMessage::QueueMessage {
-                content: message,
+                content: message.clone(),
+                display_content: Some(message.clone()),
                 session_id: self.daemon_tab_id.clone(),
             });
         } else {

@@ -85,6 +85,15 @@ pub fn enqueue_session_completion(tab_id: &str, payload: String) {
     completions.entry(tab_id.to_string()).or_default().push(payload);
 }
 
+pub fn peek_session_completions(tab_id: &str) -> Vec<String> {
+    session_completions()
+        .lock()
+        .unwrap()
+        .get(tab_id)
+        .cloned()
+        .unwrap_or_default()
+}
+
 pub fn take_session_completions(tab_id: &str) -> Vec<String> {
     session_completions()
         .lock()

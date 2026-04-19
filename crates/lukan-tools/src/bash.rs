@@ -150,7 +150,10 @@ impl Tool for BashTool {
                     "description": "Wait for a background process (by PID) to finish and return its output"
                 }
             },
-            "required": ["command"]
+            "anyOf": [
+                { "required": ["command"] },
+                { "required": ["wait_pid"] }
+            ]
         })
     }
 
@@ -180,6 +183,13 @@ impl Tool for BashTool {
     }
 
     fn validate_input(&self, input: &serde_json::Value, _ctx: &ToolContext) -> Result<(), String> {
+        if let Some(wait_pid) = input.get("wait_pid") {
+            if wait_pid.as_u64().is_none() {
+                return Err("wait_pid must be an integer PID.".to_string());
+            }
+            return Ok(());
+        }
+
         let command = input
             .get("command")
             .and_then(|v| v.as_str())
@@ -593,16 +603,14 @@ impl BashTool {
                 let log = bg_processes::get_bg_log(pid, 200)
                     .unwrap_or_else(|| "No log available.".to_string());
                 let compact_log = log.replace('\r', "").trim().to_string();
+                let sanitized_command = command.replace('\n', " ").replace('\r', " ").trim().to_string();
                 let summary = if compact_log.is_empty() {
                     format!(
-                        "Bash {pid} completed: {}\nOutput: (no output captured)",
-                        command.replace('\n', " ").replace('\r', " ").trim()
+                        "Background Bash process already completed. Do not call Bash again and do not call wait_pid. Continue using the agent normally with this final result.\nPID: {pid}\nCommand: {sanitized_command}\nFinal output: (no output captured)"
                     )
                 } else {
                     format!(
-                        "Bash {pid} completed: {}\nOutput:\n{}",
-                        command.replace('\n', " ").replace('\r', " ").trim(),
-                        compact_log
+                        "Background Bash process already completed. Do not call Bash again and do not call wait_pid. Continue using the agent normally with this final result.\nPID: {pid}\nCommand: {sanitized_command}\nFinal output:\n{compact_log}"
                     )
                 };
                 let _ = event_tx

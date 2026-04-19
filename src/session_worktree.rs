@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use lukan_agent::git_worktree_roots::{find_canonical_git_root, resolve_base_ref};
-use lukan_agent::subagent_worktrees::create_worktree_from_base;
+use lukan_agent::subagent_worktrees::{create_worktree_from_base, existing_worktree_head, worktree_path_for};
 
 pub fn resolve_main_repo_root(start: &Path) -> Option<PathBuf> {
     find_canonical_git_root(start)
@@ -27,6 +27,11 @@ pub fn create_session_worktree(cwd: &Path, slug: &str) -> Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("Session worktree mode requires a git repository."))?;
 
     let base_ref = resolve_base_ref(&repo_root)?;
+
+    let target_path = worktree_path_for(&repo_root, slug);
+    if existing_worktree_head(&target_path).is_some() {
+        return Ok(target_path);
+    }
 
     let (worktree_path, branch, _) = create_worktree_from_base(&repo_root, slug, &base_ref)?;
     let reset = std::process::Command::new("git")

@@ -79,6 +79,26 @@ pub fn find_git_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
+pub fn worktree_path_for(repo_root: &Path, agent_id: &str) -> PathBuf {
+    canonical_project_root(repo_root)
+        .join(".lukan")
+        .join("subagents")
+        .join(agent_id)
+}
+
+pub fn existing_worktree_head(worktree_path: &Path) -> Option<String> {
+    let head = std::process::Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(worktree_path)
+        .output()
+        .ok()?;
+    if !head.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&head.stdout).trim().to_string())
+}
+
 pub fn create_worktree_from_base(
     repo_root: &Path,
     agent_id: &str,
@@ -87,9 +107,12 @@ pub fn create_worktree_from_base(
     let repo_root = canonical_project_root(repo_root);
     let slug = sanitize_branch_fragment(agent_id);
     let branch = format!("lukan-subagent-{slug}");
-    let worktree_root = repo_root.join(".lukan").join("subagents").join(agent_id);
-    fs::create_dir_all(worktree_root.parent().unwrap_or(&repo_root))?;
+    let worktree_root = worktree_path_for(&repo_root, agent_id);
+    if let Some(existing_head) = existing_worktree_head(&worktree_root) {
+        return Ok((worktree_root, branch, existing_head));
+    }
 
+    fs::create_dir_all(worktree_root.parent().unwrap_or(&repo_root))?;
     let add = std::process::Command::new("git")
         .arg("worktree")
         .arg("add")

@@ -60,17 +60,6 @@ impl App {
                 display_content: Some(visible.clone()),
                 session_id: self.daemon_tab_id.clone(),
             });
-
-            if !self.is_streaming {
-                self.messages.push(ChatMessage::new(
-                    "system",
-                    format!("Background Bash process completed. PID: {pid}."),
-                ));
-                self.messages.push(ChatMessage::new("user", &visible));
-                self.input.clear();
-                self.cursor_pos = 0;
-                self.pending_queue_submit = true;
-            }
         } else {
             self.queued_messages.lock().unwrap().push(text.to_string());
             if !self.is_streaming {
@@ -759,16 +748,12 @@ impl App {
                 self.handle_subagent_update(update);
             }
             StreamEvent::BashBackgroundCompletion {
-                pid,
+                pid: _,
                 text,
                 display_text,
                 tab_id,
             } => {
-                self.messages.push(ChatMessage::new(
-                    "system",
-                    format!("Background Bash process completed. PID: {pid}."),
-                ));
-                self.maybe_forward_bash_completion(pid, &text, display_text.as_deref(), tab_id.as_deref());
+                self.maybe_forward_bash_completion(0, &text, display_text.as_deref(), tab_id.as_deref());
             }
             _ => {}
         }

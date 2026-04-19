@@ -13,53 +13,20 @@ impl App {
     }
 
     fn build_subagent_completion_message(update: &SubAgentUpdate) -> String {
-        let status_line = match update.status.as_str() {
-            "completed" => "Background subagent completed successfully.",
-            "error" => "Background subagent failed.",
-            "aborted" => "Background subagent was aborted.",
-            other => return format!("Background subagent status changed: {other}."),
+        let status = match update.status.as_str() {
+            "completed" => "completed",
+            "error" => "error",
+            "aborted" => "aborted",
+            other => other,
         };
 
-        let mut lines = vec![
-            status_line.to_string(),
-            format!("SubAgent ID: {}", update.id),
-            format!("Task: {}", update.task.trim()),
-        ];
+        let task_preview = if update.task.len() > 50 {
+            format!("{}...", &update.task[..update.task.floor_char_boundary(47)])
+        } else {
+            update.task.trim().to_string()
+        };
 
-        let summary = update
-            .chat_messages
-            .iter()
-            .rev()
-            .find_map(|msg| match msg.role.as_str() {
-                "assistant" | "tool_result" => {
-                    let text = msg.content.trim();
-                    (!text.is_empty()).then_some(text)
-                }
-                _ => None,
-            });
-
-        match update.status.as_str() {
-            "completed" => {
-                if let Some(text) = summary {
-                    lines.push(format!("Result: {}", Self::truncate_single_line(text, 500)));
-                }
-            }
-            "error" => {
-                if let Some(error) = update.error.as_deref().filter(|e| !e.trim().is_empty()) {
-                    lines.push(format!("Error: {}", Self::truncate_single_line(error.trim(), 500)));
-                } else if let Some(text) = summary {
-                    lines.push(format!("Result: {}", Self::truncate_single_line(text, 500)));
-                }
-            }
-            "aborted" => {
-                if let Some(text) = summary {
-                    lines.push(format!("Last update: {}", Self::truncate_single_line(text, 500)));
-                }
-            }
-            _ => {}
-        }
-
-        lines.join("\n")
+        format!("SubAgent {} {}: {}", update.id, status, task_preview)
     }
 
     fn maybe_forward_subagent_completion(&mut self, update: &SubAgentUpdate) {

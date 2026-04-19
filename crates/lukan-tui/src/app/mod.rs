@@ -648,6 +648,10 @@ impl App {
         }
     }
 
+    pub fn current_session_id(&self) -> Option<String> {
+        self.session_id.clone()
+    }
+
     /// Create a new AgentLoop with a fresh session
     async fn create_agent(&mut self) -> AgentLoop {
         let system_prompt = helpers::build_system_prompt_with_opts(self.browser_tools).await;

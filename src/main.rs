@@ -824,16 +824,21 @@ async fn run_chat(
     let provider =
         create_provider(&resolved).unwrap_or_else(|_| Box::new(lukan_providers::NullProvider));
 
+    let mut pending_session_worktree: Option<lukan_agent::session_manager::SessionWorktreeState> = None;
+
     // Run TUI — connect to daemon if available, otherwise use in-process agent
     if let Some(slug) = session_worktree {
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
+        let repo_root = session_worktree::resolve_main_repo_root(&cwd)
+            .unwrap_or_else(|| cwd.clone());
         let worktree_path = session_worktree::create_session_worktree(&cwd, &slug)?;
         std::env::set_current_dir(&worktree_path)?;
-        let worktree_state = SessionManager::load_worktree_state("pending")
-            .await
-            .ok()
-            .flatten();
-        let _ = worktree_state;
+        let worktree_state = lukan_agent::session_manager::SessionWorktreeState {
+            path: worktree_path.to_string_lossy().to_string(),
+            slug,
+            original_root: repo_root.to_string_lossy().to_string(),
+        };
+        pending_session_worktree = Some(worktree_state);
     }
 
     let mut app = if daemon_port > 0 {
@@ -846,6 +851,11 @@ async fn run_chat(
     }
     if continue_session {
         app.set_continue_session();
+    }
+    if let Some(state) = pending_session_worktree.take() {
+        if let Some(id) = app.current_session_id() {
+            let _ = SessionManager::save_worktree_state(&id, &state).await;
+        }
     }
     app.run().await?;
 

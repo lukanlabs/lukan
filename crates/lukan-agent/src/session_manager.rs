@@ -10,6 +10,7 @@ use tracing::debug;
 pub struct SessionWorktreeState {
     pub path: String,
     pub slug: String,
+    pub original_root: String,
 }
 
 /// Manages session persistence to ~/.config/lukan/sessions/{id}.json
@@ -178,6 +179,7 @@ mod tests {
         let state = SessionWorktreeState {
             path: "/tmp/worktree".to_string(),
             slug: "feature-x".to_string(),
+            original_root: "/tmp/repo".to_string(),
         };
         SessionManager::save_worktree_state("abc123", &state)
             .await
@@ -188,5 +190,6 @@ mod tests {
             .unwrap();
         assert_eq!(loaded.path, state.path);
         assert_eq!(loaded.slug, state.slug);
+        assert_eq!(loaded.original_root, state.original_root);
     }
 }

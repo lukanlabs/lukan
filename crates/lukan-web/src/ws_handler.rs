@@ -362,7 +362,35 @@ async fn dispatch_message(
             // Push into the session's queued_messages (read by the running agent turn)
             let mut sessions = state.sessions.lock().await;
             if let Some(session) = sessions.get_mut(&tab) {
-                session.queued_messages.lock().unwrap().push(content);
+                session.queued_messages.lock().unwrap().push(content.clone());
+            }
+            drop(sessions);
+
+            let should_start_turn = {
+                let processing = state.processing_sessions.lock().await;
+                !processing.contains_key(&tab)
+            };
+
+            if should_start_turn {
+                let state = Arc::clone(state);
+                let outbound_tx = outbound_tx.clone();
+                let done_tx = done_tx.clone();
+                let tab_for_turn = tab.clone();
+                let cancel_token = CancellationToken::new();
+                cancel_tokens.insert(tab.clone(), cancel_token.clone());
+
+                tokio::spawn(async move {
+                    handle_send_message(
+                        conn_id,
+                        String::new(),
+                        tab_for_turn,
+                        state,
+                        outbound_tx,
+                        cancel_token,
+                        done_tx,
+                    )
+                    .await;
+                });
             }
         }
 

@@ -57,6 +57,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
     let mut stream_rx = state.stream_tx.subscribe();
     let mut pipeline_notify_rx = state.pipeline_notification_tx.subscribe();
     let mut subagent_rx = lukan_agent::sub_agent::subscribe_stream_events().await;
+    let mut bash_completion_rx = lukan_tools::bg_processes::subscribe_completion_events();
 
     // Channels for spawned agent tasks to send outbound messages
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<String>(512);
@@ -131,6 +132,13 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
             Ok(subagent_ev) = subagent_rx.recv() => {
                 // Forward subagent updates to all connected clients
                 if authenticated && let Ok(json) = serde_json::to_string(&subagent_ev) {
+                    let _ = ws_tx.send(Message::Text(json.into())).await;
+                }
+                continue;
+            }
+            Ok(bash_ev) = bash_completion_rx.recv() => {
+                // Forward bash background completion notices to all connected clients
+                if authenticated && let Ok(json) = serde_json::to_string(&bash_ev) {
                     let _ = ws_tx.send(Message::Text(json.into())).await;
                 }
                 continue;

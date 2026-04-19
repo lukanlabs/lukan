@@ -621,12 +621,12 @@ impl BashTool {
                     "display_text": display_summary,
                 })
                 .to_string();
-                let _ = event_tx
-                    .send(lukan_core::models::events::StreamEvent::QueuedMessageInjected {
-                        text: summary.clone(),
-                        display_text: Some(display_summary.clone()),
-                    })
-                    .await;
+                let completion_event = lukan_core::models::events::StreamEvent::QueuedMessageInjected {
+                    text: summary.clone(),
+                    display_text: Some(display_summary.clone()),
+                };
+                let _ = event_tx.send(completion_event.clone()).await;
+                crate::bg_processes::broadcast_completion_event(completion_event);
                 if let Some(tab_id) = tab_id {
                     let _ = crate::bg_processes::enqueue_session_completion(&tab_id, queue_payload.clone());
                 }

@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
+use tokio::sync::broadcast;
+
 static SESSION_COMPLETIONS: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+static COMPLETION_BROADCAST_TX: OnceLock<broadcast::Sender<lukan_core::models::events::StreamEvent>> = OnceLock::new();
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -78,6 +81,21 @@ fn tracker() -> &'static Mutex<BgTracker> {
 
 fn session_completions() -> &'static Mutex<HashMap<String, Vec<String>>> {
     SESSION_COMPLETIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn completion_broadcast_tx() -> &'static broadcast::Sender<lukan_core::models::events::StreamEvent> {
+    COMPLETION_BROADCAST_TX.get_or_init(|| {
+        let (tx, _) = broadcast::channel(256);
+        tx
+    })
+}
+
+pub fn subscribe_completion_events() -> broadcast::Receiver<lukan_core::models::events::StreamEvent> {
+    completion_broadcast_tx().subscribe()
+}
+
+pub fn broadcast_completion_event(event: lukan_core::models::events::StreamEvent) {
+    let _ = completion_broadcast_tx().send(event);
 }
 
 pub fn enqueue_session_completion(tab_id: &str, payload: String) {

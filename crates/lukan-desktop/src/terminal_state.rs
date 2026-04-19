@@ -80,6 +80,7 @@ impl TerminalState {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
         let mut cmd = CommandBuilder::new(&shell);
         cmd.arg("-l"); // login shell for proper env
+        cmd.env("TERM", "xterm-256color");
         let working_dir = cwd.map(std::path::PathBuf::from).unwrap_or_else(|| {
             std::env::var_os("HOME")
                 .map(std::path::PathBuf::from)

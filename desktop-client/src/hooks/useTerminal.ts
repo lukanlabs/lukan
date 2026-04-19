@@ -45,7 +45,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/** Send input to PTY in chunks to avoid IPC/WebSocket message size issues. */
+/** Send plain UTF-8 text to PTY in chunks. */
 const CHAR_CHUNK = 8192; // Split by characters, not bytes, to avoid splitting multi-byte UTF-8
 
 function sendInput(sessionId: string, data: string): void {
@@ -61,6 +61,15 @@ function sendInput(sessionId: string, data: string): void {
       .then(() => terminalInput(sessionId, toBase64(chunk)))
       .catch(() => {});
   }
+}
+
+/** Send raw terminal bytes (escape sequences, control keys, etc.) unchanged. */
+function sendBinaryInput(sessionId: string, data: string): void {
+  const bytes = new Uint8Array(data.length);
+  for (let i = 0; i < data.length; i++) {
+    bytes[i] = data.charCodeAt(i);
+  }
+  terminalInput(sessionId, bytesToBase64(bytes)).catch(() => {});
 }
 
 interface UseTerminalOptions {
@@ -144,7 +153,7 @@ export function useTerminal({
     // Keyboard + paste → PTY. xterm.js fires onData for ALL input including paste.
     const inputDisposable = term.onData((data) => {
       if (pasteInProgress) return; // paste handled by our own onPaste handler
-      sendInput(sessionId, data);
+      sendBinaryInput(sessionId, data);
     });
 
     const binaryDisposable = term.onBinary((data) => {
@@ -166,9 +175,11 @@ export function useTerminal({
       e.preventDefault();
       // Suppress xterm.js onData for this paste cycle
       pasteInProgress = true;
-      // Wrap with bracketed paste markers so the TUI recognizes it as a paste event
-      // ESC[200~ = start of paste, ESC[201~ = end of paste
-      sendInput(sessionId, `\x1b[200~${text}\x1b[201~`);
+      // Send plain pasted text. Forcing bracketed-paste markers here causes
+      // some interactive prompts (e.g. lukan setup in the Web UI terminal)
+      // to render raw escape sequences like ^[[200~ and later arrow-key CSI
+      // bytes as visible text.
+      sendInput(sessionId, text);
       // Re-enable onData after the current event loop tick
       // (xterm.js fires onData synchronously during paste processing)
       setTimeout(() => {

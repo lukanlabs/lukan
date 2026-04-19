@@ -1,6 +1,8 @@
 use anyhow::Result;
 use std::io::{self, Write};
 
+use dialoguer::{Input, Select, theme::ColorfulTheme};
+
 use lukan_core::config::{
     AppConfig, ConfigManager, Credentials, CredentialsManager, LukanPaths, ProviderName,
 };
@@ -91,38 +93,35 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
     ];
 
     let current_str = config.provider.to_string();
-    for (i, (id, desc)) in providers.iter().enumerate() {
-        let is_current = *id == current_str;
-        let marker = if is_current {
-            format!("{GREEN}●{RESET}")
-        } else {
-            format!("{DIM}○{RESET}")
-        };
-        println!("  {marker} {BOLD}{}{RESET}  {DIM}{desc}{RESET}", i + 1);
-    }
+    let current_idx = providers
+        .iter()
+        .position(|(id, _)| *id == current_str)
+        .unwrap_or(0);
+    let items: Vec<String> = providers
+        .iter()
+        .map(|(id, desc)| format!("{id} — {desc}"))
+        .collect();
 
-    println!();
-    let input = prompt(&format!(
-        "Select provider [1-8] {DIM}(current: {current_str}){RESET}: "
-    ))?;
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Select provider")
+        .default(current_idx)
+        .items(&items)
+        .interact_opt()?;
 
-    if !input.is_empty() {
-        let idx: usize = input.trim().parse().unwrap_or(0);
-        if idx >= 1 && idx <= providers.len() {
-            let (id, _) = providers[idx - 1];
+    match selection {
+        Some(idx) => {
+            let (id, _) = providers[idx];
             let new_provider: ProviderName =
                 serde_json::from_value(serde_json::Value::String(id.to_string()))?;
-            // Clear stale model from previous provider
             if config.provider != new_provider {
                 config.model = None;
             }
             config.provider = new_provider;
             println!("  {GREEN}✓{RESET} Provider set to {BOLD}{id}{RESET}");
-        } else {
-            println!("  {YELLOW}⚠{RESET} Invalid selection, keeping {BOLD}{current_str}{RESET}");
         }
-    } else {
-        println!("  {DIM}Keeping {current_str}{RESET}");
+        None => {
+            println!("  {DIM}Keeping {current_str}{RESET}");
+        }
     }
 
     println!();
@@ -265,12 +264,15 @@ fn prompt_credential(label: &str, env_var: &str, current: Option<&str>) -> Resul
     let status = match current {
         Some(k) if !k.is_empty() => {
             let masked = mask_key(k);
-            format!("{GREEN}configured{RESET} {DIM}({masked}){RESET}")
+            format!("configured ({masked})")
         }
-        _ => format!("{DIM}not set{RESET}"),
+        _ => "not set".to_string(),
     };
 
-    let input = prompt(&format!("  {label} [{status}] {DIM}({env_var}){RESET}: "))?;
+    let input = Input::<String>::with_theme(&ColorfulTheme::default())
+        .with_prompt(format!("{label} [{status}] ({env_var})"))
+        .allow_empty(true)
+        .interact_text()?;
 
     if input.is_empty() {
         Ok(None)
@@ -779,10 +781,32 @@ fn prompt(msg: &str) -> Result<String> {
     io::stdout().flush()?;
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
-    Ok(input
-        .trim_end_matches('\n')
-        .trim_end_matches('\r')
-        .to_string())
+    Ok(sanitize_prompt_input(&input))
+}
+
+fn sanitize_prompt_input(input: &str) -> String {
+    let mut out = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\x1b' => {
+                if matches!(chars.peek(), Some('[')) {
+                    chars.next();
+                    while let Some(&next) = chars.peek() {
+                        chars.next();
+                        if ('@'..='~').contains(&next) {
+                            break;
+                        }
+                    }
+                }
+            }
+            '\n' | '\r' => {}
+            _ => out.push(ch),
+        }
+    }
+
+    out.trim().to_string()
 }
 
 fn mask_key(key: &str) -> String {
@@ -827,5 +851,27 @@ fn env_var_for_provider(provider: &ProviderName) -> &'static str {
         ProviderName::OpenaiCompatible => "OPENAI_COMPATIBLE_API_KEY",
         ProviderName::LukanCloud => "LUKAN_CLOUD_API_KEY",
         ProviderName::Gemini => "GEMINI_API_KEY",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_prompt_input;
+
+    #[test]
+    fn sanitize_prompt_input_strips_arrow_escape_sequences() {
+        let input = format!("abc\x1b[D\x1b[Cdef\n");
+        assert_eq!(sanitize_prompt_input(&input), "abcdef");
+    }
+
+    #[test]
+    fn sanitize_prompt_input_strips_bracketed_paste_markers() {
+        let input = format!("\x1b[200~sk-test\x1b[201~\n");
+        assert_eq!(sanitize_prompt_input(&input), "sk-test");
+    }
+
+    #[test]
+    fn sanitize_prompt_input_trims_surrounding_whitespace() {
+        assert_eq!(sanitize_prompt_input("  hello  \r\n"), "hello");
     }
 }

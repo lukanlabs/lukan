@@ -137,8 +137,16 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
                 continue;
             }
             Ok(bash_ev) = bash_completion_rx.recv() => {
-                // Forward bash background completion notices to all connected clients
-                if authenticated && let Ok(json) = serde_json::to_string(&bash_ev) {
+                // Forward bash background completion notices only to the matching session/tab
+                let target_tab_id = match &bash_ev {
+                    lukan_core::models::events::StreamEvent::BashBackgroundCompletion { tab_id, .. } => tab_id.clone(),
+                    _ => None,
+                };
+                let should_forward = match (&target_tab_id, &active_session_id) {
+                    (Some(target), Some(active)) => target == active,
+                    _ => false,
+                };
+                if authenticated && should_forward && let Ok(json) = serde_json::to_string(&bash_ev) {
                     let _ = ws_tx.send(Message::Text(json.into())).await;
                 }
                 continue;

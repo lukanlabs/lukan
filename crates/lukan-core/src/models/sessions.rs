@@ -34,6 +34,9 @@ pub struct ChatSession {
     /// Working directory where the session was created
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Stable project root used to group sessions across worktrees of the same repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<String>,
 }
 
 /// Summary of a session for listing
@@ -53,6 +56,9 @@ pub struct SessionSummary {
     /// Working directory where the session was created
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Stable project root used to group sessions across worktrees of the same repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<String>,
 }
 
 impl ChatSession {
@@ -76,6 +82,7 @@ impl ChatSession {
             cwd: std::env::current_dir()
                 .ok()
                 .map(|p| p.to_string_lossy().to_string()),
+            project_root: None,
         }
     }
 
@@ -109,6 +116,7 @@ impl ChatSession {
             model: self.model.clone(),
             last_message,
             cwd: self.cwd.clone(),
+            project_root: self.project_root.clone(),
         }
     }
 }

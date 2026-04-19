@@ -6,6 +6,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use crate::subagent_worktrees::canonical_project_root;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionWorktreeState {
     pub path: String,
@@ -26,6 +28,13 @@ impl SessionManager {
         let mut session = ChatSession::new(id);
         session.provider = Some(provider.to_string());
         session.model = Some(model.to_string());
+        if let Some(cwd) = session.cwd.clone() {
+            session.project_root = Some(
+                canonical_project_root(std::path::Path::new(&cwd))
+                    .to_string_lossy()
+                    .to_string(),
+            );
+        }
         debug!(id = %session.id, "Created new session");
         Ok(session)
     }
@@ -111,7 +120,9 @@ impl SessionManager {
         let all = Self::list().await?;
         Ok(all
             .into_iter()
-            .filter(|s| s.cwd.as_deref() == Some(cwd))
+            .filter(|s| {
+                s.project_root.as_deref() == Some(cwd) || s.cwd.as_deref() == Some(cwd)
+            })
             .collect())
     }
 
@@ -172,6 +183,18 @@ mod tests {
     fn test_hex_encode() {
         assert_eq!(hex_encode(&[0xab, 0xcd, 0xef]), "abcdef");
         assert_eq!(hex_encode(&[0x00, 0x01, 0x0a]), "00010a");
+    }
+
+    #[tokio::test]
+    async fn test_create_session() {
+        let session = SessionManager::create("anthropic", "claude-sonnet-4-20250514")
+            .await
+            .unwrap();
+        assert_eq!(session.id.len(), 6);
+        assert_eq!(session.provider.as_deref(), Some("anthropic"));
+        assert_eq!(session.model.as_deref(), Some("claude-sonnet-4-20250514"));
+        assert!(session.messages.is_empty());
+        assert!(session.project_root.is_some());
     }
 
     #[tokio::test]

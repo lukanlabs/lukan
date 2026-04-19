@@ -187,6 +187,7 @@ impl App {
                             model: s.model,
                             last_message: s.last_message,
                             cwd: None,
+                            project_root: None,
                         })
                         .collect(),
                     selected: 0,

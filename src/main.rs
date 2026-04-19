@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing::info;
 
+use lukan_agent::SessionManager;
+
 use lukan_core::config::{
     ConfigManager, CredentialsManager, LukanPaths, ProviderName, ResolvedConfig,
 };
@@ -19,6 +21,7 @@ mod plugin_exec;
 mod relay_bridge;
 mod sandbox_cmd;
 mod setup;
+mod session_worktree;
 mod skills;
 mod update;
 mod worker;
@@ -41,6 +44,10 @@ struct Cli {
     #[arg(long, short = 'c')]
     r#continue: bool,
 
+    /// Start the main session inside a git worktree (optional slug)
+    #[arg(long, short = 'w', value_name = "NAME", default_missing_value = "session", num_args = 0..=1)]
+    worktree: Option<String>,
+
     /// Bind daemon to all interfaces (0.0.0.0) for LAN access.
     /// By default the daemon binds to 127.0.0.1 only (safer).
     #[arg(long)]
@@ -60,6 +67,9 @@ enum Commands {
         /// Continue the most recent chat session
         #[arg(long, short = 'c')]
         r#continue: bool,
+        /// Start the main session inside a git worktree (optional slug)
+        #[arg(long, short = 'w', value_name = "NAME", default_missing_value = "session", num_args = 0..=1)]
+        worktree: Option<String>,
         /// UI mode: tui (default) or web
         #[arg(long, default_value = "tui")]
         ui: String,
@@ -289,6 +299,7 @@ async fn main() -> Result<()> {
             provider,
             model,
             r#continue: continue_session,
+            worktree,
             ui,
             desktop,
             browser,
@@ -303,6 +314,7 @@ async fn main() -> Result<()> {
                 let provider_override = provider.or(cli.provider);
                 let model_override = model.or(cli.model);
                 let do_continue = continue_session || cli.r#continue;
+                let session_worktree = worktree.or(cli.worktree);
                 if ui == "web" {
                     if provider_override.is_some() || model_override.is_some() {
                         eprintln!(
@@ -324,14 +336,14 @@ async fn main() -> Result<()> {
                         } else {
                             None
                         };
-                    run_chat(provider_override, model_override, browser_opts, do_continue).await?;
+                    run_chat(provider_override, model_override, browser_opts, do_continue, session_worktree).await?;
                 }
             }
         }
         None => {
             let provider_override = cli.provider;
             let model_override = cli.model;
-            run_chat(provider_override, model_override, None, cli.r#continue).await?;
+            run_chat(provider_override, model_override, None, cli.r#continue, cli.worktree).await?;
         }
     }
 
@@ -745,6 +757,7 @@ async fn run_chat(
     model_override: Option<String>,
     browser_opts: Option<BrowserOpts>,
     continue_session: bool,
+    session_worktree: Option<String>,
 ) -> Result<()> {
     // First-run wizard: guide new users through setup before starting
     if setup::is_first_run() {
@@ -812,6 +825,17 @@ async fn run_chat(
         create_provider(&resolved).unwrap_or_else(|_| Box::new(lukan_providers::NullProvider));
 
     // Run TUI — connect to daemon if available, otherwise use in-process agent
+    if let Some(slug) = session_worktree {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
+        let worktree_path = session_worktree::create_session_worktree(&cwd, &slug)?;
+        std::env::set_current_dir(&worktree_path)?;
+        let worktree_state = SessionManager::load_worktree_state("pending")
+            .await
+            .ok()
+            .flatten();
+        let _ = worktree_state;
+    }
+
     let mut app = if daemon_port > 0 {
         App::new_daemon(provider, resolved, daemon_port).await
     } else {

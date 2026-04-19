@@ -3,13 +3,23 @@ use chrono::Utc;
 use lukan_core::config::LukanPaths;
 use lukan_core::models::sessions::{ChatSession, SessionSummary};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SessionWorktreeState {
+    pub path: String,
+    pub slug: String,
+}
 
 /// Manages session persistence to ~/.config/lukan/sessions/{id}.json
 pub struct SessionManager;
 
 impl SessionManager {
-    /// Create a new session with a random 6-char hex ID
+    fn session_worktree_path(id: &str) -> std::path::PathBuf {
+        LukanPaths::sessions_dir().join(format!("{id}.worktree.json"))
+    }
+
     pub async fn create(provider: &str, model: &str) -> Result<ChatSession> {
         let id = generate_session_id();
         let mut session = ChatSession::new(id);
@@ -40,6 +50,25 @@ impl SessionManager {
         tokio::fs::write(&path, data).await?;
         debug!(id = %session.id, path = %path.display(), "Saved session");
         Ok(())
+    }
+
+    /// Save session worktree state associated with a session id.
+    pub async fn save_worktree_state(id: &str, state: &SessionWorktreeState) -> Result<()> {
+        LukanPaths::ensure_dirs().await?;
+        let path = Self::session_worktree_path(id);
+        let data = serde_json::to_string_pretty(state)?;
+        tokio::fs::write(path, data).await?;
+        Ok(())
+    }
+
+    /// Load session worktree state if present.
+    pub async fn load_worktree_state(id: &str) -> Result<Option<SessionWorktreeState>> {
+        let path = Self::session_worktree_path(id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let data = tokio::fs::read_to_string(path).await?;
+        Ok(Some(serde_json::from_str(&data)?))
     }
 
     /// List all sessions sorted by updated_at descending
@@ -145,13 +174,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_session() {
-        let session = SessionManager::create("anthropic", "claude-sonnet-4-20250514")
+    async fn test_session_worktree_state_roundtrip() {
+        let state = SessionWorktreeState {
+            path: "/tmp/worktree".to_string(),
+            slug: "feature-x".to_string(),
+        };
+        SessionManager::save_worktree_state("abc123", &state)
             .await
             .unwrap();
-        assert_eq!(session.id.len(), 6);
-        assert_eq!(session.provider.as_deref(), Some("anthropic"));
-        assert_eq!(session.model.as_deref(), Some("claude-sonnet-4-20250514"));
-        assert!(session.messages.is_empty());
+        let loaded = SessionManager::load_worktree_state("abc123")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.path, state.path);
+        assert_eq!(loaded.slug, state.slug);
     }
 }

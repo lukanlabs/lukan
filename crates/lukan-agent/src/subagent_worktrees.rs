@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::git_worktree_roots::find_canonical_git_root;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorktreeCleanupStatus {
@@ -40,6 +42,10 @@ pub struct WorktreeRecord {
     pub cleanup_status: WorktreeCleanupStatus,
 }
 
+pub fn canonical_project_root(start: &Path) -> PathBuf {
+    find_canonical_git_root(start).unwrap_or_else(|| start.to_path_buf())
+}
+
 pub fn sanitize_branch_fragment(input: &str) -> String {
     let mut out = String::new();
     let mut last_dash = false;
@@ -74,10 +80,11 @@ pub fn find_git_root(start: &Path) -> Option<PathBuf> {
 }
 
 pub fn create_worktree(repo_root: &Path, agent_id: &str) -> anyhow::Result<(PathBuf, String, String)> {
+    let repo_root = canonical_project_root(repo_root);
     let slug = sanitize_branch_fragment(agent_id);
     let branch = format!("lukan-subagent-{slug}");
     let worktree_root = repo_root.join(".lukan").join("subagents").join(agent_id);
-    fs::create_dir_all(worktree_root.parent().unwrap_or(repo_root))?;
+    fs::create_dir_all(worktree_root.parent().unwrap_or(&repo_root))?;
 
     let add = std::process::Command::new("git")
         .arg("worktree")
@@ -178,7 +185,7 @@ fn records_path(project_root: &Path) -> PathBuf {
 }
 
 pub fn load_records(project_root: &Path) -> Vec<WorktreeRecord> {
-    let path = records_path(project_root);
+    let path = records_path(&canonical_project_root(project_root));
     let Ok(content) = fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -186,7 +193,7 @@ pub fn load_records(project_root: &Path) -> Vec<WorktreeRecord> {
 }
 
 pub fn save_records(project_root: &Path, records: &[WorktreeRecord]) -> anyhow::Result<()> {
-    let path = records_path(project_root);
+    let path = records_path(&canonical_project_root(project_root));
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -195,23 +202,23 @@ pub fn save_records(project_root: &Path, records: &[WorktreeRecord]) -> anyhow::
 }
 
 pub fn upsert_record(project_root: &Path, record: WorktreeRecord) -> anyhow::Result<()> {
-    let mut records = load_records(project_root);
+    let mut records = load_records(&canonical_project_root(project_root));
     if let Some(existing) = records.iter_mut().find(|r| r.agent_id == record.agent_id) {
         *existing = record;
     } else {
         records.push(record);
     }
-    save_records(project_root, &records)
+    save_records(&canonical_project_root(project_root), &records)
 }
 
 pub fn remove_record(project_root: &Path, agent_id: &str) -> anyhow::Result<()> {
-    let mut records = load_records(project_root);
+    let mut records = load_records(&canonical_project_root(project_root));
     records.retain(|r| r.agent_id != agent_id);
-    save_records(project_root, &records)
+    save_records(&canonical_project_root(project_root), &records)
 }
 
 pub fn cleanup_stale_worktrees(project_root: &Path, older_than_secs: i64) -> anyhow::Result<usize> {
-    let mut records = load_records(project_root);
+    let mut records = load_records(&canonical_project_root(project_root));
     let cutoff = Utc::now() - chrono::Duration::seconds(older_than_secs);
     let mut removed = 0usize;
 
@@ -231,7 +238,7 @@ pub fn cleanup_stale_worktrees(project_root: &Path, older_than_secs: i64) -> any
         }
     }
 
-    save_records(project_root, &records)?;
+    save_records(&canonical_project_root(project_root), &records)?;
     Ok(removed)
 }
 

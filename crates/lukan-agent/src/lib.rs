@@ -4,6 +4,7 @@ pub mod message_history;
 pub mod permission_matcher;
 pub mod pipelines;
 pub mod session_manager;
+pub mod git_worktree_roots;
 pub mod subagent_worktree_tools;
 pub mod subagent_worktrees;
 pub mod sub_agent;

@@ -531,7 +531,8 @@ async fn dispatch_message(
         }
 
         ClientMessage::CreateAgentTab { cwd } => {
-            handle_create_agent_tab(state, ws_tx, cwd).await;
+            let tab_id = handle_create_agent_tab(state, ws_tx, cwd).await;
+            *active_session_id = Some(tab_id);
         }
 
         ClientMessage::DestroyAgentTab { session_id } => {
@@ -1974,7 +1975,7 @@ async fn handle_create_agent_tab(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     cwd: Option<String>,
-) {
+) -> String {
     let tab_id = uuid::Uuid::new_v4().to_string();
 
     let mut sessions = state.sessions.lock().await;
@@ -1991,9 +1992,13 @@ async fn handle_create_agent_tab(
 
     send_json(
         ws_tx,
-        &ServerMessage::AgentTabCreated { session_id: tab_id },
+        &ServerMessage::AgentTabCreated {
+            session_id: tab_id.clone(),
+        },
     )
     .await;
+
+    tab_id
 }
 
 /// Handle destroying an agent tab

@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState, useCallback } from "react";
+import { Fragment, useRef, useEffect, useMemo, useState, useCallback } from "react";
 import { AlertCircle } from "lucide-react";
 import logoUrl from "../assets/logo.png";
 import { useChat } from "../hooks/useChat";
@@ -197,6 +197,40 @@ export function ChatPanel({
     [chat.messages, chat.toolImages, chat.toolAfterContent, chat.checkpoints],
   );
 
+  const checkpointsByMessageIndex = useMemo(() => {
+    const grouped = new Map<number, CheckpointInfo[]>();
+    for (const checkpoint of chat.checkpoints) {
+      const existing = grouped.get(checkpoint.messageIndex);
+      if (existing) {
+        existing.push(checkpoint);
+      } else {
+        grouped.set(checkpoint.messageIndex, [checkpoint]);
+      }
+    }
+    return grouped;
+  }, [chat.checkpoints]);
+
+  const renderCheckpointGroup = useCallback(
+    (messageIndex: number) => {
+      const checkpoints = checkpointsByMessageIndex.get(messageIndex);
+      if (!checkpoints || checkpoints.length === 0) return null;
+
+      return checkpoints.map((checkpoint, index) => (
+        <CheckpointMarker
+          key={`cp-${messageIndex}-${checkpoint.id}-${index}`}
+          checkpoint={checkpoint}
+          affectedSnapshots={
+            chat.checkpoints
+              .filter((c) => c.messageIndex >= checkpoint.messageIndex)
+              .flatMap((c) => c.snapshots)
+          }
+          onRestore={handleRestore}
+        />
+      ));
+    },
+    [checkpointsByMessageIndex, chat.checkpoints, handleRestore],
+  );
+
   return (
     <div
       className="flex flex-1 flex-col min-h-0 min-w-0 bg-zinc-950 absolute inset-0 overflow-hidden"
@@ -234,46 +268,18 @@ export function ChatPanel({
 
             {/* Messages with checkpoint markers */}
             <div className="space-y-1 max-w-4xl mx-auto">
-              {chat.messages.map((msg, i) => {
-                // Show checkpoint marker before the message at messageIndex
-                // (messageIndex points to the start of the next turn, so
-                // the checkpoint appears between the turn that made edits
-                // and the next user message)
-                const cpBefore = chat.checkpoints.find(
-                  (c) => c.messageIndex === i && i > 0,
-                );
-                return (
-                  <div key={`msg-${i}`}>
-                    {cpBefore && (
-                      <CheckpointMarker
-                        checkpoint={cpBefore}
-                        affectedSnapshots={
-                          chat.checkpoints
-                            .filter((c) => c.messageIndex >= cpBefore.messageIndex)
-                            .flatMap((c) => c.snapshots)
-                        }
-                        onRestore={handleRestore}
-                      />
-                    )}
-                    <MessageBubble
-                      message={msg}
-                      toolResultsMap={toolResultsMap}
-                      silentTools={chat.silentTools}
-                    />
-                  </div>
-                );
-              })}
-              {/* Show checkpoint after last message if its messageIndex >= messages.length */}
-              {chat.checkpoints
-                .filter((c) => c.messageIndex >= chat.messages.length)
-                .map((cp) => (
-                  <CheckpointMarker
-                    key={`cp-${cp.id}`}
-                    checkpoint={cp}
-                    affectedSnapshots={cp.snapshots}
-                    onRestore={handleRestore}
+              {chat.messages.map((msg, i) => (
+                <Fragment key={`msg-${i}`}>
+                  {i > 0 && renderCheckpointGroup(i)}
+                  <MessageBubble
+                    message={msg}
+                    toolResultsMap={toolResultsMap}
+                    silentTools={chat.silentTools}
                   />
-                ))}
+                </Fragment>
+              ))}
+              {/* Show checkpoints anchored after the current history */}
+              {renderCheckpointGroup(chat.messages.length)}
             </div>
 
             {/* Streaming blocks */}

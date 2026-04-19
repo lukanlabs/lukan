@@ -621,9 +621,11 @@ impl BashTool {
                     "display_text": display_summary,
                 })
                 .to_string();
-                let completion_event = lukan_core::models::events::StreamEvent::QueuedMessageInjected {
+                let completion_event = lukan_core::models::events::StreamEvent::BashBackgroundCompletion {
+                    pid,
                     text: summary.clone(),
                     display_text: Some(display_summary.clone()),
+                    tab_id: tab_id.clone(),
                 };
                 let _ = event_tx.send(completion_event.clone()).await;
                 crate::bg_processes::broadcast_completion_event(completion_event);

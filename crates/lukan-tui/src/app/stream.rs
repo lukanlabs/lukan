@@ -47,6 +47,34 @@ impl App {
         }
     }
 
+    fn maybe_forward_bash_completion(&mut self, pid: u32, text: &str, display_text: Option<&str>, tab_id: Option<&str>) {
+        if tab_id != self.daemon_tab_id.as_deref() && tab_id.is_some() {
+            return;
+        }
+
+        let visible = display_text.unwrap_or(text).to_string();
+
+        if let Some(ref daemon) = self.daemon_tx {
+            let _ = daemon.send(&crate::ws_client::OutMessage::QueueMessage {
+                content: text.to_string(),
+                display_content: Some(visible.clone()),
+                session_id: self.daemon_tab_id.clone(),
+            });
+        } else {
+            self.queued_messages.lock().unwrap().push(text.to_string());
+            if !self.is_streaming {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Background Bash process completed. PID: {pid}."),
+                ));
+                self.messages.push(ChatMessage::new("user", &visible));
+                self.input.clear();
+                self.cursor_pos = 0;
+                self.pending_queue_submit = true;
+            }
+        }
+    }
+
     pub(super) fn handle_subagent_update(&mut self, update: SubAgentUpdate) {
         // Upsert into global manager so Alt+S can find daemon subagents
         let update_for_upsert = update.clone();
@@ -718,6 +746,18 @@ impl App {
                         .collect(),
                 };
                 self.handle_subagent_update(update);
+            }
+            StreamEvent::BashBackgroundCompletion {
+                pid,
+                text,
+                display_text,
+                tab_id,
+            } => {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Background Bash process completed. PID: {pid}."),
+                ));
+                self.maybe_forward_bash_completion(pid, &text, display_text.as_deref(), tab_id.as_deref());
             }
             _ => {}
         }

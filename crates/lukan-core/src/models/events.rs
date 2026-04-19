@@ -189,6 +189,16 @@ pub enum StreamEvent {
         /// Chat messages for the spectator view
         chat_messages: Vec<SubAgentChatMessage>,
     },
+
+    /// Bash background completion notification (forwarded from daemon to TUI)
+    BashBackgroundCompletion {
+        pid: u32,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        display_text: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
+    },
 }
 
 /// A chat message from a sub-agent conversation (for spectator view)

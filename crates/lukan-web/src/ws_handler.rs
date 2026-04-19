@@ -137,19 +137,10 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
                 continue;
             }
             Ok(bash_ev) = bash_completion_rx.recv() => {
-                // Forward bash background completion notices to the matching session/tab.
-                let target_tab_id = bash_ev
-                    .get("tabId")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                let should_forward = match (&target_tab_id, &active_session_id) {
-                    (Some(target), Some(active)) => target == active,
-                    _ => false,
-                };
-                if authenticated && should_forward {
-                    if let Ok(json) = serde_json::to_string(&bash_ev) {
-                        let _ = ws_tx.send(Message::Text(json.into())).await;
-                    }
+                // Forward bash background completion to all authenticated clients;
+                // the TUI filters by daemon_tab_id in maybe_forward_bash_completion.
+                if authenticated && let Ok(json) = serde_json::to_string(&bash_ev) {
+                    let _ = ws_tx.send(Message::Text(json.into())).await;
                 }
                 continue;
             }

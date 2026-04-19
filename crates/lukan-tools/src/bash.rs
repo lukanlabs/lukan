@@ -398,22 +398,38 @@ impl Tool for BashTool {
                         // continue writing to the log file only.
                         drainer.stop_buffering();
 
-                        // Drain tasks are already running and writing to the log
-                        // file — they'll continue until the process exits.
-                        // Just register the process and spawn a reaper.
-                        tokio::spawn(async move {
-                            let _ = child.wait().await;
-                        });
-
                         let log_display = log_path.display().to_string();
                         bg_processes::add_bg_process(
                             child_pid,
-                            command_str,
+                            command_str.clone(),
                             log_path,
                             ctx.session_id.clone(),
                             ctx.agent_label.clone(),
                             ctx.tab_id.clone(),
                         );
+
+                        // Reaper + completion notifier combined: wait for the
+                        // child so it doesn't zombie AND capture the exit code
+                        // for the completion event.
+                        let notifier_command = command_str;
+                        let notifier_tab_id = ctx.tab_id.clone();
+                        let notifier_session_id = ctx.session_id.clone();
+                        tokio::spawn(async move {
+                            let exit_code = child
+                                .wait()
+                                .await
+                                .ok()
+                                .and_then(|s| s.code())
+                                .unwrap_or(-1);
+                            emit_bg_completion(
+                                child_pid,
+                                notifier_command,
+                                exit_code,
+                                notifier_tab_id,
+                                notifier_session_id,
+                            )
+                            .await;
+                        });
 
                         Ok(ToolResult::success(format!(
                             "The user pressed Alt+B to send this command to background. \
@@ -571,11 +587,6 @@ impl BashTool {
         let stderr = child.stderr.take();
         OutputDrainer::start(pid, stdout, stderr, &log_file, false);
 
-        // Spawn a task to wait for the child (so it doesn't become a zombie)
-        tokio::spawn(async move {
-            let _ = child.wait().await;
-        });
-
         let log_display = log_file.display().to_string();
 
         bg_processes::add_bg_process(
@@ -587,53 +598,27 @@ impl BashTool {
             ctx.tab_id.clone(),
         );
 
-        if let Some(tool_call_id) = ctx.tool_call_id.as_ref() {
-            let _tool_call_id = tool_call_id.clone();
-            let command = command.to_string();
-            let tab_id = ctx.tab_id.clone();
-            tokio::spawn(async move {
-                loop {
-                    if !bg_processes::is_process_alive(pid) {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                }
-
-                let log = bg_processes::get_bg_log(pid, 200)
-                    .unwrap_or_else(|| "No log available.".to_string());
-                let compact_log = log.replace('\r', "").trim().to_string();
-                let sanitized_command = command.replace('\n', " ").replace('\r', " ").trim().to_string();
-                let summary = if compact_log.is_empty() {
-                    format!(
-                        "Background Bash process already completed. Do not call Bash again and do not call wait_pid. Continue using the agent normally with this final result.\nPID: {pid}\nCommand: {sanitized_command}\nFinal output: (no output captured)"
-                    )
-                } else {
-                    format!(
-                        "Background Bash process already completed. Do not call Bash again and do not call wait_pid. Continue using the agent normally with this final result.\nPID: {pid}\nCommand: {sanitized_command}\nFinal output:\n{compact_log}"
-                    )
-                };
-                let display_summary = format!(
-                    "Background Bash process completed. PID: {pid}."
-                );
-                let queue_payload = serde_json::json!({
-                    "text": summary,
-                    "display_text": display_summary,
-                })
-                .to_string();
-                let completion_broadcast = serde_json::json!({
-                    "type": "bash_background_completion",
-                    "pid": pid,
-                    "text": summary.clone(),
-                    "displayText": display_summary.clone(),
-                    "tabId": tab_id.clone(),
-                    "savedSessionId": tab_id.clone(),
-                });
-                crate::bg_processes::broadcast_completion_event(completion_broadcast);
-                if let Some(tab_id) = tab_id {
-                    let _ = crate::bg_processes::enqueue_session_completion(&tab_id, queue_payload.clone());
-                }
-            });
-        }
+        // Reaper + completion notifier combined: wait for the child so it
+        // doesn't zombie AND capture the exit code for the completion event.
+        let notifier_command = command.to_string();
+        let notifier_tab_id = ctx.tab_id.clone();
+        let notifier_session_id = ctx.session_id.clone();
+        tokio::spawn(async move {
+            let exit_code = child
+                .wait()
+                .await
+                .ok()
+                .and_then(|s| s.code())
+                .unwrap_or(-1);
+            emit_bg_completion(
+                pid,
+                notifier_command,
+                exit_code,
+                notifier_tab_id,
+                notifier_session_id,
+            )
+            .await;
+        });
 
         Ok(ToolResult::success(format!(
             "Background process started. PID: {pid}\n\
@@ -781,6 +766,61 @@ impl OutputDrainer {
         let stderr = std::mem::take(&mut *self.stderr_buf.lock().unwrap());
         (stdout, stderr)
     }
+}
+
+// ── Background completion notifier ────────────────────────────────────────
+
+/// Emit a completion event once the background process has exited. Shared by
+/// both `execute_background` (background: true) and the Alt+B path; both call
+/// this from the reaper task so the exit code is available.
+async fn emit_bg_completion(
+    pid: u32,
+    command: String,
+    exit_code: i32,
+    tab_id: Option<String>,
+    session_id: Option<String>,
+) {
+    let log = bg_processes::get_bg_log(pid, 200)
+        .unwrap_or_else(|| "No log available.".to_string());
+    let compact_log = log.replace('\r', "").trim().to_string();
+    let sanitized_command = command
+        .replace('\n', " ")
+        .replace('\r', " ")
+        .trim()
+        .to_string();
+
+    // Short, one-line command for the UI pill
+    let display_command = if sanitized_command.chars().count() > 60 {
+        let truncated: String = sanitized_command.chars().take(60).collect();
+        format!("{truncated}…")
+    } else {
+        sanitized_command.clone()
+    };
+
+    let summary = if compact_log.is_empty() {
+        format!(
+            "Background Bash process already completed. Do not call Bash again and do not call wait_pid. Continue using the agent normally with this final result.\nPID: {pid}\nCommand: {sanitized_command}\nExit code: {exit_code}\nFinal output: (no output captured)"
+        )
+    } else {
+        format!(
+            "Background Bash process already completed. Do not call Bash again and do not call wait_pid. Continue using the agent normally with this final result.\nPID: {pid}\nCommand: {sanitized_command}\nExit code: {exit_code}\nFinal output:\n{compact_log}"
+        )
+    };
+    let display_summary =
+        format!("Background command \"{display_command}\" completed (exit code: {exit_code})");
+
+    // savedSessionId must be the ChatSession id (hex), not the tab UUID,
+    // because the TUI filters DaemonEvent::Stream by comparing against
+    // self.session_id which is the ChatSession id.
+    let completion_broadcast = serde_json::json!({
+        "type": "bash_background_completion",
+        "pid": pid,
+        "text": summary,
+        "displayText": display_summary,
+        "tabId": tab_id,
+        "savedSessionId": session_id,
+    });
+    bg_processes::broadcast_completion_event(completion_broadcast);
 }
 
 // ── Result builders ───────────────────────────────────────────────────────

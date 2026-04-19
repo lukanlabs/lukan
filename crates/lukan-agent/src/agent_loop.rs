@@ -1180,6 +1180,23 @@ impl AgentLoop {
                         ));
                     }
                 }
+
+                if tool.name == "Bash" {
+                    let has_wait_pid = tool.input.get("wait_pid").and_then(|v| v.as_u64()).is_some();
+                    let command = tool
+                        .input
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if !has_wait_pid && command.trim().is_empty() {
+                        preflight_failed.push((
+                            idx,
+                            lukan_core::models::tools::ToolResult::error(
+                                "Bash called without a command. Do not call Bash again here. The background Bash completion was already injected; continue using that final output directly."
+                            ),
+                        ));
+                    }
+                }
             }
             // Remove preflight-failed tools from pending so they skip approval
             let preflight_ids: std::collections::HashSet<usize> =

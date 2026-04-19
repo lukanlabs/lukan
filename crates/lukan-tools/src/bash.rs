@@ -582,7 +582,6 @@ impl BashTool {
             let event_tx = event_tx.clone();
             let tool_call_id = tool_call_id.clone();
             let command = command.to_string();
-            let log_display = log_display.clone();
             tokio::spawn(async move {
                 loop {
                     if !bg_processes::is_process_alive(pid) {
@@ -591,10 +590,12 @@ impl BashTool {
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
 
-                let log = bg_processes::get_bg_log(pid, 200)
+                let _log = bg_processes::get_bg_log(pid, 200)
                     .unwrap_or_else(|| "No log available.".to_string());
                 let summary = format!(
-                    "Background Bash process finished.\nPID: {pid}\nCommand: {command}\nLog file: {log_display}\nOutput:\n{log}"
+                    "Bash {} completed: {}",
+                    pid,
+                    command.replace('\n', " ").replace('\r', " ").trim()
                 );
                 let _ = event_tx
                     .send(lukan_core::models::events::StreamEvent::QueuedMessageInjected {

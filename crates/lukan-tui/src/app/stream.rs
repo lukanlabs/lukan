@@ -2,16 +2,6 @@ use super::helpers::{format_tool_progress_named, format_tool_result_named};
 use super::*;
 
 impl App {
-    fn truncate_single_line(text: &str, max_chars: usize) -> String {
-        let collapsed = text.replace('\n', " ").replace('\r', " ");
-        let collapsed = collapsed.trim();
-        if collapsed.chars().count() <= max_chars {
-            return collapsed.to_string();
-        }
-        let truncated: String = collapsed.chars().take(max_chars.saturating_sub(1)).collect();
-        format!("{}…", truncated.trim_end())
-    }
-
     fn build_subagent_completion_message(update: &SubAgentUpdate) -> String {
         let status = match update.status.as_str() {
             "completed" => "completed",

@@ -146,8 +146,17 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
                     (Some(target), Some(active)) => target == active,
                     _ => false,
                 };
-                if authenticated && should_forward && let Ok(json) = serde_json::to_string(&bash_ev) {
-                    let _ = ws_tx.send(Message::Text(json.into())).await;
+                if authenticated && should_forward {
+                    if let Ok(mut value) = serde_json::to_value(&bash_ev) {
+                        if let serde_json::Value::Object(ref mut map) = value {
+                            if let Some(active) = active_session_id.clone() {
+                                map.insert("savedSessionId".to_string(), serde_json::Value::String(active));
+                            }
+                        }
+                        if let Ok(json) = serde_json::to_string(&value) {
+                            let _ = ws_tx.send(Message::Text(json.into())).await;
+                        }
+                    }
                 }
                 continue;
             }

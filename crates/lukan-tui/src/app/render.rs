@@ -120,29 +120,34 @@ impl App {
             let widget = EventPickerWidget::new(picker);
             frame.render_widget(widget, chat_area);
         } else {
-            // Add left margin so chat text doesn't hug the border
-            let padded_chat = Rect {
-                x: chat_area.x + 1,
-                width: chat_area.width.saturating_sub(1),
-                ..chat_area
-            };
+            // Chat renders edge-to-edge so user/thinking blocks fill the row
+            // completely; per-role widgets add their own internal padding.
+            let padded_chat = chat_area;
             // Show messages/streaming based on active view
-            let (msgs, committed_idx, streaming, vscroll) = match self.active_view {
+            let (msgs, committed_idx, thinking, streaming, vscroll) = match self.active_view {
                 ActiveView::Main => (
                     &self.messages,
                     self.committed_msg_idx,
-                    &self.streaming_text,
+                    self.streaming_thinking.as_str(),
+                    self.streaming_text.as_str(),
                     self.viewport_scroll,
                 ),
                 ActiveView::EventAgent => (
                     &self.event_messages,
                     self.event_committed_msg_idx,
-                    &self.event_streaming_text,
+                    "",
+                    self.event_streaming_text.as_str(),
                     self.event_viewport_scroll,
                 ),
             };
             let has_scrollback = committed_idx > 0 || vscroll > 0;
-            let chat = ChatWidget::new(&msgs[committed_idx..], streaming, has_scrollback, vscroll);
+            let chat = ChatWidget::new(
+                &msgs[committed_idx..],
+                thinking,
+                streaming,
+                has_scrollback,
+                vscroll,
+            );
             frame.render_widget(chat, padded_chat);
         }
 

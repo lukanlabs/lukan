@@ -17,14 +17,18 @@ pub(super) fn scroll_overflow(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     chat_area_h: u16,
     width: u16,
+    streaming_thinking: &str,
     streaming_text: &str,
 ) -> Result<()> {
-    if *committed_msg_idx >= messages.len() && streaming_text.is_empty() {
+    if *committed_msg_idx >= messages.len()
+        && streaming_thinking.is_empty()
+        && streaming_text.is_empty()
+    {
         return Ok(());
     }
 
     let uncommitted = &messages[*committed_msg_idx..];
-    let all_lines = build_message_lines(uncommitted, streaming_text);
+    let all_lines = build_message_lines_wide(uncommitted, streaming_thinking, streaming_text, width);
     let total_rows = physical_row_count(&all_lines, width);
 
     if total_rows <= chat_area_h {
@@ -60,7 +64,7 @@ pub(super) fn scroll_overflow(
     let mut gc_rows: u16 = 0;
     let mut gc_msgs: usize = 0;
     for msg in uncommitted {
-        let msg_lines = build_message_lines(std::slice::from_ref(msg), "");
+        let msg_lines = build_message_lines(std::slice::from_ref(msg), "", "");
         let msg_rows = physical_row_count(&msg_lines, width);
         if gc_rows + msg_rows <= *viewport_scroll {
             gc_rows += msg_rows;

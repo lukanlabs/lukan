@@ -50,7 +50,8 @@ use crate::event::{AppEvent, is_quit, spawn_event_reader};
 use crate::widgets::approval_prompt::{ApprovalPromptWidget, summarize_tool_input};
 use crate::widgets::bg_picker::{BgEntry, BgPicker, BgPickerView, BgPickerWidget};
 use crate::widgets::chat::{
-    ChatMessage, ChatWidget, build_message_lines, physical_row_count, sanitize_for_display,
+    ChatMessage, ChatWidget, build_message_lines, build_message_lines_wide, physical_row_count,
+    sanitize_for_display,
 };
 use crate::widgets::command_palette::CommandPaletteWidget;
 use crate::widgets::event_picker::{EventPicker, EventPickerMode, EventPickerWidget};
@@ -950,16 +951,18 @@ impl App {
                 && self.event_picker.is_none()
                 && !self.terminal_visible
             {
-                let (msgs, committed_idx, streaming, vscroll) = match self.active_view {
+                let (msgs, committed_idx, thinking, streaming, vscroll) = match self.active_view {
                     ActiveView::Main => (
                         &self.messages,
                         &mut self.committed_msg_idx,
+                        self.streaming_thinking.as_str(),
                         self.streaming_text.as_str(),
                         &mut self.viewport_scroll,
                     ),
                     ActiveView::EventAgent => (
                         &self.event_messages,
                         &mut self.event_committed_msg_idx,
+                        "",
                         self.event_streaming_text.as_str(),
                         &mut self.event_viewport_scroll,
                     ),
@@ -972,6 +975,7 @@ impl App {
                     &mut terminal,
                     chat_area_h,
                     render_width,
+                    thinking,
                     streaming,
                 )?;
             }

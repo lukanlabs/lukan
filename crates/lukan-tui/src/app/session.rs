@@ -348,6 +348,24 @@ impl App {
                         }
                     }
                     MessageContent::Blocks(blocks) => {
+                        // Reasoning/thinking comes before text in the block
+                        // order — render it above the assistant response so
+                        // the transcript matches the live stream layout.
+                        let thinking: String = blocks
+                            .iter()
+                            .filter_map(|b| {
+                                if let ContentBlock::Thinking { text } = b {
+                                    Some(text.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if !thinking.trim().is_empty() {
+                            self.messages.push(ChatMessage::new("thinking", thinking));
+                        }
+
                         let text: String = blocks
                             .iter()
                             .filter_map(|b| {

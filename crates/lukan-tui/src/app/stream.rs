@@ -456,6 +456,16 @@ impl App {
                 self.turn_text_msg_idx = None;
             }
             StreamEvent::TextDelta { text } => {
+                // Thinking normally ends the moment real text begins — flush
+                // the accumulated reasoning into a "thinking" message so it
+                // stays visible in scroll-back after the turn.
+                if !self.streaming_thinking.is_empty() {
+                    let content = std::mem::take(&mut self.streaming_thinking);
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        self.messages.push(ChatMessage::new("thinking", trimmed));
+                    }
+                }
                 self.streaming_text.push_str(&text);
             }
             StreamEvent::ThinkingDelta { text } => {
@@ -463,6 +473,15 @@ impl App {
             }
             StreamEvent::ToolUseStart { name, .. } => {
                 let is_silent = self.config.config.silent_tools.iter().any(|s| s == &name);
+                // Flush thinking first so it sits above any forthcoming
+                // assistant text / tool call in the final transcript.
+                if !self.streaming_thinking.is_empty() {
+                    let content = std::mem::take(&mut self.streaming_thinking);
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        self.messages.push(ChatMessage::new("thinking", trimmed));
+                    }
+                }
                 // Flush current text as a message before tool call.
                 // If we already flushed text earlier in this turn, append to
                 // the same message so mid-sentence splits don't occur.
@@ -586,6 +605,15 @@ impl App {
                 self.context_size = input_tokens;
             }
             StreamEvent::MessageEnd { stop_reason } => {
+                // Flush any remaining thinking first (e.g. a reasoning-only
+                // turn that ends without emitting text).
+                if !self.streaming_thinking.is_empty() {
+                    let content = std::mem::take(&mut self.streaming_thinking);
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        self.messages.push(ChatMessage::new("thinking", trimmed));
+                    }
+                }
                 let content = std::mem::take(&mut self.streaming_text);
                 let trimmed = content.trim_end().to_string();
                 if !trimmed.is_empty() {

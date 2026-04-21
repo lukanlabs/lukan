@@ -47,7 +47,7 @@ impl Widget for ToolPickerWidget<'_> {
                 let checkbox_style = if is_disabled {
                     Style::default().fg(Color::Red)
                 } else {
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(Color::Rgb(170, 170, 170))
                 };
 
                 lines.push(Line::from(vec![

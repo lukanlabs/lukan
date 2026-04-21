@@ -104,7 +104,8 @@ impl OpenAICodexProvider {
 
     /// Check if the model is a reasoning model.
     fn is_reasoning_model(&self) -> bool {
-        self.model.contains("codex") || self.model.starts_with('o')
+        let m = self.model.as_str();
+        m.contains("codex") || m.starts_with('o') || m.starts_with("gpt-5")
     }
 }
 
@@ -193,6 +194,11 @@ impl Provider for OpenAICodexProvider {
                 "effort": effort,
                 "summary": "auto",
             });
+            // Required by the Codex responses endpoint for it to emit
+            // `response.reasoning_text.delta` / `reasoning_summary_text.delta`
+            // SSE events. Without this, the model's reasoning stays hidden
+            // and only the final text deltas are streamed.
+            body["include"] = json!(["reasoning.encrypted_content"]);
         }
 
         // Send request
@@ -431,7 +437,9 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                     }
                 }
 
-                "response.reasoning.delta" | "response.reasoning_summary_text.delta" => {
+                "response.reasoning.delta"
+                | "response.reasoning_text.delta"
+                | "response.reasoning_summary_text.delta" => {
                     if let Some(delta) = data["delta"].as_str() {
                         tx.send(StreamEvent::ThinkingDelta {
                             text: delta.to_string(),

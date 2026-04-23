@@ -901,6 +901,7 @@ fn normalize_tool_input(raw: &str) -> Option<String> {
 /// Available Codex models
 pub fn codex_models() -> Vec<String> {
     vec![
+        "gpt-5.5".to_string(),
         "gpt-5.4".to_string(),
         "gpt-5.3-codex".to_string(),
         "gpt-5.3-codex-spark".to_string(),

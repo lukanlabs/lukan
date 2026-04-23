@@ -1047,8 +1047,7 @@ impl App {
                                 && let Some(ref mut modal) = self.terminal_modal
                             {
                                 modal.send_paste(&text);
-                            } else if !self.is_streaming
-                                && self.session_picker.is_none()
+                            } else if self.session_picker.is_none()
                                 && self.model_picker.is_none()
                                 && self.reasoning_picker.is_none()
                             {

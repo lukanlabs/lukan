@@ -126,8 +126,17 @@ pub fn build_message_lines_wide(
     width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
+    let mut prev_role = "";
 
     for msg in messages {
+        // Insert a blank line before an assistant message that follows tool output
+        // so the agent's response is visually separated from the tool results.
+        if matches!(msg.role.as_str(), "assistant" | "thinking")
+            && matches!(prev_role, "tool_result" | "tool_call" | "notify")
+        {
+            lines.push(Line::from(""));
+        }
+        prev_role = msg.role.as_str();
         match msg.role.as_str() {
             "thinking" => {
                 push_thinking_lines(&mut lines, &msg.content, width);

@@ -76,6 +76,9 @@ mod tests {
                     "command": {"type": "string"}
                 }
             }),
+            deferred: false,
+            read_only: false,
+            search_hint: None,
         };
         let json = serde_json::to_string(&def).unwrap();
         assert!(json.contains(r#""name":"Bash""#));

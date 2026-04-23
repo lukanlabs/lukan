@@ -256,6 +256,7 @@ mod tests {
             model: Some("claude-3".into()),
             last_message: Some("hello".into()),
             cwd: None,
+            project_root: None,
         };
         let json = serde_json::to_string(&summary).unwrap();
         assert!(json.contains(r#""messageCount":10"#));

@@ -451,6 +451,9 @@ mod tests {
             id: "tu-1".into(),
             name: "Bash".into(),
             input: serde_json::json!({"command": "rm -rf /"}),
+            activity_label: None,
+            read_only: None,
+            search_hint: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains(r#""name":"Bash""#));

@@ -100,7 +100,10 @@ pub fn broadcast_completion_event(event: serde_json::Value) {
 
 pub fn enqueue_session_completion(tab_id: &str, payload: String) {
     let mut completions = session_completions().lock().unwrap();
-    completions.entry(tab_id.to_string()).or_default().push(payload);
+    completions
+        .entry(tab_id.to_string())
+        .or_default()
+        .push(payload);
 }
 
 pub fn peek_session_completions(tab_id: &str) -> Vec<String> {

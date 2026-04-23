@@ -135,14 +135,20 @@ pub fn create_worktree_from_base(
         .output()?;
     if !head.status.success() {
         let stderr = String::from_utf8_lossy(&head.stderr);
-        anyhow::bail!("Failed to resolve subagent worktree HEAD: {}", stderr.trim());
+        anyhow::bail!(
+            "Failed to resolve subagent worktree HEAD: {}",
+            stderr.trim()
+        );
     }
     let head_commit = String::from_utf8_lossy(&head.stdout).trim().to_string();
 
     Ok((worktree_root, branch, head_commit))
 }
 
-pub fn create_worktree(repo_root: &Path, agent_id: &str) -> anyhow::Result<(PathBuf, String, String)> {
+pub fn create_worktree(
+    repo_root: &Path,
+    agent_id: &str,
+) -> anyhow::Result<(PathBuf, String, String)> {
     create_worktree_from_base(repo_root, agent_id, "HEAD")
 }
 
@@ -263,7 +269,11 @@ pub fn cleanup_stale_worktrees(project_root: &Path, older_than_secs: i64) -> any
         if worktree_has_changes(&record.worktree_path, &record.head_commit) {
             continue;
         }
-        if remove_worktree(&record.worktree_path, &record.worktree_branch, &record.git_root) {
+        if remove_worktree(
+            &record.worktree_path,
+            &record.worktree_branch,
+            &record.git_root,
+        ) {
             record.cleanup_status = WorktreeCleanupStatus::RemovedManual;
             removed += 1;
         }

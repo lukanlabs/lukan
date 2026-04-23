@@ -66,8 +66,7 @@ impl Tool for GlobTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "Missing required field: pattern".to_string())?;
 
-        Glob::new(pattern_str)
-            .map_err(|e| format!("Invalid glob pattern: {e}"))?;
+        Glob::new(pattern_str).map_err(|e| format!("Invalid glob pattern: {e}"))?;
 
         let base_path = input
             .get("path")
@@ -89,7 +88,10 @@ impl Tool for GlobTool {
         }
 
         if !base_path.is_dir() {
-            return Err(format!("Base path is not a directory: {}", base_path.display()));
+            return Err(format!(
+                "Base path is not a directory: {}",
+                base_path.display()
+            ));
         }
 
         Ok(())

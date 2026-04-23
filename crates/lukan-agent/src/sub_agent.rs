@@ -45,7 +45,12 @@ enum SubAgentIsolationMode {
 
 impl SubAgentIsolationMode {
     fn from_input(input: Option<&str>) -> Self {
-        match input.unwrap_or("shared").trim().to_ascii_lowercase().as_str() {
+        match input
+            .unwrap_or("shared")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
             "worktree" => Self::Worktree,
             _ => Self::Shared,
         }
@@ -58,7 +63,6 @@ impl SubAgentIsolationMode {
         }
     }
 }
-
 
 fn build_subagent_worktree_notice(parent_cwd: &Path, worktree_cwd: &Path) -> String {
     format!(
@@ -86,7 +90,8 @@ fn resolve_subagent_isolation(
         SubAgentIsolationMode::Worktree => {
             let repo_root = find_git_root(cwd)
                 .ok_or_else(|| anyhow::anyhow!("Worktree isolation requires a git repository."))?;
-            let (worktree_path, worktree_branch, head_commit) = create_worktree(&repo_root, agent_id)?;
+            let (worktree_path, worktree_branch, head_commit) =
+                create_worktree(&repo_root, agent_id)?;
             Ok(SubAgentIsolationContext {
                 cwd: worktree_path.clone(),
                 allowed_paths: Some(vec![worktree_path.clone()]),
@@ -99,25 +104,27 @@ fn resolve_subagent_isolation(
     }
 }
 
-pub async fn configure(
-    provider: Arc<dyn Provider>,
-    system_prompt: SystemPrompt,
-    cwd: std::path::PathBuf,
-    provider_name: String,
-    model_name: String,
-    sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
-    allowed_paths: Option<Vec<std::path::PathBuf>>,
-    session_tab_id: Option<String>,
-) {
+pub struct SubAgentConfig {
+    pub provider: Arc<dyn Provider>,
+    pub system_prompt: SystemPrompt,
+    pub cwd: std::path::PathBuf,
+    pub provider_name: String,
+    pub model_name: String,
+    pub sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
+    pub allowed_paths: Option<Vec<std::path::PathBuf>>,
+    pub session_tab_id: Option<String>,
+}
+
+pub async fn configure(config: SubAgentConfig) {
     let mut mgr = MANAGER.write().await;
-    mgr.provider = Some(provider);
-    mgr.system_prompt = Some(system_prompt);
-    mgr.cwd = Some(cwd);
-    mgr.provider_name = Some(provider_name);
-    mgr.model_name = Some(model_name);
-    mgr.sandbox = sandbox;
-    mgr.allowed_paths = allowed_paths;
-    mgr.session_tab_id = session_tab_id;
+    mgr.provider = Some(config.provider);
+    mgr.system_prompt = Some(config.system_prompt);
+    mgr.cwd = Some(config.cwd);
+    mgr.provider_name = Some(config.provider_name);
+    mgr.model_name = Some(config.model_name);
+    mgr.sandbox = config.sandbox;
+    mgr.allowed_paths = config.allowed_paths;
+    mgr.session_tab_id = config.session_tab_id;
 }
 
 /// Update the disabled tools for sub-agents (called when parent toggles tools)
@@ -134,7 +141,6 @@ pub async fn set_tool_filter(filter: Option<Vec<String>>) {
 
 static MANAGER: std::sync::LazyLock<RwLock<SubAgentManager>> =
     std::sync::LazyLock::new(|| RwLock::new(SubAgentManager::new()));
-
 
 /// Real-time update pushed from a running sub-agent to the TUI
 #[derive(Debug, Clone)]
@@ -302,7 +308,17 @@ async fn spawn_sub_agent(
         let allowed_paths = mgr.allowed_paths.clone();
         let stream_tx = mgr.stream_broadcast_tx.clone();
         let session_tab_id = mgr.session_tab_id.clone();
-        (provider, sp, cwd, pn, mn, sandbox, allowed_paths, stream_tx, session_tab_id)
+        (
+            provider,
+            sp,
+            cwd,
+            pn,
+            mn,
+            sandbox,
+            allowed_paths,
+            stream_tx,
+            session_tab_id,
+        )
     };
 
     let parent_cwd = cwd.clone();
@@ -435,7 +451,6 @@ async fn run_sub_agent(
     tokio::pin!(timeout);
 
     'outer: loop {
-
         // Check cancellation from parent agent
         if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
             final_status = SubAgentStatus::Aborted;
@@ -796,13 +811,21 @@ async fn run_sub_agent(
                 if remove_worktree(worktree_path, worktree_branch, git_root) {
                     Some(WorktreeCleanupStatus::AutoremovedClean.as_str().to_string())
                 } else {
-                    Some(WorktreeCleanupStatus::PreservedCleanupFailed.as_str().to_string())
+                    Some(
+                        WorktreeCleanupStatus::PreservedCleanupFailed
+                            .as_str()
+                            .to_string(),
+                    )
                 }
             } else {
                 Some(WorktreeCleanupStatus::PreservedChanges.as_str().to_string())
             }
         } else {
-            Some(WorktreeCleanupStatus::PreservedCleanupFailed.as_str().to_string())
+            Some(
+                WorktreeCleanupStatus::PreservedCleanupFailed
+                    .as_str()
+                    .to_string(),
+            )
         }
     } else {
         None
@@ -830,7 +853,9 @@ async fn run_sub_agent(
                 cleanup_status: match cleanup_status.as_deref() {
                     Some("autoremoved (clean)") => WorktreeCleanupStatus::AutoremovedClean,
                     Some("preserved (changes detected)") => WorktreeCleanupStatus::PreservedChanges,
-                    Some("preserved (cleanup failed)") => WorktreeCleanupStatus::PreservedCleanupFailed,
+                    Some("preserved (cleanup failed)") => {
+                        WorktreeCleanupStatus::PreservedCleanupFailed
+                    }
                     _ => WorktreeCleanupStatus::Pending,
                 },
             },
@@ -994,9 +1019,8 @@ impl Tool for SubAgentTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(120_000);
 
-        let isolation = SubAgentIsolationMode::from_input(
-            input.get("isolation").and_then(|v| v.as_str()),
-        );
+        let isolation =
+            SubAgentIsolationMode::from_input(input.get("isolation").and_then(|v| v.as_str()));
 
         match spawn_sub_agent(task.clone(), timeout, isolation, ctx.cancel.clone()).await {
             Ok(id) => Ok(ToolResult::success(format!(
@@ -1143,7 +1167,12 @@ pub(crate) enum ExploreThoroughness {
 
 impl ExploreThoroughness {
     fn from_input(input: Option<&str>) -> Self {
-        match input.unwrap_or("medium").trim().to_ascii_lowercase().as_str() {
+        match input
+            .unwrap_or("medium")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
             "quick" => Self::Quick,
             "thorough" | "very thorough" => Self::Thorough,
             _ => Self::Medium,
@@ -1152,9 +1181,15 @@ impl ExploreThoroughness {
 
     fn prompt_guidance(&self) -> &'static str {
         match self {
-            Self::Quick => "Thoroughness level: quick. Prefer a fast pass over the most likely files and patterns. Stop once you have enough evidence to answer confidently.",
-            Self::Medium => "Thoroughness level: medium. Check the main implementation plus nearby supporting files, types, and call paths before concluding.",
-            Self::Thorough => "Thoroughness level: thorough. Be comprehensive: search alternate names, trace call chains, inspect related types/interfaces, and cross-check multiple implementation points before concluding.",
+            Self::Quick => {
+                "Thoroughness level: quick. Prefer a fast pass over the most likely files and patterns. Stop once you have enough evidence to answer confidently."
+            }
+            Self::Medium => {
+                "Thoroughness level: medium. Check the main implementation plus nearby supporting files, types, and call paths before concluding."
+            }
+            Self::Thorough => {
+                "Thoroughness level: thorough. Be comprehensive: search alternate names, trace call chains, inspect related types/interfaces, and cross-check multiple implementation points before concluding."
+            }
         }
     }
 }
@@ -1200,13 +1235,12 @@ fn validate_explore_bash_command(command: &str) -> Result<(), String> {
 
     let lower = trimmed.to_ascii_lowercase();
     if forbidden_fragments.iter().any(|frag| lower.contains(frag)) {
-        return Err("Explore only allows read-only Bash commands for search/navigation.".to_string());
+        return Err(
+            "Explore only allows read-only Bash commands for search/navigation.".to_string(),
+        );
     }
 
-    let first = lower
-        .split_whitespace()
-        .next()
-        .unwrap_or_default();
+    let first = lower.split_whitespace().next().unwrap_or_default();
     let allowed_prefixes = ["ls", "find", "grep", "git", "cat", "head", "tail", "pwd"];
     if !allowed_prefixes.contains(&first) {
         return Err(format!(
@@ -1741,9 +1775,8 @@ impl Tool for ExploreTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(300_000);
 
-        let thoroughness = ExploreThoroughness::from_input(
-            input.get("thoroughness").and_then(|v| v.as_str()),
-        );
+        let thoroughness =
+            ExploreThoroughness::from_input(input.get("thoroughness").and_then(|v| v.as_str()));
         // Use the tool_call_id so TUI progress matches the tool_call message
         let explore_id = ctx
             .tool_call_id
@@ -1903,10 +1936,7 @@ mod tests {
             .and_then(|v| v.as_object())
             .unwrap();
         let isolation = props.get("isolation").and_then(|v| v.as_object()).unwrap();
-        let variants = isolation
-            .get("enum")
-            .and_then(|v| v.as_array())
-            .unwrap();
+        let variants = isolation.get("enum").and_then(|v| v.as_array()).unwrap();
         assert!(variants.iter().any(|v| v.as_str() == Some("shared")));
         assert!(variants.iter().any(|v| v.as_str() == Some("worktree")));
     }

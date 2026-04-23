@@ -90,7 +90,9 @@ impl Tool for ReadFileTool {
         ];
 
         let path_str = path.to_string_lossy();
-        if BLOCKED_DEVICE_PATHS.iter().any(|blocked| path_str == *blocked)
+        if BLOCKED_DEVICE_PATHS
+            .iter()
+            .any(|blocked| path_str == *blocked)
             || (path_str.starts_with("/proc/")
                 && (path_str.ends_with("/fd/0")
                     || path_str.ends_with("/fd/1")
@@ -103,7 +105,10 @@ impl Tool for ReadFileTool {
         }
 
         if !path.exists() {
-            return Err(format!("Failed to read file: No such file or directory: {}", path.display()));
+            return Err(format!(
+                "Failed to read file: No such file or directory: {}",
+                path.display()
+            ));
         }
 
         Ok(())

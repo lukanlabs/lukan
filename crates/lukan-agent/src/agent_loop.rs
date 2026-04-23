@@ -207,12 +207,12 @@ impl AgentLoop {
         config
             .tools
             .register(Box::new(crate::sub_agent::ExploreTool));
-        config
-            .tools
-            .register(Box::new(crate::subagent_worktree_tools::SubagentWorktreeListTool));
-        config
-            .tools
-            .register(Box::new(crate::subagent_worktree_tools::SubagentWorktreeCleanupTool));
+        config.tools.register(Box::new(
+            crate::subagent_worktree_tools::SubagentWorktreeListTool,
+        ));
+        config.tools.register(Box::new(
+            crate::subagent_worktree_tools::SubagentWorktreeCleanupTool,
+        ));
 
         // Build sandbox config for sub-agents from registry settings
         let sub_agent_sandbox = if config.tools.is_sandbox_enabled() {
@@ -226,16 +226,16 @@ impl AgentLoop {
         };
 
         // Configure the global sub-agent manager
-        crate::sub_agent::configure(
-            Arc::clone(&config.provider),
-            config.system_prompt.clone(),
-            config.cwd.clone(),
-            config.provider_name.clone(),
-            config.model_name.clone(),
-            sub_agent_sandbox,
-            config.allowed_paths.clone(),
-            config.tab_id.clone(),
-        )
+        crate::sub_agent::configure(crate::sub_agent::SubAgentConfig {
+            provider: Arc::clone(&config.provider),
+            system_prompt: config.system_prompt.clone(),
+            cwd: config.cwd.clone(),
+            provider_name: config.provider_name.clone(),
+            model_name: config.model_name.clone(),
+            sandbox: sub_agent_sandbox,
+            allowed_paths: config.allowed_paths.clone(),
+            session_tab_id: config.tab_id.clone(),
+        })
         .await;
 
         let bg_signal = config.bg_signal.take();
@@ -301,12 +301,12 @@ impl AgentLoop {
         config
             .tools
             .register(Box::new(crate::sub_agent::ExploreTool));
-        config
-            .tools
-            .register(Box::new(crate::subagent_worktree_tools::SubagentWorktreeListTool));
-        config
-            .tools
-            .register(Box::new(crate::subagent_worktree_tools::SubagentWorktreeCleanupTool));
+        config.tools.register(Box::new(
+            crate::subagent_worktree_tools::SubagentWorktreeListTool,
+        ));
+        config.tools.register(Box::new(
+            crate::subagent_worktree_tools::SubagentWorktreeCleanupTool,
+        ));
 
         // Build sandbox config for sub-agents from registry settings
         let sub_agent_sandbox = if config.tools.is_sandbox_enabled() {
@@ -319,16 +319,16 @@ impl AgentLoop {
             None
         };
 
-        crate::sub_agent::configure(
-            Arc::clone(&config.provider),
-            config.system_prompt.clone(),
-            config.cwd.clone(),
-            config.provider_name.clone(),
-            config.model_name.clone(),
-            sub_agent_sandbox,
-            config.allowed_paths.clone(),
-            config.tab_id.clone(),
-        )
+        crate::sub_agent::configure(crate::sub_agent::SubAgentConfig {
+            provider: Arc::clone(&config.provider),
+            system_prompt: config.system_prompt.clone(),
+            cwd: config.cwd.clone(),
+            provider_name: config.provider_name.clone(),
+            model_name: config.model_name.clone(),
+            sandbox: sub_agent_sandbox,
+            allowed_paths: config.allowed_paths.clone(),
+            session_tab_id: config.tab_id.clone(),
+        })
         .await;
 
         let bg_signal = config.bg_signal.take();
@@ -903,9 +903,8 @@ impl AgentLoop {
             }
             // In planner mode, only expose read-only tools to the LLM
             if self.permission_matcher.mode() == PermissionMode::Planner {
-                tool_defs.retain(|d| {
-                    PLANNER_TOOL_WHITELIST.contains(&d.name.as_str()) && d.read_only
-                });
+                tool_defs
+                    .retain(|d| PLANNER_TOOL_WHITELIST.contains(&d.name.as_str()) && d.read_only);
             }
             // Also hide tools disabled at runtime by the TUI
             tool_defs.retain(|d| !self.disabled_tools.contains(&d.name));
@@ -922,16 +921,14 @@ impl AgentLoop {
                 && !self.disabled_tools.contains("ToolSearch")
                 && has_deferred_available
                 && has_read_only_core
-            {
-                if let Some(tool_search_def) = self
+                && let Some(tool_search_def) = self
                     .tools
                     .definitions()
                     .into_iter()
                     .find(|d| d.name == "ToolSearch")
-                {
-                    tool_defs.push(tool_search_def);
-                    tool_defs.sort_by(|a, b| a.name.cmp(&b.name));
-                }
+            {
+                tool_defs.push(tool_search_def);
+                tool_defs.sort_by(|a, b| a.name.cmp(&b.name));
             }
 
             // Preprocess images for non-vision providers
@@ -1195,7 +1192,11 @@ impl AgentLoop {
                 }
 
                 if tool.name == "Bash" {
-                    let has_wait_pid = tool.input.get("wait_pid").and_then(|v| v.as_u64()).is_some();
+                    let has_wait_pid = tool
+                        .input
+                        .get("wait_pid")
+                        .and_then(|v| v.as_u64())
+                        .is_some();
                     let command = tool
                         .input
                         .get("command")
@@ -1253,9 +1254,11 @@ impl AgentLoop {
                             id: t.id.clone(),
                             name: t.name.clone(),
                             input: t.input.clone(),
-                            activity_label: tool_meta.and_then(|tool| tool.activity_label(&t.input)),
+                            activity_label: tool_meta
+                                .and_then(|tool| tool.activity_label(&t.input)),
                             read_only: tool_meta.map(|tool| tool.is_read_only()),
-                            search_hint: tool_meta.and_then(|tool| tool.search_hint().map(|s| s.to_string())),
+                            search_hint: tool_meta
+                                .and_then(|tool| tool.search_hint().map(|s| s.to_string())),
                         }
                     })
                     .collect();

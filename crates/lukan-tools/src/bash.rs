@@ -54,7 +54,10 @@ pub fn classify_bash_command(command: &str) -> BashCommandClass {
         "git clean -fd",
         "git clean -xdf",
     ];
-    if destructive_fragments.iter().any(|frag| lower.contains(frag)) {
+    if destructive_fragments
+        .iter()
+        .any(|frag| lower.contains(frag))
+    {
         return BashCommandClass::Destructive;
     }
 
@@ -103,9 +106,7 @@ pub fn classify_bash_command(command: &str) -> BashCommandClass {
                 BashCommandClass::Unknown
             }
         }
-        "curl" | "wget" | "ping" | "nslookup" | "dig" | "ssh" | "scp" => {
-            BashCommandClass::Network
-        }
+        "curl" | "wget" | "ping" | "nslookup" | "dig" | "ssh" | "scp" => BashCommandClass::Network,
         _ => BashCommandClass::Unknown,
     }
 }
@@ -163,7 +164,9 @@ impl Tool for BashTool {
     }
 
     fn search_hint(&self) -> Option<&str> {
-        Some("run shell commands and terminal tasks; read/search/list commands are lower risk than mutating or destructive ones")
+        Some(
+            "run shell commands and terminal tasks; read/search/list commands are lower risk than mutating or destructive ones",
+        )
     }
 
     fn activity_label(&self, input: &serde_json::Value) -> Option<String> {
@@ -415,12 +418,8 @@ impl Tool for BashTool {
                         let notifier_tab_id = ctx.tab_id.clone();
                         let notifier_session_id = ctx.session_id.clone();
                         tokio::spawn(async move {
-                            let exit_code = child
-                                .wait()
-                                .await
-                                .ok()
-                                .and_then(|s| s.code())
-                                .unwrap_or(-1);
+                            let exit_code =
+                                child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
                             emit_bg_completion(
                                 child_pid,
                                 notifier_command,
@@ -604,12 +603,7 @@ impl BashTool {
         let notifier_tab_id = ctx.tab_id.clone();
         let notifier_session_id = ctx.session_id.clone();
         tokio::spawn(async move {
-            let exit_code = child
-                .wait()
-                .await
-                .ok()
-                .and_then(|s| s.code())
-                .unwrap_or(-1);
+            let exit_code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
             emit_bg_completion(
                 pid,
                 notifier_command,
@@ -780,14 +774,9 @@ async fn emit_bg_completion(
     tab_id: Option<String>,
     session_id: Option<String>,
 ) {
-    let log = bg_processes::get_bg_log(pid, 200)
-        .unwrap_or_else(|| "No log available.".to_string());
+    let log = bg_processes::get_bg_log(pid, 200).unwrap_or_else(|| "No log available.".to_string());
     let compact_log = log.replace('\r', "").trim().to_string();
-    let sanitized_command = command
-        .replace('\n', " ")
-        .replace('\r', " ")
-        .trim()
-        .to_string();
+    let sanitized_command = command.replace(['\n', '\r'], " ").trim().to_string();
 
     // Short, one-line command for the UI pill
     let display_command = if sanitized_command.chars().count() > 60 {

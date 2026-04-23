@@ -69,7 +69,6 @@ impl Tool for DeferredMcpTool {
     }
 }
 
-
 #[test]
 fn search_deferred_tools_prioritizes_exact_name_match() {
     let mut registry = ToolRegistry::new();

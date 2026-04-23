@@ -244,7 +244,9 @@ async fn edit_file_validation_rejects_empty_old_text() {
 async fn successful_edit_returns_diff_output() {
     let dir = test_dir("diff-output");
     let file_path = dir.join("sample.txt");
-    tokio::fs::write(&file_path, "before after\n").await.unwrap();
+    tokio::fs::write(&file_path, "before after\n")
+        .await
+        .unwrap();
 
     let ctx = make_tool_context(&dir);
     mark_file_as_read(&ctx, &file_path).await;

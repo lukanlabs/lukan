@@ -90,7 +90,9 @@ impl Widget for SessionPickerWidget<'_> {
             if let Some(ref cwd) = session.cwd
                 && let Some(project_root) = session.project_root.as_ref()
                 && cwd != project_root
-                && let Some(name) = std::path::Path::new(cwd).file_name().and_then(|n| n.to_str())
+                && let Some(name) = std::path::Path::new(cwd)
+                    .file_name()
+                    .and_then(|n| n.to_str())
             {
                 spans.push(Span::styled(
                     format!(" [worktree:{name}]"),

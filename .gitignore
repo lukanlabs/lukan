@@ -22,3 +22,4 @@ plugins/*/package-lock.json
 crates/*/target/
 examples/audios/
 examples/bugs/
+examples/img/

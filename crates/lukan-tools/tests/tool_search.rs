@@ -17,12 +17,22 @@ fn default_registry_exposes_tool_search_and_reflects_runtime_deferred_tools() {
     let web_search_registered = registry.get("WebSearch").is_some();
 
     assert!(deferred.iter().any(|d| d.name == "WebFetch"));
-    assert!(!registry.default_definitions().iter().any(|d| d.name == "WebFetch"));
+    assert!(
+        !registry
+            .default_definitions()
+            .iter()
+            .any(|d| d.name == "WebFetch")
+    );
     assert_eq!(
         deferred.iter().any(|d| d.name == "WebSearch"),
         web_search_registered
     );
-    assert!(!registry.default_definitions().iter().any(|d| d.name == "WebSearch"));
+    assert!(
+        !registry
+            .default_definitions()
+            .iter()
+            .any(|d| d.name == "WebSearch")
+    );
 }
 
 #[test]
@@ -49,7 +59,10 @@ async fn tool_search_returns_runtime_matching_deferred_tools_only() {
     let ctx = make_tool_context(&std::env::temp_dir());
 
     let fetch_result = tool
-        .execute(json!({"query": "fetch a webpage by url", "max_results": 5}), &ctx)
+        .execute(
+            json!({"query": "fetch a webpage by url", "max_results": 5}),
+            &ctx,
+        )
         .await
         .unwrap();
     assert!(!fetch_result.is_error);
@@ -75,7 +88,10 @@ async fn tool_search_returns_no_matches_message_when_empty() {
     let ctx = make_tool_context(&std::env::temp_dir());
 
     let result = tool
-        .execute(json!({"query": "totally-unknown-specialized-capability"}), &ctx)
+        .execute(
+            json!({"query": "totally-unknown-specialized-capability"}),
+            &ctx,
+        )
         .await
         .unwrap();
 

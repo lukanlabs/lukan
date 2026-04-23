@@ -20,7 +20,11 @@ impl Tool for BrowserClick {
         "Click on an element identified by its [ref] number from the accessibility snapshot."
     }
 
-    browser_tool_metadata!("click an element in the browser", "Clicking element", read_only = false);
+    browser_tool_metadata!(
+        "click an element in the browser",
+        "Clicking element",
+        read_only = false
+    );
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

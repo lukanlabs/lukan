@@ -55,7 +55,13 @@ impl Widget for ApprovalPromptWidget<'_> {
                 .unwrap_or_else(|| summarize_tool_input(&tool.name, &tool.input));
             let prefer_concrete_summary = matches!(
                 tool.name.as_str(),
-                "Bash" | "ReadFiles" | "WriteFile" | "EditFile" | "WebFetch" | "Explore" | "SubAgent"
+                "Bash"
+                    | "ReadFiles"
+                    | "WriteFile"
+                    | "EditFile"
+                    | "WebFetch"
+                    | "Explore"
+                    | "SubAgent"
             );
             let summary = if prefer_concrete_summary {
                 summarize_tool_input(&tool.name, &tool.input)

@@ -91,7 +91,11 @@ impl Tool for BrowserEvaluate {
         "Evaluate a JavaScript expression in the browser. Only safe, read-only expressions are allowed (no network, cookies, storage, etc.)."
     }
 
-    browser_tool_metadata!("evaluate JavaScript in the browser page", "Evaluating browser script", read_only = true);
+    browser_tool_metadata!(
+        "evaluate JavaScript in the browser page",
+        "Evaluating browser script",
+        read_only = true
+    );
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

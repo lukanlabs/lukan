@@ -10,16 +10,28 @@ use super::*;
 /// messages or streaming text) gets pushed to the terminal's native
 /// scrollback via `insert_before`.  The caller's `viewport_scroll` tracks
 /// how many rows have already been pushed so we never duplicate content.
-pub(super) fn scroll_overflow(
-    messages: &[ChatMessage],
-    committed_msg_idx: &mut usize,
-    viewport_scroll: &mut u16,
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    chat_area_h: u16,
-    width: u16,
-    streaming_thinking: &str,
-    streaming_text: &str,
-) -> Result<()> {
+pub(crate) struct ScrollOverflowContext<'a> {
+    pub(crate) messages: &'a [ChatMessage],
+    pub(crate) committed_msg_idx: &'a mut usize,
+    pub(crate) viewport_scroll: &'a mut u16,
+    pub(crate) terminal: &'a mut Terminal<CrosstermBackend<Stdout>>,
+    pub(crate) chat_area_h: u16,
+    pub(crate) width: u16,
+    pub(crate) streaming_thinking: &'a str,
+    pub(crate) streaming_text: &'a str,
+}
+
+pub(super) fn scroll_overflow(ctx: ScrollOverflowContext<'_>) -> Result<()> {
+    let ScrollOverflowContext {
+        messages,
+        committed_msg_idx,
+        viewport_scroll,
+        terminal,
+        chat_area_h,
+        width,
+        streaming_thinking,
+        streaming_text,
+    } = ctx;
     if *committed_msg_idx >= messages.len()
         && streaming_thinking.is_empty()
         && streaming_text.is_empty()
@@ -28,7 +40,8 @@ pub(super) fn scroll_overflow(
     }
 
     let uncommitted = &messages[*committed_msg_idx..];
-    let all_lines = build_message_lines_wide(uncommitted, streaming_thinking, streaming_text, width);
+    let all_lines =
+        build_message_lines_wide(uncommitted, streaming_thinking, streaming_text, width);
     let total_rows = physical_row_count(&all_lines, width);
 
     if total_rows <= chat_area_h {
@@ -193,7 +206,8 @@ mod tests {
 
     #[test]
     fn web_fetch_result_is_compacted_to_single_line_preview() {
-        let content = "Title\n\nFirst paragraph with useful context.\nSecond paragraph with more details.";
+        let content =
+            "Title\n\nFirst paragraph with useful context.\nSecond paragraph with more details.";
         let formatted = format_tool_result_named("WebFetch", content, false);
         assert_eq!(
             formatted,

@@ -120,9 +120,7 @@ impl SessionManager {
         let all = Self::list().await?;
         Ok(all
             .into_iter()
-            .filter(|s| {
-                s.project_root.as_deref() == Some(cwd) || s.cwd.as_deref() == Some(cwd)
-            })
+            .filter(|s| s.project_root.as_deref() == Some(cwd) || s.cwd.as_deref() == Some(cwd))
             .collect())
     }
 

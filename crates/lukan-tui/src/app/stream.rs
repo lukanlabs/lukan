@@ -3,12 +3,7 @@ use super::*;
 
 impl App {
     fn build_subagent_completion_message(update: &SubAgentUpdate) -> String {
-        let status = match update.status.as_str() {
-            "completed" => "completed",
-            "error" => "error",
-            "aborted" => "aborted",
-            other => other,
-        };
+        let status = update.status.as_str();
 
         let task_preview = if update.task.len() > 50 {
             format!("{}...", &update.task[..update.task.floor_char_boundary(47)])
@@ -47,7 +42,13 @@ impl App {
         }
     }
 
-    fn maybe_forward_bash_completion(&mut self, pid: u32, text: &str, display_text: Option<&str>, tab_id: Option<&str>) {
+    fn maybe_forward_bash_completion(
+        &mut self,
+        pid: u32,
+        text: &str,
+        display_text: Option<&str>,
+        tab_id: Option<&str>,
+    ) {
         if tab_id != self.daemon_tab_id.as_deref() && tab_id.is_some() {
             return;
         }
@@ -542,7 +543,8 @@ impl App {
                     }
                 }
 
-                let mut msg = ChatMessage::new("tool_result", format_tool_progress_named(&name, &content));
+                let mut msg =
+                    ChatMessage::new("tool_result", format_tool_progress_named(&name, &content));
                 msg.tool_id = Some(id);
                 self.messages.insert(insert_pos, msg);
             }
@@ -646,8 +648,8 @@ impl App {
             }
             StreamEvent::ApprovalRequired { tools } => {
                 let count = tools.len();
-                let all_read_only = !tools.is_empty()
-                    && tools.iter().all(|t| t.read_only.unwrap_or(false));
+                let all_read_only =
+                    !tools.is_empty() && tools.iter().all(|t| t.read_only.unwrap_or(false));
                 self.approval_prompt = Some(ApprovalPrompt {
                     selections: vec![true; count],
                     selected: 0,
@@ -781,7 +783,12 @@ impl App {
                 display_text,
                 tab_id,
             } => {
-                self.maybe_forward_bash_completion(0, &text, display_text.as_deref(), tab_id.as_deref());
+                self.maybe_forward_bash_completion(
+                    0,
+                    &text,
+                    display_text.as_deref(),
+                    tab_id.as_deref(),
+                );
             }
             _ => {}
         }

@@ -35,5 +35,8 @@ pub async fn mark_file_as_read(ctx: &ToolContext, path: &Path) {
         .await
         .ok()
         .and_then(|m| m.modified().ok());
-    ctx.read_files.lock().await.insert(path.to_path_buf(), mtime);
+    ctx.read_files
+        .lock()
+        .await
+        .insert(path.to_path_buf(), mtime);
 }

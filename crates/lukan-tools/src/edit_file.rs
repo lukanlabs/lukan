@@ -172,22 +172,28 @@ impl Tool for EditFileTool {
             ctx.cwd.join(&path)
         };
 
-        if let Some(read_files) = ctx.read_files.try_lock().ok() {
-            if !read_files.contains_key(&path) {
-                return Err(format!(
-                    "File has not been read yet. Use ReadFiles first: {file_path_str}"
-                ));
-            }
+        if let Ok(read_files) = ctx.read_files.try_lock()
+            && !read_files.contains_key(&path)
+        {
+            return Err(format!(
+                "File has not been read yet. Use ReadFiles first: {file_path_str}"
+            ));
         }
 
         let edits_value = input.get("edits");
         if edits_value.is_none() {
-            let old_text = input.get("old_text").and_then(|v| v.as_str()).ok_or_else(|| {
-                "Missing required field: old_text (or provide edits array)".to_string()
-            })?;
-            let _new_text = input.get("new_text").and_then(|v| v.as_str()).ok_or_else(|| {
-                "Missing required field: new_text (or provide edits array)".to_string()
-            })?;
+            let old_text = input
+                .get("old_text")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    "Missing required field: old_text (or provide edits array)".to_string()
+                })?;
+            let _new_text = input
+                .get("new_text")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    "Missing required field: new_text (or provide edits array)".to_string()
+                })?;
             if old_text.is_empty() {
                 return Err("old_text cannot be empty.".to_string());
             }

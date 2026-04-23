@@ -19,7 +19,11 @@ impl Tool for BrowserNewTab {
         "Open a new browser tab and navigate to the given URL."
     }
 
-    browser_tool_metadata!("open a new browser tab", "Opening browser tab", read_only = false);
+    browser_tool_metadata!(
+        "open a new browser tab",
+        "Opening browser tab",
+        read_only = false
+    );
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

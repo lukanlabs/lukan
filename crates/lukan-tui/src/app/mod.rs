@@ -968,16 +968,16 @@ impl App {
                     ),
                 };
                 let render_width = term_size.width.saturating_sub(1);
-                helpers::scroll_overflow(
-                    msgs,
-                    committed_idx,
-                    vscroll,
-                    &mut terminal,
+                helpers::scroll_overflow(helpers::ScrollOverflowContext {
+                    messages: msgs,
+                    committed_msg_idx: committed_idx,
+                    viewport_scroll: vscroll,
+                    terminal: &mut terminal,
                     chat_area_h,
-                    render_width,
-                    thinking,
-                    streaming,
-                )?;
+                    width: render_width,
+                    streaming_thinking: thinking,
+                    streaming_text: streaming,
+                })?;
             }
 
             // Pre-compute palette state for this frame

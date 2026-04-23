@@ -1,16 +1,13 @@
 mod test_helpers;
 
-use lukan_tools::redact_env_vars;
 use lukan_tools::ToolContext;
+use lukan_tools::redact_env_vars;
 use serde_json::json;
 use test_helpers::make_tool_context;
 use tokio_util::sync::CancellationToken;
 
 fn test_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "lukan-bash-test-{}-{name}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("lukan-bash-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -108,7 +105,9 @@ async fn bash_background_mode_returns_pid_immediately() {
         .unwrap();
 
     assert!(!result.is_error);
-    assert!(result.content.contains("Background process started") || result.content.contains("PID"));
+    assert!(
+        result.content.contains("Background process started") || result.content.contains("PID")
+    );
 }
 
 #[tokio::test]
@@ -177,7 +176,8 @@ async fn bash_can_be_cancelled_via_cancellation_token() {
 async fn bash_receives_extra_env_variables() {
     let dir = test_dir("extra-env");
     let mut ctx = make_tool_context(&dir);
-    ctx.extra_env.insert("LUKAN_TEST_VAR".into(), "xyz123".into());
+    ctx.extra_env
+        .insert("LUKAN_TEST_VAR".into(), "xyz123".into());
     let registry = lukan_tools::create_default_registry();
 
     let result = bash_tool(&registry)

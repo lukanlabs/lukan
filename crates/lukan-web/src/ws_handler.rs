@@ -386,18 +386,19 @@ async fn dispatch_message(
             drop(sessions);
 
             let background_completions = lukan_tools::bg_processes::take_session_completions(&tab);
-            let background_completion_entries: Vec<(String, Option<String>)> = background_completions
-                .iter()
-                .filter_map(|entry| {
-                    let parsed = serde_json::from_str::<serde_json::Value>(entry).ok()?;
-                    let text = parsed.get("text")?.as_str()?.to_string();
-                    let display = parsed
-                        .get("display_text")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    Some((text, display))
-                })
-                .collect();
+            let background_completion_entries: Vec<(String, Option<String>)> =
+                background_completions
+                    .iter()
+                    .filter_map(|entry| {
+                        let parsed = serde_json::from_str::<serde_json::Value>(entry).ok()?;
+                        let text = parsed.get("text")?.as_str()?.to_string();
+                        let display = parsed
+                            .get("display_text")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        Some((text, display))
+                    })
+                    .collect();
             if !background_completions.is_empty() {
                 let mut sessions = state.sessions.lock().await;
                 if let Some(session) = sessions.get_mut(&tab) {

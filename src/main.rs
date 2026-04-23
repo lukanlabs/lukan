@@ -20,8 +20,8 @@ mod plugin_config;
 mod plugin_exec;
 mod relay_bridge;
 mod sandbox_cmd;
-mod setup;
 mod session_worktree;
+mod setup;
 mod skills;
 mod update;
 mod worker;
@@ -336,14 +336,28 @@ async fn main() -> Result<()> {
                         } else {
                             None
                         };
-                    run_chat(provider_override, model_override, browser_opts, do_continue, session_worktree).await?;
+                    run_chat(
+                        provider_override,
+                        model_override,
+                        browser_opts,
+                        do_continue,
+                        session_worktree,
+                    )
+                    .await?;
                 }
             }
         }
         None => {
             let provider_override = cli.provider;
             let model_override = cli.model;
-            run_chat(provider_override, model_override, None, cli.r#continue, cli.worktree).await?;
+            run_chat(
+                provider_override,
+                model_override,
+                None,
+                cli.r#continue,
+                cli.worktree,
+            )
+            .await?;
         }
     }
 
@@ -824,13 +838,14 @@ async fn run_chat(
     let provider =
         create_provider(&resolved).unwrap_or_else(|_| Box::new(lukan_providers::NullProvider));
 
-    let mut pending_session_worktree: Option<lukan_agent::session_manager::SessionWorktreeState> = None;
+    let mut pending_session_worktree: Option<lukan_agent::session_manager::SessionWorktreeState> =
+        None;
 
     // Run TUI — connect to daemon if available, otherwise use in-process agent
     if let Some(slug) = session_worktree {
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
-        let repo_root = session_worktree::resolve_main_repo_root(&cwd)
-            .unwrap_or_else(|| cwd.clone());
+        let repo_root =
+            session_worktree::resolve_main_repo_root(&cwd).unwrap_or_else(|| cwd.clone());
         let worktree_path = session_worktree::create_session_worktree(&cwd, &slug)?;
         std::env::set_current_dir(&worktree_path)?;
         let worktree_state = lukan_agent::session_manager::SessionWorktreeState {
@@ -852,10 +867,10 @@ async fn run_chat(
     if continue_session {
         app.set_continue_session();
     }
-    if let Some(state) = pending_session_worktree.take() {
-        if let Some(id) = app.current_session_id() {
-            let _ = SessionManager::save_worktree_state(&id, &state).await;
-        }
+    if let Some(state) = pending_session_worktree.take()
+        && let Some(id) = app.current_session_id()
+    {
+        let _ = SessionManager::save_worktree_state(&id, &state).await;
     }
     app.run().await?;
 

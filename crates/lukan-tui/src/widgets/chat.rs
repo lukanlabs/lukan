@@ -275,7 +275,7 @@ const BUBBLE_RIGHT_GUTTER: u16 = 8;
 /// Rows of same-bg padding on top AND bottom inside each bubble. Set to 0
 /// so only the content line has the tinted background — no extra pad rows
 /// above or below (user preference).
-const BUBBLE_VERTICAL_PAD: usize = 0;
+const BUBBLE_VERTICAL_PAD: usize = 1;
 /// Rows of app backdrop appended after each bubble so the next message has
 /// breathing room (requested by the user — separates assistant/next content).
 const BUBBLE_BOTTOM_GAP: usize = 2;
@@ -318,9 +318,11 @@ fn push_user_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16) {
 
     let pad_row = build_user_bubble_row(border_style, bg_only, text_style, box_width, " ");
 
-    // Top pad
-    for _ in 0..BUBBLE_VERTICAL_PAD {
-        lines.push(pad_row.clone());
+    if BUBBLE_VERTICAL_PAD > 0 {
+        // Top pad
+        for _ in 0..BUBBLE_VERTICAL_PAD {
+            lines.push(pad_row.clone());
+        }
     }
 
     // Collapse runs of blank lines so an unexpected empty line in the middle
@@ -352,9 +354,11 @@ fn push_user_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16) {
         }
     }
 
-    // Bottom pad — contiguous with the content (same USER_BG).
-    for _ in 0..BUBBLE_VERTICAL_PAD {
-        lines.push(pad_row.clone());
+    if BUBBLE_VERTICAL_PAD > 0 {
+        // Bottom pad — contiguous with the content (same USER_BG).
+        for _ in 0..BUBBLE_VERTICAL_PAD {
+            lines.push(pad_row.clone());
+        }
     }
 
     // Backdrop gap below so the next message has breathing room.
@@ -482,7 +486,11 @@ fn wrap_text_to_width(text: &str, max_width: u16) -> Vec<String> {
             *word_w = 0;
             return;
         }
-        let extra = if current.is_empty() { *word_w } else { 1 + *word_w };
+        let extra = if current.is_empty() {
+            *word_w
+        } else {
+            1 + *word_w
+        };
         if *current_w + extra > max {
             out.push(std::mem::take(current));
             *current_w = 0;
@@ -499,13 +507,25 @@ fn wrap_text_to_width(text: &str, max_width: u16) -> Vec<String> {
 
     for ch in text.chars() {
         if ch == ' ' || ch == '\t' {
-            flush_word(&mut current, &mut current_w, &mut word, &mut word_w, &mut out);
+            flush_word(
+                &mut current,
+                &mut current_w,
+                &mut word,
+                &mut word_w,
+                &mut out,
+            );
         } else {
             word.push(ch);
             word_w += UnicodeWidthStr::width(ch.to_string().as_str());
         }
     }
-    flush_word(&mut current, &mut current_w, &mut word, &mut word_w, &mut out);
+    flush_word(
+        &mut current,
+        &mut current_w,
+        &mut word,
+        &mut word_w,
+        &mut out,
+    );
 
     if !current.is_empty() {
         out.push(current);
@@ -524,7 +544,7 @@ fn push_thinking_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16
     let bg = Style::default().bg(THINKING_BG);
     let header = base.add_modifier(Modifier::BOLD);
 
-    let content = content.trim_end_matches(|c: char| c == '\n' || c == '\r' || c == ' ');
+    let content = content.trim_end_matches(['\n', '\r', ' ']);
     // Paint the thinking bg all the way to the right edge (no gutter).
     let box_width = width;
 
@@ -534,16 +554,15 @@ fn push_thinking_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16
         Line::from(spans).style(bg)
     };
 
-    // Top pad
-    for _ in 0..BUBBLE_VERTICAL_PAD {
-        lines.push(blank_row.clone());
+    if BUBBLE_VERTICAL_PAD > 0 {
+        // Top pad
+        for _ in 0..BUBBLE_VERTICAL_PAD {
+            lines.push(blank_row.clone());
+        }
     }
 
     // Header row — indented with 3 spaces to match the bubble's left gutter.
-    let mut header_spans = vec![
-        Span::styled("   ", bg),
-        Span::styled("Thinking:", header),
-    ];
+    let mut header_spans = vec![Span::styled("   ", bg), Span::styled("Thinking:", header)];
     let header_used = 3 + "Thinking:".len() as u16;
     pad_to_width(&mut header_spans, header_used, box_width, bg);
     lines.push(Line::from(header_spans).style(bg));
@@ -566,9 +585,11 @@ fn push_thinking_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16
         }
     }
 
-    // Bottom pad
-    for _ in 0..BUBBLE_VERTICAL_PAD {
-        lines.push(blank_row.clone());
+    if BUBBLE_VERTICAL_PAD > 0 {
+        // Bottom pad
+        for _ in 0..BUBBLE_VERTICAL_PAD {
+            lines.push(blank_row.clone());
+        }
     }
 
     // Backdrop gap so the assistant response below is clearly separated.

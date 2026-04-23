@@ -158,14 +158,14 @@ mod cli_install {
         fn cli_in_path_finds_existing_binary() {
             let tmp = make_temp("in-path-found");
             fs::write(tmp.join("lukan"), "fake").unwrap();
-            assert!(cli_in_path(&[tmp.clone()]));
+            assert!(cli_in_path(std::slice::from_ref(&tmp)));
             fs::remove_dir_all(&tmp).unwrap();
         }
 
         #[test]
         fn cli_in_path_returns_false_when_missing() {
             let tmp = make_temp("in-path-missing");
-            assert!(!cli_in_path(&[tmp.clone()]));
+            assert!(!cli_in_path(std::slice::from_ref(&tmp)));
             fs::remove_dir_all(&tmp).unwrap();
         }
 
@@ -177,7 +177,7 @@ mod cli_install {
             fs::write(&real, "fake").unwrap();
             std::os::unix::fs::symlink(&real, tmp.join("lukan")).unwrap();
 
-            assert!(cli_in_path(&[tmp.clone()]));
+            assert!(cli_in_path(std::slice::from_ref(&tmp)));
             fs::remove_dir_all(&tmp).unwrap();
         }
 
@@ -196,7 +196,7 @@ mod cli_install {
             let tmp = make_temp("beside-in-path");
             fs::write(tmp.join("lukan"), "fake").unwrap();
 
-            let result = find_bundled_cli(&tmp, &[tmp.clone()]);
+            let result = find_bundled_cli(&tmp, std::slice::from_ref(&tmp));
             assert!(result.is_none());
             fs::remove_dir_all(&tmp).unwrap();
         }

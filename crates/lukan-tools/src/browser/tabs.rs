@@ -17,7 +17,11 @@ impl Tool for BrowserTabs {
         "List all open browser tabs. Use the tab numbers with BrowserSwitchTab."
     }
 
-    browser_tool_metadata!("list and inspect open browser tabs", "Listing browser tabs", read_only = true);
+    browser_tool_metadata!(
+        "list and inspect open browser tabs",
+        "Listing browser tabs",
+        read_only = true
+    );
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

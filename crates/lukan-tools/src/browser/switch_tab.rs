@@ -17,7 +17,11 @@ impl Tool for BrowserSwitchTab {
         "Switch to a different browser tab by its number (from BrowserTabs)."
     }
 
-    browser_tool_metadata!("switch to another open browser tab", "Switching browser tab", read_only = false);
+    browser_tool_metadata!(
+        "switch to another open browser tab",
+        "Switching browser tab",
+        read_only = false
+    );
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

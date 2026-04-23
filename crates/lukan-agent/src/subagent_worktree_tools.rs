@@ -43,7 +43,9 @@ impl Tool for SubagentWorktreeListTool {
     ) -> anyhow::Result<ToolResult> {
         let records = load_records(&ctx.cwd);
         if records.is_empty() {
-            return Ok(ToolResult::success("No persisted subagent worktrees found."));
+            return Ok(ToolResult::success(
+                "No persisted subagent worktrees found.",
+            ));
         }
 
         let mut out = format!("Found {} subagent worktree(s):\n", records.len());
@@ -97,14 +99,14 @@ impl Tool for SubagentWorktreeCleanupTool {
     ) -> anyhow::Result<ToolResult> {
         if let Some(agent_id) = input.get("agentId").and_then(|v| v.as_str()) {
             let mut records = load_records(&ctx.cwd);
-            if let Some(record) = records.iter_mut().find(|r| r.agent_id == agent_id) {
-                if record.cleanup_status == WorktreeCleanupStatus::Pending {
-                    record.cleanup_status = WorktreeCleanupStatus::RemovedManual;
-                    save_records(&ctx.cwd, &records)?;
-                    return Ok(ToolResult::success(format!(
-                        "Marked subagent worktree as manually removed: {agent_id}"
-                    )));
-                }
+            if let Some(record) = records.iter_mut().find(|r| r.agent_id == agent_id)
+                && record.cleanup_status == WorktreeCleanupStatus::Pending
+            {
+                record.cleanup_status = WorktreeCleanupStatus::RemovedManual;
+                save_records(&ctx.cwd, &records)?;
+                return Ok(ToolResult::success(format!(
+                    "Marked subagent worktree as manually removed: {agent_id}"
+                )));
             }
             remove_record(&ctx.cwd, agent_id)?;
             return Ok(ToolResult::success(format!(
@@ -158,7 +160,9 @@ mod tests {
             progress_tx: None,
             event_tx: None,
             tool_call_id: None,
-            read_files: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            read_files: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
             cwd: root,
             bg_signal: None,
             sandbox: None,
@@ -171,7 +175,10 @@ mod tests {
             blocked_env_vars: Vec::new(),
         };
 
-        let result = SubagentWorktreeListTool.execute(json!({}), &ctx).await.unwrap();
+        let result = SubagentWorktreeListTool
+            .execute(json!({}), &ctx)
+            .await
+            .unwrap();
         assert!(result.content.contains("abc123"));
         assert!(result.content.contains("worktree"));
     }
@@ -201,7 +208,9 @@ mod tests {
             progress_tx: None,
             event_tx: None,
             tool_call_id: None,
-            read_files: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            read_files: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
             cwd: root.clone(),
             bg_signal: None,
             sandbox: None,
@@ -221,6 +230,9 @@ mod tests {
         assert!(result.content.contains("abc123"));
         let records = load_records(&root);
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].cleanup_status, WorktreeCleanupStatus::RemovedManual);
+        assert_eq!(
+            records[0].cleanup_status,
+            WorktreeCleanupStatus::RemovedManual
+        );
     }
 }

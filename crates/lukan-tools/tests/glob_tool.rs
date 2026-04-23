@@ -82,10 +82,7 @@ async fn glob_returns_error_for_invalid_pattern() {
     let registry = create_default_registry();
     let tool = registry.get("Glob").unwrap();
 
-    let result = tool
-        .execute(json!({"pattern": "["}), &ctx)
-        .await
-        .unwrap();
+    let result = tool.execute(json!({"pattern": "["}), &ctx).await.unwrap();
 
     assert!(result.is_error);
     assert!(result.content.contains("Invalid glob pattern"));

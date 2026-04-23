@@ -17,7 +17,11 @@ impl Tool for BrowserSnapshot {
         "Return the current page's accessibility snapshot. Interactive elements are numbered [1], [2], ... for use with BrowserClick and BrowserType. Use compact mode to save tokens when you only need interactive elements."
     }
 
-    browser_tool_metadata!("capture an accessibility snapshot of the current page", "Snapshotting page", read_only = true);
+    browser_tool_metadata!(
+        "capture an accessibility snapshot of the current page",
+        "Snapshotting page",
+        read_only = true
+    );
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

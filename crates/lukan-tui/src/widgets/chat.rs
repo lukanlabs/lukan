@@ -234,8 +234,7 @@ pub fn build_message_lines_wide(
             }
             _ => {
                 // assistant — render markdown with styles & syntax highlighting
-                lines.extend(render_markdown(&msg.content));
-                lines.push(Line::from(""));
+                push_assistant_lines(&mut lines, &msg.content);
             }
         }
     }
@@ -256,13 +255,62 @@ pub fn build_message_lines_wide(
         }
     }
 
-    // Streaming text — render markdown with styles & syntax highlighting
+    // Streaming text — keep rendering stable while deltas arrive by showing
+    // plain finalized lines plus only the last line as live content. Parsing
+    // partial markdown on every delta causes list/blockquote/code indentation
+    // to be reinterpreted mid-stream, which makes earlier lines shift right.
     if !streaming_text.is_empty() {
         let sanitized = sanitize_for_display(streaming_text);
-        lines.extend(render_markdown(&sanitized));
+        let ends_with_newline = sanitized.ends_with('\n');
+        let mut parts: Vec<&str> = sanitized.split('\n').collect();
+        if ends_with_newline {
+            let _ = parts.pop();
+            if !parts.is_empty() {
+                let finalized = parts.join("\n");
+                for line in render_markdown(&finalized) {
+                    lines.push(add_assistant_gutter(line));
+                }
+            }
+            lines.push(Line::from(""));
+        } else if parts.len() > 1 {
+            let live_tail = parts.pop().unwrap_or_default();
+            let finalized = parts.join("\n");
+            if !finalized.is_empty() {
+                for line in render_markdown(&finalized) {
+                    lines.push(add_assistant_gutter(line));
+                }
+            }
+            lines.push(add_assistant_gutter(Line::from(Span::styled(
+                live_tail.to_string(),
+                Style::default().fg(Color::White),
+            ))));
+        } else {
+            lines.push(add_assistant_gutter(Line::from(Span::styled(
+                sanitized,
+                Style::default().fg(Color::White),
+            ))));
+        }
     }
 
     lines
+}
+
+// ── Assistant gutter ───────────────────────────────────────────────────
+
+const ASSISTANT_GUTTER: &str = "  ";
+
+fn add_assistant_gutter(mut line: Line<'static>) -> Line<'static> {
+    if !line.spans.is_empty() {
+        line.spans.insert(0, Span::raw(ASSISTANT_GUTTER));
+    }
+    line
+}
+
+fn push_assistant_lines(lines: &mut Vec<Line<'static>>, content: &str) {
+    for line in render_markdown(content) {
+        lines.push(add_assistant_gutter(line));
+    }
+    lines.push(Line::from(""));
 }
 
 // ── Bubble helpers (user message + thinking block) ─────────────────────
@@ -275,10 +323,10 @@ const BUBBLE_RIGHT_GUTTER: u16 = 8;
 /// Rows of same-bg padding on top AND bottom inside each bubble. Set to 0
 /// so only the content line has the tinted background — no extra pad rows
 /// above or below (user preference).
-const BUBBLE_VERTICAL_PAD: usize = 1;
+const BUBBLE_VERTICAL_PAD: usize = 0;
 /// Rows of app backdrop appended after each bubble so the next message has
 /// breathing room (requested by the user — separates assistant/next content).
-const BUBBLE_BOTTOM_GAP: usize = 2;
+const BUBBLE_BOTTOM_GAP: usize = 1;
 
 /// Build a user-bubble row with the same structure as a normal content line.
 /// Using a real text cell (even a single space) avoids the visual seam that
@@ -318,12 +366,8 @@ fn push_user_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16) {
 
     let pad_row = build_user_bubble_row(border_style, bg_only, text_style, box_width, " ");
 
-    if BUBBLE_VERTICAL_PAD > 0 {
-        // Top pad
-        for _ in 0..BUBBLE_VERTICAL_PAD {
-            lines.push(pad_row.clone());
-        }
-    }
+    // Top pad
+    lines.extend(std::iter::repeat_with(|| pad_row.clone()).take(BUBBLE_VERTICAL_PAD));
 
     // Collapse runs of blank lines so an unexpected empty line in the middle
     // of the content doesn't render as a full-row gap inside the bubble.
@@ -354,12 +398,8 @@ fn push_user_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16) {
         }
     }
 
-    if BUBBLE_VERTICAL_PAD > 0 {
-        // Bottom pad — contiguous with the content (same USER_BG).
-        for _ in 0..BUBBLE_VERTICAL_PAD {
-            lines.push(pad_row.clone());
-        }
-    }
+    // Bottom pad — contiguous with the content (same USER_BG).
+    lines.extend(std::iter::repeat_with(|| pad_row.clone()).take(BUBBLE_VERTICAL_PAD));
 
     // Backdrop gap below so the next message has breathing room.
     for _ in 0..BUBBLE_BOTTOM_GAP {
@@ -554,12 +594,8 @@ fn push_thinking_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16
         Line::from(spans).style(bg)
     };
 
-    if BUBBLE_VERTICAL_PAD > 0 {
-        // Top pad
-        for _ in 0..BUBBLE_VERTICAL_PAD {
-            lines.push(blank_row.clone());
-        }
-    }
+    // Top pad
+    lines.extend(std::iter::repeat_with(|| blank_row.clone()).take(BUBBLE_VERTICAL_PAD));
 
     // Header row — indented with 3 spaces to match the bubble's left gutter.
     let mut header_spans = vec![Span::styled("   ", bg), Span::styled("Thinking:", header)];
@@ -585,12 +621,8 @@ fn push_thinking_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16
         }
     }
 
-    if BUBBLE_VERTICAL_PAD > 0 {
-        // Bottom pad
-        for _ in 0..BUBBLE_VERTICAL_PAD {
-            lines.push(blank_row.clone());
-        }
-    }
+    // Bottom pad
+    lines.extend(std::iter::repeat_with(|| blank_row.clone()).take(BUBBLE_VERTICAL_PAD));
 
     // Backdrop gap so the assistant response below is clearly separated.
     for _ in 0..BUBBLE_BOTTOM_GAP {

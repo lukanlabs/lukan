@@ -77,7 +77,7 @@ pub(super) fn scroll_overflow(ctx: ScrollOverflowContext<'_>) -> Result<()> {
     let mut gc_rows: u16 = 0;
     let mut gc_msgs: usize = 0;
     for msg in uncommitted {
-        let msg_lines = build_message_lines(std::slice::from_ref(msg), "", "");
+        let msg_lines = build_message_lines_wide(std::slice::from_ref(msg), "", "", width);
         let msg_rows = physical_row_count(&msg_lines, width);
         if gc_rows + msg_rows <= *viewport_scroll {
             gc_rows += msg_rows;

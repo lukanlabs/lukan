@@ -50,7 +50,7 @@ use crate::event::{AppEvent, is_quit, spawn_event_reader};
 use crate::widgets::approval_prompt::{ApprovalPromptWidget, summarize_tool_input};
 use crate::widgets::bg_picker::{BgEntry, BgPicker, BgPickerView, BgPickerWidget};
 use crate::widgets::chat::{
-    ChatMessage, ChatWidget, build_message_lines, build_message_lines_wide, physical_row_count,
+    ChatMessage, ChatWidget, build_message_lines_wide, physical_row_count,
     sanitize_for_display,
 };
 use crate::widgets::command_palette::CommandPaletteWidget;

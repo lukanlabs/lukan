@@ -37,6 +37,9 @@ WORKDIR /home/lukan
 # Create config directory
 RUN mkdir -p /home/lukan/.config/lukan
 
+# Bind to all interfaces by default in container context
+ENV LUKAN_BIND_ALL=1
+
 # Default port for web UI / daemon
 EXPOSE 3000
 

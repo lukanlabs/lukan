@@ -427,6 +427,7 @@ impl App {
                     // View task detail
                     if state.selected < state.tasks.len() => {
                         state.mode = PlanReviewMode::Detail;
+                        state.scroll = 0;
                     }
                 KeyCode::Char('a') => {
                     // Accept plan
@@ -459,11 +460,19 @@ impl App {
                 }
                 _ => {}
             },
-            PlanReviewMode::Detail => {
-                if code == KeyCode::Esc {
+            PlanReviewMode::Detail => match code {
+                KeyCode::Esc => {
                     state.mode = PlanReviewMode::List;
+                    state.scroll = 0;
                 }
-            }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    state.scroll = state.scroll.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    state.scroll = state.scroll.saturating_add(1);
+                }
+                _ => {}
+            },
             PlanReviewMode::Feedback => match code {
                 KeyCode::Enter => {
                     let feedback = state.feedback_input.clone();

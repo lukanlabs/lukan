@@ -76,7 +76,7 @@ impl Widget for PlanReviewWidget<'_> {
 
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    " Esc=back to list",
+                    " Esc=back to list  ↑↓/jk=scroll",
                     Style::default().fg(Color::DarkGray),
                 )));
             }
@@ -113,7 +113,8 @@ impl Widget for PlanReviewWidget<'_> {
 
         let paragraph = Paragraph::new(lines)
             .block(block)
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((self.state.scroll, 0));
         paragraph.render(area, buf);
     }
 }

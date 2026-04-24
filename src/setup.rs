@@ -860,13 +860,13 @@ mod tests {
 
     #[test]
     fn sanitize_prompt_input_strips_arrow_escape_sequences() {
-        let input = format!("abc\x1b[D\x1b[Cdef\n");
+        let input = "abc\x1b[D\x1b[Cdef\n".to_string();
         assert_eq!(sanitize_prompt_input(&input), "abcdef");
     }
 
     #[test]
     fn sanitize_prompt_input_strips_bracketed_paste_markers() {
-        let input = format!("\x1b[200~sk-test\x1b[201~\n");
+        let input = "\x1b[200~sk-test\x1b[201~\n".to_string();
         assert_eq!(sanitize_prompt_input(&input), "sk-test");
     }
 

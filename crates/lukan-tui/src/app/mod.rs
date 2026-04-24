@@ -327,7 +327,6 @@ pub(crate) struct PlanReviewState {
     pub(crate) selected: usize,
     pub(crate) mode: PlanReviewMode,
     pub(crate) feedback_input: String,
-    #[allow(dead_code)]
     pub(crate) scroll: u16,
 }
 

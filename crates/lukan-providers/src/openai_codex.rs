@@ -1015,7 +1015,7 @@ mod tests {
         let models = codex_models();
         assert!(models.contains(&"gpt-5.4".to_string()));
         assert!(models.contains(&"gpt-5.3-codex".to_string()));
-        assert_eq!(models.len(), 12);
+        assert_eq!(models.len(), 13);
     }
 
     #[test]

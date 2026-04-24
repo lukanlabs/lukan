@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,7 +32,6 @@ pub fn make_restricted_tool_context(cwd: &Path, allowed_paths: Vec<PathBuf>) -> 
     ctx
 }
 
-#[allow(dead_code)]
 pub async fn mark_file_as_read(ctx: &ToolContext, path: &Path) {
     let mtime = tokio::fs::metadata(path)
         .await

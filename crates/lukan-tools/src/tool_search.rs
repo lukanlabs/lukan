@@ -285,9 +285,11 @@ pub fn search_deferred_tools(
                 }
             }
 
-            // Require at least a hint or description match (score ≥ 16) to avoid
-            // returning tools that only weakly match via a partial name substring.
-            if score < 16 {
+            // Require score ≥ 35 to avoid returning tools that match only via
+            // a single CamelCase name part (e.g. "web" matching "WebFetch").
+            // A single name-part hit gives 20+10=30; a legitimate match needs
+            // at least a hint/description match on top of that.
+            if score < 35 {
                 return None;
             }
 

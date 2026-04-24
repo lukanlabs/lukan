@@ -56,18 +56,18 @@ pub(super) fn scroll_overflow(ctx: ScrollOverflowContext<'_>) -> Result<()> {
     if new_rows > 0 {
         use ratatui::widgets::{Paragraph, Wrap};
         terminal.insert_before(new_rows, |buf| {
-            let padded = Rect {
-                x: buf.area.x + 1,
-                width: buf.area.width.saturating_sub(1),
-                ..buf.area
-            };
+            // Render scrollback with the exact same horizontal origin/width as
+            // the live ChatWidget. Adding an extra x offset here made rows that
+            // had just scrolled out of the viewport appear to gain one column of
+            // left padding (most visible on tool rows and markdown bullets).
+            let area = buf.area;
             // Render starting from where we left off last time, into a
             // buffer of exactly `new_rows` height — gives us the slice
             // [viewport_scroll .. viewport_scroll + new_rows].
             let p = Paragraph::new(all_lines)
                 .wrap(Wrap { trim: false })
                 .scroll((*viewport_scroll, 0));
-            p.render(padded, buf);
+            p.render(area, buf);
         })?;
         *viewport_scroll = desired_scroll;
     }

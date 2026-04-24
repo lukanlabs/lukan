@@ -966,7 +966,7 @@ impl App {
                         &mut self.event_viewport_scroll,
                     ),
                 };
-                let render_width = term_size.width.saturating_sub(1);
+                let render_width = term_size.width;
                 helpers::scroll_overflow(helpers::ScrollOverflowContext {
                     messages: msgs,
                     committed_msg_idx: committed_idx,

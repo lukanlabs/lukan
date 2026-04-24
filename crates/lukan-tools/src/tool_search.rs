@@ -285,7 +285,9 @@ pub fn search_deferred_tools(
                 }
             }
 
-            if score == 0 {
+            // Require at least a hint or description match (score ≥ 16) to avoid
+            // returning tools that only weakly match via a partial name substring.
+            if score < 16 {
                 return None;
             }
 

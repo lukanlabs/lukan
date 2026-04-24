@@ -6,6 +6,7 @@
 
 use globset::GlobBuilder;
 use lukan_core::config::types::{PermissionMode, PermissionsConfig};
+use lukan_tools::{BashCommandClass, classify_bash_command};
 use tokio::sync::watch;
 
 /// Verdict for a tool invocation
@@ -33,6 +34,13 @@ const SAFE_TOOLS: &[&str] = &[
     "SubmitPlan",
     "LoadSkill",
     "Remember",
+    "ToolSearch",
+];
+
+const SAFE_BASH_COMMAND_CLASSES: &[BashCommandClass] = &[
+    BashCommandClass::Read,
+    BashCommandClass::Search,
+    BashCommandClass::List,
 ];
 
 /// Browser tools — only treated as safe when browser mode is enabled
@@ -224,7 +232,17 @@ impl PermissionMatcher {
         match self.effective_mode() {
             // 2. Planner: only allow read-only tools
             PermissionMode::Planner => {
-                if PLANNER_WHITELIST.contains(&tool_name) {
+                if tool_name == "Bash" {
+                    let command = tool_input
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if SAFE_BASH_COMMAND_CLASSES.contains(&classify_bash_command(command)) {
+                        ToolVerdict::Allow
+                    } else {
+                        ToolVerdict::Deny
+                    }
+                } else if PLANNER_WHITELIST.contains(&tool_name) {
                     ToolVerdict::Allow
                 } else {
                     ToolVerdict::Deny
@@ -334,6 +352,10 @@ mod tests {
             ToolVerdict::Allow
         );
         assert_eq!(
+            matcher.verdict("ToolSearch", &json!({"query": "web search"})),
+            ToolVerdict::Allow
+        );
+        assert_eq!(
             matcher.verdict("Bash", &json!({"command": "echo hi"})),
             ToolVerdict::Ask
         );
@@ -361,6 +383,18 @@ mod tests {
         );
         assert_eq!(
             matcher.verdict("Bash", &json!({"command": "ls"})),
+            ToolVerdict::Allow
+        );
+        assert_eq!(
+            matcher.verdict("Bash", &json!({"command": "git status"})),
+            ToolVerdict::Allow
+        );
+        assert_eq!(
+            matcher.verdict("Bash", &json!({"command": "cargo test -p lukan-agent"})),
+            ToolVerdict::Deny
+        );
+        assert_eq!(
+            matcher.verdict("Bash", &json!({"command": "rm -rf /tmp/foo"})),
             ToolVerdict::Deny
         );
         assert_eq!(
@@ -403,6 +437,129 @@ mod tests {
         );
         assert_eq!(
             matcher.verdict("ReadFiles", &json!({"file_path": "src/main.rs"})),
+            ToolVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn allow_rule_allows_matching_tool_in_auto_mode() {
+        let config = PermissionsConfig {
+            allow: vec!["WriteFile(**/*.rs)".to_string()],
+            ..default_config()
+        };
+        let matcher = PermissionMatcher::new(PermissionMode::Auto, &config);
+        assert_eq!(
+            matcher.verdict("WriteFile", &json!({"file_path": "src/main.rs"})),
+            ToolVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn ask_rule_forces_ask_even_for_matching_tool() {
+        let config = PermissionsConfig {
+            ask: vec!["ReadFiles(**/*.env)".to_string()],
+            ..default_config()
+        };
+        let matcher = PermissionMatcher::new(PermissionMode::Auto, &config);
+        assert_eq!(
+            matcher.verdict("ReadFiles", &json!({"file_path": "config/.env"})),
+            ToolVerdict::Ask
+        );
+    }
+
+    #[test]
+    fn deny_rule_takes_precedence_over_allow() {
+        let config = PermissionsConfig {
+            deny: vec!["WriteFile(**/*.rs)".to_string()],
+            allow: vec!["WriteFile(**/*.rs)".to_string()],
+            ..default_config()
+        };
+        let matcher = PermissionMatcher::new(PermissionMode::Auto, &config);
+        assert_eq!(
+            matcher.verdict("WriteFile", &json!({"file_path": "src/main.rs"})),
+            ToolVerdict::Deny
+        );
+    }
+
+    #[test]
+    fn bash_rule_git_push_matches_only_git_push() {
+        let config = PermissionsConfig {
+            allow: vec!["Bash(git:push)".to_string()],
+            ..default_config()
+        };
+        let matcher = PermissionMatcher::new(PermissionMode::Auto, &config);
+        assert_eq!(
+            matcher.verdict("Bash", &json!({"command": "git push origin main"})),
+            ToolVerdict::Allow
+        );
+        assert_eq!(
+            matcher.verdict("Bash", &json!({"command": "git status"})),
+            ToolVerdict::Ask
+        );
+    }
+
+    #[test]
+    fn edit_file_rule_matches_path() {
+        let config = PermissionsConfig {
+            allow: vec!["EditFile(src/**/*.rs)".to_string()],
+            ..default_config()
+        };
+        let matcher = PermissionMatcher::new(PermissionMode::Auto, &config);
+        assert_eq!(
+            matcher.verdict("EditFile", &json!({"file_path": "src/lib.rs"})),
+            ToolVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn write_file_rule_matches_path() {
+        let config = PermissionsConfig {
+            allow: vec!["WriteFile(src/**/*.rs)".to_string()],
+            ..default_config()
+        };
+        let matcher = PermissionMatcher::new(PermissionMode::Auto, &config);
+        assert_eq!(
+            matcher.verdict("WriteFile", &json!({"file_path": "src/lib.rs"})),
+            ToolVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn glob_rule_matches_path() {
+        let config = PermissionsConfig {
+            allow: vec!["Glob(src/**)".to_string()],
+            ..default_config()
+        };
+        let matcher = PermissionMatcher::new(PermissionMode::Auto, &config);
+        assert_eq!(
+            matcher.verdict("Glob", &json!({"path": "src", "pattern": "**/*.rs"})),
+            ToolVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn grep_rule_matches_path() {
+        let config = PermissionsConfig {
+            allow: vec!["Grep(src/**)".to_string()],
+            ..default_config()
+        };
+        let matcher = PermissionMatcher::new(PermissionMode::Auto, &config);
+        assert_eq!(
+            matcher.verdict("Grep", &json!({"path": "src", "pattern": "todo"})),
+            ToolVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn browser_tools_are_allowed_when_browser_mode_enabled() {
+        let mut matcher = PermissionMatcher::new(PermissionMode::Auto, &default_config());
+        assert_eq!(
+            matcher.verdict("BrowserNavigate", &json!({"url": "https://example.com"})),
+            ToolVerdict::Ask
+        );
+        matcher.enable_browser_tools();
+        assert_eq!(
+            matcher.verdict("BrowserNavigate", &json!({"url": "https://example.com"})),
             ToolVerdict::Allow
         );
     }

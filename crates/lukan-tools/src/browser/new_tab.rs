@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
-use super::{get_manager, wrap_untrusted};
+use super::{browser_tool_metadata, get_manager, wrap_untrusted};
 use crate::{Tool, ToolContext};
 
 pub struct BrowserNewTab;
@@ -18,6 +18,12 @@ impl Tool for BrowserNewTab {
     fn description(&self) -> &str {
         "Open a new browser tab and navigate to the given URL."
     }
+
+    browser_tool_metadata!(
+        "open a new browser tab",
+        "Opening browser tab",
+        read_only = false
+    );
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

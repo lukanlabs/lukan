@@ -48,6 +48,7 @@ impl App {
             vision_provider: None,
             extra_env: self.config.credentials.flatten_skill_env(),
             compaction_threshold: None,
+            tab_id: None,
         };
 
         match AgentLoop::new(config).await {

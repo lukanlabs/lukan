@@ -2,6 +2,10 @@
   {
     "name": "GenerateImage",
     "description": "Generate an image from a text prompt using AI (Gemini). Returns the image inline and saves it to a file. The saved file path is included in the output.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "generate an image from a text prompt",
+    "activityLabel": "Generating image",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -16,6 +20,10 @@
   {
     "name": "EditImage",
     "description": "Edit an existing image using AI (Gemini). Accepts an image (file path or URL) and a text prompt describing the desired changes. Returns the modified image inline and saves it to a file.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "edit an image with an AI prompt",
+    "activityLabel": "Editing image",
     "inputSchema": {
       "type": "object",
       "properties": {

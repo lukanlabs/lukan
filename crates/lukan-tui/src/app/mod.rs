@@ -50,7 +50,7 @@ use crate::event::{AppEvent, is_quit, spawn_event_reader};
 use crate::widgets::approval_prompt::{ApprovalPromptWidget, summarize_tool_input};
 use crate::widgets::bg_picker::{BgEntry, BgPicker, BgPickerView, BgPickerWidget};
 use crate::widgets::chat::{
-    ChatMessage, ChatWidget, build_message_lines, physical_row_count, sanitize_for_display,
+    ChatMessage, ChatWidget, build_message_lines_wide, physical_row_count, sanitize_for_display,
 };
 use crate::widgets::command_palette::CommandPaletteWidget;
 use crate::widgets::event_picker::{EventPicker, EventPickerMode, EventPickerWidget};
@@ -169,7 +169,7 @@ pub struct App {
     planner_question: Option<PlannerQuestionState>,
     /// Sender to respond to planner questions
     planner_answer_tx: Option<mpsc::Sender<String>>,
-    /// Messages queued by the user while the agent was streaming (shared with agent)
+    /// Messages queued while the agent was streaming (shared with agent)
     queued_messages: Arc<std::sync::Mutex<Vec<String>>>,
     /// Whether the task panel is visible (toggled with Alt+T)
     task_panel_visible: bool,
@@ -257,6 +257,8 @@ pub(crate) struct ApprovalPrompt {
     pub(crate) selections: Vec<bool>,
     /// Cursor position
     pub(crate) selected: usize,
+    /// Whether all tools in this prompt are read-only according to metadata.
+    pub(crate) all_read_only: bool,
 }
 
 /// Interactive model picker state
@@ -325,7 +327,6 @@ pub(crate) struct PlanReviewState {
     pub(crate) selected: usize,
     pub(crate) mode: PlanReviewMode,
     pub(crate) feedback_input: String,
-    #[allow(dead_code)]
     pub(crate) scroll: u16,
 }
 
@@ -646,6 +647,10 @@ impl App {
         }
     }
 
+    pub fn current_session_id(&self) -> Option<String> {
+        self.session_id.clone()
+    }
+
     /// Create a new AgentLoop with a fresh session
     async fn create_agent(&mut self) -> AgentLoop {
         let system_prompt = helpers::build_system_prompt_with_opts(self.browser_tools).await;
@@ -733,6 +738,7 @@ impl App {
                 .model_settings
                 .get(&self.config.effective_model().unwrap_or_default())
                 .and_then(|s| s.compaction_threshold),
+            tab_id: self.daemon_tab_id.clone(),
         };
 
         let blocked_env_vars = project_cfg
@@ -943,30 +949,33 @@ impl App {
                 && self.event_picker.is_none()
                 && !self.terminal_visible
             {
-                let (msgs, committed_idx, streaming, vscroll) = match self.active_view {
+                let (msgs, committed_idx, thinking, streaming, vscroll) = match self.active_view {
                     ActiveView::Main => (
                         &self.messages,
                         &mut self.committed_msg_idx,
+                        self.streaming_thinking.as_str(),
                         self.streaming_text.as_str(),
                         &mut self.viewport_scroll,
                     ),
                     ActiveView::EventAgent => (
                         &self.event_messages,
                         &mut self.event_committed_msg_idx,
+                        "",
                         self.event_streaming_text.as_str(),
                         &mut self.event_viewport_scroll,
                     ),
                 };
-                let render_width = term_size.width.saturating_sub(1);
-                helpers::scroll_overflow(
-                    msgs,
-                    committed_idx,
-                    vscroll,
-                    &mut terminal,
+                let render_width = term_size.width;
+                helpers::scroll_overflow(helpers::ScrollOverflowContext {
+                    messages: msgs,
+                    committed_msg_idx: committed_idx,
+                    viewport_scroll: vscroll,
+                    terminal: &mut terminal,
                     chat_area_h,
-                    render_width,
-                    streaming,
-                )?;
+                    width: render_width,
+                    streaming_thinking: thinking,
+                    streaming_text: streaming,
+                })?;
             }
 
             // Pre-compute palette state for this frame
@@ -1037,8 +1046,7 @@ impl App {
                                 && let Some(ref mut modal) = self.terminal_modal
                             {
                                 modal.send_paste(&text);
-                            } else if !self.is_streaming
-                                && self.session_picker.is_none()
+                            } else if self.session_picker.is_none()
                                 && self.model_picker.is_none()
                                 && self.reasoning_picker.is_none()
                             {

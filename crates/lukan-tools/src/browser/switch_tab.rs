@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use lukan_core::models::tools::ToolResult;
 use serde_json::json;
 
-use super::{get_manager, wrap_untrusted};
+use super::{browser_tool_metadata, get_manager, wrap_untrusted};
 use crate::{Tool, ToolContext};
 
 pub struct BrowserSwitchTab;
@@ -16,6 +16,12 @@ impl Tool for BrowserSwitchTab {
     fn description(&self) -> &str {
         "Switch to a different browser tab by its number (from BrowserTabs)."
     }
+
+    browser_tool_metadata!(
+        "switch to another open browser tab",
+        "Switching browser tab",
+        read_only = false
+    );
 
     fn input_schema(&self) -> serde_json::Value {
         json!({

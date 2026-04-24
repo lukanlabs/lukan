@@ -743,7 +743,7 @@ impl App {
                         if let Some(agent) = agents.iter().find(|a| a.id == entry_id) {
                             picker.detail_id = agent.id.clone();
                             picker.detail_status = format!("{}", agent.status);
-                            picker.detail_turns = format!("{}/{}", agent.turns, agent.max_turns);
+                            picker.detail_turns = format!("{}", agent.turns);
                             picker.detail_tokens = format!(
                                 "{}in/{}out tokens",
                                 agent.input_tokens, agent.output_tokens
@@ -824,7 +824,7 @@ impl App {
                                         id: a.id.clone(),
                                         task: task_preview,
                                         status: format!("{}", a.status),
-                                        turns: format!("{}/{}", a.turns, a.max_turns),
+                                        turns: format!("{}", a.turns),
                                         elapsed: format!("{secs}s running"),
                                     }
                                 })
@@ -963,6 +963,7 @@ impl App {
                 if let Some(ref daemon) = self.daemon_tx {
                     let _ = daemon.send(&crate::ws_client::OutMessage::QueueMessage {
                         content: text.clone(),
+                        display_content: None,
                         session_id: self.daemon_tab_id.clone(),
                     });
                 }
@@ -1100,7 +1101,7 @@ impl App {
                                 id: a.id.clone(),
                                 task: task_preview,
                                 status: format!("{}", a.status),
-                                turns: format!("{}/{}", a.turns, a.max_turns),
+                                turns: format!("{}", a.turns),
                                 elapsed,
                             }
                         })

@@ -789,11 +789,17 @@ mod tests {
                 name: "bash".into(),
                 description: "Run commands".into(),
                 input_schema: json!({"type": "object"}),
+                deferred: false,
+                read_only: false,
+                search_hint: None,
             },
             ToolDefinition {
                 name: "read".into(),
                 description: "Read files".into(),
                 input_schema: json!({"type": "object"}),
+                deferred: false,
+                read_only: false,
+                search_hint: None,
             },
         ];
         let result = p.convert_tools(&tools);
@@ -811,6 +817,9 @@ mod tests {
             name: "bash".into(),
             description: "Run".into(),
             input_schema: json!({}),
+            deferred: false,
+            read_only: false,
+            search_hint: None,
         }];
         let result = p.convert_tools(&tools);
         assert_eq!(result[0]["cache_control"]["type"], "ephemeral");

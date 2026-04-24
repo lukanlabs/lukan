@@ -9,6 +9,12 @@ pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+    #[serde(default)]
+    pub deferred: bool,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_hint: Option<String>,
 }
 
 /// Result from executing a tool
@@ -70,6 +76,9 @@ mod tests {
                     "command": {"type": "string"}
                 }
             }),
+            deferred: false,
+            read_only: false,
+            search_hint: None,
         };
         let json = serde_json::to_string(&def).unwrap();
         assert!(json.contains(r#""name":"Bash""#));

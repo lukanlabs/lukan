@@ -92,7 +92,7 @@ impl Widget for InputWidget<'_> {
         let border_color = if is_shell {
             Color::Red
         } else if self.is_focused {
-            Color::Cyan
+            Color::Rgb(170, 170, 170)
         } else {
             Color::DarkGray
         };

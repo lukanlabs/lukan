@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::app::{PlanReviewMode, PlanReviewState};
+use crate::widgets::markdown::render_markdown;
 
 pub(crate) struct PlanReviewWidget<'a> {
     state: &'a PlanReviewState,
@@ -69,17 +70,13 @@ impl Widget for PlanReviewWidget<'_> {
                 )));
                 lines.push(Line::from(""));
 
-                // Render task detail as plain text (markdown rendered as-is)
-                for line in task.detail.lines() {
-                    lines.push(Line::from(Span::styled(
-                        format!(" {line}"),
-                        Style::default().fg(Color::White),
-                    )));
+                for line in render_markdown(&task.detail) {
+                    lines.push(line);
                 }
 
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    " Esc=back to list",
+                    " Esc=back to list  ↑↓/jk=scroll",
                     Style::default().fg(Color::DarkGray),
                 )));
             }
@@ -116,7 +113,8 @@ impl Widget for PlanReviewWidget<'_> {
 
         let paragraph = Paragraph::new(lines)
             .block(block)
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((self.state.scroll, 0));
         paragraph.render(area, buf);
     }
 }

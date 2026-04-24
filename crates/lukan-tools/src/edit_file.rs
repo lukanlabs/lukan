@@ -143,6 +143,65 @@ impl Tool for EditFileTool {
         })
     }
 
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("edit existing files by exact string replacement")
+    }
+
+    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+        Some("Editing file".to_string())
+    }
+
+    fn validate_input(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<(), String> {
+        let file_path_str = input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing required field: file_path".to_string())?;
+
+        let path = PathBuf::from(file_path_str);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            ctx.cwd.join(&path)
+        };
+
+        if let Ok(read_files) = ctx.read_files.try_lock()
+            && !read_files.contains_key(&path)
+        {
+            return Err(format!(
+                "File has not been read yet. Use ReadFiles first: {file_path_str}"
+            ));
+        }
+
+        let edits_value = input.get("edits");
+        if edits_value.is_none() {
+            let old_text = input
+                .get("old_text")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    "Missing required field: old_text (or provide edits array)".to_string()
+                })?;
+            let _new_text = input
+                .get("new_text")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    "Missing required field: new_text (or provide edits array)".to_string()
+                })?;
+            if old_text.is_empty() {
+                return Err("old_text cannot be empty.".to_string());
+            }
+        }
+
+        Ok(())
+    }
+
     async fn execute(
         &self,
         input: serde_json::Value,

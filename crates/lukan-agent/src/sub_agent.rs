@@ -5,6 +5,7 @@
 //! - `SubAgentManager` tracks running/completed sub-agents
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -18,30 +19,112 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::{error, info};
 
 use crate::message_history::MessageHistory;
+use crate::permission_matcher::PLANNER_TOOL_WHITELIST;
+use crate::subagent_worktrees::{
+    WorktreeCleanupStatus, WorktreeRecord, create_worktree, find_git_root, remove_worktree,
+    upsert_record, worktree_has_changes,
+};
 
 // ── Global Manager ────────────────────────────────────────────────────────
 
-static MANAGER: std::sync::LazyLock<RwLock<SubAgentManager>> =
-    std::sync::LazyLock::new(|| RwLock::new(SubAgentManager::new()));
+#[derive(Debug, Clone)]
+pub struct SubAgentIsolationContext {
+    pub cwd: PathBuf,
+    pub allowed_paths: Option<Vec<PathBuf>>,
+    pub worktree_path: Option<PathBuf>,
+    pub worktree_branch: Option<String>,
+    pub git_root: Option<PathBuf>,
+    pub worktree_head_commit: Option<String>,
+}
 
-/// Configure the sub-agent manager with the parent's provider info
-pub async fn configure(
-    provider: Arc<dyn Provider>,
-    system_prompt: SystemPrompt,
-    cwd: std::path::PathBuf,
-    provider_name: String,
-    model_name: String,
-    sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
-    allowed_paths: Option<Vec<std::path::PathBuf>>,
-) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubAgentIsolationMode {
+    Shared,
+    Worktree,
+}
+
+impl SubAgentIsolationMode {
+    fn from_input(input: Option<&str>) -> Self {
+        match input
+            .unwrap_or("shared")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "worktree" => Self::Worktree,
+            _ => Self::Shared,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Shared => "shared",
+            Self::Worktree => "worktree",
+        }
+    }
+}
+
+fn build_subagent_worktree_notice(parent_cwd: &Path, worktree_cwd: &Path) -> String {
+    format!(
+        "You inherited context from a parent agent working in {}. You are operating in an isolated git worktree at {} — same repository, same relative file structure, separate working copy. Paths from the inherited context refer to the parent's working directory, so translate them to your worktree root and re-read files before editing if they may be stale. Your changes stay in this worktree and do not affect the parent's files unless explicitly applied later.",
+        parent_cwd.display(),
+        worktree_cwd.display()
+    )
+}
+
+fn resolve_subagent_isolation(
+    cwd: &Path,
+    allowed_paths: Option<Vec<PathBuf>>,
+    mode: SubAgentIsolationMode,
+    agent_id: &str,
+) -> anyhow::Result<SubAgentIsolationContext> {
+    match mode {
+        SubAgentIsolationMode::Shared => Ok(SubAgentIsolationContext {
+            cwd: cwd.to_path_buf(),
+            allowed_paths,
+            worktree_path: None,
+            worktree_branch: None,
+            git_root: None,
+            worktree_head_commit: None,
+        }),
+        SubAgentIsolationMode::Worktree => {
+            let repo_root = find_git_root(cwd)
+                .ok_or_else(|| anyhow::anyhow!("Worktree isolation requires a git repository."))?;
+            let (worktree_path, worktree_branch, head_commit) =
+                create_worktree(&repo_root, agent_id)?;
+            Ok(SubAgentIsolationContext {
+                cwd: worktree_path.clone(),
+                allowed_paths: Some(vec![worktree_path.clone()]),
+                worktree_path: Some(worktree_path),
+                worktree_branch: Some(worktree_branch),
+                git_root: Some(repo_root),
+                worktree_head_commit: Some(head_commit),
+            })
+        }
+    }
+}
+
+pub struct SubAgentConfig {
+    pub provider: Arc<dyn Provider>,
+    pub system_prompt: SystemPrompt,
+    pub cwd: std::path::PathBuf,
+    pub provider_name: String,
+    pub model_name: String,
+    pub sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
+    pub allowed_paths: Option<Vec<std::path::PathBuf>>,
+    pub session_tab_id: Option<String>,
+}
+
+pub async fn configure(config: SubAgentConfig) {
     let mut mgr = MANAGER.write().await;
-    mgr.provider = Some(provider);
-    mgr.system_prompt = Some(system_prompt);
-    mgr.cwd = Some(cwd);
-    mgr.provider_name = Some(provider_name);
-    mgr.model_name = Some(model_name);
-    mgr.sandbox = sandbox;
-    mgr.allowed_paths = allowed_paths;
+    mgr.provider = Some(config.provider);
+    mgr.system_prompt = Some(config.system_prompt);
+    mgr.cwd = Some(config.cwd);
+    mgr.provider_name = Some(config.provider_name);
+    mgr.model_name = Some(config.model_name);
+    mgr.sandbox = config.sandbox;
+    mgr.allowed_paths = config.allowed_paths;
+    mgr.session_tab_id = config.session_tab_id;
 }
 
 /// Update the disabled tools for sub-agents (called when parent toggles tools)
@@ -56,7 +139,8 @@ pub async fn set_tool_filter(filter: Option<Vec<String>>) {
     mgr.tool_filter = filter;
 }
 
-// ── Manager ───────────────────────────────────────────────────────────────
+static MANAGER: std::sync::LazyLock<RwLock<SubAgentManager>> =
+    std::sync::LazyLock::new(|| RwLock::new(SubAgentManager::new()));
 
 /// Real-time update pushed from a running sub-agent to the TUI
 #[derive(Debug, Clone)]
@@ -66,10 +150,10 @@ pub struct SubAgentUpdate {
     pub chat_messages: Vec<SubAgentChatMsg>,
     pub status: String,
     pub turns: usize,
-    pub max_turns: usize,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub error: Option<String>,
+    pub tab_id: Option<String>,
 }
 
 struct SubAgentManager {
@@ -83,6 +167,7 @@ struct SubAgentManager {
     model_name: Option<String>,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
     allowed_paths: Option<Vec<std::path::PathBuf>>,
+    session_tab_id: Option<String>,
     /// Tool restrictions inherited from the parent agent (None = all tools allowed)
     tool_filter: Option<Vec<String>>,
     /// Disabled tools inherited from the parent agent (Alt+P toggles)
@@ -108,6 +193,7 @@ impl SubAgentManager {
             model_name: None,
             sandbox: None,
             allowed_paths: None,
+            session_tab_id: None,
             tool_filter: None,
             disabled_tools: std::collections::HashSet::new(),
             update_tx: None,
@@ -148,11 +234,15 @@ pub struct SubAgentEntry {
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub turns: usize,
-    pub max_turns: usize,
     pub text_output: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub error: Option<String>,
+    pub isolation: String,
+    pub worktree_path: Option<PathBuf>,
+    pub worktree_branch: Option<String>,
+    pub git_root: Option<PathBuf>,
+    pub cleanup_status: Option<String>,
     /// Full chat conversation for the spectator view
     pub chat_messages: Vec<SubAgentChatMsg>,
 }
@@ -181,7 +271,7 @@ impl std::fmt::Display for SubAgentStatus {
 async fn spawn_sub_agent(
     task: String,
     timeout_ms: u64,
-    max_turns: usize,
+    isolation: SubAgentIsolationMode,
     cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> anyhow::Result<String> {
     let id = {
@@ -200,6 +290,7 @@ async fn spawn_sub_agent(
         sandbox,
         allowed_paths,
         stream_broadcast_tx,
+        session_tab_id,
     ) = {
         let mgr = MANAGER.read().await;
         let provider = mgr
@@ -216,8 +307,22 @@ async fn spawn_sub_agent(
         let sandbox = mgr.sandbox.clone();
         let allowed_paths = mgr.allowed_paths.clone();
         let stream_tx = mgr.stream_broadcast_tx.clone();
-        (provider, sp, cwd, pn, mn, sandbox, allowed_paths, stream_tx)
+        let session_tab_id = mgr.session_tab_id.clone();
+        (
+            provider,
+            sp,
+            cwd,
+            pn,
+            mn,
+            sandbox,
+            allowed_paths,
+            stream_tx,
+            session_tab_id,
+        )
     };
+
+    let parent_cwd = cwd.clone();
+    let isolation_ctx = resolve_subagent_isolation(&cwd, allowed_paths, isolation, &id)?;
 
     let entry = SubAgentEntry {
         id: id.clone(),
@@ -226,11 +331,15 @@ async fn spawn_sub_agent(
         started_at: Utc::now(),
         completed_at: None,
         turns: 0,
-        max_turns,
         text_output: String::new(),
         input_tokens: 0,
         output_tokens: 0,
         error: None,
+        isolation: isolation.as_str().to_string(),
+        worktree_path: isolation_ctx.worktree_path.clone(),
+        worktree_branch: isolation_ctx.worktree_branch.clone(),
+        git_root: isolation_ctx.git_root.clone(),
+        cleanup_status: None,
         chat_messages: Vec::new(),
     };
 
@@ -258,14 +367,14 @@ async fn spawn_sub_agent(
             agent_id,
             task,
             timeout_ms,
-            max_turns,
             provider,
             system_prompt,
-            cwd,
+            parent_cwd,
+            isolation_ctx,
             sandbox,
-            allowed_paths,
             Some(sub_cancel),
             stream_broadcast_tx,
+            session_tab_id,
         )
         .await;
     });
@@ -278,16 +387,19 @@ async fn run_sub_agent(
     id: String,
     task: String,
     timeout_ms: u64,
-    max_turns: usize,
     provider: Arc<dyn Provider>,
     system_prompt: SystemPrompt,
-    cwd: std::path::PathBuf,
+    parent_cwd: PathBuf,
+    isolation_ctx: SubAgentIsolationContext,
     sandbox: Option<lukan_tools::sandbox::SandboxConfig>,
-    allowed_paths: Option<Vec<std::path::PathBuf>>,
     cancel: Option<tokio_util::sync::CancellationToken>,
     stream_broadcast_tx: broadcast::Sender<StreamEvent>,
+    session_tab_id: Option<String>,
 ) {
     let mut history = MessageHistory::new();
+    if let Some(worktree_path) = &isolation_ctx.worktree_path {
+        history.add_user_message(&build_subagent_worktree_notice(&parent_cwd, worktree_path));
+    }
     history.add_user_message(&task);
 
     // Get the update channel sender (if TUI is subscribed)
@@ -339,12 +451,6 @@ async fn run_sub_agent(
     tokio::pin!(timeout);
 
     'outer: loop {
-        if turns >= max_turns {
-            final_status = SubAgentStatus::Aborted;
-            text_output.push_str("\n[Reached maximum turns]");
-            break;
-        }
-
         // Check cancellation from parent agent
         if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
             final_status = SubAgentStatus::Aborted;
@@ -480,10 +586,10 @@ async fn run_sub_agent(
                 chat_messages: chat_messages.clone(),
                 status: "running".to_string(),
                 turns,
-                max_turns,
                 input_tokens: total_input,
                 output_tokens: total_output,
                 error: None,
+                tab_id: session_tab_id.clone(),
             });
         }
         // Push via stream events (daemon mode → TUI over WebSocket)
@@ -493,10 +599,10 @@ async fn run_sub_agent(
                 &task,
                 "running",
                 turns,
-                max_turns,
                 total_input,
                 total_output,
                 None,
+                session_tab_id.clone(),
                 &chat_messages,
             ));
         }
@@ -517,12 +623,12 @@ async fn run_sub_agent(
         for (_tool_id, name, input) in &pending_tools {
             let reg = Arc::clone(&tools);
             let rf = Arc::clone(&read_files);
-            let c = cwd.clone();
+            let c = isolation_ctx.cwd.clone();
             let n = name.clone();
             let inp = input.clone();
 
             let sandbox_cfg = sandbox.clone();
-            let ap = allowed_paths.clone();
+            let ap = isolation_ctx.allowed_paths.clone();
             let cancel_token = cancel.clone();
             let sa_id = id.clone();
             handles.push(tokio::spawn(async move {
@@ -608,10 +714,10 @@ async fn run_sub_agent(
                 chat_messages: chat_messages.clone(),
                 status: "running".to_string(),
                 turns,
-                max_turns,
                 input_tokens: total_input,
                 output_tokens: total_output,
                 error: None,
+                tab_id: session_tab_id.clone(),
             });
         }
         // Push via stream events (daemon mode)
@@ -621,10 +727,10 @@ async fn run_sub_agent(
                 &task,
                 "running",
                 turns,
-                max_turns,
                 total_input,
                 total_output,
                 None,
+                session_tab_id.clone(),
                 &chat_messages,
             ));
         }
@@ -673,10 +779,10 @@ async fn run_sub_agent(
             chat_messages: chat_messages.clone(),
             status: final_status_str.clone(),
             turns,
-            max_turns,
             input_tokens: total_input,
             output_tokens: total_output,
             error: final_error.clone(),
+            tab_id: session_tab_id.clone(),
         });
     }
     // Push via stream events (daemon mode)
@@ -686,12 +792,81 @@ async fn run_sub_agent(
             &task,
             &final_status_str,
             turns,
-            max_turns,
             total_input,
             total_output,
             final_error,
+            session_tab_id.clone(),
             &chat_messages,
         ));
+    }
+
+    let cleanup_status = if isolation_ctx.worktree_path.is_some() {
+        if let (Some(worktree_path), Some(worktree_branch), Some(git_root), Some(head_commit)) = (
+            isolation_ctx.worktree_path.as_ref(),
+            isolation_ctx.worktree_branch.as_ref(),
+            isolation_ctx.git_root.as_ref(),
+            isolation_ctx.worktree_head_commit.as_ref(),
+        ) {
+            if !worktree_has_changes(worktree_path, head_commit) {
+                if remove_worktree(worktree_path, worktree_branch, git_root) {
+                    Some(WorktreeCleanupStatus::AutoremovedClean.as_str().to_string())
+                } else {
+                    Some(
+                        WorktreeCleanupStatus::PreservedCleanupFailed
+                            .as_str()
+                            .to_string(),
+                    )
+                }
+            } else {
+                Some(WorktreeCleanupStatus::PreservedChanges.as_str().to_string())
+            }
+        } else {
+            Some(
+                WorktreeCleanupStatus::PreservedCleanupFailed
+                    .as_str()
+                    .to_string(),
+            )
+        }
+    } else {
+        None
+    };
+
+    if let (Some(worktree_path), Some(worktree_branch), Some(git_root), Some(head_commit)) = (
+        isolation_ctx.worktree_path.clone(),
+        isolation_ctx.worktree_branch.clone(),
+        isolation_ctx.git_root.clone(),
+        isolation_ctx.worktree_head_commit.clone(),
+    ) {
+        let record_git_root = git_root.clone();
+        let _ = upsert_record(
+            &record_git_root,
+            WorktreeRecord {
+                agent_id: id.clone(),
+                task: task.clone(),
+                isolation: "worktree".to_string(),
+                worktree_path,
+                worktree_branch,
+                git_root,
+                head_commit,
+                started_at: Utc::now(),
+                completed_at: Some(Utc::now()),
+                cleanup_status: match cleanup_status.as_deref() {
+                    Some("autoremoved (clean)") => WorktreeCleanupStatus::AutoremovedClean,
+                    Some("preserved (changes detected)") => WorktreeCleanupStatus::PreservedChanges,
+                    Some("preserved (cleanup failed)") => {
+                        WorktreeCleanupStatus::PreservedCleanupFailed
+                    }
+                    _ => WorktreeCleanupStatus::Pending,
+                },
+            },
+        );
+    }
+
+    {
+        let mut mgr = MANAGER.write().await;
+        if let Some(entry) = mgr.entries.get_mut(&id) {
+            entry.cleanup_status = cleanup_status;
+        }
     }
 
     info!(id, turns, "Sub-agent completed");
@@ -716,18 +891,21 @@ pub async fn upsert_from_update(update: &SubAgentUpdate) {
             started_at: Utc::now(),
             completed_at: None,
             turns: 0,
-            max_turns: update.max_turns,
             text_output: String::new(),
             input_tokens: 0,
             output_tokens: 0,
             error: None,
+            isolation: "shared".to_string(),
+            worktree_path: None,
+            worktree_branch: None,
+            git_root: None,
+            cleanup_status: None,
             chat_messages: Vec::new(),
         });
     if !update.task.is_empty() {
         entry.task = update.task.clone();
     }
     entry.turns = update.turns;
-    entry.max_turns = update.max_turns;
     entry.input_tokens = update.input_tokens;
     entry.output_tokens = update.output_tokens;
     entry.error = update.error.clone();
@@ -814,10 +992,11 @@ impl Tool for SubAgentTool {
                     "description": "Timeout in milliseconds (default: 120000)",
                     "default": 120000
                 },
-                "maxTurns": {
-                    "type": "integer",
-                    "description": "Maximum LLM turns before stopping (default: 20)",
-                    "default": 20
+                "isolation": {
+                    "type": "string",
+                    "description": "Execution isolation for the sub-agent: shared checkout (default) or isolated git worktree for coding work.",
+                    "enum": ["shared", "worktree"],
+                    "default": "shared"
                 }
             },
             "required": ["task"]
@@ -840,12 +1019,14 @@ impl Tool for SubAgentTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(120_000);
 
-        let max_turns = input.get("maxTurns").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+        let isolation =
+            SubAgentIsolationMode::from_input(input.get("isolation").and_then(|v| v.as_str()));
 
-        match spawn_sub_agent(task.clone(), timeout, max_turns, ctx.cancel.clone()).await {
+        match spawn_sub_agent(task.clone(), timeout, isolation, ctx.cancel.clone()).await {
             Ok(id) => Ok(ToolResult::success(format!(
-                "Sub-agent spawned (ID: {id})\nTask: {task}\n\n\
-                 Running in background. Use SubAgentResult(\"{id}\") to check status/results."
+                "Sub-agent spawned (ID: {id})\nTask: {task}\nIsolation: {}\n\n\
+                 Running in background. Use SubAgentResult(\"{id}\") to check status/results.",
+                isolation.as_str()
             ))),
             Err(e) => Ok(ToolResult::error(format!("SubAgent error: {e}"))),
         }
@@ -928,26 +1109,147 @@ impl Tool for SubAgentResultTool {
 
 // ── Explore Sub-Agent ──────────────────────────────────────────────────────
 
-const EXPLORE_SYSTEM_PROMPT: &str = "\
-You are a codebase research agent. Your ONLY job is to explore code and return detailed findings.
-You CANNOT modify files. Use ReadFiles, Grep, and Glob to investigate.
-Be thorough — read all relevant files, trace call chains, check types and interfaces.
-Your output will be used by the main agent to make code changes, so include:
-- Exact file paths and line numbers
+const EXPLORE_SYSTEM_PROMPT_PREFIX: &str = "\
+You are a fast read-only codebase exploration agent.
+Your ONLY job is to search, inspect, and analyze an existing codebase, then return a clear report to the main agent.
+
+=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
+You are STRICTLY PROHIBITED from:
+- Creating new files
+- Modifying existing files
+- Deleting files
+- Moving or copying files
+- Creating temporary files anywhere, including /tmp
+- Using redirect operators (>, >>) or heredocs to write to files
+- Running any command that changes system state
+
+You may ONLY use tools for read-only investigation.
+Your output will be used by the main agent to make changes, so include:
+- Exact file paths and line numbers when relevant
 - Relevant code snippets
 - How components connect to each other
 - Any patterns or conventions you notice
 
-Guidelines:
-- Start with Grep to search for relevant code by content, or Glob to find files by name pattern. Then use ReadFiles to read specific sections.
-- Use Grep with output_mode \"files_with_matches\" to find which files contain a pattern, \"content\" to see matching lines, or \"count\" for match counts.
-- For Glob, ALWAYS use specific patterns like \"**/*.rs\", \"src/**/*.ts\", \"**/Cargo.toml\". NEVER use broad patterns like \"**/*\", \"*\", or \"*/*\" — they waste tokens and return noise.
-- Use ReadFiles with offset/limit to read only the relevant parts of large files.
-- Call multiple independent tools in parallel when possible.
-- Be concise but complete — include everything the main agent needs to act.";
+Core workflow:
+- Start with Grep to search by content or Glob to find files by name pattern
+- Use ReadFiles only once you know which files are relevant
+- Use ReadFiles with offset/limit to read only relevant sections of large files
+- Call multiple independent tools in parallel when possible
+- Prefer real source code and runtime wiring over docs when answering implementation questions
+- Use docs only to orient yourself or confirm high-level architecture
+- Let the actual repository structure guide your exploration instead of assuming a specific layout
+- Be concise but complete — include everything the main agent needs to act
 
-/// Read-only tools available to the Explore sub-agent
-const EXPLORE_TOOLS: &[&str] = &["ReadFiles", "Grep", "Glob", "WebFetch"];
+Tool guidance:
+- Use Remember when the task may depend on prior project decisions, architecture notes, conventions, or previously discovered project structure
+- Treat Remember as a fast project-context lookup, not as final evidence
+- Validate important Remember findings against the current codebase with Grep, Glob, ReadFiles, or approved read-only Bash
+- Use Grep with output_mode \"files_with_matches\" to find which files contain a pattern, \"content\" to inspect matching lines, or \"count\" for match counts
+- For Glob, ALWAYS use specific patterns like \"**/*.rs\", \"src/**/*.ts\", or \"**/Cargo.toml\". NEVER use broad patterns like \"**/*\", \"*\", or \"*/*\"
+- You may use Bash ONLY for read-only search/navigation commands like: ls, find, grep, git status, git log, git diff, cat, head, tail, pwd
+- NEVER use Bash for mkdir, touch, rm, cp, mv, git add, git commit, npm install, bun install, cargo build, cargo test, python scripts that write files, or anything that changes files or system state";
+
+const EXPLORE_REPORTING_GUIDANCE: &str = "\
+Final answer requirements:
+- Return findings directly as a normal message
+- Do NOT try to create files
+- Summarize the most relevant findings first
+- Mention uncertainty or missing evidence explicitly";
+
+const EXPLORE_TOOLS: &[&str] = &["ReadFiles", "Grep", "Glob", "Bash", "Remember"];
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ExploreThoroughness {
+    Quick,
+    Medium,
+    Thorough,
+}
+
+impl ExploreThoroughness {
+    fn from_input(input: Option<&str>) -> Self {
+        match input
+            .unwrap_or("medium")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "quick" => Self::Quick,
+            "thorough" | "very thorough" => Self::Thorough,
+            _ => Self::Medium,
+        }
+    }
+
+    fn prompt_guidance(&self) -> &'static str {
+        match self {
+            Self::Quick => {
+                "Thoroughness level: quick. Prefer a fast pass over the most likely files and patterns. Stop once you have enough evidence to answer confidently."
+            }
+            Self::Medium => {
+                "Thoroughness level: medium. Check the main implementation plus nearby supporting files, types, and call paths before concluding."
+            }
+            Self::Thorough => {
+                "Thoroughness level: thorough. Be comprehensive: search alternate names, trace call chains, inspect related types/interfaces, and cross-check multiple implementation points before concluding."
+            }
+        }
+    }
+}
+
+fn build_explore_system_prompt(thoroughness: ExploreThoroughness) -> String {
+    format!(
+        "{}\n\n{}\n\n{}",
+        EXPLORE_SYSTEM_PROMPT_PREFIX,
+        thoroughness.prompt_guidance(),
+        EXPLORE_REPORTING_GUIDANCE
+    )
+}
+
+fn validate_explore_bash_command(command: &str) -> Result<(), String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return Err("Explore Bash command is empty.".to_string());
+    }
+
+    let forbidden_fragments = [
+        ">",
+        ">>",
+        "<<",
+        "| tee",
+        "mkdir",
+        "touch",
+        "rm ",
+        "rm\t",
+        "cp ",
+        "cp\t",
+        "mv ",
+        "mv\t",
+        "git add",
+        "git commit",
+        "git push",
+        "npm install",
+        "bun install",
+        "cargo build",
+        "cargo test",
+        "python -c",
+        "python3 -c",
+    ];
+
+    let lower = trimmed.to_ascii_lowercase();
+    if forbidden_fragments.iter().any(|frag| lower.contains(frag)) {
+        return Err(
+            "Explore only allows read-only Bash commands for search/navigation.".to_string(),
+        );
+    }
+
+    let first = lower.split_whitespace().next().unwrap_or_default();
+    let allowed_prefixes = ["ls", "find", "grep", "git", "cat", "head", "tail", "pwd"];
+    if !allowed_prefixes.contains(&first) {
+        return Err(format!(
+            "Explore Bash only allows read-only search/navigation commands. Got: {first}"
+        ));
+    }
+
+    Ok(())
+}
 
 /// Extract the main display arg for a tool call (file path, pattern, etc.)
 fn get_display_arg(name: &str, input: &serde_json::Value) -> String {
@@ -962,7 +1264,7 @@ fn get_display_arg(name: &str, input: &serde_json::Value) -> String {
         "ReadFiles" => s("file_path"),
         "Grep" => s("pattern"),
         "Glob" => s("pattern"),
-        "WebFetch" => s("url"),
+        "Bash" => s("command"),
         _ => {
             let j = input.to_string();
             if j.len() > 60 {
@@ -1046,10 +1348,10 @@ fn build_explore_activity(
 /// research-focused system prompt. Emits `ExploreProgress` events
 /// via `progress_tx` for TUI display.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_explore(
+pub(crate) async fn run_explore(
     task: &str,
     timeout_ms: u64,
-    max_turns: usize,
+    thoroughness: ExploreThoroughness,
     progress_tx: Option<mpsc::Sender<StreamEvent>>,
     explore_id: String,
     cancel: Option<tokio_util::sync::CancellationToken>,
@@ -1072,7 +1374,7 @@ pub async fn run_explore(
 
     // Use a research-focused system prompt instead of the parent's
     let system_prompt = SystemPrompt::Structured {
-        cached: vec![EXPLORE_SYSTEM_PROMPT.to_string()],
+        cached: vec![build_explore_system_prompt(thoroughness)],
         dynamic: String::new(),
     };
 
@@ -1101,11 +1403,24 @@ pub async fn run_explore(
         tools.retain(&refs);
     }
     tools.retain(EXPLORE_TOOLS);
+    let planner_defs = tools.definitions();
+    let planner_safe_names: Vec<String> = planner_defs
+        .iter()
+        .filter(|d| {
+            PLANNER_TOOL_WHITELIST.contains(&d.name.as_str())
+                && tools
+                    .get(&d.name)
+                    .map(|tool| tool.is_read_only())
+                    .unwrap_or(false)
+        })
+        .map(|d| d.name.clone())
+        .collect();
+    let planner_safe_refs: Vec<&str> = planner_safe_names.iter().map(|s| s.as_str()).collect();
+    tools.retain(&planner_safe_refs);
     let tools = Arc::new(tools);
 
     let read_files = Arc::new(Mutex::new(std::collections::HashMap::new()));
 
-    let mut turns = 0usize;
     let mut text_output = String::new();
     let mut tool_results_fallback: Vec<String> = Vec::new();
     let mut total_input = 0u64;
@@ -1121,11 +1436,6 @@ pub async fn run_explore(
     let task_display = task.to_string();
 
     'outer: loop {
-        if turns >= max_turns {
-            text_output.push_str("\n[Reached maximum turns]");
-            break;
-        }
-
         // Check cancellation from parent agent
         if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
             text_output.push_str("\n[Cancelled by user]");
@@ -1253,8 +1563,6 @@ pub async fn run_explore(
             history.add_assistant_blocks(blocks);
         }
 
-        turns += 1;
-
         if stop_reason != StopReason::ToolUse || pending_tools.is_empty() {
             break;
         }
@@ -1284,6 +1592,13 @@ pub async fn run_explore(
                 let ap = allowed_paths.clone();
                 let cancel_token = cancel.clone();
                 futs.push(tokio::spawn(async move {
+                    if n == "Bash"
+                        && let Some(command) = inp.get("command").and_then(|v| v.as_str())
+                        && let Err(err) = validate_explore_bash_command(command)
+                    {
+                        return ToolResult::error(err);
+                    }
+
                     let ctx = ToolContext {
                         progress_tx: None,
                         event_tx: None,
@@ -1417,12 +1732,7 @@ impl Tool for ExploreTool {
     }
 
     fn description(&self) -> &str {
-        "Launch a research sub-agent to explore the codebase. The agent uses read-only tools \
-         (ReadFile, Grep, Glob) to investigate and returns detailed findings with file paths \
-         and code snippets. Use for broad searches or multi-step investigations. \
-         IMPORTANT: Always write the task description in English, regardless of the user's language. \
-         Do NOT call this tool multiple times with the same or overlapping tasks — one call per topic. \
-         If you need multiple explorations, make each task distinct and specific."
+        "Launch a fast read-only sub-agent to explore the codebase and return detailed findings with file paths and code snippets. Use for broad searches or multi-step investigations. IMPORTANT: Always write the task description in English, regardless of the user's language. Use thoroughness=quick for a fast pass, medium for normal exploration, or thorough for comprehensive analysis. Do NOT call this tool multiple times with the same or overlapping tasks — one call per topic. If you need multiple explorations, make each task distinct and specific."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -1433,10 +1743,11 @@ impl Tool for ExploreTool {
                     "type": "string",
                     "description": "What to investigate in the codebase (always in English)"
                 },
-                "maxTurns": {
-                    "type": "integer",
-                    "description": "Maximum LLM turns before stopping (default: 15)",
-                    "default": 15
+                "thoroughness": {
+                    "type": "string",
+                    "enum": ["quick", "medium", "thorough"],
+                    "description": "Desired depth of exploration (default: medium)",
+                    "default": "medium"
                 },
                 "timeout": {
                     "type": "integer",
@@ -1464,8 +1775,8 @@ impl Tool for ExploreTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(300_000);
 
-        let max_turns = input.get("maxTurns").and_then(|v| v.as_u64()).unwrap_or(15) as usize;
-
+        let thoroughness =
+            ExploreThoroughness::from_input(input.get("thoroughness").and_then(|v| v.as_str()));
         // Use the tool_call_id so TUI progress matches the tool_call message
         let explore_id = ctx
             .tool_call_id
@@ -1477,7 +1788,7 @@ impl Tool for ExploreTool {
         match run_explore(
             &task,
             timeout,
-            max_turns,
+            thoroughness,
             progress_tx,
             explore_id,
             ctx.cancel.clone(),
@@ -1497,10 +1808,10 @@ fn build_stream_event(
     task: &str,
     status: &str,
     turns: usize,
-    max_turns: usize,
     input_tokens: u64,
     output_tokens: u64,
     error: Option<String>,
+    tab_id: Option<String>,
     chat_messages: &[SubAgentChatMsg],
 ) -> StreamEvent {
     use lukan_core::models::events::SubAgentChatMessage;
@@ -1509,10 +1820,10 @@ fn build_stream_event(
         task: task.to_string(),
         status: status.to_string(),
         turns: turns as u32,
-        max_turns: max_turns as u32,
         input_tokens,
         output_tokens,
         error,
+        tab_id,
         chat_messages: chat_messages
             .iter()
             .map(|m| SubAgentChatMessage {
@@ -1557,8 +1868,27 @@ fn format_sub_agent_result(entry: &SubAgentEntry) -> ToolResult {
     }
 
     let header = format!(
-        "Status: {}\nTurns: {}/{}\nElapsed: {}\nTask: {}",
-        entry.status, entry.turns, entry.max_turns, elapsed, entry.task
+        "Status: {}\nTurns: {}\nElapsed: {}\nTask: {}\nIsolation: {}{}{}{}",
+        entry.status,
+        entry.turns,
+        elapsed,
+        entry.task,
+        entry.isolation,
+        entry
+            .worktree_path
+            .as_ref()
+            .map(|p| format!("\nWorktree: {}", p.display()))
+            .unwrap_or_default(),
+        entry
+            .worktree_branch
+            .as_ref()
+            .map(|b| format!("\nWorktree branch: {b}"))
+            .unwrap_or_default(),
+        entry
+            .cleanup_status
+            .as_ref()
+            .map(|s| format!("\nCleanup: {s}"))
+            .unwrap_or_default()
     );
 
     let content = if output.trim().is_empty() {
@@ -1571,5 +1901,129 @@ fn format_sub_agent_result(entry: &SubAgentEntry) -> ToolResult {
         ToolResult::error(content)
     } else {
         ToolResult::success(content)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subagent_isolation_defaults_to_shared() {
+        assert_eq!(
+            SubAgentIsolationMode::from_input(None),
+            SubAgentIsolationMode::Shared
+        );
+        assert_eq!(
+            SubAgentIsolationMode::from_input(Some("unknown")),
+            SubAgentIsolationMode::Shared
+        );
+    }
+
+    #[test]
+    fn subagent_isolation_parses_worktree() {
+        assert_eq!(
+            SubAgentIsolationMode::from_input(Some("worktree")),
+            SubAgentIsolationMode::Worktree
+        );
+    }
+
+    #[test]
+    fn subagent_tool_schema_supports_isolation() {
+        let schema = SubAgentTool.input_schema();
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        let isolation = props.get("isolation").and_then(|v| v.as_object()).unwrap();
+        let variants = isolation.get("enum").and_then(|v| v.as_array()).unwrap();
+        assert!(variants.iter().any(|v| v.as_str() == Some("shared")));
+        assert!(variants.iter().any(|v| v.as_str() == Some("worktree")));
+    }
+
+    #[test]
+    fn resolve_shared_isolation_keeps_original_context() {
+        let cwd = std::env::temp_dir().join("lukan-subagent-shared-test");
+        let allowed = Some(vec![cwd.clone()]);
+        let ctx = resolve_subagent_isolation(
+            &cwd,
+            allowed.clone(),
+            SubAgentIsolationMode::Shared,
+            "abc123",
+        )
+        .unwrap();
+        assert_eq!(ctx.cwd, cwd);
+        assert_eq!(ctx.allowed_paths, allowed);
+        assert!(ctx.worktree_path.is_none());
+    }
+
+    #[test]
+    fn worktree_cleanup_is_skipped_without_worktree_context() {
+        let ctx = SubAgentIsolationContext {
+            cwd: std::env::temp_dir(),
+            allowed_paths: None,
+            worktree_path: None,
+            worktree_branch: None,
+            git_root: None,
+            worktree_head_commit: None,
+        };
+        assert!(ctx.worktree_path.is_none());
+    }
+
+    #[test]
+    fn explore_thoroughness_defaults_to_medium() {
+        assert!(matches!(
+            ExploreThoroughness::from_input(None),
+            ExploreThoroughness::Medium
+        ));
+        assert!(matches!(
+            ExploreThoroughness::from_input(Some("unknown")),
+            ExploreThoroughness::Medium
+        ));
+    }
+
+    #[test]
+    fn explore_thoroughness_parses_aliases() {
+        assert!(matches!(
+            ExploreThoroughness::from_input(Some("quick")),
+            ExploreThoroughness::Quick
+        ));
+        assert!(matches!(
+            ExploreThoroughness::from_input(Some("very thorough")),
+            ExploreThoroughness::Thorough
+        ));
+    }
+
+    #[test]
+    fn explore_bash_allows_read_only_search_commands() {
+        assert!(validate_explore_bash_command("find src -name '*.rs'").is_ok());
+        assert!(validate_explore_bash_command("git diff -- crates/lukan-agent").is_ok());
+        assert!(validate_explore_bash_command("pwd").is_ok());
+    }
+
+    #[test]
+    fn explore_bash_blocks_mutating_or_non_search_commands() {
+        assert!(validate_explore_bash_command("mkdir tmp").is_err());
+        assert!(validate_explore_bash_command("grep foo src > out.txt").is_err());
+        assert!(validate_explore_bash_command("cargo test -p lukan-agent").is_err());
+    }
+
+    #[test]
+    fn explore_tool_schema_uses_thoroughness_not_max_turns() {
+        let schema = ExploreTool.input_schema();
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+
+        assert!(props.contains_key("thoroughness"));
+        assert!(!props.contains_key("maxTurns"));
+    }
+
+    #[test]
+    fn explore_tools_include_bash_and_remember_and_exclude_web_fetch() {
+        assert!(EXPLORE_TOOLS.contains(&"Bash"));
+        assert!(EXPLORE_TOOLS.contains(&"Remember"));
+        assert!(!EXPLORE_TOOLS.contains(&"WebFetch"));
     }
 }

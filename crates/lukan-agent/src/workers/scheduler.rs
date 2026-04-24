@@ -466,6 +466,7 @@ async fn run_worker(
         vision_provider: None,
         extra_env: config.credentials.flatten_skill_env(),
         compaction_threshold: None,
+        tab_id: None,
     };
 
     // Create agent and run

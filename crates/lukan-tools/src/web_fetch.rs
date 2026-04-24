@@ -41,6 +41,43 @@ impl Tool for WebFetchTool {
         })
     }
 
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("fetch content from a URL")
+    }
+
+    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+        Some("Fetching web page".to_string())
+    }
+
+    fn is_deferred(&self) -> bool {
+        true
+    }
+
+    fn validate_input(&self, input: &serde_json::Value, _ctx: &ToolContext) -> Result<(), String> {
+        let url_str = input
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing required field: url".to_string())?;
+
+        let url = Url::parse(url_str).map_err(|e| format!("Invalid URL: {e}"))?;
+
+        if let Some(host) = url.host_str()
+            && is_private_host(host)
+        {
+            return Err("Access to private/local addresses is blocked for security.".to_string());
+        }
+
+        Ok(())
+    }
+
     async fn execute(
         &self,
         input: serde_json::Value,

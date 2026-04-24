@@ -1,7 +1,81 @@
-use super::helpers::format_tool_result_named;
+use super::helpers::{format_tool_progress_named, format_tool_result_named};
 use super::*;
 
 impl App {
+    fn build_subagent_completion_message(update: &SubAgentUpdate) -> String {
+        let status = update.status.as_str();
+
+        let task_preview = if update.task.len() > 50 {
+            format!("{}...", &update.task[..update.task.floor_char_boundary(47)])
+        } else {
+            update.task.trim().to_string()
+        };
+
+        format!("SubAgent {} {}: {}", update.id, status, task_preview)
+    }
+
+    fn maybe_forward_subagent_completion(&mut self, update: &SubAgentUpdate) {
+        if !matches!(update.status.as_str(), "completed" | "error" | "aborted") {
+            return;
+        }
+
+        if update.tab_id.as_deref() != self.daemon_tab_id.as_deref() && update.tab_id.is_some() {
+            return;
+        }
+
+        let message = Self::build_subagent_completion_message(update);
+
+        if let Some(ref daemon) = self.daemon_tx {
+            let _ = daemon.send(&crate::ws_client::OutMessage::QueueMessage {
+                content: message.clone(),
+                display_content: Some(message.clone()),
+                session_id: self.daemon_tab_id.clone(),
+            });
+        } else {
+            self.queued_messages.lock().unwrap().push(message.clone());
+            if !self.is_streaming {
+                self.messages.push(ChatMessage::new("user", &message));
+                self.input.clear();
+                self.cursor_pos = 0;
+                self.pending_queue_submit = true;
+            }
+        }
+    }
+
+    fn maybe_forward_bash_completion(
+        &mut self,
+        pid: u32,
+        text: &str,
+        display_text: Option<&str>,
+        tab_id: Option<&str>,
+    ) {
+        if tab_id != self.daemon_tab_id.as_deref() && tab_id.is_some() {
+            return;
+        }
+
+        let visible = display_text.unwrap_or(text).to_string();
+
+        if let Some(ref daemon) = self.daemon_tx {
+            let _ = daemon.send(&crate::ws_client::OutMessage::QueueMessage {
+                content: text.to_string(),
+                display_content: Some(visible.clone()),
+                session_id: self.daemon_tab_id.clone(),
+            });
+        } else {
+            self.queued_messages.lock().unwrap().push(text.to_string());
+            if !self.is_streaming {
+                self.messages.push(ChatMessage::new(
+                    "system",
+                    format!("Background Bash process completed. PID: {pid}."),
+                ));
+                self.messages.push(ChatMessage::new("user", &visible));
+                self.input.clear();
+                self.cursor_pos = 0;
+                self.pending_queue_submit = true;
+            }
+        }
+    }
+
     pub(super) fn handle_subagent_update(&mut self, update: SubAgentUpdate) {
         // Upsert into global manager so Alt+S can find daemon subagents
         let update_for_upsert = update.clone();
@@ -20,13 +94,14 @@ impl App {
                 "system",
                 format!("SubAgent {} {}: {}", update.id, update.status, task_preview),
             ));
+            self.maybe_forward_subagent_completion(&update);
         }
 
         if let Some(ref mut picker) = self.subagent_picker {
             // Update detail view if viewing this specific agent
             if picker.view == SubAgentPickerView::ChatDetail && picker.detail_id == update.id {
                 picker.detail_status = update.status.clone();
-                picker.detail_turns = format!("{}/{}", update.turns, update.max_turns);
+                picker.detail_turns = format!("{}", update.turns);
                 picker.detail_tokens = format!(
                     "{}in/{}out tokens",
                     update.input_tokens, update.output_tokens
@@ -187,6 +262,7 @@ impl App {
                             model: s.model,
                             last_message: s.last_message,
                             cwd: None,
+                            project_root: None,
                         })
                         .collect(),
                     selected: 0,
@@ -381,6 +457,16 @@ impl App {
                 self.turn_text_msg_idx = None;
             }
             StreamEvent::TextDelta { text } => {
+                // Thinking normally ends the moment real text begins — flush
+                // the accumulated reasoning into a "thinking" message so it
+                // stays visible in scroll-back after the turn.
+                if !self.streaming_thinking.is_empty() {
+                    let content = std::mem::take(&mut self.streaming_thinking);
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        self.messages.push(ChatMessage::new("thinking", trimmed));
+                    }
+                }
                 self.streaming_text.push_str(&text);
             }
             StreamEvent::ThinkingDelta { text } => {
@@ -388,6 +474,15 @@ impl App {
             }
             StreamEvent::ToolUseStart { name, .. } => {
                 let is_silent = self.config.config.silent_tools.iter().any(|s| s == &name);
+                // Flush thinking first so it sits above any forthcoming
+                // assistant text / tool call in the final transcript.
+                if !self.streaming_thinking.is_empty() {
+                    let content = std::mem::take(&mut self.streaming_thinking);
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        self.messages.push(ChatMessage::new("thinking", trimmed));
+                    }
+                }
                 // Flush current text as a message before tool call.
                 // If we already flushed text earlier in this turn, append to
                 // the same message so mid-sentence splits don't occur.
@@ -430,7 +525,7 @@ impl App {
                 if is_silent {
                     return;
                 }
-                self.active_tool = Some(name);
+                self.active_tool = Some(name.clone());
                 let sanitized = sanitize_for_display(&content);
                 let insert_pos = self.tool_insert_position(&id);
 
@@ -448,7 +543,8 @@ impl App {
                     }
                 }
 
-                let mut msg = ChatMessage::new("tool_result", format!("  ⎿  {content}"));
+                let mut msg =
+                    ChatMessage::new("tool_result", format_tool_progress_named(&name, &content));
                 msg.tool_id = Some(id);
                 self.messages.insert(insert_pos, msg);
             }
@@ -511,6 +607,15 @@ impl App {
                 self.context_size = input_tokens;
             }
             StreamEvent::MessageEnd { stop_reason } => {
+                // Flush any remaining thinking first (e.g. a reasoning-only
+                // turn that ends without emitting text).
+                if !self.streaming_thinking.is_empty() {
+                    let content = std::mem::take(&mut self.streaming_thinking);
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        self.messages.push(ChatMessage::new("thinking", trimmed));
+                    }
+                }
                 let content = std::mem::take(&mut self.streaming_text);
                 let trimmed = content.trim_end().to_string();
                 if !trimmed.is_empty() {
@@ -543,10 +648,13 @@ impl App {
             }
             StreamEvent::ApprovalRequired { tools } => {
                 let count = tools.len();
+                let all_read_only =
+                    !tools.is_empty() && tools.iter().all(|t| t.read_only.unwrap_or(false));
                 self.approval_prompt = Some(ApprovalPrompt {
                     selections: vec![true; count],
                     selected: 0,
                     tools,
+                    all_read_only,
                 });
             }
             StreamEvent::PlanReview {
@@ -623,13 +731,14 @@ impl App {
                 let msg = format!("[{level}] {source}: {detail}");
                 self.toast_notifications.push((msg, Instant::now()));
             }
-            StreamEvent::QueuedMessageInjected { text } => {
+            StreamEvent::QueuedMessageInjected { text, display_text } => {
                 // Flush any partial streaming text before inserting the user message
                 if !self.streaming_text.is_empty() {
                     let content = std::mem::take(&mut self.streaming_text);
                     self.messages.push(ChatMessage::new("assistant", content));
                 }
-                self.messages.push(ChatMessage::new("user", &text));
+                let visible_text = display_text.as_deref().unwrap_or(&text);
+                self.messages.push(ChatMessage::new("user", visible_text));
                 // Remove the injected message from the local queue so the UI
                 // stops showing it in the "↳ queued" indicator.
                 let mut queue = self.queued_messages.lock().unwrap();
@@ -642,10 +751,10 @@ impl App {
                 task,
                 status,
                 turns,
-                max_turns,
                 input_tokens,
                 output_tokens,
                 error,
+                tab_id,
                 chat_messages,
             } => {
                 // Convert daemon stream event into the in-process SubAgentUpdate format
@@ -654,10 +763,10 @@ impl App {
                     task,
                     status,
                     turns: turns as usize,
-                    max_turns: max_turns as usize,
                     input_tokens,
                     output_tokens,
                     error,
+                    tab_id,
                     chat_messages: chat_messages
                         .into_iter()
                         .map(|m| lukan_agent::sub_agent::SubAgentChatMsg {
@@ -667,6 +776,19 @@ impl App {
                         .collect(),
                 };
                 self.handle_subagent_update(update);
+            }
+            StreamEvent::BashBackgroundCompletion {
+                pid: _,
+                text,
+                display_text,
+                tab_id,
+            } => {
+                self.maybe_forward_bash_completion(
+                    0,
+                    &text,
+                    display_text.as_deref(),
+                    tab_id.as_deref(),
+                );
             }
             _ => {}
         }

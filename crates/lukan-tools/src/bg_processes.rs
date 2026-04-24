@@ -2,6 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
+use tokio::sync::broadcast;
+
+static SESSION_COMPLETIONS: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+static COMPLETION_BROADCAST_TX: OnceLock<broadcast::Sender<serde_json::Value>> = OnceLock::new();
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -72,6 +77,50 @@ fn tracker() -> &'static Mutex<BgTracker> {
         debug!(count = processes.len(), "Loaded persisted bg processes");
         Mutex::new(BgTracker { processes })
     })
+}
+
+fn session_completions() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    SESSION_COMPLETIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn completion_broadcast_tx() -> &'static broadcast::Sender<serde_json::Value> {
+    COMPLETION_BROADCAST_TX.get_or_init(|| {
+        let (tx, _) = broadcast::channel(256);
+        tx
+    })
+}
+
+pub fn subscribe_completion_events() -> broadcast::Receiver<serde_json::Value> {
+    completion_broadcast_tx().subscribe()
+}
+
+pub fn broadcast_completion_event(event: serde_json::Value) {
+    let _ = completion_broadcast_tx().send(event);
+}
+
+pub fn enqueue_session_completion(tab_id: &str, payload: String) {
+    let mut completions = session_completions().lock().unwrap();
+    completions
+        .entry(tab_id.to_string())
+        .or_default()
+        .push(payload);
+}
+
+pub fn peek_session_completions(tab_id: &str) -> Vec<String> {
+    session_completions()
+        .lock()
+        .unwrap()
+        .get(tab_id)
+        .cloned()
+        .unwrap_or_default()
+}
+
+pub fn take_session_completions(tab_id: &str) -> Vec<String> {
+    session_completions()
+        .lock()
+        .unwrap()
+        .remove(tab_id)
+        .unwrap_or_default()
 }
 
 /// Register a new background process

@@ -6,7 +6,11 @@ impl App {
     pub(super) async fn open_session_picker(&mut self) {
         let cwd = std::env::current_dir()
             .ok()
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| {
+                lukan_agent::subagent_worktrees::canonical_project_root(&p)
+                    .to_string_lossy()
+                    .to_string()
+            })
             .unwrap_or_default();
         let sessions = match SessionManager::list_for_cwd(&cwd).await {
             Ok(s) => s,
@@ -113,6 +117,7 @@ impl App {
         // ── In-process mode ──
         let system_prompt = build_system_prompt_with_opts(self.browser_tools).await;
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/tmp".into());
+        let cwd = lukan_agent::subagent_worktrees::canonical_project_root(&cwd);
 
         let project_cfg = lukan_core::config::ProjectConfig::load(&cwd)
             .await
@@ -193,6 +198,7 @@ impl App {
                 .model_settings
                 .get(&self.config.effective_model().unwrap_or_default())
                 .and_then(|s| s.compaction_threshold),
+            tab_id: self.daemon_tab_id.clone(),
         };
 
         match AgentLoop::load_session(config, &session_id).await {
@@ -342,6 +348,24 @@ impl App {
                         }
                     }
                     MessageContent::Blocks(blocks) => {
+                        // Reasoning/thinking comes before text in the block
+                        // order — render it above the assistant response so
+                        // the transcript matches the live stream layout.
+                        let thinking: String = blocks
+                            .iter()
+                            .filter_map(|b| {
+                                if let ContentBlock::Thinking { text } = b {
+                                    Some(text.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if !thinking.trim().is_empty() {
+                            self.messages.push(ChatMessage::new("thinking", thinking));
+                        }
+
                         let text: String = blocks
                             .iter()
                             .filter_map(|b| {

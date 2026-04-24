@@ -207,6 +207,22 @@ impl Tool for TaskAddTool {
         })
     }
 
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("add tasks to the task list")
+    }
+
+    fn activity_label(&self, _input: &Value) -> Option<String> {
+        Some("Adding tasks".to_string())
+    }
+
     async fn execute(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let _lock = TASK_LOCK.lock().await;
 
@@ -270,6 +286,22 @@ impl Tool for TaskListTool {
                 }
             }
         })
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("list current tasks and statuses")
+    }
+
+    fn activity_label(&self, _input: &Value) -> Option<String> {
+        Some("Listing tasks".to_string())
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -352,6 +384,22 @@ impl Tool for TaskUpdateTool {
             },
             "required": ["updates"]
         })
+    }
+
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("update task status or title")
+    }
+
+    fn activity_label(&self, _input: &Value) -> Option<String> {
+        Some("Updating tasks".to_string())
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

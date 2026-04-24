@@ -22,6 +22,14 @@ struct ToolDef {
     name: String,
     description: String,
     input_schema: Value,
+    #[serde(default)]
+    read_only: Option<bool>,
+    #[serde(default)]
+    concurrency_safe: Option<bool>,
+    #[serde(default)]
+    search_hint: Option<String>,
+    #[serde(default)]
+    activity_label: Option<String>,
 }
 
 /// The JSON output format expected from plugin tool handlers.
@@ -44,6 +52,10 @@ struct PluginProvidedTool {
     tool_name: String,
     tool_description: String,
     tool_input_schema: Value,
+    tool_read_only: bool,
+    tool_concurrency_safe: bool,
+    tool_search_hint: Option<String>,
+    tool_activity_label: Option<String>,
     plugin_name: String,
     handler_command: String,
     handler_file: String,
@@ -65,6 +77,26 @@ impl Tool for PluginProvidedTool {
 
     fn input_schema(&self) -> Value {
         self.tool_input_schema.clone()
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.tool_read_only
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        self.tool_concurrency_safe
+    }
+
+    fn is_deferred(&self) -> bool {
+        true
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        self.tool_search_hint.as_deref()
+    }
+
+    fn activity_label(&self, _input: &Value) -> Option<String> {
+        self.tool_activity_label.clone()
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -250,6 +282,10 @@ pub fn register_plugin_tools(registry: &mut ToolRegistry) {
                 tool_name: def.name,
                 tool_description: def.description,
                 tool_input_schema: def.input_schema,
+                tool_read_only: def.read_only.unwrap_or(false),
+                tool_concurrency_safe: def.concurrency_safe.unwrap_or(false),
+                tool_search_hint: def.search_hint,
+                tool_activity_label: def.activity_label,
                 plugin_name: plugin_name.clone(),
                 handler_command: handler_command.clone(),
                 handler_file: handler_file.clone(),

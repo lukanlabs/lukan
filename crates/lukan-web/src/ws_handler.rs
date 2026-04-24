@@ -57,6 +57,7 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
     let mut stream_rx = state.stream_tx.subscribe();
     let mut pipeline_notify_rx = state.pipeline_notification_tx.subscribe();
     let mut subagent_rx = lukan_agent::sub_agent::subscribe_stream_events().await;
+    let mut bash_completion_rx = lukan_tools::bg_processes::subscribe_completion_events();
 
     // Channels for spawned agent tasks to send outbound messages
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<String>(512);
@@ -131,6 +132,14 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
             Ok(subagent_ev) = subagent_rx.recv() => {
                 // Forward subagent updates to all connected clients
                 if authenticated && let Ok(json) = serde_json::to_string(&subagent_ev) {
+                    let _ = ws_tx.send(Message::Text(json.into())).await;
+                }
+                continue;
+            }
+            Ok(bash_ev) = bash_completion_rx.recv() => {
+                // Forward bash background completion to all authenticated clients;
+                // the TUI filters by daemon_tab_id in maybe_forward_bash_completion.
+                if authenticated && let Ok(json) = serde_json::to_string(&bash_ev) {
                     let _ = ws_tx.send(Message::Text(json.into())).await;
                 }
                 continue;
@@ -356,13 +365,93 @@ async fn dispatch_message(
 
         ClientMessage::QueueMessage {
             content,
+            display_content,
             session_id,
         } => {
             let tab = session_id.unwrap_or_default();
+            let queue_entry = if let Some(display_content) = display_content {
+                serde_json::json!({
+                    "text": content,
+                    "display_text": display_content,
+                })
+                .to_string()
+            } else {
+                content.clone()
+            };
             // Push into the session's queued_messages (read by the running agent turn)
             let mut sessions = state.sessions.lock().await;
             if let Some(session) = sessions.get_mut(&tab) {
-                session.queued_messages.lock().unwrap().push(content);
+                session.queued_messages.lock().unwrap().push(queue_entry);
+            }
+            drop(sessions);
+
+            let background_completions = lukan_tools::bg_processes::take_session_completions(&tab);
+            let background_completion_entries: Vec<(String, Option<String>)> =
+                background_completions
+                    .iter()
+                    .filter_map(|entry| {
+                        let parsed = serde_json::from_str::<serde_json::Value>(entry).ok()?;
+                        let text = parsed.get("text")?.as_str()?.to_string();
+                        let display = parsed
+                            .get("display_text")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        Some((text, display))
+                    })
+                    .collect();
+            if !background_completions.is_empty() {
+                let mut sessions = state.sessions.lock().await;
+                if let Some(session) = sessions.get_mut(&tab) {
+                    session
+                        .queued_messages
+                        .lock()
+                        .unwrap()
+                        .extend(background_completions);
+                }
+            }
+
+            for (text, display_text) in background_completion_entries {
+                let json = inject_tab_id(
+                    &lukan_core::models::events::StreamEvent::QueuedMessageInjected {
+                        text,
+                        display_text,
+                    },
+                    &tab,
+                );
+                let broadcast_json = inject_field(&json, "savedSessionId", &tab);
+                let _ = state.stream_tx.send(StreamBroadcast {
+                    json: broadcast_json,
+                    origin_conn_id: conn_id,
+                    session_id: Some(tab.clone()),
+                });
+                let _ = outbound_tx.send(json).await;
+            }
+
+            let should_start_turn = {
+                let processing = state.processing_sessions.lock().await;
+                !processing.contains_key(&tab)
+            };
+
+            if should_start_turn {
+                let state = Arc::clone(state);
+                let outbound_tx = outbound_tx.clone();
+                let done_tx = done_tx.clone();
+                let tab_for_turn = tab.clone();
+                let cancel_token = CancellationToken::new();
+                cancel_tokens.insert(tab.clone(), cancel_token.clone());
+
+                tokio::spawn(async move {
+                    handle_send_message(
+                        conn_id,
+                        String::new(),
+                        tab_for_turn,
+                        state,
+                        outbound_tx,
+                        cancel_token,
+                        done_tx,
+                    )
+                    .await;
+                });
             }
         }
 
@@ -419,7 +508,8 @@ async fn dispatch_message(
         }
 
         ClientMessage::CreateAgentTab { cwd } => {
-            handle_create_agent_tab(state, ws_tx, cwd).await;
+            let tab_id = handle_create_agent_tab(state, ws_tx, cwd).await;
+            *active_session_id = Some(tab_id);
         }
 
         ClientMessage::DestroyAgentTab { session_id } => {
@@ -1862,7 +1952,7 @@ async fn handle_create_agent_tab(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     cwd: Option<String>,
-) {
+) -> String {
     let tab_id = uuid::Uuid::new_v4().to_string();
 
     let mut sessions = state.sessions.lock().await;
@@ -1879,9 +1969,13 @@ async fn handle_create_agent_tab(
 
     send_json(
         ws_tx,
-        &ServerMessage::AgentTabCreated { session_id: tab_id },
+        &ServerMessage::AgentTabCreated {
+            session_id: tab_id.clone(),
+        },
     )
     .await;
+
+    tab_id
 }
 
 /// Handle destroying an agent tab
@@ -2242,6 +2336,7 @@ async fn create_agent(
         .map(Arc::from),
         extra_env: config.credentials.flatten_skill_env(),
         compaction_threshold,
+        tab_id: None,
     };
 
     let mut agent = AgentLoop::new(agent_config).await?;
@@ -2368,6 +2463,7 @@ async fn create_agent_with_session(
         .map(Arc::from),
         extra_env: config.credentials.flatten_skill_env(),
         compaction_threshold,
+        tab_id: None,
     };
 
     let mut agent = AgentLoop::load_session(agent_config, session_id).await?;

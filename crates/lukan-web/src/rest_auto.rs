@@ -201,6 +201,7 @@ async fn run_auto_job(
         vision_provider: None,
         extra_env: resolved.credentials.flatten_skill_env(),
         compaction_threshold: None,
+        tab_id: None,
     };
 
     let mut agent = lukan_agent::AgentLoop::new(agent_config).await?;

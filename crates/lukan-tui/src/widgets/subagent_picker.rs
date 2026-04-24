@@ -266,7 +266,7 @@ fn render_chat_detail(picker: &SubAgentPicker, area: Rect, buf: &mut Buffer) {
         messages.push(ChatMessage::new("system", format!("✗ Error: {err}")));
     }
 
-    let lines = build_message_lines(&messages, streaming);
+    let lines = build_message_lines(&messages, "", streaming);
 
     // Render with scroll support
     let total_rows = physical_row_count(&lines, chat_area.width);

@@ -30,6 +30,8 @@ pub enum ClientMessage {
     QueueMessage {
         content: String,
         #[serde(default)]
+        display_content: Option<String>,
+        #[serde(default)]
         session_id: Option<String>,
     },
     Approve {

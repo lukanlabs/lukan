@@ -26,6 +26,8 @@ You are an AI coding agent. You MUST use function calls to perform actions.
 ## Rules
 - When asked to do something, call the appropriate tool immediately. Do not describe what you plan to do.
 - Keep going until the task is fully resolved before ending your turn.
+- If a Bash command is sent to background by the user (for example with Alt+B), do NOT call Bash wait_pid automatically and do NOT keep following that background job unless the user explicitly asks you to check it later.
+- If a background Bash completion message appears in the conversation, treat it as informational context only. Use its final output directly if relevant, but do not call Bash again just to wait on that PID.
 - If you need information, call a tool to get it. Do not guess.
 - After tool results, proceed to the next step or give a brief summary.
 - Be concise. Answer in the user's language.";
@@ -102,7 +104,8 @@ impl OpenAICodexProvider {
 
     /// Check if the model is a reasoning model.
     fn is_reasoning_model(&self) -> bool {
-        self.model.contains("codex") || self.model.starts_with('o')
+        let m = self.model.as_str();
+        m.contains("codex") || m.starts_with('o') || m.starts_with("gpt-5")
     }
 }
 
@@ -191,6 +194,11 @@ impl Provider for OpenAICodexProvider {
                 "effort": effort,
                 "summary": "auto",
             });
+            // Required by the Codex responses endpoint for it to emit
+            // `response.reasoning_text.delta` / `reasoning_summary_text.delta`
+            // SSE events. Without this, the model's reasoning stays hidden
+            // and only the final text deltas are streamed.
+            body["include"] = json!(["reasoning.encrypted_content"]);
         }
 
         // Send request
@@ -256,6 +264,7 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
     let mut text_buffer = String::new();
     let mut phantom_buffer = String::new();
     let mut phantom_suppressed = false;
+    let mut phantom_tool_index: usize = 0;
 
     let chunk_timeout = std::time::Duration::from_secs(120);
     while let Some(chunk) = tokio::time::timeout(chunk_timeout, stream.next())
@@ -309,7 +318,8 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
             if current_event != "response.output_text.delta" && !phantom_buffer.is_empty() {
                 if let Some((name, input)) = extract_phantom_tool_call(&phantom_buffer) {
                     debug!("Recovered phantom tool call: {name}");
-                    let call_id = format!("phantom_{}", uuid::Uuid::new_v4());
+                    let call_id = format!("phantom_{}", phantom_tool_index);
+                    phantom_tool_index += 1;
                     has_tool_calls = true;
                     tx.send(StreamEvent::ToolUseStart {
                         id: call_id.clone(),
@@ -427,7 +437,9 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
                     }
                 }
 
-                "response.reasoning.delta" | "response.reasoning_summary_text.delta" => {
+                "response.reasoning.delta"
+                | "response.reasoning_text.delta"
+                | "response.reasoning_summary_text.delta" => {
                     if let Some(delta) = data["delta"].as_str() {
                         tx.send(StreamEvent::ThinkingDelta {
                             text: delta.to_string(),
@@ -566,7 +578,7 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
     if !phantom_buffer.is_empty() {
         if let Some((name, input)) = extract_phantom_tool_call(&phantom_buffer) {
             debug!("Recovered phantom tool call at end: {name}");
-            let call_id = format!("phantom_{}", uuid::Uuid::new_v4());
+            let call_id = format!("phantom_{}", phantom_tool_index);
             has_tool_calls = true;
             tx.send(StreamEvent::ToolUseStart {
                 id: call_id.clone(),
@@ -627,10 +639,9 @@ fn extract_phantom_tool_call(text: &str) -> Option<(String, Value)> {
 
     // Extract JSON: find first '{' and match braces
     let Some(json_start) = text.find('{') else {
-        // No JSON found — args are garbled. Emit tool call with empty input
-        // so the tool fails gracefully and the agent loop continues.
-        debug!("Phantom tool call '{tool_name}': no JSON args found, using empty input");
-        return Some((tool_name.to_string(), Value::Object(Default::default())));
+        // No JSON found — treat as plain leaked transcript text, not a callable tool.
+        debug!("Discarding phantom tool call '{tool_name}': no JSON args found");
+        return None;
     };
     let json_text = &text[json_start..];
 
@@ -652,9 +663,9 @@ fn extract_phantom_tool_call(text: &str) -> Option<(String, Value)> {
     }
 
     if end == 0 {
-        // Unclosed JSON — also use empty input
-        debug!("Phantom tool call '{tool_name}': unclosed JSON, using empty input");
-        return Some((tool_name.to_string(), Value::Object(Default::default())));
+        // Unclosed JSON — treat as leaked/incomplete transcript instead of inventing a tool call.
+        debug!("Discarding phantom tool call '{tool_name}': unclosed JSON");
+        return None;
     }
 
     let input = parse_tool_input(&json_text[..end]);
@@ -890,6 +901,7 @@ fn normalize_tool_input(raw: &str) -> Option<String> {
 /// Available Codex models
 pub fn codex_models() -> Vec<String> {
     vec![
+        "gpt-5.5".to_string(),
         "gpt-5.4".to_string(),
         "gpt-5.3-codex".to_string(),
         "gpt-5.3-codex-spark".to_string(),
@@ -1003,6 +1015,34 @@ mod tests {
         let models = codex_models();
         assert!(models.contains(&"gpt-5.4".to_string()));
         assert!(models.contains(&"gpt-5.3-codex".to_string()));
-        assert_eq!(models.len(), 12);
+        assert_eq!(models.len(), 13);
+    }
+
+    #[test]
+    fn phantom_tool_calls_without_json_are_discarded() {
+        let text = "assistant to=functions.Bash some leaked transcript without json";
+        assert!(extract_phantom_tool_call(text).is_none());
+    }
+
+    #[test]
+    fn phantom_tool_calls_with_unclosed_json_are_discarded() {
+        let text = "assistant to=functions.Bash json {\"command\": \"pwd\"";
+        assert!(extract_phantom_tool_call(text).is_none());
+    }
+
+    #[test]
+    fn phantom_tool_calls_use_stable_call_ids() {
+        let assistant = Message::assistant_blocks(vec![ContentBlock::ToolUse {
+            id: "phantom_0".to_string(),
+            name: "Bash".to_string(),
+            input: json!({"command": "pwd"}),
+        }]);
+        let tool_result = Message::tool_result("phantom_0", "/tmp/project", false);
+        let items = convert_messages(&[assistant, tool_result]);
+        assert_eq!(items[0]["type"], "function_call");
+        assert_eq!(items[0]["call_id"], "phantom_0");
+        assert_eq!(items[1]["type"], "function_call_output");
+        assert_eq!(items[1]["call_id"], "phantom_0");
+        assert_eq!(items[1]["output"], "/tmp/project");
     }
 }

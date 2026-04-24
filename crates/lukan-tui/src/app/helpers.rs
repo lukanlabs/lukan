@@ -10,21 +10,38 @@ use super::*;
 /// messages or streaming text) gets pushed to the terminal's native
 /// scrollback via `insert_before`.  The caller's `viewport_scroll` tracks
 /// how many rows have already been pushed so we never duplicate content.
-pub(super) fn scroll_overflow(
-    messages: &[ChatMessage],
-    committed_msg_idx: &mut usize,
-    viewport_scroll: &mut u16,
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    chat_area_h: u16,
-    width: u16,
-    streaming_text: &str,
-) -> Result<()> {
-    if *committed_msg_idx >= messages.len() && streaming_text.is_empty() {
+pub(crate) struct ScrollOverflowContext<'a> {
+    pub(crate) messages: &'a [ChatMessage],
+    pub(crate) committed_msg_idx: &'a mut usize,
+    pub(crate) viewport_scroll: &'a mut u16,
+    pub(crate) terminal: &'a mut Terminal<CrosstermBackend<Stdout>>,
+    pub(crate) chat_area_h: u16,
+    pub(crate) width: u16,
+    pub(crate) streaming_thinking: &'a str,
+    pub(crate) streaming_text: &'a str,
+}
+
+pub(super) fn scroll_overflow(ctx: ScrollOverflowContext<'_>) -> Result<()> {
+    let ScrollOverflowContext {
+        messages,
+        committed_msg_idx,
+        viewport_scroll,
+        terminal,
+        chat_area_h,
+        width,
+        streaming_thinking,
+        streaming_text,
+    } = ctx;
+    if *committed_msg_idx >= messages.len()
+        && streaming_thinking.is_empty()
+        && streaming_text.is_empty()
+    {
         return Ok(());
     }
 
     let uncommitted = &messages[*committed_msg_idx..];
-    let all_lines = build_message_lines(uncommitted, streaming_text);
+    let all_lines =
+        build_message_lines_wide(uncommitted, streaming_thinking, streaming_text, width);
     let total_rows = physical_row_count(&all_lines, width);
 
     if total_rows <= chat_area_h {
@@ -39,18 +56,18 @@ pub(super) fn scroll_overflow(
     if new_rows > 0 {
         use ratatui::widgets::{Paragraph, Wrap};
         terminal.insert_before(new_rows, |buf| {
-            let padded = Rect {
-                x: buf.area.x + 1,
-                width: buf.area.width.saturating_sub(1),
-                ..buf.area
-            };
+            // Render scrollback with the exact same horizontal origin/width as
+            // the live ChatWidget. Adding an extra x offset here made rows that
+            // had just scrolled out of the viewport appear to gain one column of
+            // left padding (most visible on tool rows and markdown bullets).
+            let area = buf.area;
             // Render starting from where we left off last time, into a
             // buffer of exactly `new_rows` height — gives us the slice
             // [viewport_scroll .. viewport_scroll + new_rows].
             let p = Paragraph::new(all_lines)
                 .wrap(Wrap { trim: false })
                 .scroll((*viewport_scroll, 0));
-            p.render(padded, buf);
+            p.render(area, buf);
         })?;
         *viewport_scroll = desired_scroll;
     }
@@ -60,7 +77,7 @@ pub(super) fn scroll_overflow(
     let mut gc_rows: u16 = 0;
     let mut gc_msgs: usize = 0;
     for msg in uncommitted {
-        let msg_lines = build_message_lines(std::slice::from_ref(msg), "");
+        let msg_lines = build_message_lines_wide(std::slice::from_ref(msg), "", "", width);
         let msg_rows = physical_row_count(&msg_lines, width);
         if gc_rows + msg_rows <= *viewport_scroll {
             gc_rows += msg_rows;
@@ -78,6 +95,9 @@ pub(super) fn scroll_overflow(
 }
 
 // ── Tool Result Formatting ────────────────────────────────────────────────
+
+const TOOL_RESULT_PREVIEW_CHARS: usize = 240;
+const TOOL_PROGRESS_PREVIEW_CHARS: usize = 240;
 
 /// Format tool result with tool-aware compact summaries.
 /// ReadFile/Grep/Glob show a one-line summary instead of content.
@@ -104,8 +124,59 @@ pub(super) fn format_tool_result_named(name: &str, content: &str, is_error: bool
             let file_count = content.lines().filter(|l| !l.trim().is_empty()).count();
             format!("  ⎿  {file_count} files")
         }
+        "WebFetch" | "WebSearch" => format_web_preview(content),
+        "Bash" => format_bash_preview(content),
         _ => format_tool_result(content, false),
     }
+}
+
+pub(super) fn format_tool_progress_named(name: &str, content: &str) -> String {
+    match name {
+        "WebFetch" | "WebSearch" | "Bash" => format_progress_preview(content),
+        _ => format!("  ⎿  {content}"),
+    }
+}
+
+fn format_web_preview(content: &str) -> String {
+    let preview = single_line_preview(content, TOOL_RESULT_PREVIEW_CHARS);
+    if preview.is_empty() {
+        "  ⎿  (no output)".to_string()
+    } else {
+        format!("  ⎿  {preview}")
+    }
+}
+
+fn format_bash_preview(content: &str) -> String {
+    let preview = single_line_preview(content, TOOL_RESULT_PREVIEW_CHARS);
+    if preview.is_empty() {
+        "  ⎿  (no output)".to_string()
+    } else {
+        format!("  ⎿  {preview}")
+    }
+}
+
+fn format_progress_preview(content: &str) -> String {
+    let preview = single_line_preview(content, TOOL_PROGRESS_PREVIEW_CHARS);
+    if preview.is_empty() {
+        "  ⎿  (no output)".to_string()
+    } else {
+        format!("  ⎿  {preview}")
+    }
+}
+
+fn single_line_preview(content: &str, max_chars: usize) -> String {
+    let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return String::new();
+    }
+
+    let char_count = normalized.chars().count();
+    if char_count <= max_chars {
+        return normalized;
+    }
+
+    let truncated: String = normalized.chars().take(max_chars).collect();
+    format!("{}...", truncated.trim_end())
 }
 
 /// Format tool result with ⎿ prefix on each line, like Claude Code
@@ -127,6 +198,48 @@ pub(super) fn format_tool_result(content: &str, is_error: bool) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_fetch_result_is_compacted_to_single_line_preview() {
+        let content =
+            "Title\n\nFirst paragraph with useful context.\nSecond paragraph with more details.";
+        let formatted = format_tool_result_named("WebFetch", content, false);
+        assert_eq!(
+            formatted,
+            "  ⎿  Title First paragraph with useful context. Second paragraph with more details."
+        );
+    }
+
+    #[test]
+    fn web_search_result_is_truncated_with_ellipsis() {
+        let content = format!("Result {}", "x".repeat(400));
+        let formatted = format_tool_result_named("WebSearch", &content, false);
+        assert!(formatted.starts_with("  ⎿  Result "));
+        assert!(formatted.ends_with("..."));
+        assert_eq!(formatted.lines().count(), 1);
+    }
+
+    #[test]
+    fn bash_result_is_compacted_to_single_line_preview() {
+        let content = "[{\"number\":1,\"title\":\"A very long pull request title\"}]\nmore text";
+        let formatted = format_tool_result_named("Bash", content, false);
+        assert!(formatted.starts_with("  ⎿  [{\"number\":1"));
+        assert_eq!(formatted.lines().count(), 1);
+    }
+
+    #[test]
+    fn bash_progress_is_truncated_to_single_line_preview() {
+        let content = format!("Running Bash... {}", "x".repeat(400));
+        let formatted = format_tool_progress_named("Bash", &content);
+        assert!(formatted.starts_with("  ⎿  Running Bash... "));
+        assert!(formatted.ends_with("..."));
+        assert_eq!(formatted.lines().count(), 1);
+    }
 }
 
 // ── Welcome Banner ────────────────────────────────────────────────────────
@@ -314,6 +427,7 @@ impl App {
                     // View task detail
                     if state.selected < state.tasks.len() => {
                         state.mode = PlanReviewMode::Detail;
+                        state.scroll = 0;
                     }
                 KeyCode::Char('a') => {
                     // Accept plan
@@ -346,11 +460,19 @@ impl App {
                 }
                 _ => {}
             },
-            PlanReviewMode::Detail => {
-                if code == KeyCode::Esc {
+            PlanReviewMode::Detail => match code {
+                KeyCode::Esc => {
                     state.mode = PlanReviewMode::List;
+                    state.scroll = 0;
                 }
-            }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    state.scroll = state.scroll.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    state.scroll = state.scroll.saturating_add(1);
+                }
+                _ => {}
+            },
             PlanReviewMode::Feedback => match code {
                 KeyCode::Enter => {
                     let feedback = state.feedback_input.clone();

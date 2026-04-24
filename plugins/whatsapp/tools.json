@@ -2,6 +2,10 @@
   {
     "name": "WhatsAppSend",
     "description": "Send a text message to any WhatsApp contact or group. Use phone number (e.g. '5511999999999') for contacts or a JID (e.g. '120363...@g.us') for groups.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "send a WhatsApp message",
+    "activityLabel": "Sending WhatsApp message",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -20,6 +24,10 @@
   {
     "name": "WhatsAppSendMedia",
     "description": "Send a media file (image, document, audio, video) to a WhatsApp contact or group.",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "send media on WhatsApp",
+    "activityLabel": "Sending WhatsApp media",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -51,6 +59,10 @@
   {
     "name": "WhatsAppListChats",
     "description": "List recent WhatsApp chats with last message preview. Shows contacts and groups the connector has seen messages from.",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "list WhatsApp chats",
+    "activityLabel": "Listing WhatsApp chats",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -65,6 +77,10 @@
   {
     "name": "WhatsAppReadMessages",
     "description": "Read recent messages from a specific WhatsApp chat. Returns message history with sender, text, and timestamp.",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "read messages from a WhatsApp chat",
+    "activityLabel": "Reading WhatsApp messages",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -83,6 +99,10 @@
   {
     "name": "WhatsAppSearchContacts",
     "description": "Search WhatsApp contacts and groups by name. Returns matching JIDs that can be used with WhatsAppSend.",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "search WhatsApp contacts or groups",
+    "activityLabel": "Searching WhatsApp contacts",
     "inputSchema": {
       "type": "object",
       "properties": {

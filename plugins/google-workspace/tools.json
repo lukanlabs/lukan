@@ -2,6 +2,10 @@
   {
     "name": "SheetsRead",
     "description": "Read values from a Google Sheets spreadsheet by range (e.g. 'Sheet1!A1:C10')",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "read values from Google Sheets",
+    "activityLabel": "Reading Google Sheet",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -20,6 +24,10 @@
   {
     "name": "SheetsWrite",
     "description": "Write or append values to a Google Sheets spreadsheet",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "write values to Google Sheets",
+    "activityLabel": "Writing Google Sheet",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -51,6 +59,10 @@
   {
     "name": "SheetsCreate",
     "description": "Create a new Google Sheets spreadsheet",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "create a Google Sheets spreadsheet",
+    "activityLabel": "Creating Google Sheet",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -70,6 +82,10 @@
   {
     "name": "CalendarList",
     "description": "List upcoming events from Google Calendar",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "list Google Calendar events",
+    "activityLabel": "Listing calendar events",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -101,6 +117,10 @@
   {
     "name": "CalendarCreate",
     "description": "Create a new Google Calendar event",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "create a Google Calendar event",
+    "activityLabel": "Creating calendar event",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -141,6 +161,10 @@
   {
     "name": "CalendarUpdate",
     "description": "Update or delete a Google Calendar event",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "update or delete a Google Calendar event",
+    "activityLabel": "Updating calendar event",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -190,6 +214,10 @@
   {
     "name": "DocsRead",
     "description": "Read a Google Doc's content as plain text",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "read a Google Doc",
+    "activityLabel": "Reading Google Doc",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -204,6 +232,10 @@
   {
     "name": "DocsCreate",
     "description": "Create a new Google Doc with optional initial content",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "create a Google Doc",
+    "activityLabel": "Creating Google Doc",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -222,6 +254,10 @@
   {
     "name": "DocsUpdate",
     "description": "Update an existing Google Doc (append, find-and-replace, or insert at position)",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "update a Google Doc",
+    "activityLabel": "Updating Google Doc",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -256,6 +292,10 @@
   {
     "name": "SlidesRead",
     "description": "Read a Google Slides presentation including text, images, tables, backgrounds, and speaker notes",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "read a Google Slides presentation",
+    "activityLabel": "Reading Google Slides",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -270,6 +310,10 @@
   {
     "name": "SlidesCreate",
     "description": "Create a Google Slides presentation with slides supporting text, backgrounds, images, and speaker notes",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "create a Google Slides presentation",
+    "activityLabel": "Creating Google Slides",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -337,6 +381,10 @@
   {
     "name": "SlidesUpdate",
     "description": "Update a Google Slides presentation: add/delete slides, insert images, set backgrounds, add shapes/tables, style text",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "update a Google Slides presentation",
+    "activityLabel": "Updating Google Slides",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -452,6 +500,10 @@
   {
     "name": "DriveList",
     "description": "List files in Google Drive with optional filtering",
+    "readOnly": true,
+    "concurrencySafe": true,
+    "searchHint": "list files in Google Drive",
+    "activityLabel": "Listing Drive files",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -478,6 +530,10 @@
   {
     "name": "DriveDownload",
     "description": "Download or export a file from Google Drive",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "download a file from Google Drive",
+    "activityLabel": "Downloading Drive file",
     "inputSchema": {
       "type": "object",
       "properties": {

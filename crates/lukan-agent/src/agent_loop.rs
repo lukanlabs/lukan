@@ -90,6 +90,8 @@ pub struct AgentConfig {
     pub extra_env: HashMap<String, String>,
     /// Context token threshold for auto-compaction (None = use default 150k)
     pub compaction_threshold: Option<u64>,
+    /// Frontend tab ID when the agent is attached to a daemon/web session.
+    pub tab_id: Option<String>,
 }
 
 /// Pending tool call accumulated from stream events
@@ -97,6 +99,35 @@ struct PendingToolCall {
     id: String,
     name: String,
     input: serde_json::Value,
+}
+
+fn selected_deferred_tool_names(result: &lukan_core::models::tools::ToolResult) -> Vec<String> {
+    if result.is_error {
+        return Vec::new();
+    }
+
+    let mut names = Vec::new();
+    let Some(prefix) = result.content.strip_prefix("Found ") else {
+        return names;
+    };
+    if !prefix.contains(" deferred tool(s):") {
+        return names;
+    }
+
+    for line in result.content.lines() {
+        let trimmed = line.trim();
+        if let Some(name) = trimmed.strip_prefix("- ") {
+            let candidate = name.trim();
+            if !candidate.is_empty()
+                && candidate
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+            {
+                names.push(candidate.to_string());
+            }
+        }
+    }
+    names
 }
 
 /// The agent loop that coordinates LLM ↔ Tools
@@ -176,6 +207,12 @@ impl AgentLoop {
         config
             .tools
             .register(Box::new(crate::sub_agent::ExploreTool));
+        config.tools.register(Box::new(
+            crate::subagent_worktree_tools::SubagentWorktreeListTool,
+        ));
+        config.tools.register(Box::new(
+            crate::subagent_worktree_tools::SubagentWorktreeCleanupTool,
+        ));
 
         // Build sandbox config for sub-agents from registry settings
         let sub_agent_sandbox = if config.tools.is_sandbox_enabled() {
@@ -189,15 +226,16 @@ impl AgentLoop {
         };
 
         // Configure the global sub-agent manager
-        crate::sub_agent::configure(
-            Arc::clone(&config.provider),
-            config.system_prompt.clone(),
-            config.cwd.clone(),
-            config.provider_name.clone(),
-            config.model_name.clone(),
-            sub_agent_sandbox,
-            config.allowed_paths.clone(),
-        )
+        crate::sub_agent::configure(crate::sub_agent::SubAgentConfig {
+            provider: Arc::clone(&config.provider),
+            system_prompt: config.system_prompt.clone(),
+            cwd: config.cwd.clone(),
+            provider_name: config.provider_name.clone(),
+            model_name: config.model_name.clone(),
+            sandbox: sub_agent_sandbox,
+            allowed_paths: config.allowed_paths.clone(),
+            session_tab_id: config.tab_id.clone(),
+        })
         .await;
 
         let bg_signal = config.bg_signal.take();
@@ -263,6 +301,12 @@ impl AgentLoop {
         config
             .tools
             .register(Box::new(crate::sub_agent::ExploreTool));
+        config.tools.register(Box::new(
+            crate::subagent_worktree_tools::SubagentWorktreeListTool,
+        ));
+        config.tools.register(Box::new(
+            crate::subagent_worktree_tools::SubagentWorktreeCleanupTool,
+        ));
 
         // Build sandbox config for sub-agents from registry settings
         let sub_agent_sandbox = if config.tools.is_sandbox_enabled() {
@@ -275,15 +319,16 @@ impl AgentLoop {
             None
         };
 
-        crate::sub_agent::configure(
-            Arc::clone(&config.provider),
-            config.system_prompt.clone(),
-            config.cwd.clone(),
-            config.provider_name.clone(),
-            config.model_name.clone(),
-            sub_agent_sandbox,
-            config.allowed_paths.clone(),
-        )
+        crate::sub_agent::configure(crate::sub_agent::SubAgentConfig {
+            provider: Arc::clone(&config.provider),
+            system_prompt: config.system_prompt.clone(),
+            cwd: config.cwd.clone(),
+            provider_name: config.provider_name.clone(),
+            model_name: config.model_name.clone(),
+            sandbox: sub_agent_sandbox,
+            allowed_paths: config.allowed_paths.clone(),
+            session_tab_id: config.tab_id.clone(),
+        })
         .await;
 
         let bg_signal = config.bg_signal.take();
@@ -844,14 +889,47 @@ impl AgentLoop {
         let mut turn_snapshots: Vec<FileSnapshot> = Vec::new();
 
         // Inner loop: call LLM → execute tools → repeat until done
+        let mut loaded_deferred_tools: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         loop {
-            let mut tool_defs = self.tools.definitions();
+            let mut tool_defs = self.tools.default_definitions();
+            if !loaded_deferred_tools.is_empty() {
+                for def in self.tools.deferred_definitions() {
+                    if loaded_deferred_tools.contains(&def.name) {
+                        tool_defs.push(def);
+                    }
+                }
+                tool_defs.sort_by(|a, b| a.name.cmp(&b.name));
+            }
             // In planner mode, only expose read-only tools to the LLM
             if self.permission_matcher.mode() == PermissionMode::Planner {
-                tool_defs.retain(|d| PLANNER_TOOL_WHITELIST.contains(&d.name.as_str()));
+                tool_defs
+                    .retain(|d| PLANNER_TOOL_WHITELIST.contains(&d.name.as_str()) && d.read_only);
             }
             // Also hide tools disabled at runtime by the TUI
             tool_defs.retain(|d| !self.disabled_tools.contains(&d.name));
+
+            let has_deferred_available = self
+                .tools
+                .deferred_definitions()
+                .iter()
+                .any(|d| !self.disabled_tools.contains(&d.name));
+            let has_read_only_core = tool_defs.iter().any(|d| d.read_only);
+
+            if !tool_defs.iter().any(|d| d.name == "ToolSearch")
+                && self.tools.get("ToolSearch").is_some()
+                && !self.disabled_tools.contains("ToolSearch")
+                && has_deferred_available
+                && has_read_only_core
+                && let Some(tool_search_def) = self
+                    .tools
+                    .definitions()
+                    .into_iter()
+                    .find(|d| d.name == "ToolSearch")
+            {
+                tool_defs.push(tool_search_def);
+                tool_defs.sort_by(|a, b| a.name.cmp(&b.name));
+            }
 
             // Preprocess images for non-vision providers
             let messages = crate::vision_preprocessor::preprocess_images(
@@ -1017,12 +1095,25 @@ impl AgentLoop {
                     let messages: Vec<String> = queue.lock().unwrap().drain(..).collect();
                     if !messages.is_empty() {
                         let injected = messages.join("\n");
+                        let parsed = serde_json::from_str::<serde_json::Value>(&injected).ok();
+                        let full_text = parsed
+                            .as_ref()
+                            .and_then(|v| v.get("text"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&injected)
+                            .to_string();
+                        let display_text = parsed
+                            .as_ref()
+                            .and_then(|v| v.get("display_text"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
                         let _ = event_tx
                             .send(StreamEvent::QueuedMessageInjected {
-                                text: injected.clone(),
+                                text: full_text.clone(),
+                                display_text,
                             })
                             .await;
-                        self.history.add_user_message(&injected);
+                        self.history.add_user_message(&full_text);
                         continue;
                     }
                 }
@@ -1099,6 +1190,27 @@ impl AgentLoop {
                         ));
                     }
                 }
+
+                if tool.name == "Bash" {
+                    let has_wait_pid = tool
+                        .input
+                        .get("wait_pid")
+                        .and_then(|v| v.as_u64())
+                        .is_some();
+                    let command = tool
+                        .input
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if !has_wait_pid && command.trim().is_empty() {
+                        preflight_failed.push((
+                            idx,
+                            lukan_core::models::tools::ToolResult::error(
+                                "Bash called without a command. Do not call Bash again here. The background Bash completion was already injected; continue using that final output directly."
+                            ),
+                        ));
+                    }
+                }
             }
             // Remove preflight-failed tools from pending so they skip approval
             let preflight_ids: std::collections::HashSet<usize> =
@@ -1136,10 +1248,18 @@ impl AgentLoop {
             if !needs_approval.is_empty() {
                 let approval_requests: Vec<ToolApprovalRequest> = needs_approval
                     .iter()
-                    .map(|t| ToolApprovalRequest {
-                        id: t.id.clone(),
-                        name: t.name.clone(),
-                        input: t.input.clone(),
+                    .map(|t| {
+                        let tool_meta = self.tools.get(&t.name);
+                        ToolApprovalRequest {
+                            id: t.id.clone(),
+                            name: t.name.clone(),
+                            input: t.input.clone(),
+                            activity_label: tool_meta
+                                .and_then(|tool| tool.activity_label(&t.input)),
+                            read_only: tool_meta.map(|tool| tool.is_read_only()),
+                            search_hint: tool_meta
+                                .and_then(|tool| tool.search_hint().map(|s| s.to_string())),
+                        }
                     })
                     .collect();
 
@@ -1334,6 +1454,14 @@ impl AgentLoop {
                     self.rebuild_system_prompt().await;
                 }
 
+                if tool.name == "ToolSearch" && !result.is_error {
+                    for name in selected_deferred_tool_names(result) {
+                        if !self.disabled_tools.contains(&name) && self.tools.get(&name).is_some() {
+                            loaded_deferred_tools.insert(name);
+                        }
+                    }
+                }
+
                 // Collect file snapshots for checkpoint
                 if let Some(snapshot) = result.snapshot.clone() {
                     turn_snapshots.push(snapshot);
@@ -1355,12 +1483,25 @@ impl AgentLoop {
                 let messages: Vec<String> = queue.lock().unwrap().drain(..).collect();
                 if !messages.is_empty() {
                     let injected = messages.join("\n");
+                    let parsed = serde_json::from_str::<serde_json::Value>(&injected).ok();
+                    let full_text = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("text"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&injected)
+                        .to_string();
+                    let display_text = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("display_text"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     let _ = event_tx
                         .send(StreamEvent::QueuedMessageInjected {
-                            text: injected.clone(),
+                            text: full_text.clone(),
+                            display_text,
                         })
                         .await;
-                    self.history.add_user_message(&injected);
+                    self.history.add_user_message(&full_text);
                 }
             }
 
@@ -2431,4 +2572,26 @@ async fn update_behavior_profile(
 
     tracing::info!("Behavior profile update completed");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::selected_deferred_tool_names;
+
+    #[test]
+    fn tool_search_results_become_callable_in_followup_turn() {
+        let result = lukan_core::models::tools::ToolResult::success(
+            "Found 2 deferred tool(s):\n\n- WebSearch\n  Description: Search the web\n\n- WebFetch\n  Description: Fetch content from a URL\n",
+        );
+        let names = selected_deferred_tool_names(&result);
+        assert_eq!(names, vec!["WebSearch", "WebFetch"]);
+    }
+
+    #[test]
+    fn tool_search_parser_ignores_non_matching_summary_text() {
+        let result = lukan_core::models::tools::ToolResult::success(
+            "Use WebSearch next for discovery, then WebFetch for exact URLs.",
+        );
+        assert!(selected_deferred_tool_names(&result).is_empty());
+    }
 }

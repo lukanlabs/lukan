@@ -37,6 +37,59 @@ impl Tool for WriteFileTool {
         })
     }
 
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("write a file to disk")
+    }
+
+    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+        Some("Writing file".to_string())
+    }
+
+    fn validate_input(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<(), String> {
+        let file_path_str = input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing required field: file_path".to_string())?;
+
+        let content = input
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing required field: content".to_string())?;
+
+        if content.is_empty() {
+            return Err(
+                "Content is empty. If conversation was compacted, re-generate the file content before writing."
+                    .to_string(),
+            );
+        }
+
+        let path = PathBuf::from(file_path_str);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            ctx.cwd.join(&path)
+        };
+
+        if path.exists()
+            && let Some(read_files) = ctx.read_files.try_lock().ok()
+            && !read_files.contains_key(&path)
+        {
+            return Err(format!(
+                "File exists but has not been read yet. Use ReadFiles first: {file_path_str}"
+            ));
+        }
+
+        Ok(())
+    }
+
     async fn execute(
         &self,
         input: serde_json::Value,

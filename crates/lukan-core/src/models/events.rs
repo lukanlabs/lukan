@@ -163,8 +163,13 @@ pub enum StreamEvent {
         detail: String,
     },
 
-    /// A queued user message was injected mid-turn
-    QueuedMessageInjected { text: String },
+    /// A queued user message was injected mid-turn.
+    /// `display_text` is what the UI should show; `text` is the full context injected to the agent.
+    QueuedMessageInjected {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        display_text: Option<String>,
+    },
 
     /// Updated task list (emitted after plan acceptance or task tool calls)
     TasksUpdate { tasks: Vec<TaskInfo> },
@@ -175,13 +180,24 @@ pub enum StreamEvent {
         task: String,
         status: String,
         turns: u32,
-        max_turns: u32,
         input_tokens: u64,
         output_tokens: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
         /// Chat messages for the spectator view
         chat_messages: Vec<SubAgentChatMessage>,
+    },
+
+    /// Bash background completion notification (forwarded from daemon to TUI)
+    BashBackgroundCompletion {
+        pid: u32,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        display_text: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
     },
 }
 
@@ -199,6 +215,12 @@ pub struct ToolApprovalRequest {
     pub id: String,
     pub name: String,
     pub input: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_hint: Option<String>,
 }
 
 /// Response from the UI to an approval request (internal, not serialized over the wire)
@@ -429,6 +451,9 @@ mod tests {
             id: "tu-1".into(),
             name: "Bash".into(),
             input: serde_json::json!({"command": "rm -rf /"}),
+            activity_label: None,
+            read_only: None,
+            search_hint: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains(r#""name":"Bash""#));

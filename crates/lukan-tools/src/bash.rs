@@ -9,6 +9,108 @@ use tracing::debug;
 use crate::bg_processes;
 use crate::{Tool, ToolContext};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BashCommandClass {
+    Read,
+    Search,
+    List,
+    Network,
+    Mutating,
+    Destructive,
+    Unknown,
+}
+
+impl BashCommandClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Search => "search",
+            Self::List => "list",
+            Self::Network => "network",
+            Self::Mutating => "mutating",
+            Self::Destructive => "destructive",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+pub fn classify_bash_command(command: &str) -> BashCommandClass {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return BashCommandClass::Unknown;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+
+    let destructive_fragments = [
+        "rm -rf",
+        "rm -fr",
+        "mkfs",
+        "dd if=",
+        "shutdown",
+        "reboot",
+        "poweroff",
+        "git reset --hard",
+        "git clean -fd",
+        "git clean -xdf",
+    ];
+    if destructive_fragments
+        .iter()
+        .any(|frag| lower.contains(frag))
+    {
+        return BashCommandClass::Destructive;
+    }
+
+    let mutating_fragments = [
+        ">",
+        ">>",
+        "touch ",
+        "mkdir ",
+        "rmdir ",
+        "mv ",
+        "cp ",
+        "sed -i",
+        "perl -pi",
+        "git add",
+        "git commit",
+        "git stash",
+        "git apply",
+        "npm install",
+        "bun install",
+        "pnpm install",
+        "yarn install",
+        "cargo build",
+        "cargo test",
+        "make ",
+        "python -c",
+        "python3 -c",
+    ];
+    if mutating_fragments.iter().any(|frag| lower.contains(frag)) {
+        return BashCommandClass::Mutating;
+    }
+
+    let first = lower.split_whitespace().next().unwrap_or_default();
+    match first {
+        "ls" | "tree" | "du" | "pwd" => BashCommandClass::List,
+        "find" | "grep" | "rg" | "fd" | "which" | "whereis" => BashCommandClass::Search,
+        "cat" | "head" | "tail" | "less" | "more" | "stat" | "file" | "git" => {
+            if lower.starts_with("git status")
+                || lower.starts_with("git diff")
+                || lower.starts_with("git log")
+                || lower.starts_with("git show")
+                || lower == "git branch"
+                || lower.starts_with("git branch --show-current")
+            {
+                BashCommandClass::Read
+            } else {
+                BashCommandClass::Unknown
+            }
+        }
+        "curl" | "wget" | "ping" | "nslookup" | "dig" | "ssh" | "scp" => BashCommandClass::Network,
+        _ => BashCommandClass::Unknown,
+    }
+}
+
 const MAX_OUTPUT_BYTES: usize = 30_000;
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 
@@ -49,8 +151,55 @@ impl Tool for BashTool {
                     "description": "Wait for a background process (by PID) to finish and return its output"
                 }
             },
-            "required": ["command"]
+            "required": []
         })
+    }
+
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some(
+            "run shell commands and terminal tasks; read/search/list commands are lower risk than mutating or destructive ones",
+        )
+    }
+
+    fn activity_label(&self, input: &serde_json::Value) -> Option<String> {
+        let command = input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(|cmd| cmd.trim())
+            .filter(|cmd| !cmd.is_empty());
+        let class = command.map(classify_bash_command);
+        match (command, class) {
+            (Some(cmd), Some(class)) => Some(format!("[{}] {cmd}", class.as_str())),
+            _ => Some("Running command".to_string()),
+        }
+    }
+
+    fn validate_input(&self, input: &serde_json::Value, _ctx: &ToolContext) -> Result<(), String> {
+        if let Some(wait_pid) = input.get("wait_pid") {
+            if wait_pid.as_u64().is_none() {
+                return Err("wait_pid must be an integer PID.".to_string());
+            }
+            return Ok(());
+        }
+
+        let command = input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing required field: command".to_string())?;
+
+        if command.trim().is_empty() {
+            return Err("Command is empty. Provide a shell command to execute.".to_string());
+        }
+
+        Ok(())
     }
 
     async fn execute(
@@ -252,30 +401,44 @@ impl Tool for BashTool {
                         // continue writing to the log file only.
                         drainer.stop_buffering();
 
-                        // Drain tasks are already running and writing to the log
-                        // file — they'll continue until the process exits.
-                        // Just register the process and spawn a reaper.
-                        tokio::spawn(async move {
-                            let _ = child.wait().await;
-                        });
-
                         let log_display = log_path.display().to_string();
                         bg_processes::add_bg_process(
                             child_pid,
-                            command_str,
+                            command_str.clone(),
                             log_path,
                             ctx.session_id.clone(),
                             ctx.agent_label.clone(),
                             ctx.tab_id.clone(),
                         );
 
+                        // Reaper + completion notifier combined: wait for the
+                        // child so it doesn't zombie AND capture the exit code
+                        // for the completion event.
+                        let notifier_command = command_str;
+                        let notifier_tab_id = ctx.tab_id.clone();
+                        let notifier_session_id = ctx.session_id.clone();
+                        tokio::spawn(async move {
+                            let exit_code =
+                                child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
+                            emit_bg_completion(
+                                child_pid,
+                                notifier_command,
+                                exit_code,
+                                notifier_tab_id,
+                                notifier_session_id,
+                            )
+                            .await;
+                        });
+
                         Ok(ToolResult::success(format!(
                             "The user pressed Alt+B to send this command to background. \
-                             The process is still running — do NOT kill or restart it.\n\
+                             The process is still running — do NOT kill or restart it. \
+                             IMPORTANT: do NOT automatically call Bash({{ wait_pid: {child_pid} }}) and do NOT keep following this background job unless the user explicitly asks you to check it later. \
+                             Stop here so the chat stays free for other work.\n\
                              PID: {child_pid}\n\
                              Log file: {log_display}\n\
-                             To check output later: ReadFiles(\"{log_display}\")\n\
-                             To wait for completion: Bash({{ wait_pid: {child_pid} }})\n\
+                             If the user later asks to inspect output, you may use ReadFiles(\"{log_display}\").\n\
+                             If the user later explicitly asks you to wait for completion, you may use Bash({{ wait_pid: {child_pid} }}).\n\
                              To stop (only if user asks): Bash({{ command: \"kill {child_pid}\" }})"
                         )))
                     } else {
@@ -423,11 +586,6 @@ impl BashTool {
         let stderr = child.stderr.take();
         OutputDrainer::start(pid, stdout, stderr, &log_file, false);
 
-        // Spawn a task to wait for the child (so it doesn't become a zombie)
-        tokio::spawn(async move {
-            let _ = child.wait().await;
-        });
-
         let log_display = log_file.display().to_string();
 
         bg_processes::add_bg_process(
@@ -438,6 +596,23 @@ impl BashTool {
             ctx.agent_label.clone(),
             ctx.tab_id.clone(),
         );
+
+        // Reaper + completion notifier combined: wait for the child so it
+        // doesn't zombie AND capture the exit code for the completion event.
+        let notifier_command = command.to_string();
+        let notifier_tab_id = ctx.tab_id.clone();
+        let notifier_session_id = ctx.session_id.clone();
+        tokio::spawn(async move {
+            let exit_code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
+            emit_bg_completion(
+                pid,
+                notifier_command,
+                exit_code,
+                notifier_tab_id,
+                notifier_session_id,
+            )
+            .await;
+        });
 
         Ok(ToolResult::success(format!(
             "Background process started. PID: {pid}\n\
@@ -585,6 +760,56 @@ impl OutputDrainer {
         let stderr = std::mem::take(&mut *self.stderr_buf.lock().unwrap());
         (stdout, stderr)
     }
+}
+
+// ── Background completion notifier ────────────────────────────────────────
+
+/// Emit a completion event once the background process has exited. Shared by
+/// both `execute_background` (background: true) and the Alt+B path; both call
+/// this from the reaper task so the exit code is available.
+async fn emit_bg_completion(
+    pid: u32,
+    command: String,
+    exit_code: i32,
+    tab_id: Option<String>,
+    session_id: Option<String>,
+) {
+    let log = bg_processes::get_bg_log(pid, 200).unwrap_or_else(|| "No log available.".to_string());
+    let compact_log = log.replace('\r', "").trim().to_string();
+    let sanitized_command = command.replace(['\n', '\r'], " ").trim().to_string();
+
+    // Short, one-line command for the UI pill
+    let display_command = if sanitized_command.chars().count() > 60 {
+        let truncated: String = sanitized_command.chars().take(60).collect();
+        format!("{truncated}…")
+    } else {
+        sanitized_command.clone()
+    };
+
+    let summary = if compact_log.is_empty() {
+        format!(
+            "Background Bash process already completed. Do not call Bash again and do not call wait_pid. Continue using the agent normally with this final result.\nPID: {pid}\nCommand: {sanitized_command}\nExit code: {exit_code}\nFinal output: (no output captured)"
+        )
+    } else {
+        format!(
+            "Background Bash process already completed. Do not call Bash again and do not call wait_pid. Continue using the agent normally with this final result.\nPID: {pid}\nCommand: {sanitized_command}\nExit code: {exit_code}\nFinal output:\n{compact_log}"
+        )
+    };
+    let display_summary =
+        format!("Background command \"{display_command}\" completed (exit code: {exit_code})");
+
+    // savedSessionId must be the ChatSession id (hex), not the tab UUID,
+    // because the TUI filters DaemonEvent::Stream by comparing against
+    // self.session_id which is the ChatSession id.
+    let completion_broadcast = serde_json::json!({
+        "type": "bash_background_completion",
+        "pid": pid,
+        "text": summary,
+        "displayText": display_summary,
+        "tabId": tab_id,
+        "savedSessionId": session_id,
+    });
+    bg_processes::broadcast_completion_event(completion_broadcast);
 }
 
 // ── Result builders ───────────────────────────────────────────────────────

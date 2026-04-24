@@ -821,6 +821,9 @@ mod tests {
                 "type": "object",
                 "properties": { "command": { "type": "string" } }
             }),
+            deferred: false,
+            read_only: false,
+            search_hint: None,
         }];
         let result = p.convert_tools(&tools);
         assert_eq!(result.len(), 1);
@@ -848,6 +851,9 @@ mod tests {
             name: "noop".into(),
             description: "No params".into(),
             input_schema: json!(null),
+            deferred: false,
+            read_only: false,
+            search_hint: None,
         }];
         let result = p.convert_tools(&tools);
         let decls = result[0]["functionDeclarations"].as_array().unwrap();
@@ -861,6 +867,9 @@ mod tests {
             name: "noop".into(),
             description: "No params".into(),
             input_schema: json!({}),
+            deferred: false,
+            read_only: false,
+            search_hint: None,
         }];
         let result = p.convert_tools(&tools);
         let decls = result[0]["functionDeclarations"].as_array().unwrap();

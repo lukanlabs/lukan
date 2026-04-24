@@ -45,6 +45,75 @@ impl Tool for ReadFileTool {
         })
     }
 
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("read file contents with numbered lines")
+    }
+
+    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+        Some("Reading file".to_string())
+    }
+
+    fn validate_input(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<(), String> {
+        let file_path_str = input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing required field: file_path".to_string())?;
+
+        let path = PathBuf::from(file_path_str);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            ctx.cwd.join(&path)
+        };
+
+        const BLOCKED_DEVICE_PATHS: &[&str] = &[
+            "/dev/zero",
+            "/dev/random",
+            "/dev/urandom",
+            "/dev/full",
+            "/dev/stdin",
+            "/dev/tty",
+            "/dev/console",
+            "/dev/stdout",
+            "/dev/stderr",
+            "/dev/fd/0",
+            "/dev/fd/1",
+            "/dev/fd/2",
+        ];
+
+        let path_str = path.to_string_lossy();
+        if BLOCKED_DEVICE_PATHS
+            .iter()
+            .any(|blocked| path_str == *blocked)
+            || (path_str.starts_with("/proc/")
+                && (path_str.ends_with("/fd/0")
+                    || path_str.ends_with("/fd/1")
+                    || path_str.ends_with("/fd/2")))
+        {
+            return Err(format!(
+                "Refusing to read special device path '{}'. Use a regular file path instead.",
+                path.display()
+            ));
+        }
+
+        if !path.exists() {
+            return Err(format!(
+                "Failed to read file: No such file or directory: {}",
+                path.display()
+            ));
+        }
+
+        Ok(())
+    }
+
     async fn execute(
         &self,
         input: serde_json::Value,

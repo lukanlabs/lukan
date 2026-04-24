@@ -5,6 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Clear, Paragraph, Widget, Wrap},
 };
+use unicode_width::UnicodeWidthStr;
 
 use similar::{ChangeTag, TextDiff};
 use syntect::easy::HighlightLines;
@@ -108,11 +109,38 @@ impl ChatMessage {
 /// This is a standalone function used both by `ChatWidget::render` and by
 /// `commit_overflow` in `app.rs` (to push old messages into the terminal
 /// scrollback via `insert_before`).
-pub fn build_message_lines(messages: &[ChatMessage], streaming_text: &str) -> Vec<Line<'static>> {
+pub fn build_message_lines(
+    messages: &[ChatMessage],
+    streaming_thinking: &str,
+    streaming_text: &str,
+) -> Vec<Line<'static>> {
+    build_message_lines_wide(messages, streaming_thinking, streaming_text, 0)
+}
+
+/// Same as `build_message_lines` but with an explicit render width so rows can
+/// be padded (e.g. thinking block fills the row with its background).
+pub fn build_message_lines_wide(
+    messages: &[ChatMessage],
+    streaming_thinking: &str,
+    streaming_text: &str,
+    width: u16,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
+    let mut prev_role = "";
 
     for msg in messages {
+        // Insert a blank line before an assistant message that follows tool output
+        // so the agent's response is visually separated from the tool results.
+        if matches!(msg.role.as_str(), "assistant" | "thinking")
+            && matches!(prev_role, "tool_result" | "tool_call" | "notify")
+        {
+            lines.push(Line::from(""));
+        }
+        prev_role = msg.role.as_str();
         match msg.role.as_str() {
+            "thinking" => {
+                push_thinking_lines(&mut lines, &msg.content, width);
+            }
             "banner" => {
                 for line in msg.content.lines() {
                     lines.push(Line::from(Span::styled(
@@ -211,29 +239,404 @@ pub fn build_message_lines(messages: &[ChatMessage], streaming_text: &str) -> Ve
                 lines.push(Line::from(""));
             }
             "user" => {
-                let bg_style = Style::default().fg(Color::White).bg(Color::DarkGray);
-                for line in msg.content.lines() {
-                    lines.push(
-                        Line::from(Span::styled(format!("> {line}"), bg_style)).style(bg_style),
-                    );
-                }
-                lines.push(Line::from(""));
+                push_user_lines(&mut lines, &msg.content, width);
             }
             _ => {
                 // assistant — render markdown with styles & syntax highlighting
-                lines.extend(render_markdown(&msg.content));
-                lines.push(Line::from(""));
+                push_assistant_lines(&mut lines, &msg.content);
             }
         }
     }
 
-    // Streaming text — render markdown with styles & syntax highlighting
+    // Streaming thinking — render above the live text with the same style as
+    // the finalized "thinking" role so the UI doesn't jump when it flushes.
+    if !streaming_thinking.is_empty() {
+        let sanitized = sanitize_for_display(streaming_thinking);
+        push_thinking_lines(&mut lines, &sanitized, width);
+        // Drop the trailing blank line when followed by streaming text so the
+        // block hugs the response.
+        if !streaming_text.is_empty()
+            && lines
+                .last()
+                .is_some_and(|l| l.spans.iter().all(|s| s.content.is_empty()))
+        {
+            lines.pop();
+        }
+    }
+
+    // Streaming text — keep rendering stable while deltas arrive by showing
+    // plain finalized lines plus only the last line as live content. Parsing
+    // partial markdown on every delta causes list/blockquote/code indentation
+    // to be reinterpreted mid-stream, which makes earlier lines shift right.
     if !streaming_text.is_empty() {
         let sanitized = sanitize_for_display(streaming_text);
-        lines.extend(render_markdown(&sanitized));
+        let ends_with_newline = sanitized.ends_with('\n');
+        let mut parts: Vec<&str> = sanitized.split('\n').collect();
+        if ends_with_newline {
+            let _ = parts.pop();
+            if !parts.is_empty() {
+                let finalized = parts.join("\n");
+                for line in render_markdown(&finalized) {
+                    lines.push(add_assistant_gutter(line));
+                }
+            }
+            lines.push(Line::from(""));
+        } else if parts.len() > 1 {
+            let live_tail = parts.pop().unwrap_or_default();
+            let finalized = parts.join("\n");
+            if !finalized.is_empty() {
+                for line in render_markdown(&finalized) {
+                    lines.push(add_assistant_gutter(line));
+                }
+            }
+            lines.push(add_assistant_gutter(Line::from(Span::styled(
+                live_tail.to_string(),
+                Style::default().fg(Color::White),
+            ))));
+        } else {
+            lines.push(add_assistant_gutter(Line::from(Span::styled(
+                sanitized,
+                Style::default().fg(Color::White),
+            ))));
+        }
     }
 
     lines
+}
+
+// ── Assistant gutter ───────────────────────────────────────────────────
+
+const ASSISTANT_GUTTER: &str = "  ";
+
+fn add_assistant_gutter(mut line: Line<'static>) -> Line<'static> {
+    if !line.spans.is_empty() {
+        line.spans.insert(0, Span::raw(ASSISTANT_GUTTER));
+    }
+    line
+}
+
+fn push_assistant_lines(lines: &mut Vec<Line<'static>>, content: &str) {
+    for line in render_markdown(content) {
+        lines.push(add_assistant_gutter(line));
+    }
+    lines.push(Line::from(""));
+}
+
+// ── Bubble helpers (user message + thinking block) ─────────────────────
+
+const USER_BG: Color = Color::Rgb(30, 30, 34);
+const USER_BORDER: Color = Color::Rgb(235, 140, 55); // soft orange
+/// Horizontal breathing room on the right so bubbles don't hug the terminal
+/// edge — the gap shows the app backdrop instead.
+const BUBBLE_RIGHT_GUTTER: u16 = 8;
+/// Rows of same-bg padding on top AND bottom inside each bubble. Set to 0
+/// so only the content line has the tinted background — no extra pad rows
+/// above or below (user preference).
+const BUBBLE_VERTICAL_PAD: usize = 0;
+/// Rows of app backdrop appended after each bubble so the next message has
+/// breathing room (requested by the user — separates assistant/next content).
+const BUBBLE_BOTTOM_GAP: usize = 1;
+
+/// Build a user-bubble row with the same structure as a normal content line.
+/// Using a real text cell (even a single space) avoids the visual seam that
+/// appeared when the padding rows were rendered with an empty text span.
+fn build_user_bubble_row(
+    border_style: Style,
+    bg: Style,
+    text_style: Style,
+    box_width: u16,
+    text: &str,
+) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(" ", border_style),
+        Span::styled("  ", bg),
+        Span::styled(text.to_string(), text_style),
+    ];
+    let used = 3 + UnicodeWidthStr::width(text) as u16;
+    pad_to_width(&mut spans, used, box_width, bg);
+    Line::from(spans).style(bg)
+}
+
+/// Render the user's message with a colored left accent + filled dark
+/// background, with internal vertical padding and an external backdrop gap
+/// below so the next message has breathing room.
+fn push_user_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16) {
+    let bg_only = Style::default().bg(USER_BG);
+    let border_style = Style::default().bg(USER_BORDER);
+    let text_style = Style::default().fg(Color::Gray).bg(USER_BG);
+
+    // Trim whitespace from BOTH ends so stray leading/trailing newlines don't
+    // become empty rows inside the bubble.
+    let content = content.trim_matches(|c: char| c.is_whitespace());
+
+    // Paint the user bg all the way to the right edge so it matches the
+    // thinking bubble width (uniform look).
+    let box_width = width;
+
+    let pad_row = build_user_bubble_row(border_style, bg_only, text_style, box_width, " ");
+
+    // Top pad
+    lines.extend(std::iter::repeat_with(|| pad_row.clone()).take(BUBBLE_VERTICAL_PAD));
+
+    // Collapse runs of blank lines so an unexpected empty line in the middle
+    // of the content doesn't render as a full-row gap inside the bubble.
+    // Pre-wrap so long pastes render as multiple full-bg rows instead of a
+    // single line that Paragraph wraps (losing the bg on the overflow).
+    let content_width = box_width.saturating_sub(3); // account for the 3-col left gutter
+    let mut prev_blank = false;
+    for raw_line in content.lines() {
+        let line = raw_line.trim_end();
+        let is_blank = line.is_empty();
+        if is_blank && prev_blank {
+            continue;
+        }
+        prev_blank = is_blank;
+        let segments = if line.is_empty() {
+            vec![String::new()]
+        } else {
+            wrap_text_to_width(line, content_width)
+        };
+        for segment in segments {
+            lines.push(build_user_bubble_row(
+                border_style,
+                bg_only,
+                text_style,
+                box_width,
+                &segment,
+            ));
+        }
+    }
+
+    // Bottom pad — contiguous with the content (same USER_BG).
+    lines.extend(std::iter::repeat_with(|| pad_row.clone()).take(BUBBLE_VERTICAL_PAD));
+
+    // Backdrop gap below so the next message has breathing room.
+    for _ in 0..BUBBLE_BOTTOM_GAP {
+        lines.push(Line::from(""));
+    }
+}
+
+// ── Thinking block helpers ─────────────────────────────────────────────
+
+const THINKING_BG: Color = Color::Rgb(40, 40, 40);
+
+fn thinking_base_style() -> Style {
+    Style::default()
+        .fg(Color::Gray)
+        .bg(THINKING_BG)
+        .add_modifier(Modifier::ITALIC)
+}
+
+/// Parse `**bold**` inline markers and emit styled spans. Preserves italic +
+/// gray fg + gray bg, adds BOLD where the `**...**` wraps text.
+fn parse_thinking_inline(text: &str) -> Vec<Span<'static>> {
+    let base = thinking_base_style();
+    let bold = base.add_modifier(Modifier::BOLD);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    let mut plain_start = 0usize;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'*' && bytes[i + 1] == b'*' {
+            // Look for the closing "**"
+            if let Some(rel) = find_double_star(&text[i + 2..]) {
+                let close = i + 2 + rel;
+                if close > i + 2 {
+                    // Flush plain segment before the bold opener.
+                    if plain_start < i {
+                        spans.push(Span::styled(text[plain_start..i].to_string(), base));
+                    }
+                    spans.push(Span::styled(text[i + 2..close].to_string(), bold));
+                    i = close + 2;
+                    plain_start = i;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    if plain_start < text.len() {
+        spans.push(Span::styled(text[plain_start..].to_string(), base));
+    }
+    if spans.is_empty() {
+        spans.push(Span::styled(String::new(), base));
+    }
+    spans
+}
+
+fn find_double_star(s: &str) -> Option<usize> {
+    let b = s.as_bytes();
+    let mut i = 0usize;
+    while i + 1 < b.len() {
+        if b[i] == b'*' && b[i + 1] == b'*' {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Pad a line of spans with a trailing space span so the background extends
+/// to the right edge. `used` is the displayed width of the existing spans.
+fn pad_to_width(spans: &mut Vec<Span<'static>>, used: u16, width: u16, style: Style) {
+    if width <= used {
+        return;
+    }
+    let fill = (width - used) as usize;
+    spans.push(Span::styled(" ".repeat(fill), style));
+}
+
+/// Soft-wrap `text` so every returned fragment fits within `max_width`
+/// terminal columns. Splits on whitespace boundaries when possible, falls
+/// back to hard-breaking mid-word when a single token is longer than the
+/// line. Preserves empty segments for blank lines in the source.
+fn wrap_text_to_width(text: &str, max_width: u16) -> Vec<String> {
+    if max_width == 0 {
+        return vec![text.to_string()];
+    }
+    let max = max_width as usize;
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_w: usize = 0;
+
+    let mut word = String::new();
+    let mut word_w: usize = 0;
+
+    let flush_word = |current: &mut String,
+                      current_w: &mut usize,
+                      word: &mut String,
+                      word_w: &mut usize,
+                      out: &mut Vec<String>| {
+        if word.is_empty() {
+            return;
+        }
+        if *word_w > max {
+            // Word longer than the full line — hard-break it.
+            if !current.is_empty() {
+                out.push(std::mem::take(current));
+                *current_w = 0;
+            }
+            let mut piece = String::new();
+            let mut piece_w: usize = 0;
+            for ch in word.chars() {
+                let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                if piece_w + cw > max && !piece.is_empty() {
+                    out.push(std::mem::take(&mut piece));
+                    piece_w = 0;
+                }
+                piece.push(ch);
+                piece_w += cw;
+            }
+            if !piece.is_empty() {
+                *current = piece;
+                *current_w = piece_w;
+            }
+            word.clear();
+            *word_w = 0;
+            return;
+        }
+        let extra = if current.is_empty() {
+            *word_w
+        } else {
+            1 + *word_w
+        };
+        if *current_w + extra > max {
+            out.push(std::mem::take(current));
+            *current_w = 0;
+        }
+        if !current.is_empty() {
+            current.push(' ');
+            *current_w += 1;
+        }
+        current.push_str(word);
+        *current_w += *word_w;
+        word.clear();
+        *word_w = 0;
+    };
+
+    for ch in text.chars() {
+        if ch == ' ' || ch == '\t' {
+            flush_word(
+                &mut current,
+                &mut current_w,
+                &mut word,
+                &mut word_w,
+                &mut out,
+            );
+        } else {
+            word.push(ch);
+            word_w += UnicodeWidthStr::width(ch.to_string().as_str());
+        }
+    }
+    flush_word(
+        &mut current,
+        &mut current_w,
+        &mut word,
+        &mut word_w,
+        &mut out,
+    );
+
+    if !current.is_empty() {
+        out.push(current);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+/// Render the "Thinking:" header + content lines with full-row background.
+/// Styled uniformly with the user bubble: right gutter + one row of same-bg
+/// padding above and below, then a backdrop gap.
+fn push_thinking_lines(lines: &mut Vec<Line<'static>>, content: &str, width: u16) {
+    let base = thinking_base_style();
+    let bg = Style::default().bg(THINKING_BG);
+    let header = base.add_modifier(Modifier::BOLD);
+
+    let content = content.trim_end_matches(['\n', '\r', ' ']);
+    // Paint the thinking bg all the way to the right edge (no gutter).
+    let box_width = width;
+
+    let blank_row = {
+        let mut spans = vec![Span::styled("   ", bg), Span::styled(String::new(), base)];
+        pad_to_width(&mut spans, 3, box_width, bg);
+        Line::from(spans).style(bg)
+    };
+
+    // Top pad
+    lines.extend(std::iter::repeat_with(|| blank_row.clone()).take(BUBBLE_VERTICAL_PAD));
+
+    // Header row — indented with 3 spaces to match the bubble's left gutter.
+    let mut header_spans = vec![Span::styled("   ", bg), Span::styled("Thinking:", header)];
+    let header_used = 3 + "Thinking:".len() as u16;
+    pad_to_width(&mut header_spans, header_used, box_width, bg);
+    lines.push(Line::from(header_spans).style(bg));
+
+    // Content rows — prefix with 3 spaces of bg to keep consistent left gutter.
+    // Pre-wrap so long paragraphs render as multiple full-bg rows instead of
+    // a single line that Paragraph wraps (losing the bg on the overflow).
+    let content_width = box_width.saturating_sub(3); // account for the 3-col left gutter
+    for line in content.lines() {
+        let wrapped = wrap_text_to_width(line, content_width);
+        for segment in wrapped {
+            let mut spans = vec![Span::styled("   ", bg)];
+            spans.extend(parse_thinking_inline(&segment));
+            let used: u16 = spans
+                .iter()
+                .map(|s| UnicodeWidthStr::width(s.content.as_ref()) as u16)
+                .sum();
+            pad_to_width(&mut spans, used, box_width, bg);
+            lines.push(Line::from(spans).style(bg));
+        }
+    }
+
+    // Bottom pad
+    lines.extend(std::iter::repeat_with(|| blank_row.clone()).take(BUBBLE_VERTICAL_PAD));
+
+    // Backdrop gap so the assistant response below is clearly separated.
+    for _ in 0..BUBBLE_BOTTOM_GAP {
+        lines.push(Line::from(""));
+    }
 }
 
 /// Count physical rows that `lines` would occupy when wrapped at `width`.
@@ -251,6 +654,7 @@ pub fn physical_row_count(lines: &[Line], width: u16) -> u16 {
 /// Widget that renders the chat history
 pub struct ChatWidget<'a> {
     messages: &'a [ChatMessage],
+    streaming_thinking: &'a str,
     streaming_text: &'a str,
     /// Whether older content has been pushed to terminal scrollback.
     has_scrollback: bool,
@@ -262,12 +666,14 @@ pub struct ChatWidget<'a> {
 impl<'a> ChatWidget<'a> {
     pub fn new(
         messages: &'a [ChatMessage],
+        streaming_thinking: &'a str,
         streaming_text: &'a str,
         has_scrollback: bool,
         scroll_offset: u16,
     ) -> Self {
         Self {
             messages,
+            streaming_thinking,
             streaming_text,
             has_scrollback,
             scroll_offset,
@@ -282,7 +688,12 @@ impl Widget for ChatWidget<'_> {
         // previous frames bleed through as ghost text.
         Clear.render(area, buf);
 
-        let lines = build_message_lines(self.messages, self.streaming_text);
+        let lines = build_message_lines_wide(
+            self.messages,
+            self.streaming_thinking,
+            self.streaming_text,
+            area.width,
+        );
         let total_rows = physical_row_count(&lines, area.width);
 
         if self.scroll_offset > 0 {

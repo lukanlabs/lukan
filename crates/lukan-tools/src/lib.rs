@@ -1,4 +1,5 @@
 mod bash;
+pub use bash::{BashCommandClass, classify_bash_command};
 pub mod bg_processes;
 pub mod browser;
 mod edit_file;
@@ -14,6 +15,7 @@ pub mod reranker;
 pub mod sandbox;
 pub mod skills;
 pub mod tasks;
+pub mod tool_search;
 mod web_fetch;
 mod web_search;
 mod write_file;
@@ -27,6 +29,7 @@ use lukan_core::models::events::StreamEvent;
 use lukan_core::models::tools::{ToolDefinition, ToolResult};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio_util::sync::CancellationToken;
+pub use tool_search::ToolSearchTool;
 
 /// Context passed to every tool execution
 pub struct ToolContext {
@@ -212,6 +215,42 @@ pub trait Tool: Send + Sync {
         true
     }
 
+    /// Whether the tool is read-only from the user's perspective.
+    /// This metadata is intended for future orchestration, permissions,
+    /// and smarter tool selection.
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    /// Whether multiple invocations of the tool are safe to run concurrently.
+    /// This metadata is intended for future scheduling decisions.
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    /// Short discoverability hint for future tool search / ranking.
+    fn search_hint(&self) -> Option<&str> {
+        None
+    }
+
+    /// Human-friendly activity label for future UI / tracing.
+    fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+        None
+    }
+
+    /// Whether the tool should be hidden from the default tool set and only
+    /// surfaced through future deferred/discovery flows.
+    fn is_deferred(&self) -> bool {
+        false
+    }
+
+    /// Validate tool input before execution.
+    /// Returns `Ok(())` when the input is acceptable, or a user-facing error
+    /// message when execution should be blocked early.
+    fn validate_input(&self, _input: &serde_json::Value, _ctx: &ToolContext) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Execute the tool with parsed JSON input
     async fn execute(
         &self,
@@ -261,7 +300,12 @@ impl ToolRegistry {
         ctx: &ToolContext,
     ) -> anyhow::Result<ToolResult> {
         match self.get(name) {
-            Some(tool) => tool.execute(input, ctx).await,
+            Some(tool) => {
+                if let Err(msg) = tool.validate_input(&input, ctx) {
+                    return Ok(ToolResult::error(msg));
+                }
+                tool.execute(input, ctx).await
+            }
             None => Ok(ToolResult::error(format!("Unknown tool: {name}"))),
         }
     }
@@ -275,11 +319,30 @@ impl ToolRegistry {
                 name: t.name().to_string(),
                 description: t.description().to_string(),
                 input_schema: t.input_schema(),
+                deferred: t.is_deferred(),
+                read_only: t.is_read_only(),
+                search_hint: t.search_hint().map(|s| s.to_string()),
             })
             .collect();
         defs.sort_by(|a, b| a.name.cmp(&b.name));
         defs
     }
+
+    pub fn deferred_definitions(&self) -> Vec<ToolDefinition> {
+        let mut defs = self.definitions();
+        defs.retain(|d| d.deferred);
+        defs
+    }
+    /// Get tool definitions for the LLM, excluding deferred tools unless a tool is explicitly marked to always load.
+    pub fn default_definitions(&self) -> Vec<ToolDefinition> {
+        let mut defs = self.definitions();
+        defs.retain(|d| !d.deferred || should_always_load_tool(&d.name));
+        defs
+    }
+}
+
+fn should_always_load_tool(name: &str) -> bool {
+    matches!(name, "ToolSearch")
 }
 
 impl Default for ToolRegistry {
@@ -736,6 +799,8 @@ pub struct ToolInfo {
     pub name: String,
     /// Plugin name if provided by a plugin, null for built-in tools
     pub source: Option<String>,
+    /// Whether the tool is deferred from the default tool set.
+    pub deferred: bool,
 }
 
 /// List all available tools with their source (plugin name or null for built-in).
@@ -756,6 +821,7 @@ fn tool_info_from_registry(registry: ToolRegistry) -> Vec<ToolInfo> {
         .map(|t| ToolInfo {
             name: t.name().to_string(),
             source: t.source().map(|s| s.to_string()),
+            deferred: t.is_deferred(),
         })
         .collect();
     tools.sort_by(|a, b| a.name.cmp(&b.name));
@@ -773,6 +839,7 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(Box::new(glob_tool::GlobTool));
     registry.register(Box::new(web_fetch::WebFetchTool));
     registry.register(Box::new(web_search::WebSearchTool));
+    registry.register(Box::new(tool_search::ToolSearchTool));
     // Memory retrieval
     registry.register(Box::new(remember::RememberTool));
     // Task tools

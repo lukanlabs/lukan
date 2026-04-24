@@ -18,6 +18,7 @@ export function isRelayMode(): boolean {
   if (
     host === "app.lukan.ai" ||
     host === "remote.lukan.ai" ||
+    host === "staging-relay.lukan.ai" ||
     host.endsWith(".kiteploy.com")
   ) {
     return true;

@@ -16,6 +16,32 @@ use lukan_core::models::tools::ToolResult;
 
 use crate::ToolRegistry;
 
+macro_rules! browser_tool_metadata {
+    ($hint:expr, $label:expr, read_only = $read_only:expr) => {
+        fn is_read_only(&self) -> bool {
+            $read_only
+        }
+
+        fn is_concurrency_safe(&self) -> bool {
+            false
+        }
+
+        fn is_deferred(&self) -> bool {
+            true
+        }
+
+        fn search_hint(&self) -> Option<&str> {
+            Some($hint)
+        }
+
+        fn activity_label(&self, _input: &serde_json::Value) -> Option<String> {
+            Some($label.to_string())
+        }
+    };
+}
+
+pub(crate) use browser_tool_metadata;
+
 /// Register all browser tools into the given registry.
 pub fn register_browser_tools(registry: &mut ToolRegistry) {
     registry.register(Box::new(navigate::BrowserNavigate));

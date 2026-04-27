@@ -35,7 +35,7 @@ else
   SHA256CMD := sha256sum
 endif
 
-.PHONY: all build clean test check install release bundle-plugins package-plugins package-whisper bundle-desktop upload upload-daily upload-gh help
+.PHONY: all build clean test check install check-release-version release bundle-plugins package-plugins package-whisper bundle-desktop upload upload-daily upload-gh help
 
 all: build
 
@@ -149,8 +149,22 @@ bundle-desktop: build
 	@echo "Desktop bundles in dist/desktop/"
 	@ls -lh dist/desktop/ 2>/dev/null || true
 
+## check-release-version: Ensure Cargo workspace version matches release tag/version
+check-release-version:
+	@CARGO_VERSION="$$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')"; \
+	RELEASE_VERSION="$$(printf '%s' "$(VERSION)" | sed 's/^v//')"; \
+	if ! printf '%s' "$$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$$'; then \
+		echo "Invalid release version: $(VERSION)" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$CARGO_VERSION" != "$$RELEASE_VERSION" ]; then \
+		echo "Version mismatch: Cargo.toml is $$CARGO_VERSION but release is $(VERSION)" >&2; \
+		echo "Bump Cargo.toml/Cargo.lock before tagging or uploading this release." >&2; \
+		exit 1; \
+	fi
+
 ## release: Build binary + bundle plugins + generate checksums
-release: build bundle-plugins package-plugins
+release: check-release-version build bundle-plugins package-plugins
 	@$(MAKE) package-whisper || echo "  Warning: whisper plugin build failed (skipped)"
 	@echo "Building release $(VERSION) for $(PLATFORM)..."
 	@mkdir -p dist

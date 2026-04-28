@@ -18,11 +18,25 @@ pub enum SystemPrompt {
     },
 }
 
+/// Provider-agnostic prompt caching policy.
+///
+/// Providers with explicit prompt caching can translate this into native cache
+/// markers. Providers with automatic prefix caching should ignore the metadata
+/// while preserving the stable request ordering.
+#[derive(Debug, Clone, Default)]
+pub struct CachePolicy {
+    /// Index in `StreamParams::messages` of the last stable message in the
+    /// cacheable prefix. The next user message / dynamic tail should be after
+    /// this point.
+    pub message_breakpoint: Option<usize>,
+}
+
 /// Parameters for a streaming LLM request
 pub struct StreamParams {
     pub system_prompt: SystemPrompt,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolDefinition>,
+    pub cache_policy: CachePolicy,
 }
 
 /// Common interface for all LLM providers

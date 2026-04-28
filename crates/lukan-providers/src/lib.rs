@@ -22,7 +22,7 @@ use lukan_core::config::types::{AppConfig, Credentials};
 use lukan_core::config::{CredentialsManager, ProviderName, ResolvedConfig};
 use tracing::debug;
 
-pub use contracts::{Provider, StreamParams, SystemPrompt};
+pub use contracts::{CachePolicy, Provider, StreamParams, SystemPrompt};
 
 /// A no-op provider returned when no model is selected.
 /// Allows the TUI to launch; streaming returns an error prompting the user to pick a model.

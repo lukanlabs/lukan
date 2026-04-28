@@ -9,7 +9,7 @@ use lukan_core::models::events::{StopReason, StreamEvent};
 use lukan_core::models::messages::{ContentBlock, ImageSource, Message, MessageContent, Role};
 use lukan_core::models::tools::ToolDefinition;
 
-use crate::contracts::{Provider, StreamParams, SystemPrompt};
+use crate::contracts::{CachePolicy, Provider, StreamParams, SystemPrompt};
 use crate::sse::{SseEvent, SseParser};
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -68,26 +68,51 @@ impl AnthropicProvider {
     }
 
     /// Convert our canonical messages to Anthropic format
-    fn convert_messages(&self, messages: &[Message]) -> Vec<serde_json::Value> {
+    fn convert_messages(
+        &self,
+        messages: &[Message],
+        cache_policy: &CachePolicy,
+    ) -> Vec<serde_json::Value> {
         let mut result = Vec::new();
 
-        for msg in messages {
+        for (idx, msg) in messages.iter().enumerate() {
+            let should_cache_message = cache_policy.message_breakpoint == Some(idx);
             match msg.role {
                 Role::User => {
                     let content = match &msg.content {
-                        MessageContent::Text(s) => serde_json::json!(s),
-                        MessageContent::Blocks(blocks) => {
-                            serde_json::json!(self.convert_content_blocks(blocks))
+                        MessageContent::Text(s) => {
+                            if should_cache_message {
+                                serde_json::json!([{
+                                    "type": "text",
+                                    "text": s,
+                                    "cache_control": { "type": "ephemeral" }
+                                }])
+                            } else {
+                                serde_json::json!(s)
+                            }
                         }
+                        MessageContent::Blocks(blocks) => serde_json::json!(
+                            self.convert_content_blocks(blocks, should_cache_message)
+                        ),
                     };
                     result.push(serde_json::json!({ "role": "user", "content": content }));
                 }
                 Role::Assistant => {
                     let content = match &msg.content {
-                        MessageContent::Text(s) => serde_json::json!(s),
-                        MessageContent::Blocks(blocks) => {
-                            serde_json::json!(self.convert_content_blocks(blocks))
+                        MessageContent::Text(s) => {
+                            if should_cache_message {
+                                serde_json::json!([{
+                                    "type": "text",
+                                    "text": s,
+                                    "cache_control": { "type": "ephemeral" }
+                                }])
+                            } else {
+                                serde_json::json!(s)
+                            }
                         }
+                        MessageContent::Blocks(blocks) => serde_json::json!(
+                            self.convert_content_blocks(blocks, should_cache_message)
+                        ),
                     };
                     result.push(serde_json::json!({ "role": "assistant", "content": content }));
                 }
@@ -95,13 +120,17 @@ impl AnthropicProvider {
                     // Tool results wrapped in user message with tool_result blocks
                     let tool_use_id = msg.tool_call_id.as_deref().unwrap_or("");
                     let content_text = msg.content.to_text();
+                    let mut tool_result = serde_json::json!({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": content_text
+                    });
+                    if should_cache_message {
+                        tool_result["cache_control"] = serde_json::json!({ "type": "ephemeral" });
+                    }
                     result.push(serde_json::json!({
                         "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": content_text
-                        }]
+                        "content": [tool_result]
                     }));
                 }
             }
@@ -111,23 +140,37 @@ impl AnthropicProvider {
     }
 
     /// Convert content blocks to Anthropic format
-    fn convert_content_blocks(&self, blocks: &[ContentBlock]) -> Vec<serde_json::Value> {
+    fn convert_content_blocks(
+        &self,
+        blocks: &[ContentBlock],
+        cache_last_block: bool,
+    ) -> Vec<serde_json::Value> {
         let mut result = Vec::new();
 
-        for block in blocks {
+        for (idx, block) in blocks.iter().enumerate() {
+            let should_cache_block = cache_last_block && idx == blocks.len().saturating_sub(1);
             match block {
                 ContentBlock::Text { text } => {
                     if !text.is_empty() {
-                        result.push(serde_json::json!({ "type": "text", "text": text }));
+                        let mut block_json = serde_json::json!({ "type": "text", "text": text });
+                        if should_cache_block {
+                            block_json["cache_control"] =
+                                serde_json::json!({ "type": "ephemeral" });
+                        }
+                        result.push(block_json);
                     }
                 }
                 ContentBlock::ToolUse { id, name, input } => {
-                    result.push(serde_json::json!({
+                    let mut block_json = serde_json::json!({
                         "type": "tool_use",
                         "id": id,
                         "name": name,
                         "input": input
-                    }));
+                    });
+                    if should_cache_block {
+                        block_json["cache_control"] = serde_json::json!({ "type": "ephemeral" });
+                    }
+                    result.push(block_json);
                 }
                 ContentBlock::ToolResult {
                     tool_use_id,
@@ -143,6 +186,9 @@ impl AnthropicProvider {
                     if let Some(true) = is_error {
                         block_json["is_error"] = serde_json::json!(true);
                     }
+                    if should_cache_block {
+                        block_json["cache_control"] = serde_json::json!({ "type": "ephemeral" });
+                    }
                     result.push(block_json);
                 }
                 ContentBlock::Image {
@@ -151,20 +197,30 @@ impl AnthropicProvider {
                     media_type,
                 } => match source {
                     ImageSource::Url => {
-                        result.push(serde_json::json!({
+                        let mut block_json = serde_json::json!({
                             "type": "image",
                             "source": { "type": "url", "url": data }
-                        }));
+                        });
+                        if should_cache_block {
+                            block_json["cache_control"] =
+                                serde_json::json!({ "type": "ephemeral" });
+                        }
+                        result.push(block_json);
                     }
                     ImageSource::Base64 => {
-                        result.push(serde_json::json!({
+                        let mut block_json = serde_json::json!({
                             "type": "image",
                             "source": {
                                 "type": "base64",
                                 "media_type": media_type.as_deref().unwrap_or("image/jpeg"),
                                 "data": data
                             }
-                        }));
+                        });
+                        if should_cache_block {
+                            block_json["cache_control"] =
+                                serde_json::json!({ "type": "ephemeral" });
+                        }
+                        result.push(block_json);
                     }
                 },
                 ContentBlock::Thinking { .. } => {
@@ -218,7 +274,7 @@ impl Provider for AnthropicProvider {
 
     async fn stream(&self, params: StreamParams, tx: mpsc::Sender<StreamEvent>) -> Result<()> {
         let system_blocks = self.build_system_blocks(&params.system_prompt);
-        let messages = self.convert_messages(&params.messages);
+        let messages = self.convert_messages(&params.messages, &params.cache_policy);
         let tools = self.convert_tools(&params.tools);
 
         let mut body = serde_json::json!({
@@ -638,7 +694,7 @@ mod tests {
     fn convert_messages_user_text() {
         let p = make_provider();
         let msgs = vec![Message::user("Hello")];
-        let result = p.convert_messages(&msgs);
+        let result = p.convert_messages(&msgs, &CachePolicy::default());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["role"], "user");
         assert_eq!(result[0]["content"], "Hello");
@@ -648,7 +704,7 @@ mod tests {
     fn convert_messages_assistant_text() {
         let p = make_provider();
         let msgs = vec![Message::assistant("Response")];
-        let result = p.convert_messages(&msgs);
+        let result = p.convert_messages(&msgs, &CachePolicy::default());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["role"], "assistant");
         assert_eq!(result[0]["content"], "Response");
@@ -663,13 +719,52 @@ mod tests {
             tool_call_id: Some("call_123".into()),
             name: None,
         }];
-        let result = p.convert_messages(&msgs);
+        let result = p.convert_messages(&msgs, &CachePolicy::default());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["role"], "user");
         let content = result[0]["content"].as_array().unwrap();
         assert_eq!(content[0]["type"], "tool_result");
         assert_eq!(content[0]["tool_use_id"], "call_123");
         assert_eq!(content[0]["content"], "tool output");
+    }
+
+    #[test]
+    fn convert_messages_applies_cache_breakpoint_to_text_message() {
+        let p = make_provider();
+        let msgs = vec![Message::user("stable"), Message::user("dynamic")];
+        let result = p.convert_messages(
+            &msgs,
+            &CachePolicy {
+                message_breakpoint: Some(0),
+            },
+        );
+        let content = result[0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["text"], "stable");
+        assert_eq!(content[0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(result[1]["content"], "dynamic");
+    }
+
+    #[test]
+    fn convert_messages_applies_cache_breakpoint_to_last_block() {
+        let p = make_provider();
+        let msgs = vec![Message {
+            role: Role::User,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Text { text: "a".into() },
+                ContentBlock::Text { text: "b".into() },
+            ]),
+            tool_call_id: None,
+            name: None,
+        }];
+        let result = p.convert_messages(
+            &msgs,
+            &CachePolicy {
+                message_breakpoint: Some(0),
+            },
+        );
+        let content = result[0]["content"].as_array().unwrap();
+        assert!(content[0].get("cache_control").is_none());
+        assert_eq!(content[1]["cache_control"]["type"], "ephemeral");
     }
 
     // ── convert_content_blocks ────────────────────────────────────────
@@ -680,7 +775,7 @@ mod tests {
         let blocks = vec![ContentBlock::Text {
             text: "hello".into(),
         }];
-        let result = p.convert_content_blocks(&blocks);
+        let result = p.convert_content_blocks(&blocks, false);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["type"], "text");
         assert_eq!(result[0]["text"], "hello");
@@ -692,7 +787,7 @@ mod tests {
         let blocks = vec![ContentBlock::Text {
             text: String::new(),
         }];
-        let result = p.convert_content_blocks(&blocks);
+        let result = p.convert_content_blocks(&blocks, false);
         assert!(result.is_empty());
     }
 
@@ -704,7 +799,7 @@ mod tests {
             name: "bash".into(),
             input: json!({"command": "ls"}),
         }];
-        let result = p.convert_content_blocks(&blocks);
+        let result = p.convert_content_blocks(&blocks, false);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["type"], "tool_use");
         assert_eq!(result[0]["id"], "tool_1");
@@ -722,7 +817,7 @@ mod tests {
             diff: None,
             image: None,
         }];
-        let result = p.convert_content_blocks(&blocks);
+        let result = p.convert_content_blocks(&blocks, false);
         assert_eq!(result[0]["type"], "tool_result");
         assert_eq!(result[0]["is_error"], true);
     }
@@ -737,7 +832,7 @@ mod tests {
             diff: None,
             image: None,
         }];
-        let result = p.convert_content_blocks(&blocks);
+        let result = p.convert_content_blocks(&blocks, false);
         assert!(result[0].get("is_error").is_none());
     }
 
@@ -749,7 +844,7 @@ mod tests {
             data: "https://example.com/img.png".into(),
             media_type: None,
         }];
-        let result = p.convert_content_blocks(&blocks);
+        let result = p.convert_content_blocks(&blocks, false);
         assert_eq!(result[0]["type"], "image");
         assert_eq!(result[0]["source"]["type"], "url");
         assert_eq!(result[0]["source"]["url"], "https://example.com/img.png");
@@ -763,7 +858,7 @@ mod tests {
             data: "abc123".into(),
             media_type: Some("image/png".into()),
         }];
-        let result = p.convert_content_blocks(&blocks);
+        let result = p.convert_content_blocks(&blocks, false);
         assert_eq!(result[0]["source"]["type"], "base64");
         assert_eq!(result[0]["source"]["media_type"], "image/png");
         assert_eq!(result[0]["source"]["data"], "abc123");
@@ -775,7 +870,7 @@ mod tests {
         let blocks = vec![ContentBlock::Thinking {
             text: "reasoning".into(),
         }];
-        let result = p.convert_content_blocks(&blocks);
+        let result = p.convert_content_blocks(&blocks, false);
         assert!(result.is_empty());
     }
 

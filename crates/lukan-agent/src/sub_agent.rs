@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lukan_core::models::events::{StopReason, StreamEvent};
 use lukan_core::models::tools::ToolResult;
-use lukan_providers::{Provider, StreamParams, SystemPrompt};
+use lukan_providers::{CachePolicy, Provider, StreamParams, SystemPrompt};
 use lukan_tools::{Tool, ToolContext, create_default_registry};
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
@@ -400,6 +400,7 @@ async fn run_sub_agent(
     if let Some(worktree_path) = &isolation_ctx.worktree_path {
         history.add_user_message(&build_subagent_worktree_notice(&parent_cwd, worktree_path));
     }
+    let message_index_before_task = history.messages().len();
     history.add_user_message(&task);
 
     // Get the update channel sender (if TUI is subscribed)
@@ -462,6 +463,9 @@ async fn run_sub_agent(
             system_prompt: system_prompt.clone(),
             messages: history.messages().to_vec(),
             tools: tools.definitions(),
+            cache_policy: CachePolicy {
+                message_breakpoint: message_index_before_task.checked_sub(1),
+            },
         };
 
         let (stream_tx, mut stream_rx) = mpsc::channel::<StreamEvent>(256);
@@ -1379,6 +1383,7 @@ pub(crate) async fn run_explore(
     };
 
     let mut history = MessageHistory::new();
+    let message_index_before_task = history.messages().len();
     history.add_user_message(task);
 
     // Create a filtered tool registry with only read-only tools
@@ -1452,6 +1457,9 @@ pub(crate) async fn run_explore(
             system_prompt: system_prompt.clone(),
             messages: history.messages().to_vec(),
             tools: tools.definitions(),
+            cache_policy: CachePolicy {
+                message_breakpoint: message_index_before_task.checked_sub(1),
+            },
         };
 
         let (stream_tx, mut stream_rx) = mpsc::channel::<StreamEvent>(256);

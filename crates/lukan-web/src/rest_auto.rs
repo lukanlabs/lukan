@@ -12,7 +12,7 @@ use axum::{
 use lukan_core::config::ResolvedConfig;
 use lukan_core::models::events::StreamEvent;
 use lukan_core::models::messages::{Message, MessageContent, Role};
-use lukan_providers::{Provider, StreamParams, SystemPrompt, create_provider};
+use lukan_providers::{CachePolicy, Provider, StreamParams, SystemPrompt, create_provider};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 
@@ -353,6 +353,7 @@ async fn supervisor_think(
         system_prompt: SystemPrompt::Text(SUPERVISOR_SYSTEM.to_string()),
         messages: history.clone(),
         tools: vec![],
+        cache_policy: CachePolicy::default(),
     };
 
     let p = provider.clone();

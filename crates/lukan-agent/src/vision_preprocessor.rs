@@ -7,7 +7,7 @@ use std::sync::Arc;
 use base64::Engine;
 use lukan_core::models::events::StreamEvent;
 use lukan_core::models::messages::{ContentBlock, ImageSource, Message, MessageContent, Role};
-use lukan_providers::{Provider, StreamParams, SystemPrompt};
+use lukan_providers::{CachePolicy, Provider, StreamParams, SystemPrompt};
 use regex::Regex;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -260,6 +260,7 @@ async fn describe_with_provider(provider: &dyn Provider, image_block: ContentBlo
         system_prompt: SystemPrompt::Text(VISION_SYSTEM.to_string()),
         messages: vec![user_msg],
         tools: vec![],
+        cache_policy: CachePolicy::default(),
     };
 
     let (tx, mut rx) = mpsc::channel::<StreamEvent>(64);

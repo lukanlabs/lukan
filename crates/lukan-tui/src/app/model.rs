@@ -59,7 +59,7 @@ impl App {
             let default_idx = match current_effort {
                 "low" => 0,
                 "high" => 2,
-                "extra_high" => 3,
+                "xhigh" => 3,
                 _ => 1, // medium
             };
             self.reasoning_picker = Some(ReasoningPicker {
@@ -76,7 +76,7 @@ impl App {
                         "High",
                         "Greater reasoning depth for complex problems",
                     ),
-                    ("extra_high", "Extra high", "Maximum reasoning depth"),
+                    ("xhigh", "Extra high", "Maximum reasoning depth"),
                 ],
                 selected: default_idx,
             });
@@ -203,7 +203,12 @@ impl App {
                     banner.content = sanitize_for_display(&new_banner);
                 }
                 let effort_label = reasoning_effort
-                    .map(|e| format!(" (reasoning: {e})"))
+                    .map(|e| {
+                        format!(
+                            " (reasoning: {})",
+                            if e == "xhigh" { "extra high" } else { e }
+                        )
+                    })
                     .unwrap_or_default();
                 self.messages.push(ChatMessage::new(
                     "system",

@@ -51,7 +51,7 @@ pub trait Provider: Send + Sync {
     }
 
     /// Set the reasoning effort level (only relevant for reasoning models).
-    /// Valid values: "low", "medium", "high", "extra_high".
+    /// Valid values: "low", "medium", "high", "xhigh".
     fn set_reasoning_effort(&self, _effort: &str) {}
 
     /// Get the current reasoning effort level, if the provider supports it.

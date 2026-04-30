@@ -131,7 +131,7 @@ impl Provider for OpenAICodexProvider {
         match effort.as_str() {
             "low" => Some("low"),
             "high" => Some("high"),
-            "extra_high" => Some("extra_high"),
+            "xhigh" => Some("xhigh"),
             _ => Some("medium"),
         }
     }
@@ -190,6 +190,13 @@ impl Provider for OpenAICodexProvider {
 
         if self.is_reasoning_model() {
             let effort = self.reasoning_effort.lock().unwrap().clone();
+            let effort = match effort.as_str() {
+                "none" | "minimal" | "low" | "medium" | "high" | "xhigh" => effort,
+                // The Codex endpoint uses `xhigh`; older Lukan builds exposed
+                // `extra_high`, so normalize it here to avoid 400s.
+                "extra_high" => "xhigh".to_string(),
+                _ => "medium".to_string(),
+            };
             body["reasoning"] = json!({
                 "effort": effort,
                 "summary": "auto",

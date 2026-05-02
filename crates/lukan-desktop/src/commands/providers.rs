@@ -33,6 +33,7 @@ pub async fn list_providers() -> Result<Vec<ProviderInfo>, String> {
         ProviderName::OpenaiCompatible,
         ProviderName::LukanCloud,
         ProviderName::Gemini,
+        ProviderName::Minimax,
     ];
 
     let current_model = config.model.clone();
@@ -213,6 +214,18 @@ pub async fn fetch_provider_models(provider: String) -> Result<Vec<FetchedModel>
         ]),
         ProviderName::Gemini => {
             let models = lukan_providers::gemini::fetch_gemini_models(&api_key)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(models
+                .into_iter()
+                .map(|m| FetchedModel {
+                    name: m.display_name,
+                    id: m.id,
+                })
+                .collect())
+        }
+        ProviderName::Minimax => {
+            let models = lukan_providers::minimax::fetch_minimax_models(&api_key)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(models

@@ -16,6 +16,7 @@ pub enum ProviderName {
     OpenaiCompatible,
     LukanCloud,
     Gemini,
+    Minimax,
 }
 
 impl fmt::Display for ProviderName {
@@ -31,6 +32,7 @@ impl fmt::Display for ProviderName {
             ProviderName::OpenaiCompatible => write!(f, "openai-compatible"),
             ProviderName::LukanCloud => write!(f, "lukan-cloud"),
             ProviderName::Gemini => write!(f, "gemini"),
+            ProviderName::Minimax => write!(f, "minimax"),
         }
     }
 }
@@ -196,6 +198,8 @@ pub struct Credentials {
     pub lukan_cloud_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gemini_api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimax_api_key: Option<String>,
     /// Per-skill environment variables (e.g. {"nano-banana-pro": {"GEMINI_API_KEY": "..."}})
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub skill_credentials: HashMap<String, HashMap<String, String>>,
@@ -415,6 +419,7 @@ mod tests {
             ProviderName::OpenaiCompatible,
             ProviderName::LukanCloud,
             ProviderName::Gemini,
+            ProviderName::Minimax,
         ];
         for variant in &variants {
             let json = serde_json::to_string(variant).unwrap();
@@ -436,6 +441,7 @@ mod tests {
         );
         assert_eq!(ProviderName::LukanCloud.to_string(), "lukan-cloud");
         assert_eq!(ProviderName::Gemini.to_string(), "gemini");
+        assert_eq!(ProviderName::Minimax.to_string(), "minimax");
     }
 
     #[test]

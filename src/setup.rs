@@ -90,6 +90,7 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
         ("openai-compatible", "OpenAI-compatible endpoint"),
         ("lukan-cloud", "Lukan Cloud"),
         ("gemini", "Google Gemini"),
+        ("minimax", "MiniMax M2"),
     ];
 
     let current_str = config.provider.to_string();
@@ -234,6 +235,14 @@ fn setup_credentials(provider: &ProviderName, mut creds: Credentials) -> Result<
                 creds.gemini_api_key.as_deref(),
             )?
             .or(creds.gemini_api_key);
+        }
+        ProviderName::Minimax => {
+            creds.minimax_api_key = prompt_credential(
+                "MiniMax API key",
+                "MINIMAX_API_KEY",
+                creds.minimax_api_key.as_deref(),
+            )?
+            .or(creds.minimax_api_key);
         }
     }
 
@@ -444,6 +453,11 @@ pub async fn run_doctor() -> Result<()> {
         "LUKAN_CLOUD_API_KEY",
     );
     print_key_status(
+        "MiniMax",
+        creds.minimax_api_key.as_deref(),
+        "MINIMAX_API_KEY",
+    );
+    print_key_status(
         "Brave Search",
         creds.brave_api_key.as_deref(),
         "BRAVE_API_KEY",
@@ -577,6 +591,7 @@ pub async fn run_first_run_wizard() -> Result<bool> {
         ("fireworks", "Fireworks (open-source models)", false),
         ("nebius", "Nebius (DeepSeek, MiniMax, GLM)", false),
         ("gemini", "Google Gemini", false),
+        ("minimax", "MiniMax M2", false),
         ("lukan-cloud", "Lukan Cloud", false),
         ("zai", "z.ai (GLM models)", false),
         ("ollama-cloud", "Ollama Cloud", false),
@@ -769,6 +784,10 @@ fn setup_credentials_for_provider(
             creds.gemini_api_key =
                 prompt_credential("Gemini API key", env_var, None)?.or(creds.gemini_api_key);
         }
+        ProviderName::Minimax => {
+            creds.minimax_api_key =
+                prompt_credential("MiniMax API key", env_var, None)?.or(creds.minimax_api_key);
+        }
         _ => {}
     }
     Ok(creds)
@@ -851,6 +870,7 @@ fn env_var_for_provider(provider: &ProviderName) -> &'static str {
         ProviderName::OpenaiCompatible => "OPENAI_COMPATIBLE_API_KEY",
         ProviderName::LukanCloud => "LUKAN_CLOUD_API_KEY",
         ProviderName::Gemini => "GEMINI_API_KEY",
+        ProviderName::Minimax => "MINIMAX_API_KEY",
     }
 }
 

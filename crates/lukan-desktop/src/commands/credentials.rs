@@ -37,6 +37,7 @@ pub async fn get_provider_status() -> Result<Vec<ProviderStatus>, String> {
         ProviderName::OllamaCloud,
         ProviderName::OpenaiCompatible,
         ProviderName::Gemini,
+        ProviderName::Minimax,
     ];
 
     let statuses = providers
@@ -99,6 +100,12 @@ pub async fn test_provider(provider: String) -> Result<String, String> {
         }
         ProviderName::Gemini => {
             let models = lukan_providers::gemini::fetch_gemini_models(&api_key)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(format!("Connected. {} models available.", models.len()))
+        }
+        ProviderName::Minimax => {
+            let models = lukan_providers::minimax::fetch_minimax_models(&api_key)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(format!("Connected. {} models available.", models.len()))

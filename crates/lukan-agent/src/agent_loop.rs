@@ -13,7 +13,7 @@ use lukan_core::models::events::{
 };
 use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
 use lukan_core::models::sessions::ChatSession;
-use lukan_providers::{Provider, StreamParams, SystemPrompt};
+use lukan_providers::{CachePolicy, Provider, StreamParams, SystemPrompt};
 use lukan_tools::{ToolContext, ToolRegistry};
 
 use crate::permission_matcher::{
@@ -939,10 +939,18 @@ impl AgentLoop {
             )
             .await;
 
+            let cache_policy = CachePolicy {
+                // The current user message has already been appended to history.
+                // Cache the stable conversation prefix before that dynamic tail so
+                // file-read tool results from previous turns remain prefix-cacheable.
+                message_breakpoint: message_index_before.checked_sub(1),
+            };
+
             let params = StreamParams {
                 system_prompt: self.system_prompt.clone(),
                 messages,
                 tools: tool_defs,
+                cache_policy,
             };
 
             // Stream from LLM
@@ -2138,6 +2146,7 @@ impl AgentLoop {
             system_prompt: SystemPrompt::Text(system_prompt.to_string()),
             messages: vec![Message::user(user_message)],
             tools: vec![],
+            cache_policy: CachePolicy::default(),
         };
 
         let (tx, mut rx) = mpsc::channel::<StreamEvent>(256);
@@ -2266,7 +2275,7 @@ async fn run_structured_memory_update(
 ) -> Result<()> {
     use lukan_core::models::events::StreamEvent;
     use lukan_core::models::messages::Message;
-    use lukan_providers::{StreamParams, SystemPrompt};
+    use lukan_providers::{CachePolicy, StreamParams, SystemPrompt};
 
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
@@ -2289,6 +2298,7 @@ async fn run_structured_memory_update(
         system_prompt: SystemPrompt::Text(STRUCTURED_MEMORY_UPDATE_PROMPT.to_string()),
         messages: vec![Message::user(&user_prompt)],
         tools: vec![],
+        cache_policy: CachePolicy::default(),
     };
 
     let (tx, mut rx) = mpsc::channel::<StreamEvent>(256);
@@ -2412,7 +2422,7 @@ async fn update_behavior_profile(
 ) -> Result<()> {
     use lukan_core::models::events::StreamEvent;
     use lukan_core::models::messages::{ContentBlock, Message, MessageContent, Role};
-    use lukan_providers::{StreamParams, SystemPrompt};
+    use lukan_providers::{CachePolicy, StreamParams, SystemPrompt};
 
     let memory_path = cwd.join(".lukan").join("memories").join("MEMORY.md");
     let current = tokio::fs::read_to_string(&memory_path)
@@ -2464,6 +2474,7 @@ async fn update_behavior_profile(
             system_prompt: SystemPrompt::Text(system_prompt.clone()),
             messages: messages.clone(),
             tools: tool_defs.clone(),
+            cache_policy: CachePolicy::default(),
         };
 
         let (tx, mut rx) = mpsc::channel::<StreamEvent>(256);

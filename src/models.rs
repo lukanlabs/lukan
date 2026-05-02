@@ -192,6 +192,37 @@ const ZAI_MODELS: &[StaticModel] = &[
     },
 ];
 
+const MINIMAX_MODELS: &[StaticModel] = &[
+    StaticModel {
+        id: "MiniMax-M2.7",
+        name: "MiniMax M2.7",
+    },
+    StaticModel {
+        id: "MiniMax-M2.7-highspeed",
+        name: "MiniMax M2.7 Highspeed",
+    },
+    StaticModel {
+        id: "MiniMax-M2.5",
+        name: "MiniMax M2.5",
+    },
+    StaticModel {
+        id: "MiniMax-M2.5-highspeed",
+        name: "MiniMax M2.5 Highspeed",
+    },
+    StaticModel {
+        id: "MiniMax-M2.1",
+        name: "MiniMax M2.1",
+    },
+    StaticModel {
+        id: "MiniMax-M2.1-highspeed",
+        name: "MiniMax M2.1 Highspeed",
+    },
+    StaticModel {
+        id: "MiniMax-M2",
+        name: "MiniMax M2",
+    },
+];
+
 // ── Theme ──────────────────────────────────────────────────────────────────
 
 fn picker_theme() -> ColorfulTheme {
@@ -247,6 +278,7 @@ pub async fn run_models(provider: Option<&str>, model_entry: Option<&str>) -> Re
         }
         "openai-codex" | "codex" => select_static("openai-codex", OPENAI_CODEX_MODELS, true).await,
         "zai" | "z.ai" => select_static("zai", ZAI_MODELS, false).await,
+        "minimax" | "minimax-ai" => select_static("minimax", MINIMAX_MODELS, false).await,
         "ollama-cloud" | "ollama" => select_ollama_cloud().await,
         "openai-compatible" | "oai-compatible" => select_openai_compatible().await,
         "lukan-cloud" | "lukan" => select_lukan_cloud().await,
@@ -274,6 +306,7 @@ fn print_usage() {
     println!("  {CYAN}ollama-cloud{RESET}      Ollama Cloud (requires API key)");
     println!("  {CYAN}openai-compatible{RESET}  Generic OpenAI-compatible endpoint");
     println!("  {CYAN}zai{RESET}               z.ai (GLM models)");
+    println!("  {CYAN}minimax{RESET}           MiniMax M2 models (requires API key)");
     println!("  {CYAN}lukan-cloud{RESET}       Lukan Cloud (requires API key)");
     println!("  {CYAN}gemini{RESET}            Google Gemini models (requires API key)");
     println!();

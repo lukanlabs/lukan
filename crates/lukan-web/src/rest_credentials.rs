@@ -81,6 +81,7 @@ pub async fn get_provider_status() -> impl IntoResponse {
         ProviderName::LukanCloud,
         ProviderName::OpenaiCompatible,
         ProviderName::Gemini,
+        ProviderName::Minimax,
     ];
 
     let statuses: Vec<ProviderStatusDto> = providers
@@ -153,6 +154,9 @@ pub async fn test_provider(Path(provider): Path<String>) -> impl IntoResponse {
             )),
         },
         ProviderName::Gemini => lukan_providers::gemini::fetch_gemini_models(&api_key)
+            .await
+            .map(|m| format!("Connected. {} models available.", m.len())),
+        ProviderName::Minimax => lukan_providers::minimax::fetch_minimax_models(&api_key)
             .await
             .map(|m| format!("Connected. {} models available.", m.len())),
         _ => Ok(format!("Provider {provider} configured.")),

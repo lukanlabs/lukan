@@ -9,6 +9,7 @@ pub mod fireworks;
 pub mod gemini;
 pub mod github_copilot;
 pub mod lukan_cloud;
+pub mod minimax;
 pub mod nebius;
 pub mod ollama_cloud;
 pub mod openai_codex;
@@ -22,7 +23,7 @@ use lukan_core::config::types::{AppConfig, Credentials};
 use lukan_core::config::{CredentialsManager, ProviderName, ResolvedConfig};
 use tracing::debug;
 
-pub use contracts::{Provider, StreamParams, SystemPrompt};
+pub use contracts::{CachePolicy, Provider, StreamParams, SystemPrompt};
 
 /// A no-op provider returned when no model is selected.
 /// Allows the TUI to launch; streaming returns an error prompting the user to pick a model.
@@ -219,6 +220,20 @@ pub fn create_provider(config: &ResolvedConfig) -> Result<Box<dyn Provider>> {
                 )
             })?;
             Ok(Box::new(gemini::GeminiProvider::new(
+                api_key, model, max_tokens,
+            )))
+        }
+        ProviderName::Minimax => {
+            let api_key = CredentialsManager::get_api_key(
+                &config.credentials,
+                &ProviderName::Minimax,
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing MiniMax API key. Set it via `lukan setup` or MINIMAX_API_KEY env var"
+                )
+            })?;
+            Ok(Box::new(minimax::MiniMaxProvider::new(
                 api_key, model, max_tokens,
             )))
         } // All ProviderName variants are covered above.

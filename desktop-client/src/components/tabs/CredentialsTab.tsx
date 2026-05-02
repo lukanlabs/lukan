@@ -80,6 +80,12 @@ const PROVIDERS: ProviderEntry[] = [
     label: "Google Gemini",
     envVar: "GEMINI_API_KEY",
   },
+  {
+    provider: "minimax",
+    field: "minimaxApiKey",
+    label: "MiniMax",
+    envVar: "MINIMAX_API_KEY",
+  },
 ];
 
 type TestResult = { status: "success" | "error"; message: string } | null;

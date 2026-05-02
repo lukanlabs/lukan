@@ -90,6 +90,7 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
         ("openai-compatible", "OpenAI-compatible endpoint"),
         ("lukan-cloud", "Lukan Cloud"),
         ("gemini", "Google Gemini"),
+        ("minimax", "MiniMax M2"),
     ];
 
     let current_str = config.provider.to_string();
@@ -235,6 +236,14 @@ fn setup_credentials(provider: &ProviderName, mut creds: Credentials) -> Result<
             )?
             .or(creds.gemini_api_key);
         }
+        ProviderName::Minimax => {
+            creds.minimax_api_key = prompt_credential(
+                "MiniMax API key",
+                "MINIMAX_API_KEY",
+                creds.minimax_api_key.as_deref(),
+            )?
+            .or(creds.minimax_api_key);
+        }
     }
 
     // Optionally configure search API
@@ -262,10 +271,7 @@ fn setup_credentials(provider: &ProviderName, mut creds: Credentials) -> Result<
 
 fn prompt_credential(label: &str, env_var: &str, current: Option<&str>) -> Result<Option<String>> {
     let status = match current {
-        Some(k) if !k.is_empty() => {
-            let masked = mask_key(k);
-            format!("configured ({masked})")
-        }
+        Some(k) if !k.is_empty() => format!("configured ({} chars)", k.len()),
         _ => "not set".to_string(),
     };
 
@@ -405,50 +411,88 @@ pub async fn run_doctor() -> Result<()> {
 
     // Credentials status
     println!("{BOLD}API Keys{RESET}");
-    print_key_status(
+    print_key_presence(
         "Anthropic",
-        creds.anthropic_api_key.as_deref(),
+        creds
+            .anthropic_api_key
+            .as_ref()
+            .is_some_and(|k| !k.is_empty()),
         "ANTHROPIC_API_KEY",
     );
-    print_key_status("Nebius", creds.nebius_api_key.as_deref(), "NEBIUS_API_KEY");
-    print_key_status(
+    print_key_presence(
+        "Nebius",
+        creds.nebius_api_key.as_ref().is_some_and(|k| !k.is_empty()),
+        "NEBIUS_API_KEY",
+    );
+    print_key_presence(
         "Fireworks",
-        creds.fireworks_api_key.as_deref(),
+        creds
+            .fireworks_api_key
+            .as_ref()
+            .is_some_and(|k| !k.is_empty()),
         "FIREWORKS_API_KEY",
     );
-    print_key_status(
+    print_key_presence(
         "Copilot",
-        creds.copilot_token.as_deref(),
+        creds.copilot_token.as_ref().is_some_and(|k| !k.is_empty()),
         "lukan copilot-auth",
     );
 
-    print_key_status(
+    print_key_presence(
         "Codex",
-        creds.codex_access_token.as_deref(),
+        creds
+            .codex_access_token
+            .as_ref()
+            .is_some_and(|k| !k.is_empty()),
         "lukan codex-auth",
     );
-    print_key_status("z.ai", creds.zai_api_key.as_deref(), "ZAI_API_KEY");
-    print_key_status(
+    print_key_presence(
+        "z.ai",
+        creds.zai_api_key.as_ref().is_some_and(|k| !k.is_empty()),
+        "ZAI_API_KEY",
+    );
+    print_key_presence(
         "Ollama Cloud",
-        creds.ollama_cloud_api_key.as_deref(),
+        creds
+            .ollama_cloud_api_key
+            .as_ref()
+            .is_some_and(|k| !k.is_empty()),
         "OLLAMA_API_KEY",
     );
-    print_key_status(
+    print_key_presence(
         "OpenAI-compat",
-        creds.openai_compatible_api_key.as_deref(),
+        creds
+            .openai_compatible_api_key
+            .as_ref()
+            .is_some_and(|k| !k.is_empty()),
         "OPENAI_COMPATIBLE_API_KEY",
     );
-    print_key_status(
+    print_key_presence(
         "Lukan Cloud",
-        creds.lukan_cloud_api_key.as_deref(),
+        creds
+            .lukan_cloud_api_key
+            .as_ref()
+            .is_some_and(|k| !k.is_empty()),
         "LUKAN_CLOUD_API_KEY",
     );
-    print_key_status(
+    print_key_presence(
+        "MiniMax",
+        creds
+            .minimax_api_key
+            .as_ref()
+            .is_some_and(|k| !k.is_empty()),
+        "MINIMAX_API_KEY",
+    );
+    print_key_presence(
         "Brave Search",
-        creds.brave_api_key.as_deref(),
+        creds.brave_api_key.as_ref().is_some_and(|k| !k.is_empty()),
         "BRAVE_API_KEY",
     );
-    print_key_status("Tavily", creds.tavily_api_key.as_deref(), "TAVILY_API_KEY");
+    print_key_presence(
+        "Tavily",
+        creds.tavily_api_key.as_ref().is_some_and(|k| !k.is_empty()),
+        "TAVILY_API_KEY",
+    );
     println!();
 
     // Active provider check
@@ -577,6 +621,7 @@ pub async fn run_first_run_wizard() -> Result<bool> {
         ("fireworks", "Fireworks (open-source models)", false),
         ("nebius", "Nebius (DeepSeek, MiniMax, GLM)", false),
         ("gemini", "Google Gemini", false),
+        ("minimax", "MiniMax M2", false),
         ("lukan-cloud", "Lukan Cloud", false),
         ("zai", "z.ai (GLM models)", false),
         ("ollama-cloud", "Ollama Cloud", false),
@@ -769,6 +814,10 @@ fn setup_credentials_for_provider(
             creds.gemini_api_key =
                 prompt_credential("Gemini API key", env_var, None)?.or(creds.gemini_api_key);
         }
+        ProviderName::Minimax => {
+            creds.minimax_api_key =
+                prompt_credential("MiniMax API key", env_var, None)?.or(creds.minimax_api_key);
+        }
         _ => {}
     }
     Ok(creds)
@@ -809,15 +858,6 @@ fn sanitize_prompt_input(input: &str) -> String {
     out.trim().to_string()
 }
 
-fn mask_key(key: &str) -> String {
-    if key.len() <= 8 {
-        return "****".to_string();
-    }
-    let prefix = &key[..4];
-    let suffix = &key[key.len() - 4..];
-    format!("{prefix}...{suffix}")
-}
-
 fn format_path_status(path: &std::path::Path) -> String {
     if path.exists() {
         format!("{GREEN}✓{RESET} {}", path.display())
@@ -826,16 +866,12 @@ fn format_path_status(path: &std::path::Path) -> String {
     }
 }
 
-fn print_key_status(name: &str, key: Option<&str>, env_var: &str) {
+fn print_key_presence(name: &str, is_set: bool, env_var: &str) {
     let width = 15;
-    match key {
-        Some(k) if !k.is_empty() => {
-            let masked = mask_key(k);
-            println!("  {GREEN}✓{RESET} {name:<width$} {DIM}{masked}{RESET}");
-        }
-        _ => {
-            println!("  {DIM}✗ {name:<width$} not set ({env_var}){RESET}");
-        }
+    if is_set {
+        println!("  {GREEN}✓{RESET} {name:<width$} {DIM}configured{RESET}");
+    } else {
+        println!("  {DIM}✗ {name:<width$} not set ({env_var}){RESET}");
     }
 }
 
@@ -851,6 +887,7 @@ fn env_var_for_provider(provider: &ProviderName) -> &'static str {
         ProviderName::OpenaiCompatible => "OPENAI_COMPATIBLE_API_KEY",
         ProviderName::LukanCloud => "LUKAN_CLOUD_API_KEY",
         ProviderName::Gemini => "GEMINI_API_KEY",
+        ProviderName::Minimax => "MINIMAX_API_KEY",
     }
 }
 

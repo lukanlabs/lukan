@@ -63,6 +63,7 @@ impl CredentialsManager {
         env_fallback!(openai_compatible_api_key, "OPENAI_COMPATIBLE_API_KEY");
         env_fallback!(lukan_cloud_api_key, "LUKAN_CLOUD_API_KEY");
         env_fallback!(gemini_api_key, "GEMINI_API_KEY");
+        env_fallback!(minimax_api_key, "MINIMAX_API_KEY");
     }
 
     /// Save credentials to disk with restricted permissions (0o600)
@@ -99,6 +100,7 @@ impl CredentialsManager {
             super::types::ProviderName::OpenaiCompatible => creds.openai_compatible_api_key.clone(),
             super::types::ProviderName::LukanCloud => creds.lukan_cloud_api_key.clone(),
             super::types::ProviderName::Gemini => creds.gemini_api_key.clone(),
+            super::types::ProviderName::Minimax => creds.minimax_api_key.clone(),
         }
     }
 }
@@ -121,6 +123,7 @@ mod tests {
             openai_compatible_api_key: Some("oai-key".into()),
             lukan_cloud_api_key: Some("lk-key".into()),
             gemini_api_key: Some("gem-key".into()),
+            minimax_api_key: Some("mm-key".into()),
             ..Default::default()
         };
 
@@ -163,6 +166,10 @@ mod tests {
         assert_eq!(
             CredentialsManager::get_api_key(&creds, &ProviderName::Gemini),
             Some("gem-key".into())
+        );
+        assert_eq!(
+            CredentialsManager::get_api_key(&creds, &ProviderName::Minimax),
+            Some("mm-key".into())
         );
     }
 

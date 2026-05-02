@@ -80,6 +80,7 @@ pub async fn list_providers() -> impl IntoResponse {
         ProviderName::OpenaiCompatible,
         ProviderName::LukanCloud,
         ProviderName::Gemini,
+        ProviderName::Minimax,
     ];
 
     let current_model = config.model.clone();
@@ -163,6 +164,18 @@ pub async fn fetch_provider_models(Path(provider): Path<String>) -> impl IntoRes
                     })
                     .collect()
             }),
+        ProviderName::OllamaCloud => {
+            lukan_providers::ollama_cloud::fetch_ollama_cloud_models(&api_key)
+                .await
+                .map(|m| {
+                    m.into_iter()
+                        .map(|m| FetchedModelDto {
+                            name: m.name,
+                            id: m.model,
+                        })
+                        .collect()
+                })
+        }
         ProviderName::Fireworks => lukan_providers::fireworks::fetch_fireworks_models(&api_key)
             .await
             .map(|m| {
@@ -274,7 +287,16 @@ pub async fn fetch_provider_models(Path(provider): Path<String>) -> impl IntoRes
                     })
                     .collect()
             }),
-        _ => Ok(vec![]),
+        ProviderName::Minimax => lukan_providers::minimax::fetch_minimax_models(&api_key)
+            .await
+            .map(|m| {
+                m.into_iter()
+                    .map(|m| FetchedModelDto {
+                        name: m.display_name,
+                        id: m.id,
+                    })
+                    .collect()
+            }),
     };
 
     match result {

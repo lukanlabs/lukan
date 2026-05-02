@@ -60,6 +60,7 @@ export interface Credentials {
   openaiCompatibleApiKey?: string;
   lukanCloudApiKey?: string;
   geminiApiKey?: string;
+  minimaxApiKey?: string;
 }
 
 export interface ProviderStatus {

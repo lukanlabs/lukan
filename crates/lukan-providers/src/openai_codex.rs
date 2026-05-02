@@ -19,6 +19,7 @@ use crate::contracts::{Provider, StreamParams, SystemPrompt};
 // ── Constants ─────────────────────────────────────────────────────────────
 
 const RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+const MAX_REQUEST_RETRIES: u32 = 3;
 
 const CODEX_INSTRUCTIONS: &str = "\
 You are an AI coding agent. You MUST use function calls to perform actions.
@@ -106,6 +107,25 @@ impl OpenAICodexProvider {
     fn is_reasoning_model(&self) -> bool {
         let m = self.model.as_str();
         m.contains("codex") || m.starts_with('o') || m.starts_with("gpt-5")
+    }
+
+    fn codex_request_builder(
+        &self,
+        access_token: &str,
+        account_id: Option<&String>,
+    ) -> reqwest::RequestBuilder {
+        let mut req = self
+            .client
+            .post(RESPONSES_URL)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {access_token}"))
+            .header("Accept", "text/event-stream");
+
+        if let Some(acct_id) = account_id {
+            req = req.header("ChatGPT-Account-Id", acct_id);
+        }
+
+        req
     }
 }
 
@@ -208,36 +228,60 @@ impl Provider for OpenAICodexProvider {
             body["include"] = json!(["reasoning.encrypted_content"]);
         }
 
-        // Send request
-        let mut req = self
-            .client
-            .post(RESPONSES_URL)
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {access_token}"))
-            .header("Accept", "text/event-stream");
+        let body_string = body.to_string();
+        let mut response = None;
 
-        if let Some(ref acct_id) = account_id {
-            req = req.header("ChatGPT-Account-Id", acct_id);
-        }
-
-        let resp = req
-            .body(body.to_string())
-            .send()
-            .await
-            .context("Codex API request failed")?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            if status == reqwest::StatusCode::UNAUTHORIZED
-                || status == reqwest::StatusCode::FORBIDDEN
-            {
-                bail!(
-                    "Codex authentication failed ({status}). Run 'lukan codex-auth' to re-authenticate.\n{body}"
-                );
+        for attempt in 0..=MAX_REQUEST_RETRIES {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_millis(500 * 2u64.pow(attempt - 1));
+                warn!("Retry {attempt}/{MAX_REQUEST_RETRIES} for Codex API after {delay:?}");
+                tokio::time::sleep(delay).await;
             }
-            bail!("Codex API error ({status}): {body}");
+
+            let req = self.codex_request_builder(&access_token, account_id.as_ref());
+            match req.body(body_string.clone()).send().await {
+                Ok(resp)
+                    if resp.status().is_server_error()
+                        || resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS =>
+                {
+                    let status = resp.status();
+                    let error_body = resp.text().await.unwrap_or_default();
+                    warn!("Codex API transient error ({status}): {error_body}");
+                    if attempt == MAX_REQUEST_RETRIES {
+                        bail!(
+                            "Codex API error ({status}) after {MAX_REQUEST_RETRIES} retries: {error_body}"
+                        );
+                    }
+                }
+                Ok(resp) if !resp.status().is_success() => {
+                    let status = resp.status();
+                    let error_body = resp.text().await.unwrap_or_default();
+                    if status == reqwest::StatusCode::UNAUTHORIZED
+                        || status == reqwest::StatusCode::FORBIDDEN
+                    {
+                        bail!(
+                            "Codex authentication failed ({status}). Run 'lukan codex-auth' to re-authenticate.\n{error_body}"
+                        );
+                    }
+                    bail!("Codex API error ({status}): {error_body}");
+                }
+                Ok(resp) => {
+                    response = Some(resp);
+                    break;
+                }
+                Err(e) => {
+                    let error = e.to_string();
+                    warn!("Codex API connection error: {error}");
+                    if attempt == MAX_REQUEST_RETRIES {
+                        bail!(
+                            "Codex API request failed after {MAX_REQUEST_RETRIES} retries: {error}"
+                        );
+                    }
+                }
+            }
         }
+
+        let resp = response.expect("response must be set after retry loop");
 
         tx.send(StreamEvent::MessageStart).await.ok();
 
@@ -251,6 +295,22 @@ impl Provider for OpenAICodexProvider {
 // ── SSE Parsing ───────────────────────────────────────────────────────────
 
 async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>) -> Result<()> {
+    parse_codex_sse_inner(resp, tx).await.map_err(|err| {
+        let message = err.to_string();
+        if is_transient_stream_error(&message) {
+            anyhow::anyhow!(
+                "Codex stream ended unexpectedly after the request had started; retrying would risk duplicating tool calls. Please send the message again. Details: {message}"
+            )
+        } else {
+            err
+        }
+    })
+}
+
+async fn parse_codex_sse_inner(
+    resp: reqwest::Response,
+    tx: &mpsc::Sender<StreamEvent>,
+) -> Result<()> {
     use futures::StreamExt;
 
     let mut stream = resp.bytes_stream();
@@ -622,6 +682,17 @@ async fn parse_codex_sse(resp: reqwest::Response, tx: &mpsc::Sender<StreamEvent>
     tx.send(StreamEvent::MessageEnd { stop_reason }).await.ok();
 
     Ok(())
+}
+
+fn is_transient_stream_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("stream read error")
+        || lower.contains("connection reset")
+        || lower.contains("connection closed")
+        || lower.contains("incomplete message")
+        || lower.contains("unexpected eof")
+        || lower.contains("body error")
+        || lower.contains("operation timed out")
 }
 
 /// Extract a tool name and JSON input from phantom tool call text.

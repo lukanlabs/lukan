@@ -146,31 +146,22 @@ impl Tool for ReadFileTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_LIMIT);
 
-        // Check if the file is an image — return as base64 data URL
-        let is_image = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| {
-                matches!(
-                    e.to_lowercase().as_str(),
-                    "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "svg"
-                )
-            })
-            .unwrap_or(false);
+        // Check if the file is a provider-supported raster image — return as base64 data URL.
+        // SVG is text/XML and is not accepted by several vision providers (including Codex),
+        // so it intentionally falls through to the numbered text reader below.
+        let image_mime = path.extension().and_then(|e| e.to_str()).and_then(|e| {
+            match e.to_lowercase().as_str() {
+                "png" => Some("image/png"),
+                "jpg" | "jpeg" => Some("image/jpeg"),
+                "gif" => Some("image/gif"),
+                "webp" => Some("image/webp"),
+                _ => None,
+            }
+        });
 
-        if is_image {
+        if let Some(mime) = image_mime {
             match tokio::fs::read(&path).await {
                 Ok(bytes) => {
-                    let ext = path.extension().unwrap().to_str().unwrap().to_lowercase();
-                    let mime = match ext.as_str() {
-                        "png" => "image/png",
-                        "jpg" | "jpeg" => "image/jpeg",
-                        "gif" => "image/gif",
-                        "webp" => "image/webp",
-                        "bmp" => "image/bmp",
-                        "svg" => "image/svg+xml",
-                        _ => "image/png",
-                    };
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                     let data_url = format!("data:{mime};base64,{b64}");
                     let mtime = tokio::fs::metadata(&path)

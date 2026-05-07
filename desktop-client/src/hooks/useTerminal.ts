@@ -6,10 +6,10 @@ import { terminalInput, terminalResize, onTerminalOutput } from "../lib/tauri";
 import type { TerminalOutputEvent } from "../lib/types";
 
 const THEME = {
-  background: "#0a0a0a",
+  background: "#09090b",
   foreground: "#fafafa",
   cursor: "#fafafa",
-  cursorAccent: "#0a0a0a",
+  cursorAccent: "#09090b",
   selectionBackground: "rgba(161,161,170,0.3)",
   selectionForeground: "#ffffff",
   black: "#18181b",

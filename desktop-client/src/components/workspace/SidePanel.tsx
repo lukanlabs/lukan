@@ -148,7 +148,7 @@ export function SidePanel({
         {onClose && (
           <button
             onClick={onClose}
-            className="sm:hidden flex items-center justify-center h-6 w-6 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors ml-auto"
+            className="sm:hidden flex items-center justify-center h-6 w-6 rounded-none text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors ml-auto"
           >
             <X size={14} />
           </button>

@@ -175,7 +175,7 @@ export default function McpTab() {
                     color: "#52525b",
                     cursor: "pointer",
                     padding: 4,
-                    borderRadius: 3,
+                    borderRadius: 0,
                   }}
                   title="Remove"
                 >

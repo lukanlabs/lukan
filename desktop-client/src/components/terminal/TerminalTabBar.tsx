@@ -97,7 +97,7 @@ export default function TerminalTabBar({
               startRename(s.id, label);
             }}
             onDoubleClick={() => startRename(s.id, label)}
-            className="group relative flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-mono border-none cursor-pointer transition-all"
+            className="group relative flex items-center gap-1.5 px-3 py-1 rounded-none text-xs font-mono border-none cursor-pointer transition-all"
             style={{
               background: isActive ? "rgba(60, 60, 60, 0.3)" : "transparent",
               color: isActive ? "#fafafa" : "#71717a",
@@ -128,7 +128,7 @@ export default function TerminalTabBar({
 
       <button
         onClick={onCreate}
-        className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
+        className="flex items-center justify-center w-6 h-6 rounded-none border-none cursor-pointer transition-colors"
         style={{ color: "#71717a", background: "transparent" }}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = "rgba(50, 50, 50, 0.3)";
@@ -155,25 +155,25 @@ export default function TerminalTabBar({
           />
           <button
             onClick={onToggleViewMode}
-            className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
+            className="flex items-center justify-center w-6 h-6 rounded-none border-none cursor-pointer transition-colors"
             style={{
-              color: viewMode === "split" ? "#6366f1" : "#71717a",
+              color: viewMode === "split" ? "#44a4ee" : "#71717a",
               background:
-                viewMode === "split" ? "rgba(99,102,241,0.1)" : "transparent",
+                viewMode === "split" ? "rgba(68,164,238,0.1)" : "transparent",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background =
                 viewMode === "split"
-                  ? "rgba(99,102,241,0.15)"
+                  ? "rgba(68,164,238,0.15)"
                   : "rgba(50, 50, 50, 0.3)";
               e.currentTarget.style.color =
                 viewMode === "split" ? "#818cf8" : "#fafafa";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background =
-                viewMode === "split" ? "rgba(99,102,241,0.1)" : "transparent";
+                viewMode === "split" ? "rgba(68,164,238,0.1)" : "transparent";
               e.currentTarget.style.color =
-                viewMode === "split" ? "#6366f1" : "#71717a";
+                viewMode === "split" ? "#44a4ee" : "#71717a";
             }}
             title={viewMode === "split" ? "Tab view" : "Split view"}
           >
@@ -189,7 +189,7 @@ export default function TerminalTabBar({
                 onClick={() =>
                   onSplitFontSizeChange(Math.max(6, splitFontSize - 1))
                 }
-                className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
+                className="flex items-center justify-center w-6 h-6 rounded-none border-none cursor-pointer transition-colors"
                 style={{ color: "#71717a", background: "transparent" }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "rgba(50,50,50,0.3)";
@@ -218,7 +218,7 @@ export default function TerminalTabBar({
                 onClick={() =>
                   onSplitFontSizeChange(Math.min(16, splitFontSize + 1))
                 }
-                className="flex items-center justify-center w-6 h-6 rounded-md border-none cursor-pointer transition-colors"
+                className="flex items-center justify-center w-6 h-6 rounded-none border-none cursor-pointer transition-colors"
                 style={{ color: "#71717a", background: "transparent" }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "rgba(50,50,50,0.3)";

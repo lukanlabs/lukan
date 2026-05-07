@@ -515,7 +515,7 @@ function MasterView({
           onKeyDown={(e) => {
             if (e.key === "Enter") onInstallLocal();
           }}
-          className="flex-1 px-2.5 py-1.5 rounded-lg text-xs outline-none"
+          className="flex-1 px-2.5 py-1.5 rounded-none text-xs outline-none"
           style={{
             background: "var(--bg-tertiary)",
             border: "1px solid var(--border)",
@@ -525,7 +525,7 @@ function MasterView({
         <button
           onClick={onInstallLocal}
           disabled={installingLocal || !localPath.trim()}
-          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none shrink-0"
+          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-none text-xs font-medium cursor-pointer border-none shrink-0"
           style={{
             background: "#fafafa",
             color: "#09090b",
@@ -546,7 +546,7 @@ function MasterView({
       {/* Plugin list */}
       {plugins.length === 0 ? (
         <div
-          className="text-center py-10 rounded-lg"
+          className="text-center py-10 rounded-none"
           style={{
             color: "var(--text-muted)",
             border: "1px dashed var(--border)",
@@ -560,7 +560,7 @@ function MasterView({
           {plugins.map((plugin) => (
             <div
               key={plugin.name}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-none cursor-pointer"
               style={{
                 background: "transparent",
                 transition: "background 120ms",
@@ -613,7 +613,7 @@ function MasterView({
                 {plugin.pluginType === "channel" ||
                   (plugin.activityBar && (
                     <span
-                      className="w-1.5 h-1.5 rounded-full"
+                      className="w-1.5 h-1.5 rounded-none"
                       style={{
                         background: plugin.running
                           ? "#4ade80"
@@ -899,7 +899,7 @@ function DetailView({
                 fontSize: 10,
                 padding: "8px 10px",
                 marginTop: 6,
-                borderRadius: 4,
+                borderRadius: 0,
                 overflow: "auto",
                 background: "rgba(0,0,0,0.2)",
                 color: "var(--text-secondary)",
@@ -985,7 +985,7 @@ function DetailView({
               fontFamily: "var(--font-mono)",
               fontSize: 10,
               padding: "10px 12px",
-              borderRadius: 4,
+              borderRadius: 0,
               minHeight: 100,
               maxHeight: 220,
               width: "100%",
@@ -1133,7 +1133,7 @@ function PluginToolsSection({
       action={
         <div className="flex items-center gap-2">
           <span
-            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+            className="text-[10px] px-1.5 py-0.5 rounded-none font-medium"
             style={{ background: "rgba(63,63,70,0.5)", color: "#a1a1aa" }}
           >
             {enabledCount}/{totalTools} enabled
@@ -1169,7 +1169,7 @@ function PluginToolsSection({
                     {group}
                   </span>
                   <span
-                    className="text-[9px] px-1 py-px rounded-full"
+                    className="text-[9px] px-1 py-px rounded-none"
                     style={{
                       background: allDisabled
                         ? "rgba(239,68,68,0.1)"
@@ -1192,7 +1192,7 @@ function PluginToolsSection({
                 </button>
               </div>
               <div
-                className="flex flex-col rounded-lg overflow-hidden"
+                className="flex flex-col rounded-none overflow-hidden"
                 style={{ border: "1px solid rgba(63,63,70,0.3)" }}
               >
                 {tools.map((tool, i) => {
@@ -1219,7 +1219,7 @@ function PluginToolsSection({
                       </span>
                       <button
                         onClick={() => toggle(tool)}
-                        className="relative w-7 h-[16px] rounded-full transition-colors"
+                        className="relative w-7 h-[16px] rounded-none transition-colors"
                         style={{
                           background: enabled
                             ? "rgba(34,197,94,0.35)"
@@ -1230,7 +1230,7 @@ function PluginToolsSection({
                         }}
                       >
                         <span
-                          className="absolute top-[2px] w-[12px] h-[12px] rounded-full transition-all"
+                          className="absolute top-[2px] w-[12px] h-[12px] rounded-none transition-all"
                           style={{
                             background: enabled ? "#22c55e" : "#52525b",
                             left: enabled ? 12 : 2,
@@ -1264,7 +1264,7 @@ function PluginToolsSection({
                       Plugin Tools
                     </span>
                     <span
-                      className="text-[9px] px-1 py-px rounded-full"
+                      className="text-[9px] px-1 py-px rounded-none"
                       style={{
                         background: allDisabled
                           ? "rgba(239,68,68,0.1)"
@@ -1287,7 +1287,7 @@ function PluginToolsSection({
                   </button>
                 </div>
                 <div
-                  className="flex flex-col rounded-lg overflow-hidden"
+                  className="flex flex-col rounded-none overflow-hidden"
                   style={{ border: "1px solid rgba(63,63,70,0.3)" }}
                 >
                   {pluginTools.map((tool, i) => {
@@ -1314,7 +1314,7 @@ function PluginToolsSection({
                         </span>
                         <button
                           onClick={() => toggle(tool)}
-                          className="relative w-7 h-[16px] rounded-full transition-colors"
+                          className="relative w-7 h-[16px] rounded-none transition-colors"
                           style={{
                             background: enabled
                               ? "rgba(34,197,94,0.35)"
@@ -1325,7 +1325,7 @@ function PluginToolsSection({
                           }}
                         >
                           <span
-                            className="absolute top-[2px] w-[12px] h-[12px] rounded-full transition-all"
+                            className="absolute top-[2px] w-[12px] h-[12px] rounded-none transition-all"
                             style={{
                               background: enabled ? "#22c55e" : "#52525b",
                               left: enabled ? 12 : 2,
@@ -1361,7 +1361,7 @@ function Section({
 }) {
   return (
     <div
-      className="mb-3 p-3 rounded-lg"
+      className="mb-3 p-3 rounded-none"
       style={{
         background: "rgba(20,20,20,0.9)",
         border: "1px solid var(--border)",
@@ -1440,7 +1440,7 @@ function ConfigField({
         onKeyDown={(e) => {
           if (e.key === "Enter" && dirty) onSave(localValue);
         }}
-        className="flex-1 px-2 py-1 rounded-lg text-xs outline-none"
+        className="flex-1 px-2 py-1 rounded-none text-xs outline-none"
         style={{
           background: "var(--bg-tertiary)",
           border: "1px solid var(--border)",
@@ -1592,7 +1592,7 @@ function GenericField({
         <select
           value={effectiveValue}
           onChange={(e) => onSave(e.target.value)}
-          className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none appearance-none"
+          className="w-full px-2.5 py-1.5 rounded-none text-xs outline-none appearance-none"
           style={{
             background: "var(--bg-tertiary)",
             border: "1px solid var(--border)",
@@ -1661,7 +1661,7 @@ function GenericField({
       <FieldRow label={label} description={schema.description}>
         <button
           onClick={() => onSave(!checked)}
-          className="relative w-7 h-[16px] rounded-full transition-colors"
+          className="relative w-7 h-[16px] rounded-none transition-colors"
           style={{
             background: checked ? "rgba(34,197,94,0.35)" : "rgba(63,63,70,0.4)",
             border: "none",
@@ -1670,7 +1670,7 @@ function GenericField({
           }}
         >
           <span
-            className="absolute top-[2px] w-[12px] h-[12px] rounded-full transition-all"
+            className="absolute top-[2px] w-[12px] h-[12px] rounded-none transition-all"
             style={{
               background: checked ? "#22c55e" : "#52525b",
               left: checked ? 12 : 2,
@@ -1793,7 +1793,7 @@ function TextInputField({
           onKeyDown={(e) => {
             if (e.key === "Enter") commit();
           }}
-          className="flex-1 px-2.5 py-1.5 rounded-lg text-xs outline-none"
+          className="flex-1 px-2.5 py-1.5 rounded-none text-xs outline-none"
           style={{
             background: "var(--bg-tertiary)",
             border: "1px solid var(--border)",
@@ -2019,7 +2019,7 @@ function PhoneListField({
       )}
       {showAdd && (
         <div
-          className="flex flex-wrap gap-1.5 p-2 rounded-lg"
+          className="flex flex-wrap gap-1.5 p-2 rounded-none"
           style={{
             background: "var(--bg-base)",
             border: "1px solid var(--border)",
@@ -2186,7 +2186,7 @@ function RemoteOptionsField({
       )}
       {options.length > 0 && (
         <div
-          className="flex flex-col gap-px rounded-lg overflow-auto"
+          className="flex flex-col gap-px rounded-none overflow-auto"
           style={{
             maxHeight: 180,
             border: "1px solid var(--border)",
@@ -2261,7 +2261,7 @@ function QrModal({
       onClick={onClose}
     >
       <div
-        className="rounded-xl p-5 flex flex-col items-center gap-3"
+        className="rounded-none p-5 flex flex-col items-center gap-3"
         style={{
           background: "rgba(20,20,20,0.98)",
           border: "1px solid var(--border)",
@@ -2297,7 +2297,7 @@ function QrModal({
             </p>
             <button
               onClick={onDone}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
+              className="px-3 py-1.5 rounded-none text-xs font-medium cursor-pointer border-none"
               style={{ background: "#fafafa", color: "#09090b" }}
             >
               Done
@@ -2338,7 +2338,7 @@ function QrModal({
                 style={{
                   width: 220,
                   height: 220,
-                  borderRadius: 8,
+                  borderRadius: 0,
                   imageRendering: "pixelated",
                 }}
               />
@@ -2350,7 +2350,7 @@ function QrModal({
                   height: 140,
                   color: "var(--text-muted)",
                   background: "var(--bg-tertiary)",
-                  borderRadius: 8,
+                  borderRadius: 0,
                   border: "1px dashed var(--border)",
                   padding: 16,
                 }}
@@ -2360,7 +2360,7 @@ function QrModal({
             )}
             <button
               onClick={onClose}
-              className="px-3 py-1.5 rounded-lg text-xs cursor-pointer"
+              className="px-3 py-1.5 rounded-none text-xs cursor-pointer"
               style={{
                 background: "var(--bg-tertiary)",
                 color: "var(--text-primary)",

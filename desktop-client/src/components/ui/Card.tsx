@@ -15,7 +15,7 @@ export default function Card({
 }: CardProps) {
   return (
     <div
-      className={`rounded-2xl p-5 ${className}`}
+      className={`rounded-none p-5 ${className}`}
       style={{
         background: "rgba(20, 20, 20, 0.9)",
         border: "1px solid var(--border)",

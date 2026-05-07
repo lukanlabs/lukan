@@ -100,7 +100,7 @@ export default function MemoryTab() {
   };
 
   const pillBase =
-    "inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium cursor-pointer border-none select-none transition-all";
+    "inline-flex items-center gap-1.5 px-4 py-1.5 rounded-none text-sm font-medium cursor-pointer border-none select-none transition-all";
 
   return (
     <div className="max-w-3xl" style={{ animation: "fadeIn 0.3s ease-out" }}>
@@ -119,7 +119,7 @@ export default function MemoryTab() {
 
       {/* Sub-navigation pills */}
       <div
-        className="inline-flex items-center gap-1 p-1 rounded-full mb-6"
+        className="inline-flex items-center gap-1 p-1 rounded-none mb-6"
         style={{
           background: "var(--bg-tertiary)",
           border: "1px solid var(--border)",
@@ -236,7 +236,7 @@ export default function MemoryTab() {
               <div style={{ animation: "slideUp 0.2s ease-out" }}>
                 {/* Active toggle row */}
                 <div
-                  className="mb-4 py-3 px-4 rounded-xl flex items-center justify-between"
+                  className="mb-4 py-3 px-4 rounded-none flex items-center justify-between"
                   style={{
                     background: "var(--bg-tertiary)",
                     border: "1px solid var(--border)",
@@ -282,7 +282,7 @@ export default function MemoryTab() {
             {/* Placeholder when no project loaded */}
             {!projectLoaded && !loadingProject && (
               <div
-                className="py-16 text-center rounded-xl"
+                className="py-16 text-center rounded-none"
                 style={{
                   background: "var(--bg-tertiary)",
                   border: "1px dashed var(--border)",

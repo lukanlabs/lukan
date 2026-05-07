@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { Check, ChevronRight, Copy } from "lucide-react";
 import logoUrl from "../../assets/logo.png";
 import type { Message, ContentBlock } from "../../lib/types";
 import { MarkdownRenderer } from "./MarkdownRenderer";
@@ -61,6 +61,15 @@ function isToolResultMessage(msg: Message): boolean {
 export function MessageBubble({ message, toolResultsMap, silentTools = [] }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const [showThinking, setShowThinking] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyMessage = async () => {
+    const text = extractTextContent(message.content);
+    if (!text.trim()) return;
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   // Skip tool-result-only messages — shown inline with tool_use blocks
   if (
@@ -106,7 +115,7 @@ export function MessageBubble({ message, toolResultsMap, silentTools = [] }: Mes
           {!isUser && thinking && (
             <button
               onClick={() => setShowThinking((v) => !v)}
-              className="mt-[7px] mb-1 inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-md border-none cursor-pointer transition-colors bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
+              className="mt-[7px] mb-1 inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-none border-none cursor-pointer transition-colors bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
             >
               <ChevronRight
                 size={10}
@@ -117,21 +126,36 @@ export function MessageBubble({ message, toolResultsMap, silentTools = [] }: Mes
           )}
 
           {showThinking && thinking && (
-            <div className="mb-2 rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2 text-xs text-zinc-500 italic max-h-48 overflow-y-auto whitespace-pre-wrap break-words">
+            <div className="mb-2 rounded-none bg-white/[0.02] border border-white/5 px-3 py-2 text-xs text-zinc-500 italic max-h-48 overflow-y-auto whitespace-pre-wrap break-words">
               {thinking}
             </div>
           )}
 
           {text.trim() && (
-            <div
-              className={`rounded-lg text-sm leading-relaxed max-w-3xl ${
-                isUser
-                  ? "px-4 py-3 bg-white/[0.06] text-zinc-100"
-                  : "py-1 text-zinc-100"
-              }`}
-            >
-              <MarkdownRenderer content={text} />
-            </div>
+            <>
+              <div
+                className={`rounded-none text-sm leading-relaxed max-w-3xl ${
+                  isUser
+                    ? "px-4 py-3 bg-white/[0.06] text-zinc-100"
+                    : "py-1 text-zinc-100"
+                }`}
+              >
+                <MarkdownRenderer content={text} />
+              </div>
+              {!isUser && (
+                <div className="message-actions mt-1.5 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={handleCopyMessage}
+                    className="message-action-btn"
+                    title={copied ? "Copied" : "Copy message"}
+                    aria-label={copied ? "Copied" : "Copy message"}
+                  >
+                    {copied ? <Check size={13} /> : <Copy size={13} />}
+                  </button>
+                </div>
+              )}
+            </>
           )}
 
           {toolUses.map((tu) => {

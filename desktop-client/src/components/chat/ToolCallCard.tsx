@@ -116,19 +116,19 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
   const statusIndicator = tool.isRunning ? (
     <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
   ) : tool.isError ? (
-    <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+    <span className="h-1.5 w-1.5 rounded-none bg-red-400" />
   ) : tool.isHistorical && !tool.content && !tool.diff ? (
-    <span className="h-1.5 w-1.5 rounded-full bg-zinc-600" />
+    <span className="h-1.5 w-1.5 rounded-none bg-zinc-600" />
   ) : (
-    <span className="h-1.5 w-1.5 rounded-full bg-green-500/50" />
+    <span className="h-1.5 w-1.5 rounded-none bg-green-500/50" />
   );
 
   return (
-    <div className="my-1 rounded-md text-sm">
+    <div className="my-1 rounded-none text-sm">
       {/* Header */}
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 w-full text-left cursor-pointer rounded-md px-2 py-1.5 hover:bg-white/5 transition-colors"
+        className="flex items-center gap-2 w-full text-left cursor-pointer rounded-none px-2 py-1.5 hover:bg-white/5 transition-colors"
       >
         <span className="text-zinc-600 shrink-0">
           {open ? (
@@ -138,19 +138,19 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
           )}
         </span>
         <span
-          className={`shrink-0 ${isAgent ? "text-purple-400/70" : "text-zinc-500"}`}
+          className={`shrink-0 ${isAgent ? "text-sky-400/70" : "text-zinc-500"}`}
         >
           {icon}
         </span>
         <span
-          className={`text-xs font-medium ${isAgent ? "text-purple-300/80" : "text-zinc-400"}`}
+          className={`text-xs font-medium ${isAgent ? "text-sky-300/80" : "text-zinc-400"}`}
         >
           {displayName}
         </span>
         {summary && (
           <span
             className={`text-xs truncate font-mono flex-1 min-w-0 ${
-              isFileTool ? "text-zinc-500 hover:text-indigo-400 cursor-pointer" : "text-zinc-600"
+              isFileTool ? "text-zinc-500 hover:text-sky-400 cursor-pointer" : "text-zinc-600"
             }`}
             onClick={isFileTool ? (e) => {
               e.stopPropagation();
@@ -166,7 +166,7 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
           {isBashRunning && !sendingToBg && tool.content && elapsed >= 5000 && (
             <button
               onClick={handleSendToBackground}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-none text-[10px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors"
             >
               <ArrowUpRight className="h-2.5 w-2.5" />
               Background
@@ -178,14 +178,14 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
 
       {/* Live progress for agents (Explore/SubAgent) — always visible while running */}
       {isAgent && tool.isRunning && tool.content && (
-        <pre className="mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] text-purple-400/50 font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto overflow-x-hidden">
+        <pre className="mt-1 mx-2 rounded-none bg-white/[0.02] p-2.5 text-[11px] text-sky-400/50 font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto overflow-x-hidden">
           {tool.content}
         </pre>
       )}
 
       {/* Collapsible content */}
       {open && tool.rawInput && !isAgent && (
-        <pre className="mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap break-words max-h-36 overflow-y-auto overflow-x-hidden">
+        <pre className="mt-1 mx-2 rounded-none bg-white/[0.02] p-2.5 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap break-words max-h-36 overflow-y-auto overflow-x-hidden">
           {JSON.stringify(tool.rawInput, null, 2)}
         </pre>
       )}
@@ -195,7 +195,7 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
 
       {/* Image result */}
       {tool.image && (
-        <div className="mt-1.5 mx-2 rounded-md overflow-hidden">
+        <div className="mt-1.5 mx-2 rounded-none overflow-hidden">
           <img
             src={tool.image}
             alt="Tool result"
@@ -207,7 +207,7 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
       {/* Text result */}
       {!tool.isRunning && tool.content && !tool.diff && (
         <pre
-          className={`mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto overflow-x-hidden ${
+          className={`mt-1 mx-2 rounded-none bg-white/[0.02] p-2.5 text-[11px] font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto overflow-x-hidden ${
             tool.isError ? "text-red-400/70" : "text-zinc-600"
           }`}
         >

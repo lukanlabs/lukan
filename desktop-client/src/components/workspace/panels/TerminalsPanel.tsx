@@ -124,7 +124,7 @@ export function TerminalsPanel({
             color: "var(--text-muted)",
             cursor: "pointer",
             padding: 4,
-            borderRadius: 4,
+            borderRadius: 0,
             flexShrink: 0,
           }}
         >
@@ -200,7 +200,7 @@ export function TerminalsPanel({
                     fontSize: 12,
                     fontFamily: "var(--font-mono)",
                     padding: "1px 4px",
-                    borderRadius: 3,
+                    borderRadius: 0,
                     outline: "none",
                     minWidth: 0,
                   }}
@@ -257,7 +257,7 @@ export function TerminalsPanel({
                     color: "var(--text-muted)",
                     cursor: "pointer",
                     padding: 2,
-                    borderRadius: 4,
+                    borderRadius: 0,
                     flexShrink: 0,
                   }}
                 >

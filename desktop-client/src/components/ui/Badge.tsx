@@ -32,7 +32,7 @@ export default function Badge({ variant = "neutral", children }: BadgeProps) {
   const style = variantStyles[variant];
   return (
     <span
-      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-semibold"
+      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-none text-[11px] font-semibold"
       style={{ ...style, border: `1px solid ${style.borderColor}` }}
     >
       {children}

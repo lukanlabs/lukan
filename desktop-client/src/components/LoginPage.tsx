@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import logoUrl from "../assets/logo.png";
 
 interface LoginPageProps {
   onAuthenticated: (token: string) => void;
@@ -33,6 +32,18 @@ function GoogleIcon() {
     </svg>
   );
 }
+
+const inputStyle = {
+  width: "100%",
+  padding: "12px 16px",
+  background: "#0b0b0b",
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 0,
+  color: "#fafafa",
+  fontSize: 15,
+  outline: "none",
+  transition: "border-color 0.2s, box-shadow 0.2s, background 0.2s",
+};
 
 export default function LoginPage({
   onAuthenticated,
@@ -88,7 +99,7 @@ export default function LoginPage({
     }
     setError("");
     // Show success message — the CLI will save relay.json
-    document.body.innerHTML = `<div style="font-family:system-ui;text-align:center;padding-top:100px;background:#0a0a0b;color:#f1f5f9;min-height:100vh"><h1>Logged in to lukan</h1><p>You can close this window and return to the terminal.</p></div>`;
+    document.body.innerHTML = `<div style="font-family:system-ui;text-align:center;padding-top:100px;background:#050505;color:#fafafa;min-height:100vh"><h1>Logged in to lukan</h1><p style="color:#71717a">You can close this window and return to the terminal.</p></div>`;
   };
 
   const handleGoogleLogin = () => {
@@ -158,39 +169,42 @@ export default function LoginPage({
           to   { opacity: 1; transform: translateY(0); }
         }
         @keyframes lukan-glow {
-          0%, 100% { opacity: 0.4; }
-          50%      { opacity: 0.7; }
+          0%, 100% { opacity: 0.35; transform: scale(1); }
+          50%      { opacity: 0.65; transform: scale(1.04); }
         }
         .login-root * { box-sizing: border-box; }
         .login-pw:focus {
-          border-color: #6366f1 !important;
-          box-shadow: 0 0 0 3px rgba(99,102,241,0.15) !important;
+          border-color: #44a4ee !important;
+          box-shadow: 0 0 0 3px rgba(68,164,238,0.14) !important;
+          background: #050505 !important;
         }
         .login-btn-primary:hover:not(:disabled) {
-          background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+          background: #6db9f2 !important;
           transform: translateY(-1px);
-          box-shadow: 0 6px 20px rgba(99,102,241,0.4) !important;
+          box-shadow: 0 0 34px rgba(68,164,238,0.28) !important;
         }
-        .login-btn-primary:active:not(:disabled) {
-          transform: translateY(0);
-        }
+        .login-btn-primary:active:not(:disabled) { transform: translateY(0); }
         .login-btn-google:hover {
           background: #f2f2f2 !important;
           transform: translateY(-1px);
           box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
         }
-        .login-btn-google:active {
-          transform: translateY(0);
+        .login-btn-google:active { transform: translateY(0); }
+        .device-link:hover {
+          border-color: rgba(68,164,238,0.5) !important;
+          background: rgba(68,164,238,0.07) !important;
         }
+        .sign-out-btn:hover { color: #a1a1aa !important; }
         @media (max-width: 860px) {
-          .login-root .lukan-brand-panel {
-            display: none !important;
-          }
+          .login-root { display: block !important; overflow: auto; }
+          .login-root .lukan-brand-panel { min-height: 42vh !important; padding: 40px 24px !important; }
           .login-root .lukan-login-panel {
             width: 100% !important;
             min-width: 0 !important;
             border-left: none !important;
+            padding: 36px 24px 48px !important;
           }
+          .login-root .brand-logo { width: 132px !important; height: 132px !important; margin-bottom: 20px !important; }
         }
       `}</style>
 
@@ -202,6 +216,7 @@ export default function LoginPage({
           zIndex: 99999,
           display: "flex",
           animation: "lukan-fade-in 0.5s ease-out",
+          background: "#050505",
         }}
       >
         {/* Left brand panel */}
@@ -210,40 +225,51 @@ export default function LoginPage({
           style={{
             flex: 1,
             background:
-              "linear-gradient(135deg, #0f0a1e 0%, #1a1145 40%, #0d1b3e 70%, #0a0e1f 100%)",
+              "radial-gradient(circle at 50% 42%, rgba(68,164,238,0.2) 0%, rgba(68,164,238,0.08) 28%, transparent 58%), linear-gradient(135deg, #050505 0%, #090b0d 48%, #050505 100%)",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            padding: 48,
+            padding: 56,
             position: "relative",
             overflow: "hidden",
           }}
         >
-          {/* Glow orbs */}
           <div
             style={{
               position: "absolute",
-              top: -120,
+              inset: 0,
+              backgroundImage:
+                "radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px)",
+              backgroundSize: "32px 32px",
+              pointerEvents: "none",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: -140,
               left: -120,
-              width: 400,
-              height: 400,
+              width: 440,
+              height: 440,
               background:
-                "radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)",
+                "radial-gradient(circle, rgba(68,164,238,0.18) 0%, transparent 70%)",
               borderRadius: "50%",
+              filter: "blur(12px)",
               animation: "lukan-glow 6s ease-in-out infinite",
             }}
           />
           <div
             style={{
               position: "absolute",
-              bottom: -80,
+              bottom: -100,
               right: -80,
-              width: 300,
-              height: 300,
+              width: 360,
+              height: 360,
               background:
-                "radial-gradient(circle, rgba(139,92,246,0.1) 0%, transparent 70%)",
+                "radial-gradient(circle, rgba(68,164,238,0.14) 0%, transparent 70%)",
               borderRadius: "50%",
+              filter: "blur(12px)",
               animation: "lukan-glow 6s ease-in-out infinite 3s",
             }}
           />
@@ -251,42 +277,58 @@ export default function LoginPage({
           {/* Brand content */}
           <div style={{ position: "relative", zIndex: 1, textAlign: "center" }}>
             <img
-              src={logoUrl}
+              className="brand-logo"
+              src="/lukan.png"
               alt="lukan"
               style={{
                 display: "block",
-                margin: "0 auto 32px",
-                width: 120,
-                height: 120,
-                filter: "drop-shadow(0 0 30px rgba(99,102,241,0.3))",
+                margin: "0 auto 30px",
+                width: 168,
+                height: 168,
+                objectFit: "contain",
+                filter:
+                  "drop-shadow(0 0 40px rgba(68,164,238,0.45)) drop-shadow(0 0 90px rgba(68,164,238,0.22))",
               }}
             />
             <div style={{ maxWidth: 320, margin: "0 auto" }}>
               <p
                 style={{
-                  fontSize: 18,
-                  fontWeight: 300,
-                  color: "rgba(226,232,240,0.9)",
-                  lineHeight: 1.6,
-                  margin: "0 0 12px",
-                  letterSpacing: 0.3,
+                  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+                  fontSize: 11,
+                  letterSpacing: "0.18em",
+                  textTransform: "uppercase",
+                  color: "#44a4ee",
+                  margin: "0 0 14px",
                 }}
               >
-                Your AI-powered assistant,
+                — remote · devices
+              </p>
+              <p
+                style={{
+                  fontSize: 22,
+                  fontWeight: 300,
+                  color: "#e5f5f4",
+                  lineHeight: 1.55,
+                  margin: "0 0 14px",
+                  letterSpacing: 0.5,
+                }}
+              >
+                Your AI Platform,
                 <br />
-                running on{" "}
-                <strong style={{ fontWeight: 500 }}>your machine</strong>.
+                <strong style={{ color: "#44a4ee", fontWeight: 500 }}>
+                  always on
+                </strong>
+                .
               </p>
               <p
                 style={{
                   fontSize: 13,
-                  color: "rgba(148,163,184,0.7)",
+                  color: "#a1a1aa",
                   lineHeight: 1.5,
                   margin: 0,
                 }}
               >
-                Sign in to securely connect to your local agent through the
-                relay.
+                Securely connect to your Lukan devices through the relay.
               </p>
             </div>
           </div>
@@ -298,15 +340,26 @@ export default function LoginPage({
           style={{
             width: 460,
             minWidth: 400,
-            background: "#0a0a0b",
+            background: "#050505",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             padding: 48,
             borderLeft: "1px solid rgba(255,255,255,0.06)",
+            position: "relative",
           }}
         >
-          <div style={{ width: "100%", maxWidth: 340 }}>
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              border: "1px solid transparent",
+              borderImage:
+                "linear-gradient(180deg, rgba(68,164,238,0.14), rgba(68,164,238,0.06), transparent) 1",
+              pointerEvents: "none",
+            }}
+          />
+          <div style={{ width: "100%", maxWidth: 340, position: "relative", zIndex: 1 }}>
             {/* Info message (e.g. daemon not connected) */}
             {message && (
               <div
@@ -315,7 +368,7 @@ export default function LoginPage({
                   marginBottom: 24,
                   background: "rgba(234,179,8,0.08)",
                   border: "1px solid rgba(234,179,8,0.25)",
-                  borderRadius: 10,
+                  borderRadius: 0,
                   color: "#eab308",
                   fontSize: 13,
                   lineHeight: 1.5,
@@ -333,14 +386,14 @@ export default function LoginPage({
                     style={{
                       fontSize: 24,
                       fontWeight: 600,
-                      color: "#f1f5f9",
+                      color: "#fafafa",
                       margin: "0 0 8px",
                       letterSpacing: -0.3,
                     }}
                   >
                     Select a device
                   </h2>
-                  <p style={{ fontSize: 14, color: "#64748b", margin: 0 }}>
+                  <p style={{ fontSize: 14, color: "#71717a", margin: 0 }}>
                     Choose which machine to connect to
                   </p>
                 </div>
@@ -349,30 +402,32 @@ export default function LoginPage({
                   <div
                     style={{
                       padding: "24px 16px",
-                      background: "#111113",
-                      borderRadius: 12,
-                      border: "1px solid #1e1e24",
+                      background: "#0b0b0b",
+                      borderRadius: 0,
+                      border: "1px solid rgba(255,255,255,0.1)",
                       textAlign: "center",
                     }}
                   >
                     <p
                       style={{
                         fontSize: 14,
-                        color: "#94a3b8",
+                        color: "#a1a1aa",
                         margin: "0 0 8px",
                         lineHeight: 1.5,
                       }}
                     >
                       No devices connected
                     </p>
-                    <p style={{ fontSize: 13, color: "#475569", margin: 0 }}>
+                    <p style={{ fontSize: 13, color: "#52525b", margin: 0 }}>
                       Run{" "}
                       <code
                         style={{
-                          background: "#1e1e24",
+                          background: "#050505",
+                          border: "1px solid rgba(255,255,255,0.08)",
                           padding: "2px 6px",
-                          borderRadius: 4,
+                          borderRadius: 0,
                           fontSize: 12,
+                          color: "#e5f5f4",
                         }}
                       >
                         lukan daemon start
@@ -386,6 +441,7 @@ export default function LoginPage({
                   >
                     {devices.map((device) => (
                       <a
+                        className="device-link"
                         key={device}
                         href={`/${encodeURIComponent(device)}`}
                         style={{
@@ -393,23 +449,14 @@ export default function LoginPage({
                           alignItems: "center",
                           gap: 12,
                           padding: "14px 16px",
-                          background: "#111113",
-                          borderRadius: 12,
-                          border: "1px solid #1e1e24",
-                          color: "#f1f5f9",
+                          background: "#0b0b0b",
+                          borderRadius: 0,
+                          border: "1px solid rgba(255,255,255,0.1)",
+                          color: "#fafafa",
                           textDecoration: "none",
                           fontSize: 15,
-                          fontWeight: 500,
+                          fontWeight: 600,
                           transition: "all 0.15s ease",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.borderColor = "#6366f1";
-                          e.currentTarget.style.background =
-                            "rgba(99,102,241,0.06)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.borderColor = "#1e1e24";
-                          e.currentTarget.style.background = "#111113";
                         }}
                       >
                         <svg
@@ -417,19 +464,12 @@ export default function LoginPage({
                           height="18"
                           viewBox="0 0 24 24"
                           fill="none"
-                          stroke="#6366f1"
+                          stroke="#44a4ee"
                           strokeWidth="1.5"
                           strokeLinecap="round"
                           strokeLinejoin="round"
                         >
-                          <rect
-                            x="2"
-                            y="3"
-                            width="20"
-                            height="14"
-                            rx="2"
-                            ry="2"
-                          />
+                          <rect x="2" y="3" width="20" height="14" rx="0" />
                           <line x1="8" y1="21" x2="16" y2="21" />
                           <line x1="12" y1="17" x2="12" y2="21" />
                         </svg>
@@ -439,7 +479,7 @@ export default function LoginPage({
                           height="16"
                           viewBox="0 0 24 24"
                           fill="none"
-                          stroke="#475569"
+                          stroke="#52525b"
                           strokeWidth="2"
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -455,21 +495,16 @@ export default function LoginPage({
                 {/* Sign out */}
                 <div style={{ textAlign: "center", marginTop: 24 }}>
                   <button
+                    className="sign-out-btn"
                     onClick={onLogout}
                     style={{
                       background: "none",
                       border: "none",
-                      color: "#475569",
+                      color: "#52525b",
                       fontSize: 13,
                       cursor: "pointer",
                       padding: "8px 16px",
                       transition: "color 0.15s ease",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.color = "#94a3b8";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.color = "#475569";
                     }}
                   >
                     Sign out
@@ -484,15 +519,15 @@ export default function LoginPage({
                     style={{
                       fontSize: 24,
                       fontWeight: 600,
-                      color: "#f1f5f9",
+                      color: "#fafafa",
                       margin: "0 0 8px",
                       letterSpacing: -0.3,
                     }}
                   >
                     Welcome back
                   </h2>
-                  <p style={{ fontSize: 14, color: "#64748b", margin: 0 }}>
-                    Sign in to access your agent dashboard
+                  <p style={{ fontSize: 14, color: "#71717a", margin: 0 }}>
+                    Sign in to access your remote devices
                   </p>
                 </div>
 
@@ -503,12 +538,12 @@ export default function LoginPage({
                   style={{
                     width: "100%",
                     padding: 12,
-                    border: "none",
-                    borderRadius: 10,
-                    background: "#ffffff",
-                    color: "#1f1f1f",
-                    fontSize: 15,
-                    fontWeight: 500,
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    borderRadius: 0,
+                    background: "#fafafa",
+                    color: "#050505",
+                    fontSize: 13,
+                    fontWeight: 700,
                     cursor: "pointer",
                     display: "flex",
                     alignItems: "center",
@@ -535,21 +570,30 @@ export default function LoginPage({
                       }}
                     >
                       <div
-                        style={{ flex: 1, height: 1, background: "#1e1e24" }}
+                        style={{
+                          flex: 1,
+                          height: 1,
+                          background: "rgba(255,255,255,0.08)",
+                        }}
                       />
                       <span
                         style={{
-                          fontSize: 12,
-                          color: "#475569",
+                          fontSize: 11,
+                          color: "#52525b",
                           textTransform: "uppercase" as const,
-                          letterSpacing: 1,
-                          fontWeight: 500,
+                          letterSpacing: "0.12em",
+                          fontWeight: 700,
+                          fontFamily: '"JetBrains Mono", "Fira Code", monospace',
                         }}
                       >
                         or
                       </span>
                       <div
-                        style={{ flex: 1, height: 1, background: "#1e1e24" }}
+                        style={{
+                          flex: 1,
+                          height: 1,
+                          background: "rgba(255,255,255,0.08)",
+                        }}
                       />
                     </div>
 
@@ -559,10 +603,13 @@ export default function LoginPage({
                         <label
                           style={{
                             display: "block",
-                            fontSize: 13,
-                            fontWeight: 500,
-                            color: "#94a3b8",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: "#a1a1aa",
                             marginBottom: 8,
+                            textTransform: "uppercase" as const,
+                            letterSpacing: "0.12em",
+                            fontFamily: '"JetBrains Mono", "Fira Code", monospace',
                           }}
                         >
                           Email
@@ -573,17 +620,7 @@ export default function LoginPage({
                           placeholder="dev@localhost"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
-                          style={{
-                            width: "100%",
-                            padding: "12px 16px",
-                            background: "#111113",
-                            border: "1px solid #1e1e24",
-                            borderRadius: 10,
-                            color: "#f1f5f9",
-                            fontSize: 15,
-                            outline: "none",
-                            transition: "border-color 0.2s, box-shadow 0.2s",
-                          }}
+                          style={inputStyle}
                         />
                       </div>
 
@@ -593,10 +630,13 @@ export default function LoginPage({
                           <label
                             style={{
                               display: "block",
-                              fontSize: 13,
-                              fontWeight: 500,
-                              color: "#94a3b8",
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "#a1a1aa",
                               marginBottom: 8,
+                              textTransform: "uppercase" as const,
+                              letterSpacing: "0.12em",
+                              fontFamily: '"JetBrains Mono", "Fira Code", monospace',
                             }}
                           >
                             Secret
@@ -608,17 +648,7 @@ export default function LoginPage({
                             value={secret}
                             onChange={(e) => setSecret(e.target.value)}
                             autoComplete="off"
-                            style={{
-                              width: "100%",
-                              padding: "12px 16px",
-                              background: "#111113",
-                              border: "1px solid #1e1e24",
-                              borderRadius: 10,
-                              color: "#f1f5f9",
-                              fontSize: 15,
-                              outline: "none",
-                              transition: "border-color 0.2s, box-shadow 0.2s",
-                            }}
+                            style={inputStyle}
                           />
                         </div>
                       )}
@@ -643,18 +673,18 @@ export default function LoginPage({
                         style={{
                           width: "100%",
                           padding: 12,
-                          border: "none",
-                          borderRadius: 10,
-                          background:
-                            "linear-gradient(135deg, #6366f1, #4f46e5)",
-                          color: "white",
-                          fontSize: 15,
-                          fontWeight: 600,
+                          border: "1px solid rgba(68,164,238,0.5)",
+                          borderRadius: 0,
+                          background: "#44a4ee",
+                          color: "#020617",
+                          fontSize: 13,
+                          fontWeight: 800,
                           cursor: loading ? "default" : "pointer",
-                          letterSpacing: 0.3,
+                          letterSpacing: "0.08em",
+                          textTransform: "uppercase" as const,
                           transition: "all 0.2s ease",
                           opacity: loading ? 0.6 : 1,
-                          boxShadow: "0 4px 14px rgba(99,102,241,0.25)",
+                          boxShadow: "0 0 24px rgba(68,164,238,0.18)",
                         }}
                       >
                         {loading ? "Signing in..." : "Sign in"}
@@ -670,8 +700,11 @@ export default function LoginPage({
               style={{
                 textAlign: "center",
                 marginTop: 32,
-                fontSize: 12,
-                color: "#334155",
+                fontSize: 11,
+                color: "#52525b",
+                fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+                textTransform: "uppercase",
+                letterSpacing: "0.12em",
               }}
             >
               Secured by lukan relay

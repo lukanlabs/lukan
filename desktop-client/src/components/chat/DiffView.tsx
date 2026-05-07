@@ -528,7 +528,7 @@ function Minimap({
           height: Math.max(8, viewport.height),
           backgroundColor: "rgba(255,255,255,0.08)",
           border: "1px solid rgba(255,255,255,0.15)",
-          borderRadius: 2,
+          borderRadius: 0,
           pointerEvents: "none",
         }}
       />
@@ -883,7 +883,7 @@ export function DiffView({ diff, fullHeight }: DiffViewProps) {
 
   return (
     <div
-      className={`${fullHeight ? "flex-1 min-h-0" : "my-1.5 mx-2 max-h-72"} rounded-md overflow-hidden bg-white/[0.02]`}
+      className={`${fullHeight ? "flex-1 min-h-0" : "my-1.5 mx-2 max-h-72"} rounded-none overflow-hidden bg-white/[0.02]`}
       style={{ display: "flex", flexDirection: "column" }}
     >
       {/* Toolbar — only in full-height (FileViewer) mode */}
@@ -907,7 +907,7 @@ export function DiffView({ diff, fullHeight }: DiffViewProps) {
               border: "1px solid",
               borderColor:
                 mode === "unified" ? "rgba(255,255,255,0.12)" : "transparent",
-              borderRadius: 4,
+              borderRadius: 0,
               padding: "3px 6px",
               cursor: "pointer",
               color: mode === "unified" ? "#e0e0e0" : "rgba(130,130,150,0.6)",
@@ -929,7 +929,7 @@ export function DiffView({ diff, fullHeight }: DiffViewProps) {
               border: "1px solid",
               borderColor:
                 mode === "split" ? "rgba(255,255,255,0.12)" : "transparent",
-              borderRadius: 4,
+              borderRadius: 0,
               padding: "3px 6px",
               cursor: "pointer",
               color: mode === "split" ? "#e0e0e0" : "rgba(130,130,150,0.6)",

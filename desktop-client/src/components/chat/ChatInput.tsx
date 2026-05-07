@@ -107,12 +107,12 @@ export function ChatInput({
         {/* Permission mode selector */}
         <div className="flex items-center gap-2 mb-3 min-w-0">
           <Bot className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
-          <div className="flex items-center gap-1 bg-white/[0.02] rounded-lg p-0.5 border border-white/5 overflow-x-auto min-w-0">
+          <div className="flex items-center gap-1 bg-white/[0.02] rounded-none p-0.5 border border-white/5 overflow-x-auto min-w-0">
             {(Object.keys(modeLabels) as PermissionMode[]).map((mode) => (
               <button
                 key={mode}
                 onClick={() => onSetPermissionMode(mode)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                className={`px-2.5 py-1 rounded-none text-[11px] font-medium transition-all ${
                   permissionMode === mode
                     ? "bg-white/[0.06] text-zinc-100"
                     : "text-zinc-500 hover:text-zinc-300"
@@ -127,7 +127,7 @@ export function ChatInput({
         {/* Input container */}
         <div className="relative">
           <div
-            className={`flex items-end gap-2 p-2 rounded-lg border transition-all duration-200 bg-white/[0.02] focus-within:border-white/10 ${
+            className={`flex items-end gap-2 p-2 rounded-none border transition-all duration-200 bg-white/[0.02] focus-within:border-white/10 ${
               isRecording
                 ? "border-red-500/60 ring-1 ring-red-500/30"
                 : "border-white/5"
@@ -137,8 +137,8 @@ export function ChatInput({
             {isRecording ? (
               <div className="flex-1 flex items-center gap-3 px-3 py-3 min-h-[44px]">
                 <span className="relative flex h-3 w-3 shrink-0">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-none bg-red-400 opacity-75" />
+                  <span className="relative inline-flex rounded-none h-3 w-3 bg-red-500" />
                 </span>
                 <span className="text-sm text-red-400 font-medium">
                   Recording {formatDuration(recorder.duration)}
@@ -150,7 +150,7 @@ export function ChatInput({
             ) : (
               <textarea
                 ref={textareaRef}
-                className="flex-1 resize-none rounded-lg bg-transparent px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none min-h-[44px] max-h-[240px] leading-relaxed"
+                className="flex-1 resize-none rounded-none bg-transparent px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none min-h-[44px] max-h-[240px] leading-relaxed"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -177,7 +177,7 @@ export function ChatInput({
                     ? "Stop recording & transcribe"
                     : "Record audio"
               }
-              className={`h-9 w-9 shrink-0 rounded-md flex items-center justify-center transition-all ${
+              className={`h-9 w-9 shrink-0 rounded-none flex items-center justify-center transition-all ${
                 isRecording
                   ? "bg-red-500 text-white hover:bg-red-600 border border-red-400 cursor-pointer"
                   : isTranscribing
@@ -202,7 +202,7 @@ export function ChatInput({
             {isProcessing ? (
               <button
                 onClick={onAbort}
-                className="h-9 w-9 shrink-0 rounded-md flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] border border-white/5 text-zinc-300 transition-all cursor-pointer"
+                className="h-9 w-9 shrink-0 rounded-none flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] border border-white/5 text-zinc-300 transition-all cursor-pointer"
               >
                 <Square className="h-4 w-4" />
               </button>
@@ -210,7 +210,7 @@ export function ChatInput({
               <button
                 onClick={handleSubmit}
                 disabled={isDisabled || isRecording || isTranscribing}
-                className="h-9 w-9 shrink-0 rounded-md flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 disabled:bg-white/[0.04] disabled:text-zinc-600 disabled:border-white/5 text-zinc-900 transition-all cursor-pointer disabled:cursor-not-allowed border-0"
+                className="h-9 w-9 shrink-0 rounded-none flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 disabled:bg-white/[0.04] disabled:text-zinc-600 disabled:border-white/5 text-zinc-900 transition-all cursor-pointer disabled:cursor-not-allowed border-0"
               >
                 <Send className="h-4 w-4" />
               </button>

@@ -116,7 +116,7 @@ function ToolApprovalCard({
 
   return (
     <div
-      className={`rounded-lg border transition-colors ${
+      className={`rounded-none border transition-colors ${
         checked ? "border-blue-500/40 bg-blue-500/5" : "border-zinc-800"
       }`}
     >
@@ -163,7 +163,7 @@ function ToolApprovalCard({
         <div className="px-3 pb-3">
           {/* EditFile: show diff */}
           {diffLines && (
-            <div className="max-h-64 rounded-md overflow-auto border border-white/5">
+            <div className="max-h-64 rounded-none overflow-auto border border-white/5">
               <pre className="text-xs font-mono">
                 {diffLines.map((line, i) => {
                   let cls = "px-2 whitespace-pre";
@@ -182,7 +182,7 @@ function ToolApprovalCard({
 
           {/* WriteFile: show content preview */}
           {isWrite && content && (
-            <pre className="max-h-48 rounded-md overflow-auto border border-white/5 p-2 text-xs font-mono text-zinc-400 whitespace-pre-wrap">
+            <pre className="max-h-48 rounded-none overflow-auto border border-white/5 p-2 text-xs font-mono text-zinc-400 whitespace-pre-wrap">
               {content.length > 1000
                 ? content.slice(0, 1000) + "\n..."
                 : content}
@@ -191,14 +191,14 @@ function ToolApprovalCard({
 
           {/* Bash: show full command */}
           {isBash && command && (
-            <pre className="max-h-32 rounded-md overflow-auto border border-white/5 p-2 text-xs font-mono text-yellow-400/80 whitespace-pre-wrap">
+            <pre className="max-h-32 rounded-none overflow-auto border border-white/5 p-2 text-xs font-mono text-yellow-400/80 whitespace-pre-wrap">
               $ {command}
             </pre>
           )}
 
           {/* Other tools: show JSON */}
           {!isEdit && !isWrite && !isBash && (
-            <pre className="max-h-36 rounded-md overflow-auto border border-white/5 p-2 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap break-all">
+            <pre className="max-h-36 rounded-none overflow-auto border border-white/5 p-2 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap break-all">
               {JSON.stringify(tool.input, null, 2)}
             </pre>
           )}
@@ -231,7 +231,7 @@ export function ApprovalModal({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 
       <div
-        className="relative w-full max-w-2xl mx-4 rounded-xl border animate-scale-in"
+        className="relative w-full max-w-2xl mx-4 rounded-none border animate-scale-in"
         style={{
           background: "var(--surface-raised)",
           borderColor: "var(--border)",
@@ -265,14 +265,14 @@ export function ApprovalModal({
         >
           <button
             onClick={() => onApprove([...selected])}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-zinc-100 text-zinc-900 hover:bg-zinc-200 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 rounded-none text-sm font-medium bg-zinc-100 text-zinc-900 hover:bg-zinc-200 transition-colors"
           >
             <ShieldCheck className="h-4 w-4" />
             Approve ({selected.size})
           </button>
           <button
             onClick={onDenyAll}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 rounded-none text-sm font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors"
           >
             <ShieldX className="h-4 w-4" />
             Deny All

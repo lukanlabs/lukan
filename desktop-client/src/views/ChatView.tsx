@@ -309,7 +309,7 @@ export function ChatPanel({
                             return (
                               <div
                                 key={block.id}
-                                className="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2 text-xs text-zinc-500 italic max-h-48 overflow-y-auto whitespace-pre-wrap break-words"
+                                className="rounded-none bg-white/[0.02] border border-white/5 px-3 py-2 text-xs text-zinc-500 italic max-h-48 overflow-y-auto whitespace-pre-wrap break-words"
                                 ref={(el) => {
                                   if (el) el.scrollTop = el.scrollHeight;
                                 }}
@@ -381,9 +381,9 @@ export function ChatPanel({
                   />
                 </div>
                 <div className="flex gap-1">
-                  <span className="typing-dot w-2 h-2 rounded-full bg-zinc-500" />
-                  <span className="typing-dot w-2 h-2 rounded-full bg-zinc-500" />
-                  <span className="typing-dot w-2 h-2 rounded-full bg-zinc-500" />
+                  <span className="typing-dot w-2 h-2 rounded-none bg-zinc-500" />
+                  <span className="typing-dot w-2 h-2 rounded-none bg-zinc-500" />
+                  <span className="typing-dot w-2 h-2 rounded-none bg-zinc-500" />
                 </div>
               </div>
             )}
@@ -394,7 +394,7 @@ export function ChatPanel({
           {/* Error display — pinned above the input */}
           {chat.error && (
             <div
-              className="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm text-red-300 cursor-pointer hover:bg-red-500/15 transition-colors mx-4 mb-2 max-w-2xl self-center"
+              className="flex items-start gap-3 rounded-none border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm text-red-300 cursor-pointer hover:bg-red-500/15 transition-colors mx-4 mb-2 max-w-2xl self-center"
               onClick={chat.dismissError}
             >
               <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />

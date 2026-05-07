@@ -241,7 +241,7 @@ export default function ProvidersTab() {
         {/* OpenAI-compatible: base URL + API key */}
         {selectedProvider === "openai-compatible" && (
           <div
-            className="flex flex-col gap-2.5 mb-4 p-3 rounded-lg"
+            className="flex flex-col gap-2.5 mb-4 p-3 rounded-none"
             style={{
               background: "var(--bg-secondary)",
               border: "1px solid var(--border)",
@@ -255,7 +255,7 @@ export default function ProvidersTab() {
                 <Globe size={10} /> Base URL
               </label>
               <input
-                className="w-full px-2.5 py-1.5 rounded-md text-xs font-mono outline-none"
+                className="w-full px-2.5 py-1.5 rounded-none text-xs font-mono outline-none"
                 style={{
                   background: "var(--bg-tertiary)",
                   border: "1px solid var(--border)",
@@ -275,7 +275,7 @@ export default function ProvidersTab() {
               </label>
               <div className="flex gap-1.5">
                 <input
-                  className="flex-1 px-2.5 py-1.5 rounded-md text-xs font-mono outline-none"
+                  className="flex-1 px-2.5 py-1.5 rounded-none text-xs font-mono outline-none"
                   style={{
                     background: "var(--bg-tertiary)",
                     border: "1px solid var(--border)",
@@ -288,7 +288,7 @@ export default function ProvidersTab() {
                 />
                 <button
                   onClick={() => setShowApiKey((v) => !v)}
-                  className="px-1.5 rounded-md border-none cursor-pointer"
+                  className="px-1.5 rounded-none border-none cursor-pointer"
                   style={{
                     background: "var(--bg-tertiary)",
                     color: "var(--text-muted)",
@@ -301,7 +301,7 @@ export default function ProvidersTab() {
             <button
               onClick={handleSaveCompat}
               disabled={compatSaving}
-              className="self-start inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium cursor-pointer border-none mt-1"
+              className="self-start inline-flex items-center gap-1 px-2.5 py-1.5 rounded-none text-[11px] font-medium cursor-pointer border-none mt-1"
               style={{
                 background: "#fafafa",
                 color: "#09090b",
@@ -319,7 +319,7 @@ export default function ProvidersTab() {
           <button
             onClick={() => handleFetchModels(selectedProvider)}
             disabled={fetching}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-none text-xs font-medium cursor-pointer"
             style={{
               background: "var(--bg-tertiary)",
               color: "var(--text-primary)",
@@ -335,7 +335,7 @@ export default function ProvidersTab() {
             <button
               onClick={handleSaveSelection}
               disabled={saving}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-none text-xs font-medium cursor-pointer border-none"
               style={{
                 background: "#fafafa",
                 color: "#09090b",
@@ -352,7 +352,7 @@ export default function ProvidersTab() {
         {/* Error */}
         {fetchError && (
           <div
-            className="text-xs px-3 py-2 rounded-lg mb-3"
+            className="text-xs px-3 py-2 rounded-none mb-3"
             style={{
               background: "rgba(251,113,133,0.08)",
               color: "#fb7185",
@@ -374,7 +374,7 @@ export default function ProvidersTab() {
               selected
             </span>
             <div
-              className="flex flex-col gap-px rounded-lg overflow-hidden"
+              className="flex flex-col gap-px rounded-none overflow-hidden"
               style={{
                 border: "1px solid var(--border)",
                 maxHeight: 320,
@@ -408,7 +408,7 @@ export default function ProvidersTab() {
                       style={{
                         width: 14,
                         height: 14,
-                        borderRadius: 3,
+                        borderRadius: 0,
                         flexShrink: 0,
                         border: checked ? "none" : "1px solid var(--border)",
                         background: checked ? "#4ade80" : "transparent",
@@ -449,7 +449,7 @@ export default function ProvidersTab() {
               Configured Models ({currentProviderModels.length})
             </span>
             <div
-              className="flex flex-col gap-px rounded-lg overflow-hidden"
+              className="flex flex-col gap-px rounded-none overflow-hidden"
               style={{
                 border: "1px solid var(--border)",
                 maxHeight: 320,
@@ -509,7 +509,7 @@ export default function ProvidersTab() {
       {/* Active provider pill */}
       {activeProvider && (
         <div
-          className="flex items-center gap-2 px-3 py-2.5 rounded-lg mb-4"
+          className="flex items-center gap-2 px-3 py-2.5 rounded-none mb-4"
           style={{
             background: "rgba(255,255,255,0.03)",
             border: "1px solid rgba(255,255,255,0.08)",
@@ -555,7 +555,7 @@ export default function ProvidersTab() {
           return (
             <div
               key={provider.name}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-none cursor-pointer"
               style={{
                 background: provider.active
                   ? "rgba(255,255,255,0.03)"
@@ -597,7 +597,7 @@ export default function ProvidersTab() {
               <div className="flex items-center gap-2 shrink-0">
                 {status && (
                   <span
-                    className="w-1.5 h-1.5 rounded-full"
+                    className="w-1.5 h-1.5 rounded-none"
                     style={{
                       background: status.configured ? "#4ade80" : "#fbbf24",
                     }}

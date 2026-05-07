@@ -74,7 +74,7 @@ function StatusDot({ status }: { status?: string }) {
         : status === "partial"
           ? "var(--warning, #f59e0b)"
           : status === "waiting_approval"
-            ? "#8b5cf6"
+            ? "#44a4ee"
             : "var(--danger, #ef4444)";
   return (
     <span
@@ -111,7 +111,7 @@ function StatusBadge({ status }: { status?: string }) {
     },
     pending: { color: "var(--text-muted)", icon: <Clock size={10} /> },
     skipped: { color: "var(--text-muted)", icon: null },
-    waiting_approval: { color: "#8b5cf6", icon: <Clock size={10} /> },
+    waiting_approval: { color: "#44a4ee", icon: <Clock size={10} /> },
   };
   const c = cfg[status] ?? cfg.error!;
   return (
@@ -305,7 +305,7 @@ export function PipelinesPanel() {
                 fontSize: 10,
                 color: "var(--danger, #ef4444)",
                 background: "rgba(239,68,68,0.08)",
-                borderRadius: 4,
+                borderRadius: 0,
                 padding: "4px 8px",
                 marginBottom: 8,
                 textAlign: "left",
@@ -341,10 +341,10 @@ export function PipelinesPanel() {
             style={{
               border: "1px solid var(--border)",
               background: "transparent",
-              color: "var(--accent, #a78bfa)",
+              color: "var(--accent, #6db9f2)",
               cursor: "pointer",
               padding: "4px 10px",
-              borderRadius: 4,
+              borderRadius: 0,
               fontSize: 11,
               display: "inline-flex",
               alignItems: "center",
@@ -365,7 +365,7 @@ export function PipelinesPanel() {
               fontSize: 10,
               color: "var(--danger, #ef4444)",
               background: "rgba(239,68,68,0.08)",
-              borderRadius: 4,
+              borderRadius: 0,
               padding: "4px 8px",
               margin: "4px 8px",
             }}
@@ -428,12 +428,12 @@ export function PipelinesPanel() {
             onClick={() => setView({ kind: "create" })}
             title="New pipeline"
             style={{
-              border: "1px solid var(--accent, #a78bfa)",
+              border: "1px solid var(--accent, #6db9f2)",
               background: "transparent",
-              color: "var(--accent, #a78bfa)",
+              color: "var(--accent, #6db9f2)",
               cursor: "pointer",
               padding: "3px 8px",
-              borderRadius: 4,
+              borderRadius: 0,
               fontSize: 11,
               display: "flex",
               alignItems: "center",
@@ -513,7 +513,7 @@ export function PipelinesPanel() {
                   : "var(--text-muted)",
                 cursor: "pointer",
                 padding: 4,
-                borderRadius: 4,
+                borderRadius: 0,
                 display: "flex",
                 alignItems: "center",
               }}
@@ -649,7 +649,7 @@ export function PipelinesPanel() {
                 key={sr.stepId}
                 style={{
                   border: "1px solid var(--border)",
-                  borderRadius: 4,
+                  borderRadius: 0,
                   padding: "6px 8px",
                 }}
               >
@@ -704,7 +704,7 @@ export function PipelinesPanel() {
                       fontSize: 10,
                       color: "var(--danger, #ef4444)",
                       background: "rgba(239,68,68,0.08)",
-                      borderRadius: 3,
+                      borderRadius: 0,
                       padding: "3px 6px",
                       marginTop: 2,
                     }}
@@ -857,12 +857,12 @@ export function PipelinesPanel() {
             onClick={() => handleTrigger(detail.id)}
             disabled={triggering}
             style={{
-              border: "1px solid var(--accent, #a78bfa)",
+              border: "1px solid var(--accent, #6db9f2)",
               background: "transparent",
-              color: "var(--accent, #a78bfa)",
+              color: "var(--accent, #6db9f2)",
               cursor: triggering ? "not-allowed" : "pointer",
               padding: "3px 8px",
-              borderRadius: 4,
+              borderRadius: 0,
               fontSize: 11,
               display: "flex",
               alignItems: "center",
@@ -890,7 +890,7 @@ export function PipelinesPanel() {
                 : "var(--success, #22c55e)",
               cursor: "pointer",
               padding: "3px 8px",
-              borderRadius: 4,
+              borderRadius: 0,
               fontSize: 11,
               display: "flex",
               alignItems: "center",
@@ -908,7 +908,7 @@ export function PipelinesPanel() {
               color: "var(--danger, #ef4444)",
               cursor: "pointer",
               padding: "3px 8px",
-              borderRadius: 4,
+              borderRadius: 0,
               fontSize: 11,
               display: "flex",
               alignItems: "center",
@@ -975,7 +975,7 @@ export function PipelinesPanel() {
                     textAlign: "left",
                     border: "1px solid var(--border)",
                     background: "transparent",
-                    borderRadius: 4,
+                    borderRadius: 0,
                     padding: "6px 8px",
                     cursor: "pointer",
                     color: "inherit",
@@ -1144,7 +1144,7 @@ function CreateForm({
     border: "1px solid var(--border)",
     background: "var(--bg-secondary, #1a1a2e)",
     color: "var(--text-primary)",
-    borderRadius: 4,
+    borderRadius: 0,
     padding: "6px 8px",
     fontSize: 12,
     outline: "none",
@@ -1390,7 +1390,7 @@ function CreateForm({
           marginBottom: 10,
           padding: "6px 8px",
           border: "1px solid var(--border)",
-          borderRadius: 4,
+          borderRadius: 0,
         }}
       >
         Steps are added in the visual flow editor after creation
@@ -1407,7 +1407,7 @@ function CreateForm({
             color: "var(--text-muted)",
             cursor: "pointer",
             padding: "4px 10px",
-            borderRadius: 4,
+            borderRadius: 0,
             fontSize: 11,
           }}
         >
@@ -1429,7 +1429,7 @@ function CreateForm({
                 : "#0a0a0a",
             cursor: !name.trim() || !triggerValid ? "not-allowed" : "pointer",
             padding: "4px 10px",
-            borderRadius: 4,
+            borderRadius: 0,
             fontSize: 11,
           }}
         >

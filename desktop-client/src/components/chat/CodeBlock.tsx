@@ -20,7 +20,7 @@ export function CodeBlock({ language, children }: CodeBlockProps) {
 
   return (
     <div
-      className="group relative my-3 rounded-lg overflow-hidden border border-white/10"
+      className="group relative my-3 rounded-none overflow-hidden border border-white/10"
       style={{ background: "rgba(20, 20, 20, 0.8)" }}
     >
       {/* Header */}
@@ -33,6 +33,8 @@ export function CodeBlock({ language, children }: CodeBlockProps) {
         <button
           onClick={handleCopy}
           className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors sm:opacity-0 sm:group-hover:opacity-100 ml-auto"
+          title={copied ? "Copied" : "Copy code"}
+          aria-label={copied ? "Copied" : "Copy code"}
         >
           {copied ? (
             <>
@@ -45,6 +47,15 @@ export function CodeBlock({ language, children }: CodeBlockProps) {
           )}
         </button>
       </div>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="code-block-bottom-copy"
+        title={copied ? "Copied" : "Copy code"}
+        aria-label={copied ? "Copied" : "Copy code"}
+      >
+        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      </button>
       {/* Code */}
       <SyntaxHighlighter
         style={oneDark}

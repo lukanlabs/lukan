@@ -891,7 +891,7 @@ export function FileViewer({
                 padding: 4,
                 display: "flex",
                 alignItems: "center",
-                borderRadius: 4,
+                borderRadius: 0,
                 transition: "all 0.1s",
               }}
               onMouseEnter={(e) => {
@@ -917,7 +917,7 @@ export function FileViewer({
               padding: 4,
               display: "flex",
               alignItems: "center",
-              borderRadius: 4,
+              borderRadius: 0,
               transition: "all 0.1s",
             }}
             onMouseEnter={(e) => {
@@ -989,7 +989,7 @@ export function FileViewer({
                 color: "var(--text-muted)",
                 background: "var(--bg-tertiary, rgba(255,255,255,0.06))",
                 padding: "1px 6px",
-                borderRadius: 4,
+                borderRadius: 0,
                 flexShrink: 0,
               }}
             >

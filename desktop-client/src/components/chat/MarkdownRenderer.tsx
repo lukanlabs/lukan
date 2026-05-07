@@ -34,7 +34,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           },
           table({ children }) {
             return (
-              <div className="my-3 overflow-x-auto rounded-lg border border-white/10">
+              <div className="my-3 overflow-x-auto rounded-none border border-white/10">
                 <table className="w-full text-sm">{children}</table>
               </div>
             );

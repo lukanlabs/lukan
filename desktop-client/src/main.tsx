@@ -135,7 +135,7 @@ function Root() {
               setChecking(true);
               checkAuth();
             }}
-            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm transition-colors cursor-pointer"
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-none text-sm transition-colors cursor-pointer"
           >
             Retry
           </button>

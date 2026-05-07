@@ -65,11 +65,11 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
   };
 
   return (
-    <div className="my-1 rounded-lg bg-white/[0.02] overflow-hidden">
+    <div className="my-1 rounded-none bg-white/[0.02] overflow-hidden">
       {/* Header */}
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 w-full text-left cursor-pointer rounded-md px-2 py-1.5 hover:bg-white/5 transition-colors"
+        className="flex items-center gap-2 w-full text-left cursor-pointer rounded-none px-2 py-1.5 hover:bg-white/5 transition-colors"
       >
         <span className="text-zinc-600 shrink-0">
           {open ? (
@@ -94,9 +94,9 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
         )}
         <span className="shrink-0 ml-auto">
           {answered ? (
-            <span className="h-1.5 w-1.5 rounded-full bg-green-500/50 inline-block" />
+            <span className="h-1.5 w-1.5 rounded-none bg-green-500/50 inline-block" />
           ) : (
-            <span className="h-1.5 w-1.5 rounded-full bg-blue-400/50 inline-block" />
+            <span className="h-1.5 w-1.5 rounded-none bg-blue-400/50 inline-block" />
           )}
         </span>
       </button>
@@ -105,7 +105,7 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
       {open && !answered && (
         <div className="mx-2 mb-2">
           {/* Question text */}
-          <div className="rounded-md bg-white/[0.02] px-3 py-2 mb-2">
+          <div className="rounded-none bg-white/[0.02] px-3 py-2 mb-2">
             <p className="text-xs text-zinc-400">{question.question}</p>
           </div>
 
@@ -116,7 +116,7 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
                 <button
                   key={i}
                   onClick={() => toggleOption(opt.label)}
-                  className={`flex w-full items-start gap-2 rounded-md px-3 py-2 text-left transition-colors cursor-pointer ${
+                  className={`flex w-full items-start gap-2 rounded-none px-3 py-2 text-left transition-colors cursor-pointer ${
                     selected.has(opt.label)
                       ? "bg-blue-500/10"
                       : "bg-white/[0.02] hover:bg-white/[0.03]"
@@ -142,7 +142,7 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
                 <button
                   key={i}
                   onClick={() => advance(opt.label)}
-                  className="flex w-full flex-col items-start rounded-md bg-white/[0.02] px-3 py-2 text-left transition-colors hover:bg-white/[0.03] cursor-pointer"
+                  className="flex w-full flex-col items-start rounded-none bg-white/[0.02] px-3 py-2 text-left transition-colors hover:bg-white/[0.03] cursor-pointer"
                 >
                   <span className="text-xs font-medium text-blue-400/80">
                     {opt.label}
@@ -163,7 +163,7 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
               <button
                 onClick={confirmMulti}
                 disabled={selected.size === 0}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-1 px-2 py-1.5 rounded-none text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Check className="h-3 w-3" />
                 Confirm ({selected.size})
@@ -176,13 +176,13 @@ export function QuestionPicker({ questions, onSubmit }: QuestionPickerProps) {
                 value={customInput}
                 onChange={(e) => setCustomInput(e.target.value)}
                 placeholder={isMulti ? "Custom option..." : "Custom answer..."}
-                className="flex-1 sm:w-40 min-w-0 rounded-md border border-white/5 bg-white/[0.02] px-2 py-1.5 text-[11px] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                className="flex-1 sm:w-40 min-w-0 rounded-none border border-white/5 bg-white/[0.02] px-2 py-1.5 text-[11px] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
                 onKeyDown={(e) => e.key === "Enter" && submitCustom()}
               />
               <button
                 onClick={submitCustom}
                 disabled={!customInput.trim()}
-                className="flex items-center px-1.5 py-1.5 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center px-1.5 py-1.5 rounded-none text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Send className="h-3 w-3" />
               </button>

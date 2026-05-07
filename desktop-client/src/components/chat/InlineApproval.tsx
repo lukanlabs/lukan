@@ -191,7 +191,7 @@ function ToolPreview({
     : null;
 
   return (
-    <div className="rounded-lg bg-white/[0.02] overflow-hidden">
+    <div className="rounded-none bg-white/[0.02] overflow-hidden">
       {/* Header with tool info + Approve / Deny */}
       <div className="flex flex-wrap items-center justify-between gap-1 px-3 py-1.5 border-b border-white/5">
         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -212,14 +212,14 @@ function ToolPreview({
         <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={() => onApprove(allIds)}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded-none text-[11px] font-medium text-zinc-300 hover:text-zinc-100 hover:bg-white/5 transition-colors"
           >
             <Check className="h-3 w-3" />
             Approve
           </button>
           <button
             onClick={onDenyAll}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-red-400/70 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded-none text-[11px] font-medium text-red-400/70 hover:text-red-300 hover:bg-red-500/10 transition-colors"
           >
             <X className="h-3 w-3" />
             Deny

@@ -20,7 +20,7 @@ export default function Textarea({
         </label>
       )}
       <textarea
-        className={`px-3 py-2.5 rounded-xl text-sm outline-none resize-y font-mono transition-all min-h-[120px] ${className}`}
+        className={`px-3 py-2.5 rounded-none text-sm outline-none resize-y font-mono transition-all min-h-[120px] ${className}`}
         style={{
           background: "var(--bg-tertiary)",
           border: "1px solid var(--border)",

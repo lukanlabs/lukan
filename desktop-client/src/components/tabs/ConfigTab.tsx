@@ -307,7 +307,7 @@ export default function ConfigTab() {
                       style={{
                         flex: 1,
                         padding: "6px 10px",
-                        borderRadius: 4,
+                        borderRadius: 0,
                         background: "rgba(0,0,0,0.3)",
                         fontFamily: "var(--font-mono)",
                         fontSize: 11,

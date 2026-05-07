@@ -72,7 +72,7 @@ export default function AgentTabBar({
       >
         <button
           onClick={() => onCreate()}
-          className="flex items-center justify-center w-7 h-7 rounded-md border-none cursor-pointer transition-colors"
+          className="flex items-center justify-center w-7 h-7 rounded-none border-none cursor-pointer transition-colors"
           style={{ color: "#a1a1aa", background: "transparent" }}
           onMouseEnter={(e) => {
             e.currentTarget.style.background = "rgba(50, 50, 50, 0.4)";
@@ -88,7 +88,7 @@ export default function AgentTabBar({
         </button>
         <button
           onClick={() => setShowFolderPicker(true)}
-          className="flex items-center justify-center w-7 h-7 rounded-md border-none cursor-pointer transition-colors"
+          className="flex items-center justify-center w-7 h-7 rounded-none border-none cursor-pointer transition-colors"
           style={{ color: "#a1a1aa", background: "transparent" }}
           onMouseEnter={(e) => {
             e.currentTarget.style.background = "rgba(50, 50, 50, 0.4)";
@@ -147,7 +147,7 @@ export default function AgentTabBar({
                 startRename(t.id, label);
               }}
               onDoubleClick={() => startRename(t.id, label)}
-              className="group relative flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-mono border-none cursor-pointer transition-all whitespace-nowrap"
+              className="group relative flex items-center gap-1.5 px-3 py-1 rounded-none text-xs font-mono border-none cursor-pointer transition-all whitespace-nowrap"
               style={{
                 background: isActive ? "rgba(60, 60, 60, 0.3)" : "transparent",
                 color: isActive ? "#fafafa" : "#71717a",

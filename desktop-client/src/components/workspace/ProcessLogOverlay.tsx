@@ -314,7 +314,7 @@ export function ProcessLogOverlay({
                 color: "var(--danger)",
                 cursor: killing ? "not-allowed" : "pointer",
                 padding: "2px 10px",
-                borderRadius: 4,
+                borderRadius: 0,
                 fontSize: 11,
                 fontFamily: "var(--font-mono)",
                 display: "flex",

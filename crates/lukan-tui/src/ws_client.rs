@@ -23,6 +23,8 @@ use lukan_core::models::messages::Message;
 pub enum OutMessage {
     SendMessage {
         content: String,
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
+        images: Vec<lukan_core::models::messages::ContentBlock>,
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
     },

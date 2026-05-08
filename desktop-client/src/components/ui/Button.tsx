@@ -14,7 +14,7 @@ export default function Button({
   ...props
 }: ButtonProps) {
   const base =
-    "inline-flex items-center justify-center rounded-lg font-medium cursor-pointer border-none select-none gap-1.5 transition-all";
+    "inline-flex items-center justify-center rounded-none font-medium cursor-pointer border-none select-none gap-1.5 transition-all";
   const sizes = size === "sm" ? "px-2.5 py-1 text-xs" : "px-4 py-2 text-sm";
 
   const variantStyles: Record<string, React.CSSProperties> = {

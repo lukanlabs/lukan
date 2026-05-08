@@ -68,7 +68,7 @@ export default function FolderPicker({
         style={{
           background: "#1a1a1a",
           border: "1px solid rgba(60,60,60,0.6)",
-          borderRadius: 8,
+          borderRadius: 0,
           width: 420,
           maxHeight: "70vh",
           display: "flex",
@@ -124,7 +124,7 @@ export default function FolderPicker({
               color: "#a1a1aa",
               cursor: "pointer",
               padding: 4,
-              borderRadius: 4,
+              borderRadius: 0,
             }}
             title="Parent directory"
           >
@@ -151,7 +151,7 @@ export default function FolderPicker({
               color: "#fff",
               cursor: "pointer",
               padding: "3px 10px",
-              borderRadius: 4,
+              borderRadius: 0,
               fontSize: 11,
               fontWeight: 500,
               display: "flex",

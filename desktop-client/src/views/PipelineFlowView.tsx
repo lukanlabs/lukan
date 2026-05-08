@@ -112,7 +112,7 @@ const STATUS_COLOR: Record<string, string> = {
   error: "#ef4444",
   partial: "#f59e0b",
   skipped: "#52525b",
-  waiting_approval: "#8b5cf6",
+  waiting_approval: "#44a4ee",
 };
 
 const menuItemStyle: React.CSSProperties = {
@@ -125,7 +125,7 @@ const menuItemStyle: React.CSSProperties = {
   color: "#ccc",
   cursor: "pointer",
   padding: "5px 8px",
-  borderRadius: 3,
+  borderRadius: 0,
   fontSize: 10,
   fontFamily: "monospace",
   whiteSpace: "nowrap",
@@ -152,7 +152,7 @@ function StepNode({ data }: { data: StepNodeData }) {
   const isApproval = stepType === "approval";
   const [menuOpen, setMenuOpen] = useState(false);
   const status = stepRun?.status;
-  const defaultColor = isApproval ? "#8b5cf6" : "#3c3c3c";
+  const defaultColor = isApproval ? "#44a4ee" : "#3c3c3c";
   const c = (status && STATUS_COLOR[status]) || defaultColor;
   const isRunning = status === "running";
   const isWaiting = status === "waiting_approval";
@@ -174,12 +174,12 @@ function StepNode({ data }: { data: StepNodeData }) {
       style={{
         background: isApproval ? "#13111a" : "#111",
         border: `1px solid ${c}`,
-        borderLeft: isApproval ? `3px solid #8b5cf6` : `3px solid ${c}`,
+        borderLeft: isApproval ? `3px solid #44a4ee` : `3px solid ${c}`,
         borderRadius: isApproval ? 8 : 4,
         width: 200,
         fontFamily: "monospace",
         boxShadow: isWaiting
-          ? `0 0 16px #8b5cf630`
+          ? `0 0 16px #44a4ee30`
           : isRunning
             ? `0 0 12px ${c}30`
             : "none",
@@ -208,7 +208,7 @@ function StepNode({ data }: { data: StepNodeData }) {
         }}
       >
         {isApproval ? (
-          <ShieldCheck size={11} style={{ color: "#8b5cf6", flexShrink: 0 }} />
+          <ShieldCheck size={11} style={{ color: "#44a4ee", flexShrink: 0 }} />
         ) : (
           <span
             style={{ fontSize: 9, color: c, fontWeight: 700, opacity: 0.7 }}
@@ -245,7 +245,7 @@ function StepNode({ data }: { data: StepNodeData }) {
         {isWaiting && (
           <Loader2
             size={11}
-            style={{ color: "#8b5cf6", animation: "spin 2s linear infinite" }}
+            style={{ color: "#44a4ee", animation: "spin 2s linear infinite" }}
           />
         )}
 
@@ -279,7 +279,7 @@ function StepNode({ data }: { data: StepNodeData }) {
                 left: "calc(100% + 4px)",
                 background: "#1a1a1a",
                 border: "1px solid #333",
-                borderRadius: 4,
+                borderRadius: 0,
                 padding: 2,
                 zIndex: 50,
                 boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
@@ -361,7 +361,7 @@ function StepNode({ data }: { data: StepNodeData }) {
           style={{
             padding: "3px 8px",
             fontSize: 8,
-            color: "#7c3aed",
+            color: "#44a4ee",
             display: "flex",
             alignItems: "center",
             gap: 3,
@@ -439,7 +439,7 @@ function StepNode({ data }: { data: StepNodeData }) {
           style={{
             padding: "3px 8px 2px",
             fontSize: 9,
-            color: "#8b5cf6",
+            color: "#44a4ee",
             display: "flex",
             alignItems: "center",
             gap: 3,
@@ -486,7 +486,7 @@ function StepNode({ data }: { data: StepNodeData }) {
               color: "#22c55e",
               cursor: "pointer",
               padding: "3px 12px",
-              borderRadius: 3,
+              borderRadius: 0,
               fontSize: 9,
               fontFamily: "monospace",
               fontWeight: 600,
@@ -505,7 +505,7 @@ function StepNode({ data }: { data: StepNodeData }) {
               color: "#ef4444",
               cursor: "pointer",
               padding: "3px 12px",
-              borderRadius: 3,
+              borderRadius: 0,
               fontSize: 9,
               fontFamily: "monospace",
               fontWeight: 600,
@@ -707,7 +707,7 @@ function EditStepSheet({
     border: "1px solid #333",
     background: "#111",
     color: "#e0e0e0",
-    borderRadius: 4,
+    borderRadius: 0,
     padding: "6px 8px",
     fontSize: 12,
     fontFamily: "monospace",
@@ -825,7 +825,7 @@ function EditStepSheet({
                   checked={stepType === t}
                   onChange={() => setStepType(t)}
                   style={{
-                    accentColor: t === "approval" ? "#8b5cf6" : "#a78bfa",
+                    accentColor: t === "approval" ? "#44a4ee" : "#6db9f2",
                   }}
                 />
                 {t === "approval" ? "Approval Gate" : "Agent"}
@@ -1093,7 +1093,7 @@ function EditStepSheet({
                     type="checkbox"
                     checked={toolsEnabled}
                     onChange={(e) => setToolsEnabled(e.target.checked)}
-                    style={{ accentColor: "#a78bfa" }}
+                    style={{ accentColor: "#6db9f2" }}
                   />
                   Restrict tools
                 </label>
@@ -1134,7 +1134,7 @@ function EditStepSheet({
                       style={{
                         border: "none",
                         background: "transparent",
-                        color: "#a78bfa",
+                        color: "#6db9f2",
                         cursor: "pointer",
                         fontSize: 9,
                         marginLeft: 6,
@@ -1148,7 +1148,7 @@ function EditStepSheet({
                       maxHeight: 180,
                       overflowY: "auto",
                       border: "1px solid #222",
-                      borderRadius: 4,
+                      borderRadius: 0,
                       padding: 4,
                     }}
                   >
@@ -1161,7 +1161,7 @@ function EditStepSheet({
                           gap: 6,
                           padding: "2px 4px",
                           cursor: "pointer",
-                          borderRadius: 2,
+                          borderRadius: 0,
                           fontSize: 10,
                           color: selectedTools.has(tool.name)
                             ? "#e0e0e0"
@@ -1178,7 +1178,7 @@ function EditStepSheet({
                           type="checkbox"
                           checked={selectedTools.has(tool.name)}
                           onChange={() => toggleTool(tool.name)}
-                          style={{ accentColor: "#a78bfa", flexShrink: 0 }}
+                          style={{ accentColor: "#6db9f2", flexShrink: 0 }}
                         />
                         <span
                           style={{
@@ -1249,7 +1249,7 @@ function EditStepSheet({
             color: "#888",
             cursor: "pointer",
             padding: "4px 12px",
-            borderRadius: 3,
+            borderRadius: 0,
             fontSize: 11,
           }}
         >
@@ -1264,7 +1264,7 @@ function EditStepSheet({
             color: "#0a0a0a",
             cursor: saving ? "not-allowed" : "pointer",
             padding: "4px 12px",
-            borderRadius: 3,
+            borderRadius: 0,
             fontSize: 11,
             fontWeight: 600,
             opacity: saving ? 0.5 : 1,
@@ -1316,7 +1316,7 @@ function PipelineSettingsSheet({
     border: "1px solid #333",
     background: "#111",
     color: "#e0e0e0",
-    borderRadius: 4,
+    borderRadius: 0,
     padding: "6px 8px",
     fontSize: 12,
     fontFamily: "monospace",
@@ -1466,12 +1466,12 @@ function PipelineSettingsSheet({
                 type="button"
                 onClick={() => setTriggerType(t)}
                 style={{
-                  border: `1px solid ${triggerType === t ? "#a78bfa" : "#333"}`,
-                  background: triggerType === t ? "#a78bfa20" : "transparent",
-                  color: triggerType === t ? "#a78bfa" : "#888",
+                  border: `1px solid ${triggerType === t ? "#6db9f2" : "#333"}`,
+                  background: triggerType === t ? "#6db9f220" : "transparent",
+                  color: triggerType === t ? "#6db9f2" : "#888",
                   cursor: "pointer",
                   padding: "2px 8px",
-                  borderRadius: 3,
+                  borderRadius: 0,
                   fontSize: 10,
                 }}
               >
@@ -1562,7 +1562,7 @@ function PipelineSettingsSheet({
             color: "#888",
             cursor: "pointer",
             padding: "4px 12px",
-            borderRadius: 3,
+            borderRadius: 0,
             fontSize: 11,
           }}
         >
@@ -1577,7 +1577,7 @@ function PipelineSettingsSheet({
             color: "#0a0a0a",
             cursor: saving ? "not-allowed" : "pointer",
             padding: "4px 12px",
-            borderRadius: 3,
+            borderRadius: 0,
             fontSize: 11,
             fontWeight: 600,
             opacity: saving ? 0.5 : 1,
@@ -1689,7 +1689,7 @@ function OutputPanel({
               marginBottom: 8,
               padding: "4px 8px",
               background: "rgba(239,68,68,0.06)",
-              borderRadius: 3,
+              borderRadius: 0,
             }}
           >
             {stepRun.error}
@@ -2177,7 +2177,7 @@ export default function PipelineFlowView({
         let stroke = "#2a2a2a";
         let animated = false;
         if (fs === "success" && ts === "waiting_approval") {
-          stroke = "#8b5cf6";
+          stroke = "#44a4ee";
           animated = true;
         } else if (fs === "success" && ts === "running") {
           stroke = "#f59e0b";
@@ -2340,7 +2340,7 @@ export default function PipelineFlowView({
               background: "#141414",
               border: "1px solid #2a2a2a",
               color: "#888",
-              borderRadius: 3,
+              borderRadius: 0,
               padding: "2px 6px",
               fontSize: 10,
               fontFamily: "monospace",
@@ -2427,7 +2427,7 @@ export default function PipelineFlowView({
             color: "#888",
             cursor: "pointer",
             padding: "3px 10px",
-            borderRadius: 3,
+            borderRadius: 0,
             fontSize: 10,
             fontFamily: "monospace",
             display: "flex",
@@ -2447,7 +2447,7 @@ export default function PipelineFlowView({
               color: "#ef4444",
               cursor: "pointer",
               padding: "3px 10px",
-              borderRadius: 3,
+              borderRadius: 0,
               fontSize: 10,
               fontWeight: 600,
               fontFamily: "monospace",
@@ -2468,7 +2468,7 @@ export default function PipelineFlowView({
               color: triggering ? "#666" : "#0a0a0a",
               cursor: triggering ? "not-allowed" : "pointer",
               padding: "3px 10px",
-              borderRadius: 3,
+              borderRadius: 0,
               fontSize: 10,
               fontWeight: 600,
               fontFamily: "monospace",

@@ -845,6 +845,24 @@ impl AgentLoop {
         cancel: Option<CancellationToken>,
         queued: Option<Arc<std::sync::Mutex<Vec<String>>>>,
     ) -> Result<()> {
+        self.run_turn_with_content(
+            user_message,
+            MessageContent::Text(user_message.to_string()),
+            event_tx,
+            cancel,
+            queued,
+        )
+        .await
+    }
+
+    pub async fn run_turn_with_content(
+        &mut self,
+        user_message: &str,
+        user_content: MessageContent,
+        event_tx: mpsc::Sender<StreamEvent>,
+        cancel: Option<CancellationToken>,
+        queued: Option<Arc<std::sync::Mutex<Vec<String>>>>,
+    ) -> Result<()> {
         // Reload from disk if another client (CLI / Web) updated this session
         self.reload_if_stale().await;
 
@@ -869,20 +887,32 @@ impl AgentLoop {
             self.history.add_user_message(&ctx);
         }
 
-        // Add user message to history, extracting any image URLs as vision blocks
-        let (clean_text, image_blocks) = extract_image_urls(user_message).await;
-        if !image_blocks.is_empty() {
-            tracing::info!(
-                count = image_blocks.len(),
-                "Extracted image URLs from user message"
-            );
-        }
-        if image_blocks.is_empty() {
-            self.history.add_user_message(user_message);
-        } else {
-            let mut blocks = vec![ContentBlock::Text { text: clean_text }];
-            blocks.extend(image_blocks);
-            self.history.add_user_blocks(blocks);
+        // Add user message to history, using explicit content blocks from richer clients when present.
+        match user_content {
+            MessageContent::Blocks(blocks)
+                if blocks
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::Image { .. })) =>
+            {
+                self.history.add_user_blocks(blocks);
+            }
+            _ => {
+                // Add user message to history, extracting any image URLs as vision blocks
+                let (clean_text, image_blocks) = extract_image_urls(user_message).await;
+                if !image_blocks.is_empty() {
+                    tracing::info!(
+                        count = image_blocks.len(),
+                        "Extracted image URLs from user message"
+                    );
+                }
+                if image_blocks.is_empty() {
+                    self.history.add_user_message(user_message);
+                } else {
+                    let mut blocks = vec![ContentBlock::Text { text: clean_text }];
+                    blocks.extend(image_blocks);
+                    self.history.add_user_blocks(blocks);
+                }
+            }
         }
 
         // Accumulate file snapshots across all tool rounds in this turn

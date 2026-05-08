@@ -62,7 +62,7 @@ export default function ProjectSelector({ onSelect }: Props) {
           <button
             onClick={handlePick}
             disabled={loading}
-            className="w-full flex items-center gap-3 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+            className="w-full flex items-center gap-3 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-none transition-colors cursor-pointer disabled:opacity-50"
           >
             <svg
               className="w-5 h-5 text-zinc-400 shrink-0"
@@ -83,7 +83,7 @@ export default function ProjectSelector({ onSelect }: Props) {
           <button
             onClick={handleHomeDir}
             disabled={loading}
-            className="w-full flex items-center gap-3 px-4 py-3 bg-zinc-900 hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer text-zinc-400 disabled:opacity-50"
+            className="w-full flex items-center gap-3 px-4 py-3 bg-zinc-900 hover:bg-zinc-800 rounded-none transition-colors cursor-pointer text-zinc-400 disabled:opacity-50"
           >
             <svg
               className="w-5 h-5 shrink-0"
@@ -115,7 +115,7 @@ export default function ProjectSelector({ onSelect }: Props) {
                   key={project.path}
                   onClick={() => selectPath(project.path)}
                   disabled={loading}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-zinc-800/60 rounded-lg transition-colors cursor-pointer text-left disabled:opacity-50"
+                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-zinc-800/60 rounded-none transition-colors cursor-pointer text-left disabled:opacity-50"
                 >
                   <svg
                     className="w-4 h-4 text-zinc-500 shrink-0"

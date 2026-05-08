@@ -27,7 +27,7 @@ export function CheckpointMarker({
   return (
     <div className="my-2 mx-auto max-w-4xl">
       <div
-        className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-white/[0.02] border border-white/5 cursor-pointer hover:bg-white/[0.04] transition-colors"
+        className="flex items-center gap-2 px-3 py-1.5 rounded-none bg-white/[0.02] border border-white/5 cursor-pointer hover:bg-white/[0.04] transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
         <History size={12} className="text-zinc-600 shrink-0" />
@@ -38,7 +38,7 @@ export function CheckpointMarker({
       </div>
 
       {expanded && (
-        <div className="mt-1 rounded-md bg-white/[0.02] border border-white/5 overflow-hidden">
+        <div className="mt-1 rounded-none bg-white/[0.02] border border-white/5 overflow-hidden">
           {/* Files that will be reverted */}
           <div className="px-3 py-2 space-y-1">
             {/* Deduplicate affected files by path, keep last operation */}
@@ -85,7 +85,7 @@ export function CheckpointMarker({
                   e.stopPropagation();
                   setConfirming(true);
                 }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-none text-[11px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors"
               >
                 <RotateCcw size={11} />
                 Restore to here
@@ -100,7 +100,7 @@ export function CheckpointMarker({
                     setConfirming(false);
                     setExpanded(false);
                   }}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-zinc-300 hover:text-zinc-100 bg-white/5 hover:bg-white/10 transition-colors"
+                  className="flex items-center gap-1 px-2 py-1 rounded-none text-[11px] font-medium text-zinc-300 hover:text-zinc-100 bg-white/5 hover:bg-white/10 transition-colors"
                 >
                   Chat only
                 </button>
@@ -111,7 +111,7 @@ export function CheckpointMarker({
                     setConfirming(false);
                     setExpanded(false);
                   }}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-orange-300 hover:text-orange-100 bg-orange-500/10 hover:bg-orange-500/20 transition-colors"
+                  className="flex items-center gap-1 px-2 py-1 rounded-none text-[11px] font-medium text-orange-300 hover:text-orange-100 bg-orange-500/10 hover:bg-orange-500/20 transition-colors"
                 >
                   Chat + Code
                 </button>
@@ -120,7 +120,7 @@ export function CheckpointMarker({
                     e.stopPropagation();
                     setConfirming(false);
                   }}
-                  className="p-1 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-white/5 transition-colors"
+                  className="p-1 rounded-none text-zinc-500 hover:text-zinc-300 hover:bg-white/5 transition-colors"
                 >
                   <X size={11} />
                 </button>

@@ -16,7 +16,7 @@ export default function Input({ label, className = "", ...props }: InputProps) {
         </label>
       )}
       <input
-        className={`px-3 py-2 rounded-xl text-sm outline-none transition-all ${className}`}
+        className={`px-3 py-2 rounded-none text-sm outline-none transition-all ${className}`}
         style={{
           background: "var(--bg-tertiary)",
           border: "1px solid var(--border)",

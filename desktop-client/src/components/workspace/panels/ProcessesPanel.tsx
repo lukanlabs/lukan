@@ -20,7 +20,7 @@ function StatusDot({ status }: { status: BgProcessInfo["status"] }) {
     status === "running"
       ? "var(--success, #22c55e)"
       : status === "completed"
-        ? "var(--accent, #a78bfa)"
+        ? "var(--accent, #6db9f2)"
         : "var(--danger, #ef4444)";
   return (
     <span
@@ -50,7 +50,7 @@ function StatusBadge({ status }: { status: BgProcessInfo["status"] }) {
       label: "running",
     },
     completed: {
-      color: "var(--accent, #a78bfa)",
+      color: "var(--accent, #6db9f2)",
       icon: <CheckCircle2 size={10} />,
       label: "completed",
     },
@@ -179,7 +179,7 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
             onClick={(e) => e.stopPropagation()}
             style={{
               background: "#1a1a1e", border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 10, padding: "20px 24px", maxWidth: 360, width: "90%",
+              borderRadius: 0, padding: "20px 24px", maxWidth: 360, width: "90%",
               boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
             }}
           >
@@ -196,7 +196,7 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
               <button
                 onClick={() => setConfirmClear(false)}
                 style={{
-                  padding: "6px 16px", fontSize: 13, borderRadius: 6,
+                  padding: "6px 16px", fontSize: 13, borderRadius: 0,
                   border: "1px solid rgba(255,255,255,0.1)", background: "transparent",
                   color: "#a1a1aa", cursor: "pointer",
                 }}
@@ -206,7 +206,7 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
               <button
                 onClick={handleClear}
                 style={{
-                  padding: "6px 16px", fontSize: 13, borderRadius: 6,
+                  padding: "6px 16px", fontSize: 13, borderRadius: 0,
                   border: "none", background: "#dc2626", color: "#fff",
                   cursor: "pointer", fontWeight: 500,
                 }}
@@ -265,7 +265,7 @@ export function ProcessesPanel({ onOpenLog }: ProcessesPanelProps) {
                     <span
                       style={{
                         background: "var(--surface-2, #2a2a2a)",
-                        borderRadius: 3,
+                        borderRadius: 0,
                         padding: "1px 4px",
                         fontSize: 9,
                         color: "var(--text-muted)",

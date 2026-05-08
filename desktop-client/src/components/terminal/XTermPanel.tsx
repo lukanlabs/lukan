@@ -94,7 +94,7 @@ export default function XTermPanel({
         className="flex-1 min-h-0"
         style={{
           padding: "4px 0 4px 4px",
-          background: "#0a0a0a",
+          background: "#09090b",
         }}
       />
     </div>

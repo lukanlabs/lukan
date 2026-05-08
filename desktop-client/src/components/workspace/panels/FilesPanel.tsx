@@ -15,7 +15,7 @@ const GIT_BADGE_COLORS: Record<string, { color: string; bg: string }> = {
   A: { color: "#4ade80", bg: "rgba(74,222,128,0.12)" },
   D: { color: "#fb7185", bg: "rgba(251,113,133,0.12)" },
   U: { color: "#60a5fa", bg: "rgba(96,165,250,0.12)" },
-  R: { color: "#a78bfa", bg: "rgba(139,92,246,0.12)" },
+  R: { color: "#6db9f2", bg: "rgba(68,164,238,0.12)" },
 };
 
 interface FilesPanelProps {
@@ -170,7 +170,7 @@ export function FilesPanel({ onPreviewFile }: FilesPanelProps) {
                     lineHeight: "14px",
                     minWidth: 14,
                     textAlign: "center",
-                    borderRadius: 3,
+                    borderRadius: 0,
                     color: gitColor.color,
                     background: gitColor.bg,
                     flexShrink: 0,

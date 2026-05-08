@@ -79,7 +79,7 @@ function ToastItem({
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm"
+      className="flex items-center gap-3 px-4 py-3 rounded-none text-sm"
       style={{
         background: "rgba(20, 20, 20, 0.95)",
         backdropFilter: "blur(12px)",

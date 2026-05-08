@@ -8,6 +8,7 @@ use lukan_core::models::events::StreamEvent;
 use lukan_core::models::events::{
     ApprovalResponse, PlanReviewResponse, PlanTask, ToolApprovalRequest,
 };
+use lukan_core::models::messages::{ContentBlock, MessageContent};
 use lukan_providers::create_provider;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -215,6 +216,25 @@ pub async fn initialize_chat(state: State<'_, ChatState>) -> Result<InitResponse
     })
 }
 
+fn build_user_message_content(content: &str, images: Vec<ContentBlock>) -> MessageContent {
+    if images.is_empty() {
+        MessageContent::Text(content.to_string())
+    } else {
+        let mut blocks = Vec::with_capacity(images.len() + usize::from(!content.trim().is_empty()));
+        if !content.trim().is_empty() {
+            blocks.push(ContentBlock::Text {
+                text: content.to_string(),
+            });
+        }
+        blocks.extend(
+            images
+                .into_iter()
+                .filter(|block| matches!(block, ContentBlock::Image { .. })),
+        );
+        MessageContent::Blocks(blocks)
+    }
+}
+
 // ── Per-session commands ─────────────────────────────────────────────
 
 #[tauri::command]
@@ -223,6 +243,7 @@ pub async fn send_message(
     state: State<'_, ChatState>,
     session_id: String,
     content: String,
+    images: Option<Vec<ContentBlock>>,
 ) -> Result<(), String> {
     let stream_event_name = format!("stream-event-{session_id}");
     let turn_complete_event_name = format!("turn-complete-{session_id}");
@@ -311,6 +332,7 @@ pub async fn send_message(
 
     let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
     let content_owned = content;
+    let user_content = build_user_message_content(&content_owned, images.unwrap_or_default());
     let app_handle = app.clone();
     let session_id_owned = session_id.clone();
 
@@ -332,7 +354,13 @@ pub async fn send_message(
     // Spawn agent turn
     let agent_handle = tokio::spawn(async move {
         let result = agent
-            .run_turn(&content_owned, event_tx, Some(cancel_token), None)
+            .run_turn_with_content(
+                &content_owned,
+                user_content,
+                event_tx,
+                Some(cancel_token),
+                None,
+            )
             .await;
         (agent, result)
     });

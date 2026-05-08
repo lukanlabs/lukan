@@ -212,7 +212,7 @@ export function MainArea({
                 width: "95%",
                 height: "92%",
                 maxWidth: 1200,
-                borderRadius: 10,
+                borderRadius: 0,
                 overflow: "hidden",
                 display: "flex",
                 flexDirection: "column",
@@ -269,7 +269,7 @@ export function MainArea({
             transition: "background 0.15s",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "var(--accent, #6366f1)";
+            e.currentTarget.style.background = "var(--accent, #44a4ee)";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = "var(--border-subtle)";

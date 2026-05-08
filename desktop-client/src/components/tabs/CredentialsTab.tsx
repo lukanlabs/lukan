@@ -222,7 +222,7 @@ export default function CredentialsTab() {
                     style={{
                       width: 6,
                       height: 6,
-                      borderRadius: 3,
+                      borderRadius: 0,
                       flexShrink: 0,
                       background: status?.configured
                         ? "#4ade80"
@@ -314,7 +314,7 @@ export default function CredentialsTab() {
                   alignItems: "center",
                   gap: 6,
                   padding: "6px 10px",
-                  borderRadius: 4,
+                  borderRadius: 0,
                   fontSize: 11.5,
                   background:
                     testResult.status === "success"

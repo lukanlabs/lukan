@@ -266,55 +266,60 @@ export class WebTransport implements Transport {
             to   { opacity: 1; transform: translateY(0); }
           }
           @keyframes lukan-glow {
-            0%, 100% { opacity: 0.4; }
-            50%      { opacity: 0.7; }
+            0%, 100% { opacity: 0.35; transform: scale(1); }
+            50%      { opacity: 0.65; transform: scale(1.04); }
           }
           #lukan-login-overlay * { box-sizing: border-box; }
           #lukan-login-pw:focus {
-            border-color: #6366f1 !important;
-            box-shadow: 0 0 0 3px rgba(99,102,241,0.15) !important;
+            border-color: #44a4ee !important;
+            box-shadow: 0 0 0 3px rgba(68,164,238,0.14) !important;
+            background: #050505 !important;
           }
           #lukan-login-btn:hover:not(:disabled) {
-            background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+            background: #6db9f2 !important;
             transform: translateY(-1px);
-            box-shadow: 0 6px 20px rgba(99,102,241,0.4) !important;
+            box-shadow: 0 0 34px rgba(68,164,238,0.28) !important;
           }
           #lukan-login-btn:active:not(:disabled) {
             transform: translateY(0);
           }
           @media (max-width: 860px) {
+            #lukan-login-overlay { display: block !important; overflow: auto; }
             #lukan-login-overlay .lukan-brand-panel {
-              display: none !important;
+              min-height: 42vh !important;
+              padding: 40px 24px !important;
             }
             #lukan-login-overlay .lukan-login-panel {
               width: 100% !important;
               min-width: 0 !important;
               border-left: none !important;
+              padding: 36px 24px 48px !important;
             }
           }
         </style>
-        <div style="
+        <div id="lukan-login-overlay" style="
           position:fixed;inset:0;z-index:99999;
           display:flex;
           font-family:'Inter','SF Pro Display',system-ui,-apple-system,sans-serif;
+          background:#050505;color:#fafafa;
         ">
           <!-- Left branding panel -->
           <div class="lukan-brand-panel" style="
             flex:1;
-            background: linear-gradient(135deg, #0f0a1e 0%, #1a1145 40%, #0d1b3e 70%, #0a0e1f 100%);
+            background:radial-gradient(circle at 50% 42%, rgba(68,164,238,0.2) 0%, rgba(68,164,238,0.08) 28%, transparent 58%), linear-gradient(135deg, #050505 0%, #090b0d 48%, #050505 100%);
             display:flex;flex-direction:column;align-items:center;justify-content:center;
-            padding:48px;position:relative;overflow:hidden;
+            padding:56px;position:relative;overflow:hidden;
           ">
             <!-- Background decorative elements -->
             <div style="
-              position:absolute;top:-120px;left:-120px;width:400px;height:400px;
-              background:radial-gradient(circle,rgba(99,102,241,0.12) 0%,transparent 70%);
-              border-radius:50%;animation:lukan-glow 6s ease-in-out infinite;
+              position:absolute;top:-140px;left:-120px;width:440px;height:440px;
+              background:radial-gradient(circle,rgba(68,164,238,0.18) 0%,transparent 70%);
+              border-radius:50%;filter:blur(12px);animation:lukan-glow 6s ease-in-out infinite;
             "></div>
             <div style="
-              position:absolute;bottom:-80px;right:-80px;width:300px;height:300px;
-              background:radial-gradient(circle,rgba(139,92,246,0.1) 0%,transparent 70%);
-              border-radius:50%;animation:lukan-glow 6s ease-in-out infinite 3s;
+              position:absolute;bottom:-100px;right:-80px;width:360px;height:360px;
+              background:radial-gradient(circle,rgba(68,164,238,0.14) 0%,transparent 70%);
+              border-radius:50%;filter:blur(12px);animation:lukan-glow 6s ease-in-out infinite 3s;
             "></div>
             <!-- Content -->
             <div style="
@@ -322,25 +327,25 @@ export class WebTransport implements Transport {
               animation:lukan-fade-in 0.8s ease-out;
             ">
               <img src="data:image/png;base64,${LOGO_B64}"
-                   width="96" height="96"
-                   style="display:block;margin:0 auto 24px;filter:drop-shadow(0 0 30px rgba(99,102,241,0.3));" />
+                   width="168" height="168"
+                   style="display:block;margin:0 auto 30px;filter:drop-shadow(0 0 40px rgba(68,164,238,0.45)) drop-shadow(0 0 90px rgba(68,164,238,0.22));" />
               <img src="data:image/png;base64,${TEXT_B64}"
                    width="220" height="auto"
-                   style="display:block;margin:0 auto 32px;filter:drop-shadow(0 0 20px rgba(99,102,241,0.2));" />
+                   style="display:block;margin:0 auto 28px;filter:drop-shadow(0 0 20px rgba(68,164,238,0.18));opacity:0.8" />
               <div style="
                 max-width:320px;margin:0 auto;
               ">
                 <p style="
-                  font-size:18px;font-weight:300;color:rgba(226,232,240,0.9);
-                  line-height:1.6;margin:0 0 12px;letter-spacing:0.3px;
+                  font-size:22px;font-weight:300;color:#e5f5f4;
+                  line-height:1.55;margin:0 0 14px;letter-spacing:0.5px;
                 ">
-                  Your AI-powered development companion
+                  Your AI Platform, <span style="color:#44a4ee;font-weight:500">always on</span>.
                 </p>
                 <p style="
-                  font-size:13px;color:rgba(148,163,184,0.7);
+                  font-size:13px;color:#a1a1aa;
                   line-height:1.5;margin:0;
                 ">
-                  Code smarter. Ship faster. Build with intelligence.
+                  Local-first coding, browser, terminal, and automation in one workspace.
                 </p>
               </div>
             </div>
@@ -349,10 +354,11 @@ export class WebTransport implements Transport {
           <!-- Right login panel -->
           <div class="lukan-login-panel" style="
             width:460px;min-width:400px;
-            background:#0a0a0b;
+            background:#050505;
             display:flex;align-items:center;justify-content:center;
             padding:48px;
             border-left:1px solid rgba(255,255,255,0.06);
+            position:relative;
           ">
             <div style="
               width:100%;max-width:340px;
@@ -360,27 +366,27 @@ export class WebTransport implements Transport {
             ">
               <div style="margin-bottom:36px;">
                 <h2 style="
-                  font-size:24px;font-weight:600;color:#f1f5f9;
+                  font-size:24px;font-weight:600;color:#fafafa;
                   margin:0 0 8px;letter-spacing:-0.3px;
                 ">Welcome back</h2>
                 <p style="
-                  font-size:14px;color:#64748b;margin:0;
+                  font-size:14px;color:#71717a;margin:0;
                 ">Enter your password to access the dashboard</p>
               </div>
 
               <div style="margin-bottom:20px;">
                 <label style="
-                  display:block;font-size:13px;font-weight:500;
-                  color:#94a3b8;margin-bottom:8px;
+                  display:block;font-size:11px;font-weight:700;
+                  color:#a1a1aa;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.12em;
                 ">Password</label>
                 <input id="lukan-login-pw" type="password"
                   placeholder="Enter your password"
                   autocomplete="current-password"
                   style="
                     width:100%;padding:12px 16px;
-                    background:#111113;border:1px solid #1e1e24;border-radius:10px;
-                    color:#f1f5f9;font-size:15px;outline:none;
-                    transition:border-color 0.2s,box-shadow 0.2s;
+                    background:#0b0b0b;border:1px solid rgba(255,255,255,0.1);border-radius:0;
+                    color:#fafafa;font-size:15px;outline:none;
+                    transition:border-color 0.2s,box-shadow 0.2s,background 0.2s;
                   " />
               </div>
 
@@ -390,17 +396,17 @@ export class WebTransport implements Transport {
               "></div>
 
               <button id="lukan-login-btn" style="
-                width:100%;padding:12px;border:none;border-radius:10px;
-                background:linear-gradient(135deg, #6366f1, #4f46e5);
-                color:white;font-size:15px;font-weight:600;
-                cursor:pointer;letter-spacing:0.3px;
+                width:100%;padding:12px;border:1px solid rgba(68,164,238,0.5);border-radius:0;
+                background:#44a4ee;
+                color:#020617;font-size:13px;font-weight:800;
+                cursor:pointer;letter-spacing:0.08em;text-transform:uppercase;
                 transition:all 0.2s ease;
-                box-shadow:0 4px 14px rgba(99,102,241,0.25);
+                box-shadow:0 0 24px rgba(68,164,238,0.18);
               ">Sign in</button>
 
               <p style="
                 text-align:center;margin-top:32px;
-                font-size:12px;color:#334155;
+                font-size:11px;color:#52525b;text-transform:uppercase;letter-spacing:0.12em;
               ">Secured connection &bull; lukan v1</p>
             </div>
           </div>
@@ -741,6 +747,7 @@ export class WebTransport implements Transport {
         return {
           type: "send_message",
           content: args?.content,
+          images: args?.images,
           sessionId: args?.sessionId,
         };
       case "cancel_stream":

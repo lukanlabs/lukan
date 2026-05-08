@@ -187,7 +187,7 @@ export function Toolbar({
                 left: 8,
                 background: "var(--bg-secondary)",
                 border: "1px solid var(--border)",
-                borderRadius: 8,
+                borderRadius: 0,
                 padding: 4,
                 minWidth: 180,
                 zIndex: 9999,
@@ -215,7 +215,7 @@ export function Toolbar({
                     background:
                       activePanel === id ? "var(--bg-active)" : "transparent",
                     border: "none",
-                    borderRadius: 6,
+                    borderRadius: 0,
                     textAlign: "left",
                     cursor: "pointer",
                   }}
@@ -244,6 +244,7 @@ export function Toolbar({
           onClick={() => setShowModelMenu((v) => !v)}
         >
           <span
+            className="model-selector-label"
             style={{
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -271,7 +272,7 @@ export function Toolbar({
                 transform: "translateX(-50%)",
                 background: "var(--bg-secondary)",
                 border: "1px solid var(--border)",
-                borderRadius: 8,
+                borderRadius: 0,
                 padding: 4,
                 minWidth: "min(220px, 80vw)",
                 maxWidth: "90vw",
@@ -322,7 +323,7 @@ export function Toolbar({
                               ? "var(--bg-active)"
                               : "transparent",
                             border: "none",
-                            borderRadius: 4,
+                            borderRadius: 0,
                             textAlign: "left",
                             cursor: "pointer",
                           }}
@@ -344,7 +345,7 @@ export function Toolbar({
                           color: "var(--text-secondary)",
                           background: "transparent",
                           border: "none",
-                          borderRadius: 4,
+                          borderRadius: 0,
                           textAlign: "left",
                           cursor: "pointer",
                         }}

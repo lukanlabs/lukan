@@ -41,7 +41,7 @@ function ConfirmDialog({
         style={{
           background: "#1a1a1e",
           border: "1px solid rgba(255,255,255,0.08)",
-          borderRadius: 10,
+          borderRadius: 0,
           padding: "20px 24px",
           maxWidth: 360,
           width: "90%",
@@ -81,7 +81,7 @@ function ConfirmDialog({
             style={{
               padding: "6px 16px",
               fontSize: 13,
-              borderRadius: 6,
+              borderRadius: 0,
               border: "1px solid rgba(255,255,255,0.1)",
               background: "transparent",
               color: "#a1a1aa",
@@ -95,7 +95,7 @@ function ConfirmDialog({
             style={{
               padding: "6px 16px",
               fontSize: 13,
-              borderRadius: 6,
+              borderRadius: 0,
               border: "none",
               background: "#dc2626",
               color: "#fff",
@@ -261,7 +261,7 @@ export default function TerminalView() {
   ]);
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0" style={{ background: "#09090b" }}>
       <TerminalTabBar
         sessions={sessions}
         activeSessionId={activeSessionId}
@@ -306,7 +306,7 @@ export default function TerminalView() {
             gridTemplateColumns: `repeat(${splitCols}, 1fr)`,
             gridTemplateRows: `repeat(${splitRows}, 1fr)`,
             gap: 4,
-            background: "#1a1a1e",
+            background: "#09090b",
             boxSizing: "border-box",
           }}
         >
@@ -320,9 +320,9 @@ export default function TerminalView() {
                 minWidth: 0,
                 border:
                   s.id === activeSessionId
-                    ? "2px solid rgba(99,102,241,0.6)"
+                    ? "2px solid rgba(68,164,238,0.6)"
                     : "1px solid rgba(255,255,255,0.08)",
-                borderRadius: 6,
+                borderRadius: 0,
                 overflow: "hidden",
                 boxSizing: "border-box",
               }}
@@ -337,11 +337,11 @@ export default function TerminalView() {
                   fontFamily: "var(--font-mono)",
                   color:
                     s.id === activeSessionId
-                      ? "rgba(99,102,241,0.7)"
+                      ? "rgba(68,164,238,0.7)"
                       : "rgba(255,255,255,0.25)",
                   background: "rgba(0,0,0,0.6)",
                   padding: "1px 6px",
-                  borderRadius: 4,
+                  borderRadius: 0,
                   pointerEvents: "none",
                 }}
               >

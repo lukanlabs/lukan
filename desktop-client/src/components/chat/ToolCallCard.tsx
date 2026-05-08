@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ChevronRight,
   ArrowUpRight,
+  X,
 } from "lucide-react";
 import type { ToolStatus } from "../../hooks/useChat";
 import { DiffView } from "./DiffView";
@@ -83,6 +84,7 @@ function getToolSummary(
 export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
   const [open, setOpen] = useState(false);
   const [sendingToBg, setSendingToBg] = useState(false);
+  const [showBashModal, setShowBashModal] = useState(false);
   const [startedAt] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
 
@@ -91,7 +93,10 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
   const summary = getToolSummary(tool.name, tool.rawInput);
   const isAgent = tool.name === "SubAgent" || tool.name === "Explore";
   const isFileTool = ["ReadFiles", "WriteFile", "EditFile"].includes(tool.name);
-  const isBashRunning = tool.name === "Bash" && tool.isRunning;
+  const isBash = tool.name === "Bash";
+  const isBashRunning = isBash && tool.isRunning;
+  const bashCommand = typeof tool.rawInput?.command === "string" ? tool.rawInput.command : "";
+  const canOpenBashModal = isBash && (!!tool.content || !!bashCommand || !!tool.rawInput);
 
   // Tick elapsed time while Bash is running (for delayed "Background" button)
   useEffect(() => {
@@ -113,44 +118,52 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
     }
   };
 
+  const handleHeaderClick = () => {
+    if (canOpenBashModal) {
+      setShowBashModal(true);
+      return;
+    }
+    setOpen(!open);
+  };
+
   const statusIndicator = tool.isRunning ? (
     <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
   ) : tool.isError ? (
-    <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+    <span className="h-1.5 w-1.5 rounded-none bg-red-400" />
   ) : tool.isHistorical && !tool.content && !tool.diff ? (
-    <span className="h-1.5 w-1.5 rounded-full bg-zinc-600" />
+    <span className="h-1.5 w-1.5 rounded-none bg-zinc-600" />
   ) : (
-    <span className="h-1.5 w-1.5 rounded-full bg-green-500/50" />
+    <span className="h-1.5 w-1.5 rounded-none bg-green-500/50" />
   );
 
   return (
-    <div className="my-1 rounded-md text-sm">
+    <div className="my-1 rounded-none text-sm">
       {/* Header */}
       <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 w-full text-left cursor-pointer rounded-md px-2 py-1.5 hover:bg-white/5 transition-colors"
+        onClick={handleHeaderClick}
+        className="flex items-center gap-2 w-full text-left cursor-pointer rounded-none px-2 py-1.5 hover:bg-white/5 transition-colors"
       >
         <span className="text-zinc-600 shrink-0">
-          {open ? (
+          {!canOpenBashModal && open ? (
             <ChevronDown className="h-3 w-3" />
           ) : (
             <ChevronRight className="h-3 w-3" />
           )}
         </span>
         <span
-          className={`shrink-0 ${isAgent ? "text-purple-400/70" : "text-zinc-500"}`}
+          className={`shrink-0 ${isAgent ? "text-sky-400/70" : "text-zinc-500"}`}
         >
           {icon}
         </span>
         <span
-          className={`text-xs font-medium ${isAgent ? "text-purple-300/80" : "text-zinc-400"}`}
+          className={`text-xs font-medium ${isAgent ? "text-sky-300/80" : "text-zinc-400"}`}
         >
           {displayName}
         </span>
         {summary && (
           <span
             className={`text-xs truncate font-mono flex-1 min-w-0 ${
-              isFileTool ? "text-zinc-500 hover:text-indigo-400 cursor-pointer" : "text-zinc-600"
+              isFileTool ? "text-zinc-500 hover:text-sky-400 cursor-pointer" : "text-zinc-600"
             }`}
             onClick={isFileTool ? (e) => {
               e.stopPropagation();
@@ -166,7 +179,7 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
           {isBashRunning && !sendingToBg && tool.content && elapsed >= 5000 && (
             <button
               onClick={handleSendToBackground}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-none text-[10px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors"
             >
               <ArrowUpRight className="h-2.5 w-2.5" />
               Background
@@ -178,14 +191,14 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
 
       {/* Live progress for agents (Explore/SubAgent) — always visible while running */}
       {isAgent && tool.isRunning && tool.content && (
-        <pre className="mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] text-purple-400/50 font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto overflow-x-hidden">
+        <pre className="mt-1 mx-2 rounded-none bg-white/[0.02] p-2.5 text-[11px] text-sky-400/50 font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto overflow-x-hidden">
           {tool.content}
         </pre>
       )}
 
       {/* Collapsible content */}
       {open && tool.rawInput && !isAgent && (
-        <pre className="mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap break-words max-h-36 overflow-y-auto overflow-x-hidden">
+        <pre className="mt-1 mx-2 rounded-none bg-white/[0.02] p-2.5 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap break-words max-h-36 overflow-y-auto overflow-x-hidden">
           {JSON.stringify(tool.rawInput, null, 2)}
         </pre>
       )}
@@ -195,7 +208,7 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
 
       {/* Image result */}
       {tool.image && (
-        <div className="mt-1.5 mx-2 rounded-md overflow-hidden">
+        <div className="mt-1.5 mx-2 rounded-none overflow-hidden">
           <img
             src={tool.image}
             alt="Tool result"
@@ -207,7 +220,7 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
       {/* Text result */}
       {!tool.isRunning && tool.content && !tool.diff && (
         <pre
-          className={`mt-1 mx-2 rounded-md bg-white/[0.02] p-2.5 text-[11px] font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto overflow-x-hidden ${
+          className={`mt-1 mx-2 rounded-none bg-white/[0.02] p-2.5 text-[11px] font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto overflow-x-hidden ${
             tool.isError ? "text-red-400/70" : "text-zinc-600"
           }`}
         >
@@ -215,6 +228,62 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
             ? tool.content.slice(0, 500) + "..."
             : tool.content}
         </pre>
+      )}
+
+      {showBashModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+          onClick={() => setShowBashModal(false)}
+        >
+          <div
+            className="flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-none border border-white/10 bg-[#050505] shadow-2xl shadow-sky-500/10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+              <Terminal className="h-4 w-4 text-sky-400" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">
+                  Bash result
+                </div>
+                {bashCommand && (
+                  <div className="mt-1 truncate font-mono text-xs text-zinc-500">
+                    {bashCommand}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBashModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-none border border-white/10 bg-white/[0.03] text-zinc-400 transition-colors hover:bg-white/[0.07] hover:text-zinc-100"
+                aria-label="Close Bash result"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {bashCommand && (
+                <div className="mb-4">
+                  <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-600">
+                    Command
+                  </div>
+                  <pre className="overflow-x-auto rounded-none border border-white/10 bg-white/[0.03] p-3 font-mono text-xs text-zinc-300 whitespace-pre-wrap break-words">
+                    {bashCommand}
+                  </pre>
+                </div>
+              )}
+              <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-600">
+                Output
+              </div>
+              <pre
+                className={`min-h-40 overflow-x-auto rounded-none border border-white/10 bg-[#09090b] p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words ${
+                  tool.isError ? "text-red-300" : "text-zinc-300"
+                }`}
+              >
+                {tool.content || "No output yet."}
+              </pre>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

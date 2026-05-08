@@ -77,7 +77,7 @@ export default function Layout({
         <div className="px-4 pt-5 pb-4">
           <div className="flex items-center gap-2.5">
             <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
+              className="w-8 h-8 rounded-none flex items-center justify-center"
               style={{
                 background: "rgba(40, 40, 40, 0.8)",
                 border: "1px solid rgba(60, 60, 60, 0.5)",
@@ -112,7 +112,7 @@ export default function Layout({
               <button
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
-                className="relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer border-none text-left transition-all"
+                className="relative flex items-center gap-3 px-3 py-2.5 rounded-none text-sm cursor-pointer border-none text-left transition-all"
                 style={{
                   background: isActive
                     ? "rgba(60, 60, 60, 0.3)"
@@ -136,7 +136,7 @@ export default function Layout({
                 {/* Active indicator bar */}
                 {isActive && (
                   <span
-                    className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full"
+                    className="absolute left-0 top-2 bottom-2 w-[3px] rounded-none"
                     style={{
                       background: "#fafafa",
                     }}

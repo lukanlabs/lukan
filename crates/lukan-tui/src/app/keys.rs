@@ -2,6 +2,32 @@ use super::helpers::filtered_commands;
 use super::*;
 
 impl App {
+    fn delete_input_char_at_cursor(&mut self) {
+        if self.cursor_pos >= self.input.len() {
+            return;
+        }
+
+        let next = self.input[self.cursor_pos..]
+            .char_indices()
+            .nth(1)
+            .map(|(i, _)| self.cursor_pos + i)
+            .unwrap_or(self.input.len());
+        let removed = next - self.cursor_pos;
+        self.input.drain(self.cursor_pos..next);
+
+        if let Some((ref mut s, ref mut e, _)) = self.paste_info {
+            if self.cursor_pos < *s {
+                *s = s.saturating_sub(removed);
+                *e = e.saturating_sub(removed);
+            } else if self.cursor_pos < *e {
+                *e = e.saturating_sub(removed);
+                if *s >= *e {
+                    self.paste_info = None;
+                }
+            }
+        }
+    }
+
     pub(super) async fn handle_key_event(
         &mut self,
         key: crossterm::event::KeyEvent,
@@ -1353,6 +1379,11 @@ impl App {
                     self.cmd_palette_idx = 0;
                     self.esc_pending = false;
                 }
+                KeyCode::Delete => {
+                    self.delete_input_char_at_cursor();
+                    self.cmd_palette_idx = 0;
+                    self.esc_pending = false;
+                }
                 KeyCode::Left if self.cursor_pos > 0 => {
                     if let Some((ps, pe, _)) = self.paste_info
                         && self.cursor_pos > ps
@@ -1409,6 +1440,9 @@ impl App {
                         .unwrap_or(0);
                     self.input.drain(prev..self.cursor_pos);
                     self.cursor_pos = prev;
+                }
+                KeyCode::Delete => {
+                    self.delete_input_char_at_cursor();
                 }
                 KeyCode::Left if self.cursor_pos > 0 => {
                     self.cursor_pos = self.input[..self.cursor_pos]

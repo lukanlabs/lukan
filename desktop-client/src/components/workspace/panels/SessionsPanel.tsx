@@ -181,7 +181,7 @@ export function SessionsPanel({
                 color: "var(--text-secondary)",
                 cursor: "pointer",
                 padding: "3px 10px",
-                borderRadius: 4,
+                borderRadius: 0,
                 fontSize: 11,
               }}
             >
@@ -195,7 +195,7 @@ export function SessionsPanel({
                 color: "#fff",
                 cursor: "pointer",
                 padding: "3px 10px",
-                borderRadius: 4,
+                borderRadius: 0,
                 fontSize: 11,
               }}
             >
@@ -236,7 +236,7 @@ export function SessionsPanel({
                   : "var(--text-muted)",
               cursor: selectedIds.size > 0 ? "pointer" : "default",
               padding: 4,
-              borderRadius: 4,
+              borderRadius: 0,
               opacity: selectedIds.size > 0 ? 1 : 0.4,
             }}
           >
@@ -251,7 +251,7 @@ export function SessionsPanel({
               color: "var(--text-muted)",
               cursor: "pointer",
               padding: 4,
-              borderRadius: 4,
+              borderRadius: 0,
             }}
           >
             <X size={13} />
@@ -275,7 +275,7 @@ export function SessionsPanel({
             alignItems: "center",
             gap: 4,
             background: "rgba(60, 60, 60, 0.3)",
-            borderRadius: 4,
+            borderRadius: 0,
             padding: "3px 6px",
           }}
         >
@@ -311,7 +311,7 @@ export function SessionsPanel({
                 color: "var(--text-muted)",
                 cursor: "pointer",
                 padding: 4,
-                borderRadius: 4,
+                borderRadius: 0,
                 flexShrink: 0,
               }}
             >
@@ -326,7 +326,7 @@ export function SessionsPanel({
                 color: "var(--text-muted)",
                 cursor: "pointer",
                 padding: 4,
-                borderRadius: 4,
+                borderRadius: 0,
                 flexShrink: 0,
               }}
             >
@@ -478,7 +478,7 @@ export function SessionsPanel({
                         fontFamily: "var(--font-mono)",
                         color: "var(--text-muted)",
                         padding: "1px 4px",
-                        borderRadius: 3,
+                        borderRadius: 0,
                         background: "var(--bg-secondary)",
                         border: "1px solid var(--border)",
                       }}
@@ -500,7 +500,7 @@ export function SessionsPanel({
                     color: "var(--text-muted)",
                     cursor: "pointer",
                     padding: 2,
-                    borderRadius: 3,
+                    borderRadius: 0,
                     flexShrink: 0,
                     marginTop: 1,
                   }}

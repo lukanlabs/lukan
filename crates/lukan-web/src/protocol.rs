@@ -24,6 +24,8 @@ pub enum ClientMessage {
     SendMessage {
         content: String,
         #[serde(default)]
+        images: Vec<lukan_core::models::messages::ContentBlock>,
+        #[serde(default)]
         session_id: Option<String>,
     },
     /// Queue a message for mid-turn injection (accepted while processing)
@@ -760,6 +762,7 @@ mod tests {
         match msg {
             ClientMessage::SendMessage {
                 content,
+                images: _,
                 session_id,
             } => {
                 assert_eq!(content, "hello world");
@@ -776,6 +779,7 @@ mod tests {
         match msg {
             ClientMessage::SendMessage {
                 content,
+                images: _,
                 session_id,
             } => {
                 assert_eq!(content, "hello");

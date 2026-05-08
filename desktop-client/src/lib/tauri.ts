@@ -217,8 +217,8 @@ export const deleteAllSessions = () =>
 export const listTasks = () => getTransport().call<TaskInfo[]>("list_tasks");
 
 // Chat — per-session (scoped by sessionId)
-export const sendMessage = (sessionId: string, content: string) =>
-  getTransport().call<void>("send_message", { sessionId, content });
+export const sendMessage = (sessionId: string, content: string, images?: unknown[]) =>
+  getTransport().call<void>("send_message", { sessionId, content, images });
 export const cancelStream = (sessionId: string) =>
   getTransport().call<void>("cancel_stream", { sessionId });
 export const approveTools = (sessionId: string, approvedIds: string[]) =>

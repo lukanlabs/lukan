@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import type { ImageAttachment } from "../components/chat/ChatInput";
 import type {
   Message,
   StreamEvent,
@@ -539,7 +540,7 @@ export function useChat(tabId: string) {
   // ── Actions (all scoped to tabId) ──────────────────────────────────
 
   const sendMessage = useCallback(
-    (content: string) => {
+    (content: string, attachments: ImageAttachment[] = []) => {
       // Block sending when no model is configured
       if (!modelNameRef.current) {
         setState((s) => ({
@@ -553,13 +554,39 @@ export function useChat(tabId: string) {
       blocksRef.current = [];
       blockIdCounter.current = 0;
       pendingTextRef.current = "";
+      const imageBlocks = attachments.map((attachment) => ({
+        type: "image" as const,
+        source: "base64" as const,
+        data: attachment.dataUrl.includes(",")
+          ? attachment.dataUrl.slice(attachment.dataUrl.indexOf(",") + 1)
+          : attachment.dataUrl,
+        mediaType: attachment.mediaType,
+      }));
+      const messageContent: Message["content"] = attachments.length > 0
+        ? [
+            ...(content.trim()
+              ? [{ type: "text" as const, text: content }]
+              : []),
+            ...imageBlocks,
+          ]
+        : content;
+      const contentToSend = attachments.length > 0
+        ? [
+            content,
+            ...attachments.map(
+              (attachment) => `![${attachment.name}](${attachment.dataUrl})`,
+            ),
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+        : content;
       // Optimistically add user message
       setState((s) => ({
         ...s,
-        messages: [...s.messages, { role: "user" as const, content }],
+        messages: [...s.messages, { role: "user" as const, content: messageContent }],
         streamingBlocks: [],
       }));
-      api.sendMessage(tabId, content).catch((e) => {
+      api.sendMessage(tabId, contentToSend, imageBlocks).catch((e) => {
         setState((s) => ({ ...s, error: `Send failed: ${e}` }));
       });
     },

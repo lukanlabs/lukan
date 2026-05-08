@@ -15,6 +15,7 @@ use lukan_agent::{AgentConfig, AgentLoop, SessionManager};
 use lukan_core::config::LukanPaths;
 use lukan_core::config::types::PermissionMode;
 use lukan_core::models::events::{ApprovalResponse, PlanReviewResponse, PlanTask, StreamEvent};
+use lukan_core::models::messages::{ContentBlock, MessageContent};
 use lukan_core::pipelines::PipelineManager;
 use lukan_core::workers::WorkerManager;
 use lukan_providers::{SystemPrompt, create_provider};
@@ -290,6 +291,7 @@ async fn dispatch_message(
     match msg {
         ClientMessage::SendMessage {
             content,
+            images,
             session_id,
         } => {
             let tab = match session_id {
@@ -353,6 +355,7 @@ async fn dispatch_message(
                 handle_send_message(
                     conn_id,
                     content,
+                    images,
                     tab,
                     state,
                     outbound_tx,
@@ -444,6 +447,7 @@ async fn dispatch_message(
                     handle_send_message(
                         conn_id,
                         String::new(),
+                        Vec::new(),
                         tab_for_turn,
                         state,
                         outbound_tx,
@@ -1494,6 +1498,25 @@ async fn dispatch_message(
     }
 }
 
+fn build_user_message_content(content: &str, images: Vec<ContentBlock>) -> MessageContent {
+    if images.is_empty() {
+        MessageContent::Text(content.to_string())
+    } else {
+        let mut blocks = Vec::with_capacity(images.len() + usize::from(!content.trim().is_empty()));
+        if !content.trim().is_empty() {
+            blocks.push(ContentBlock::Text {
+                text: content.to_string(),
+            });
+        }
+        blocks.extend(
+            images
+                .into_iter()
+                .filter(|block| matches!(block, ContentBlock::Image { .. })),
+        );
+        MessageContent::Blocks(blocks)
+    }
+}
+
 /// Handle send_message: run agent turn, stream events via outbound channel.
 ///
 /// Spawned as an independent task so the main WS loop stays free for other
@@ -1501,12 +1524,15 @@ async fn dispatch_message(
 async fn handle_send_message(
     conn_id: usize,
     content: String,
+    images: Vec<ContentBlock>,
     tab: String,
     state: Arc<AppState>,
     outbound_tx: mpsc::Sender<String>,
     cancel_token: CancellationToken,
     done_tx: mpsc::Sender<String>,
 ) {
+    let user_content = build_user_message_content(&content, images);
+
     // Ensure agent exists — reload from last_session_id if available
     {
         let mut sessions = state.sessions.lock().await;
@@ -1591,7 +1617,13 @@ async fn handle_send_message(
     // Spawn the agent turn
     let agent_handle = tokio::spawn(async move {
         let result = agent
-            .run_turn(&content, event_tx, Some(cancel_for_agent), queued)
+            .run_turn_with_content(
+                &content,
+                user_content,
+                event_tx,
+                Some(cancel_for_agent),
+                queued,
+            )
             .await;
         (agent, result)
     });

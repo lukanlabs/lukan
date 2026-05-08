@@ -8,6 +8,7 @@ import { MessageBubble } from "../components/chat/MessageBubble";
 import { StreamingText } from "../components/chat/StreamingText";
 import { ToolCallCard } from "../components/chat/ToolCallCard";
 import { ChatInput } from "../components/chat/ChatInput";
+import type { ImageAttachment } from "../components/chat/ChatInput";
 import { CheckpointMarker } from "../components/chat/CheckpointMarker";
 import { InlineApproval } from "../components/chat/InlineApproval";
 import { InlinePlanReview } from "../components/chat/InlinePlanReview";
@@ -166,9 +167,9 @@ export function ChatPanel({
 
   // Resume auto-scroll on send
   const handleSend = useCallback(
-    (content: string) => {
+    (content: string, attachments: ImageAttachment[] = []) => {
       setAutoScroll(true);
-      chat.sendMessage(content);
+      chat.sendMessage(content, attachments);
     },
     [chat.sendMessage],
   );

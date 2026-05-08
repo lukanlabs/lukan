@@ -27,6 +27,14 @@ function extractTextContent(content: string | ContentBlock[]): string {
     .join("\n");
 }
 
+function extractImageContent(content: string | ContentBlock[]) {
+  if (typeof content === "string") return [];
+  return content.filter(
+    (b): b is { type: "image"; source: "base64" | "url"; data: string; mediaType?: string } =>
+      b.type === "image",
+  );
+}
+
 function extractThinkingContent(
   content: string | ContentBlock[],
 ): string | null {
@@ -82,6 +90,7 @@ export function MessageBubble({ message, toolResultsMap, silentTools = [] }: Mes
   if (message.role === "tool") return null;
 
   const text = extractTextContent(message.content);
+  const images = isUser ? extractImageContent(message.content) : [];
   if (isUser && text.startsWith("[System:")) return null;
 
   const thinking = !isUser ? extractThinkingContent(message.content) : null;
@@ -89,7 +98,7 @@ export function MessageBubble({ message, toolResultsMap, silentTools = [] }: Mes
     ? extractToolUses(message.content).filter((tu) => !silentTools.includes(tu.name))
     : [];
 
-  if (!text.trim() && toolUses.length === 0) return null;
+  if (!text.trim() && toolUses.length === 0 && images.length === 0) return null;
 
   return (
     <div
@@ -128,6 +137,24 @@ export function MessageBubble({ message, toolResultsMap, silentTools = [] }: Mes
           {showThinking && thinking && (
             <div className="mb-2 rounded-none bg-white/[0.02] border border-white/5 px-3 py-2 text-xs text-zinc-500 italic max-h-48 overflow-y-auto whitespace-pre-wrap break-words">
               {thinking}
+            </div>
+          )}
+
+          {images.length > 0 && (
+            <div className="mb-2 flex flex-wrap justify-end gap-2">
+              {images.map((image, index) => {
+                const src = image.source === "url"
+                  ? image.data
+                  : `data:${image.mediaType || "image/png"};base64,${image.data}`;
+                return (
+                  <img
+                    key={`${src.slice(0, 32)}-${index}`}
+                    src={src}
+                    alt="Attached image"
+                    className="max-h-40 max-w-56 rounded-none border border-white/10 bg-[#09090b] object-contain"
+                  />
+                );
+              })}
             </div>
           )}
 

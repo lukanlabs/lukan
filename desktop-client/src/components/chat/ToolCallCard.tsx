@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ChevronRight,
   ArrowUpRight,
+  X,
 } from "lucide-react";
 import type { ToolStatus } from "../../hooks/useChat";
 import { DiffView } from "./DiffView";
@@ -83,6 +84,7 @@ function getToolSummary(
 export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
   const [open, setOpen] = useState(false);
   const [sendingToBg, setSendingToBg] = useState(false);
+  const [showBashModal, setShowBashModal] = useState(false);
   const [startedAt] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
 
@@ -91,7 +93,10 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
   const summary = getToolSummary(tool.name, tool.rawInput);
   const isAgent = tool.name === "SubAgent" || tool.name === "Explore";
   const isFileTool = ["ReadFiles", "WriteFile", "EditFile"].includes(tool.name);
-  const isBashRunning = tool.name === "Bash" && tool.isRunning;
+  const isBash = tool.name === "Bash";
+  const isBashRunning = isBash && tool.isRunning;
+  const bashCommand = typeof tool.rawInput?.command === "string" ? tool.rawInput.command : "";
+  const canOpenBashModal = isBash && (!!tool.content || !!bashCommand || !!tool.rawInput);
 
   // Tick elapsed time while Bash is running (for delayed "Background" button)
   useEffect(() => {
@@ -113,6 +118,14 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
     }
   };
 
+  const handleHeaderClick = () => {
+    if (canOpenBashModal) {
+      setShowBashModal(true);
+      return;
+    }
+    setOpen(!open);
+  };
+
   const statusIndicator = tool.isRunning ? (
     <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
   ) : tool.isError ? (
@@ -127,11 +140,11 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
     <div className="my-1 rounded-none text-sm">
       {/* Header */}
       <button
-        onClick={() => setOpen(!open)}
+        onClick={handleHeaderClick}
         className="flex items-center gap-2 w-full text-left cursor-pointer rounded-none px-2 py-1.5 hover:bg-white/5 transition-colors"
       >
         <span className="text-zinc-600 shrink-0">
-          {open ? (
+          {!canOpenBashModal && open ? (
             <ChevronDown className="h-3 w-3" />
           ) : (
             <ChevronRight className="h-3 w-3" />
@@ -215,6 +228,62 @@ export function ToolCallCard({ tool, onSendToBackground }: ToolCallCardProps) {
             ? tool.content.slice(0, 500) + "..."
             : tool.content}
         </pre>
+      )}
+
+      {showBashModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+          onClick={() => setShowBashModal(false)}
+        >
+          <div
+            className="flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-none border border-white/10 bg-[#050505] shadow-2xl shadow-sky-500/10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+              <Terminal className="h-4 w-4 text-sky-400" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">
+                  Bash result
+                </div>
+                {bashCommand && (
+                  <div className="mt-1 truncate font-mono text-xs text-zinc-500">
+                    {bashCommand}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBashModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-none border border-white/10 bg-white/[0.03] text-zinc-400 transition-colors hover:bg-white/[0.07] hover:text-zinc-100"
+                aria-label="Close Bash result"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {bashCommand && (
+                <div className="mb-4">
+                  <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-600">
+                    Command
+                  </div>
+                  <pre className="overflow-x-auto rounded-none border border-white/10 bg-white/[0.03] p-3 font-mono text-xs text-zinc-300 whitespace-pre-wrap break-words">
+                    {bashCommand}
+                  </pre>
+                </div>
+              )}
+              <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-600">
+                Output
+              </div>
+              <pre
+                className={`min-h-40 overflow-x-auto rounded-none border border-white/10 bg-[#09090b] p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words ${
+                  tool.isError ? "text-red-300" : "text-zinc-300"
+                }`}
+              >
+                {tool.content || "No output yet."}
+              </pre>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

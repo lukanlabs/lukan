@@ -6,7 +6,6 @@ import {
   Puzzle,
   Cpu,
   Wrench,
-  Brain,
   Plug,
 } from "lucide-react";
 
@@ -14,7 +13,6 @@ const ConfigTab = lazy(() => import("../tabs/ConfigTab"));
 const CredentialsTab = lazy(() => import("../tabs/CredentialsTab"));
 const PluginsTab = lazy(() => import("../tabs/PluginsTab"));
 const ProvidersTab = lazy(() => import("../tabs/ProvidersTab"));
-const MemoryTab = lazy(() => import("../tabs/MemoryTab"));
 const ToolsTab = lazy(() => import("../tabs/ToolsTab"));
 const McpTab = lazy(() => import("../tabs/McpTab"));
 
@@ -25,7 +23,6 @@ const TABS = [
   { id: "plugins", label: "Plugins", icon: Puzzle },
   { id: "tools", label: "Tools", icon: Wrench },
   { id: "mcp", label: "MCP Servers", icon: Plug },
-  { id: "memory", label: "Memory", icon: Brain },
 ] as const;
 
 const TAB_COMPONENTS: Record<
@@ -38,7 +35,6 @@ const TAB_COMPONENTS: Record<
   providers: ProvidersTab,
   tools: ToolsTab,
   mcp: McpTab,
-  memory: MemoryTab,
 };
 
 interface SettingsOverlayProps {
@@ -73,7 +69,7 @@ export function SettingsOverlay({
     [isClosing, onExited],
   );
 
-  const TabComponent = TAB_COMPONENTS[activeTab];
+  const TabComponent = TAB_COMPONENTS[activeTab] ?? ConfigTab;
   const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Settings";
 
   return (

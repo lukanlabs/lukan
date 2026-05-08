@@ -1,14 +1,21 @@
-import { Send, Square, Bot, Mic, MicOff, Loader2 } from "lucide-react";
+import { Send, Square, Bot, Mic, MicOff, Loader2, ImagePlus, X } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { PermissionMode } from "../../lib/types";
 import { useAudioRecorder } from "../../hooks/useAudioRecorder";
 
 interface ChatInputProps {
-  onSend: (message: string) => void;
+  onSend: (message: string, attachments?: ImageAttachment[]) => void;
   onAbort: () => void;
   isProcessing: boolean;
   permissionMode: PermissionMode;
   onSetPermissionMode: (mode: PermissionMode) => void;
+}
+
+export interface ImageAttachment {
+  id: string;
+  name: string;
+  dataUrl: string;
+  mediaType: string;
 }
 
 const modeLabels: Record<PermissionMode, string> = {
@@ -32,7 +39,10 @@ export function ChatInput({
   onSetPermissionMode,
 }: ChatInputProps) {
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleTranscript = useCallback((text: string) => {
     setInput((prev) => (prev ? prev + " " + text : text));
@@ -68,10 +78,63 @@ export function ChatInput({
 
   const handleSubmit = () => {
     const trimmed = input.trim();
-    if (!trimmed) return;
-    onSend(trimmed);
+    if (!trimmed && attachments.length === 0) return;
+    onSend(trimmed, attachments);
     setInput("");
+    setAttachments([]);
+    setAttachmentError(null);
   };
+
+  const readImageFile = (file: File): Promise<ImageAttachment> =>
+    new Promise((resolve, reject) => {
+      if (!file.type.startsWith("image/")) {
+        reject(new Error("Only image files can be attached."));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === "string" ? reader.result : "";
+        if (!dataUrl) {
+          reject(new Error("Could not read image."));
+          return;
+        }
+        resolve({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          name: file.name || "pasted-image",
+          dataUrl,
+          mediaType: file.type || "image/png",
+        });
+      };
+      reader.onerror = () => reject(new Error("Could not read image."));
+      reader.readAsDataURL(file);
+    });
+
+  const addImageFiles = async (files: File[]) => {
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length === 0) return;
+    try {
+      const next = await Promise.all(imageFiles.map(readImageFile));
+      setAttachments((prev) => [...prev, ...next]);
+      setAttachmentError(null);
+      setTimeout(() => textareaRef.current?.focus(), 50);
+    } catch (err) {
+      setAttachmentError(err instanceof Error ? err.message : "Could not attach image.");
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files).filter((file) =>
+      file.type.startsWith("image/"),
+    );
+    if (files.length === 0) return;
+    e.preventDefault();
+    void addImageFiles(files);
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((attachment) => attachment.id !== id));
+  };
+
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -96,7 +159,7 @@ export function ChatInput({
     }
   };
 
-  const isDisabled = !input.trim();
+  const isDisabled = !input.trim() && attachments.length === 0;
   const isRecording = recorder.state === "recording";
   const isTranscribing = recorder.state === "transcribing";
   const micBlocked = !recorder.transcriptionAvailable;
@@ -127,12 +190,39 @@ export function ChatInput({
         {/* Input container */}
         <div className="relative">
           <div
-            className={`flex items-end gap-2 p-2 rounded-none border transition-all duration-200 bg-white/[0.02] focus-within:border-white/10 ${
+            className={`flex flex-col gap-2 p-2 rounded-none border transition-all duration-200 bg-white/[0.02] focus-within:border-white/10 ${
               isRecording
                 ? "border-red-500/60 ring-1 ring-red-500/30"
                 : "border-white/5"
             }`}
           >
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2 border-b border-white/5 px-1 pb-2">
+                {attachments.map((attachment) => (
+                  <div
+                    key={attachment.id}
+                    className="group relative h-16 w-16 overflow-hidden rounded-none border border-white/10 bg-[#09090b]"
+                    title={attachment.name}
+                  >
+                    <img
+                      src={attachment.dataUrl}
+                      alt={attachment.name}
+                      className="h-full w-full object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(attachment.id)}
+                      className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-none border border-black/50 bg-black/80 text-zinc-200 opacity-90 transition-colors hover:bg-red-500 hover:text-white"
+                      aria-label="Remove image"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-end gap-2">
             {/* Recording overlay replaces textarea while recording */}
             {isRecording ? (
               <div className="flex-1 flex items-center gap-3 px-3 py-3 min-h-[44px]">
@@ -154,6 +244,7 @@ export function ChatInput({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={
                   isTranscribing
                     ? "Transcribing audio..."
@@ -165,6 +256,28 @@ export function ChatInput({
                 rows={1}
               />
             )}
+
+            {/* Attach image button */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              multiple
+              onChange={(e) => {
+                void addImageFiles(Array.from(e.target.files ?? []));
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isProcessing || isRecording || isTranscribing}
+              title="Attach image"
+              className="h-9 w-9 shrink-0 rounded-none flex items-center justify-center bg-white/[0.04] text-zinc-400 hover:bg-white/[0.08] hover:text-sky-300 border border-white/5 transition-all cursor-pointer disabled:cursor-not-allowed disabled:text-zinc-700 disabled:bg-white/[0.02]"
+            >
+              <ImagePlus className="h-4 w-4" />
+            </button>
 
             {/* Mic button */}
             <button
@@ -215,12 +328,13 @@ export function ChatInput({
                 <Send className="h-4 w-4" />
               </button>
             )}
+            </div>
           </div>
 
           {/* Error message */}
-          {recorder.error && (
+          {(recorder.error || attachmentError) && (
             <div className="mt-1.5 text-[11px] text-red-400 text-center">
-              {recorder.error}
+              {recorder.error || attachmentError}
             </div>
           )}
 

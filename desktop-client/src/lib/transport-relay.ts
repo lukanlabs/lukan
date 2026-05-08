@@ -732,6 +732,7 @@ export class RelayTransport implements Transport {
         return {
           type: "send_message",
           content: args?.content,
+          images: args?.images,
           sessionId: args?.sessionId,
         };
       case "cancel_stream":

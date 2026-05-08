@@ -493,6 +493,7 @@ impl App {
         if let Some(ref daemon) = self.daemon_tx {
             let msg = crate::ws_client::OutMessage::SendMessage {
                 content: text,
+                images: Vec::new(),
                 session_id: self.daemon_tab_id.clone(),
             };
             if let Err(e) = daemon.send(&msg) {

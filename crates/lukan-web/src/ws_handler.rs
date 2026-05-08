@@ -352,7 +352,7 @@ async fn dispatch_message(
             let done_tx = done_tx.clone();
 
             tokio::spawn(async move {
-                handle_send_message(
+                handle_send_message(SendMessageRequest {
                     conn_id,
                     content,
                     images,
@@ -361,7 +361,7 @@ async fn dispatch_message(
                     outbound_tx,
                     cancel_token,
                     done_tx,
-                )
+                })
                 .await;
             });
         }
@@ -444,16 +444,16 @@ async fn dispatch_message(
                 cancel_tokens.insert(tab.clone(), cancel_token.clone());
 
                 tokio::spawn(async move {
-                    handle_send_message(
+                    handle_send_message(SendMessageRequest {
                         conn_id,
-                        String::new(),
-                        Vec::new(),
-                        tab_for_turn,
+                        content: String::new(),
+                        images: Vec::new(),
+                        tab: tab_for_turn,
                         state,
                         outbound_tx,
                         cancel_token,
                         done_tx,
-                    )
+                    })
                     .await;
                 });
             }
@@ -1498,6 +1498,17 @@ async fn dispatch_message(
     }
 }
 
+struct SendMessageRequest {
+    conn_id: usize,
+    content: String,
+    images: Vec<ContentBlock>,
+    tab: String,
+    state: Arc<AppState>,
+    outbound_tx: mpsc::Sender<String>,
+    cancel_token: CancellationToken,
+    done_tx: mpsc::Sender<String>,
+}
+
 fn build_user_message_content(content: &str, images: Vec<ContentBlock>) -> MessageContent {
     if images.is_empty() {
         MessageContent::Text(content.to_string())
@@ -1521,16 +1532,17 @@ fn build_user_message_content(content: &str, images: Vec<ContentBlock>) -> Messa
 ///
 /// Spawned as an independent task so the main WS loop stays free for other
 /// tabs and mid-turn messages (approvals, abort, terminal, etc.).
-async fn handle_send_message(
-    conn_id: usize,
-    content: String,
-    images: Vec<ContentBlock>,
-    tab: String,
-    state: Arc<AppState>,
-    outbound_tx: mpsc::Sender<String>,
-    cancel_token: CancellationToken,
-    done_tx: mpsc::Sender<String>,
-) {
+async fn handle_send_message(request: SendMessageRequest) {
+    let SendMessageRequest {
+        conn_id,
+        content,
+        images,
+        tab,
+        state,
+        outbound_tx,
+        cancel_token,
+        done_tx,
+    } = request;
     let user_content = build_user_message_content(&content, images);
 
     // Ensure agent exists — reload from last_session_id if available

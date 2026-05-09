@@ -1931,10 +1931,75 @@ async fn evict_session_from_memory(session_id: &str, state: &Arc<AppState>) {
 async fn handle_load_session(
     saved_session_id: &str,
     tab_id: Option<&str>,
-    _conn_id: usize,
+    conn_id: usize,
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
+    // If this tab is currently running a turn, loading the same saved session
+    // from a reconnected mobile/web client must not replace the in-flight
+    // AgentLoop. During a turn the live agent is temporarily taken out of
+    // `session.agent`; replacing that slot with a fresh copy from disk can race
+    // with the running turn and stale-save/overwrite state. Treat load_session
+    // as a read-only resync while processing.
+    if let Some(tid) = tab_id {
+        let is_processing = {
+            let processing = state.processing_sessions.lock().await;
+            processing.contains_key(tid)
+        };
+        if is_processing {
+            info!(
+                conn_id,
+                tab_id = tid,
+                saved_session_id,
+                "Serving load_session from disk while tab is processing"
+            );
+            match SessionManager::load(saved_session_id).await {
+                Ok(Some(saved)) => {
+                    let threshold = {
+                        let config = state.config.lock().await;
+                        effective_compaction_threshold(&config)
+                    };
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::SessionLoaded {
+                            session_id: saved.id,
+                            messages: saved.messages,
+                            checkpoints: saved.checkpoints,
+                            token_usage: TokenUsage {
+                                input: saved.total_input_tokens,
+                                output: saved.total_output_tokens,
+                                cache_creation: None,
+                                cache_read: None,
+                            },
+                            context_size: saved.last_context_size,
+                            compaction_threshold: threshold,
+                        },
+                    )
+                    .await;
+                }
+                Ok(None) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Session not found: {saved_session_id}"),
+                        },
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to load session: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+            return;
+        }
+    }
+
     // Save current session first (only if not stale, to avoid overwriting
     // newer data written by another client)
     if let Some(tid) = tab_id {

@@ -251,25 +251,24 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
         .await;
     }
 
-    // Cancel any in-flight agent turns for this connection
-    for (_, token) in cancel_tokens.drain() {
-        token.cancel();
-    }
+    // On disconnect, detach from in-flight turns instead of cancelling them.
+    // Mobile browsers and relay clients routinely close/suspend WebSockets when
+    // minimized; the agent turn is session-owned and should keep running until
+    // it completes or the user explicitly sends Abort.
+    cancel_tokens.clear();
 
-    // On disconnect: release any processing locks owned by this connection
+    // On disconnect: keep processing locks owned by this connection so the
+    // detached turn remains protected from duplicate sends until it completes.
     {
-        let mut processing = state.processing_sessions.lock().await;
-        processing.retain(|session_id, &mut owner| {
-            if owner == conn_id {
+        let processing = state.processing_sessions.lock().await;
+        for (session_id, owner) in processing.iter() {
+            if *owner == conn_id {
                 info!(
                     conn_id,
-                    session_id, "Released session processing lock on disconnect"
+                    session_id, "Detached from processing session on disconnect"
                 );
-                false
-            } else {
-                true
             }
-        });
+        }
     }
 
     // Save all sessions (only if not stale, to avoid overwriting
@@ -358,6 +357,10 @@ async fn dispatch_message(
 
             let cancel_token = CancellationToken::new();
             cancel_tokens.insert(tab.clone(), cancel_token.clone());
+            {
+                let mut active_tokens = state.active_cancel_tokens.lock().await;
+                active_tokens.insert(tab.clone(), cancel_token.clone());
+            }
 
             let state = Arc::clone(state);
             let outbound_tx = outbound_tx.clone();
@@ -454,6 +457,10 @@ async fn dispatch_message(
                 let tab_for_turn = tab.clone();
                 let cancel_token = CancellationToken::new();
                 cancel_tokens.insert(tab.clone(), cancel_token.clone());
+                {
+                    let mut active_tokens = state.active_cancel_tokens.lock().await;
+                    active_tokens.insert(tab.clone(), cancel_token.clone());
+                }
 
                 tokio::spawn(async move {
                     handle_send_message(SendMessageRequest {
@@ -486,8 +493,16 @@ async fn dispatch_message(
 
         ClientMessage::Abort { session_id } => {
             if let Some(sid) = &session_id {
-                if let Some(token) = cancel_tokens.get(sid) {
-                    // Mid-turn abort: cancel the agent task
+                let token = if let Some(token) = cancel_tokens.get(sid).cloned() {
+                    Some(token)
+                } else {
+                    let active_tokens = state.active_cancel_tokens.lock().await;
+                    active_tokens.get(sid).cloned()
+                };
+
+                if let Some(token) = token {
+                    // Mid-turn abort: cancel the agent task, even if this client
+                    // reconnected after the turn was detached from its original WS.
                     info!(conn_id, session_id = %sid, "Abort received, cancelling agent");
                     token.cancel();
                     // Token + lock cleanup happens when the task signals done_tx
@@ -1673,8 +1688,11 @@ async fn handle_send_message(request: SendMessageRequest) {
         (agent, result)
     });
 
-    // Forward stream events to outbound channel. The main WS loop reads
-    // from outbound_rx and writes to ws_tx — no direct WS access here.
+    // Forward stream events to the originating connection while it remains
+    // attached, and always broadcast them through shared stream state. If the
+    // WebSocket drops, continue draining events until the agent finishes so the
+    // turn can save/reinsert normally and other/reconnected clients can observe
+    // progress via broadcast.
     let mut client_disconnected = false;
     let mut aborted = false;
     loop {
@@ -1690,11 +1708,9 @@ async fn handle_send_message(request: SendMessageRequest) {
                             origin_conn_id: conn_id,
                             session_id: Some(broadcast_session_id.clone()),
                         });
-                        if outbound_tx.send(json).await.is_err() {
-                            warn!(conn_id, "Outbound channel closed, client disconnected");
+                        if !client_disconnected && outbound_tx.send(json).await.is_err() {
+                            warn!(conn_id, "Outbound channel closed, detaching client from running agent");
                             client_disconnected = true;
-                            cancel_token.cancel();
-                            break;
                         }
                     }
                     None => break, // event channel closed, agent turn finished
@@ -1708,10 +1724,20 @@ async fn handle_send_message(request: SendMessageRequest) {
     }
 
     // Drain remaining buffered events before dropping the receiver.
-    if !client_disconnected {
-        while let Ok(ev) = event_rx.try_recv() {
-            let json = inject_tab_id(&ev, &tab);
-            let _ = outbound_tx.send(json).await;
+    while let Ok(ev) = event_rx.try_recv() {
+        let json = inject_tab_id(&ev, &tab);
+        let broadcast_json = inject_field(&json, "savedSessionId", &broadcast_session_id);
+        let _ = state.stream_tx.send(StreamBroadcast {
+            json: broadcast_json,
+            origin_conn_id: conn_id,
+            session_id: Some(broadcast_session_id.clone()),
+        });
+        if !client_disconnected && outbound_tx.send(json).await.is_err() {
+            warn!(
+                conn_id,
+                "Outbound channel closed while draining, detaching client"
+            );
+            client_disconnected = true;
         }
     }
 
@@ -1719,8 +1745,9 @@ async fn handle_send_message(request: SendMessageRequest) {
     // instead of blocking on a full channel buffer when nobody is reading.
     drop(event_rx);
 
-    // Wait for agent turn to complete (with timeout for abort/disconnect cases)
-    let wait_result = if aborted || client_disconnected {
+    // Wait for the agent turn to complete. Disconnect is detach, not abort, so
+    // only explicit cancellation gets the short timeout path.
+    let wait_result = if aborted {
         match tokio::time::timeout(std::time::Duration::from_secs(10), agent_handle).await {
             Ok(result) => Some(result),
             Err(_) => {
@@ -1808,8 +1835,12 @@ async fn handle_send_message(request: SendMessageRequest) {
         }
     }
 
-    // Release processing lock
+    // Release processing lock and active cancellation token
     release_processing_lock(conn_id, &tab, &state).await;
+    {
+        let mut active_tokens = state.active_cancel_tokens.lock().await;
+        active_tokens.remove(&tab);
+    }
 
     // Signal that this tab's turn is complete
     let _ = done_tx.send(tab).await;

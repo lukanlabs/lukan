@@ -73,6 +73,10 @@ pub struct AppState {
     pub config: Mutex<ResolvedConfig>,
     /// Session IDs currently processing (one agent turn per session at a time)
     pub processing_sessions: Mutex<HashMap<String, usize>>,
+    /// Cancellation tokens for active turns keyed by session/tab ID. These are
+    /// session-owned so an explicit Abort after a reconnect can still stop a
+    /// detached turn.
+    pub active_cancel_tokens: Mutex<HashMap<String, CancellationToken>>,
     /// HMAC secret for token signing (random, generated at startup)
     pub auth_secret: String,
     /// Optional web password (None = no auth required)
@@ -132,6 +136,7 @@ impl AppState {
             sessions: Mutex::new(HashMap::new()),
             config: Mutex::new(resolved),
             processing_sessions: Mutex::new(HashMap::new()),
+            active_cancel_tokens: Mutex::new(HashMap::new()),
             auth_secret,
             web_password,
             token_ttl_ms,

@@ -285,6 +285,7 @@ pub enum ServerMessage {
         provider_name: String,
         model_name: String,
         browser_screenshots: bool,
+        compaction_threshold: u64,
     },
     ProcessingComplete {
         session_id: String,
@@ -292,6 +293,8 @@ pub enum ServerMessage {
         checkpoints: Vec<Checkpoint>,
         #[serde(skip_serializing_if = "Option::is_none")]
         context_size: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        compaction_threshold: Option<u64>,
         /// Agent tab ID for routing (new multi-tab protocol)
         #[serde(skip_serializing_if = "Option::is_none")]
         tab_id: Option<String>,
@@ -315,6 +318,7 @@ pub enum ServerMessage {
         checkpoints: Vec<Checkpoint>,
         token_usage: TokenUsage,
         context_size: u64,
+        compaction_threshold: u64,
     },
     ModelList {
         models: Vec<String>,
@@ -433,6 +437,8 @@ pub enum ServerMessage {
         session_id: String,
         messages: Vec<Message>,
         checkpoints: Vec<Checkpoint>,
+        context_size: u64,
+        compaction_threshold: u64,
     },
     CheckpointRestored {
         session_id: String,
@@ -513,6 +519,7 @@ mod tests {
             provider_name: "anthropic".into(),
             model_name: "claude-sonnet".into(),
             browser_screenshots: false,
+            compaction_threshold: 150_000,
         };
         let json = serde_json::to_string(&msg).unwrap();
         // Variant tag should be snake_case
@@ -1239,6 +1246,7 @@ mod tests {
             messages: vec![],
             checkpoints: vec![],
             context_size: None,
+            compaction_threshold: None,
             tab_id: None,
             aborted: None,
         };
@@ -1264,6 +1272,7 @@ mod tests {
             messages: vec![],
             checkpoints: vec![],
             context_size: Some(100000),
+            compaction_threshold: Some(150000),
             tab_id: Some("tab-1".into()),
             aborted: None,
         };
@@ -1273,6 +1282,10 @@ mod tests {
             "contextSize present: {json}"
         );
         assert!(json.contains(r#""tabId":"tab-1""#), "tabId present: {json}");
+        assert!(
+            json.contains(r#""compactionThreshold":150000"#),
+            "compactionThreshold present: {json}"
+        );
     }
 
     #[test]

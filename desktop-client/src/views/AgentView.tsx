@@ -14,6 +14,7 @@ import type { TokenUsage } from "../lib/types";
 interface TabStats {
   tokenUsage: TokenUsage;
   contextSize: number;
+  compactionThreshold: number;
 }
 
 export default function AgentView() {
@@ -150,8 +151,8 @@ export default function AgentView() {
   const [, setTick] = useState(0);
 
   const handleStatsChange = useCallback(
-    (tabId: string, tokenUsage: TokenUsage, contextSize: number) => {
-      statsRef.current.set(tabId, { tokenUsage, contextSize });
+    (tabId: string, tokenUsage: TokenUsage, contextSize: number, compactionThreshold: number) => {
+      statsRef.current.set(tabId, { tokenUsage, contextSize, compactionThreshold });
       if (tabId === activeTabId) {
         setTick((n) => n + 1);
       }
@@ -234,8 +235,15 @@ export default function AgentView() {
         onClose={handleDestroyTab}
         onCreate={(cwd) => createTab(cwd)}
         onRename={renameTab}
+        onCompact={() => {
+          if (activeTabId) {
+            window.dispatchEvent(new CustomEvent(`compact-agent-${activeTabId}`));
+          }
+        }}
+        compactDisabled={activeStats ? activeStats.contextSize <= 0 : false}
         tokenUsage={activeStats?.tokenUsage}
         contextSize={activeStats?.contextSize}
+        compactionThreshold={activeStats?.compactionThreshold}
       />
       <div className="flex-1 min-h-0 min-w-0 relative overflow-hidden">
         {tabs.map((tab) => (

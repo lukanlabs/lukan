@@ -68,12 +68,14 @@ export interface ChatState {
   messages: Message[];
   streamingBlocks: StreamingBlock[];
   isProcessing: boolean;
+  isCompacting: boolean;
   pendingApproval: PendingApproval | null;
   pendingQuestion: PendingQuestion | null;
   pendingPlanReview: PendingPlanReview | null;
   permissionMode: PermissionMode;
   tokenUsage: TokenUsage;
   contextSize: number;
+  compactionThreshold: number;
   providerName: string;
   modelName: string;
   silentTools: string[];
@@ -94,12 +96,14 @@ export function useChat(tabId: string) {
     messages: [],
     streamingBlocks: [],
     isProcessing: false,
+    isCompacting: false,
     pendingApproval: null,
     pendingQuestion: null,
     pendingPlanReview: null,
     permissionMode: "auto",
     tokenUsage: { input: 0, output: 0, cacheCreation: null, cacheRead: null },
     contextSize: 0,
+    compactionThreshold: 150000,
     providerName: "",
     modelName: "",
     silentTools: ["Remember"],
@@ -148,6 +152,57 @@ export function useChat(tabId: string) {
           pendingTextRef.current = "";
           setState((s) => ({ ...s, isProcessing: true, error: null }));
           break;
+
+        case "compaction_start":
+          const existingBlock = blocksRef.current.find(
+            (b): b is Extract<StreamingBlock, { type: "tool" }> =>
+              b.type === "tool" && b.tool.id === "system-compaction",
+          );
+          if (existingBlock) {
+            existingBlock.tool = {
+              ...existingBlock.tool,
+              name: "compaction",
+              isRunning: true,
+              content: event.reason || "Compacting conversation...",
+            };
+          } else {
+            blocksRef.current.push({
+              type: "tool",
+              id: `compact-${blockIdCounter.current++}`,
+              tool: {
+                id: "system-compaction",
+                name: "compaction",
+                isRunning: true,
+                content: event.reason || "Compacting conversation...",
+              },
+            } as StreamingBlock);
+          }
+          flushRender();
+          setState((s) => ({ ...s, isProcessing: true, isCompacting: true, error: null }));
+          break;
+
+        case "compaction_end": {
+          const block = blocksRef.current.find(
+            (b): b is Extract<StreamingBlock, { type: "tool" }> =>
+              b.type === "tool" && b.tool.id === "system-compaction",
+          );
+          if (block) {
+            block.tool = {
+              ...block.tool,
+              isRunning: false,
+              content: `Compacted: ${event.beforeMessages} msgs → ${event.afterMessages} msgs.`,
+            };
+          }
+          flushRender();
+          setState((s) => ({
+            ...s,
+            isProcessing: s.streamingBlocks.length > 0 && blocksRef.current.some((b) =>
+              b.type !== "tool" || b.tool.id !== "system-compaction"
+            ),
+            isCompacting: false,
+          }));
+          break;
+        }
 
         case "text_delta": {
           // If there's pending text from before a tool call, prepend it
@@ -320,6 +375,7 @@ export function useChat(tabId: string) {
             ...s,
             error: event.error,
             isProcessing: false,
+            isCompacting: false,
             streamingBlocks: [],
           }));
           break;
@@ -376,6 +432,7 @@ export function useChat(tabId: string) {
       return {
         ...s,
         isProcessing: false,
+        isCompacting: false,
         sessionId: sid || s.sessionId,
         messages,
         streamingBlocks: [],
@@ -383,6 +440,7 @@ export function useChat(tabId: string) {
         toolAfterContent: { ...s.toolAfterContent, ...afterContentCacheRef.current },
         checkpoints: complete.checkpoints ?? s.checkpoints,
         contextSize: complete.contextSize ?? s.contextSize,
+        compactionThreshold: complete.compactionThreshold ?? s.compactionThreshold,
         tokenUsage: {
           input: complete.tokenUsage?.input ?? s.tokenUsage.input,
           output: complete.tokenUsage?.output ?? s.tokenUsage.output,
@@ -415,6 +473,7 @@ export function useChat(tabId: string) {
           providerName: init.providerName ?? "",
           modelName: init.modelName ?? "",
           silentTools,
+          compactionThreshold: init.compactionThreshold ?? s.compactionThreshold,
           checkpoints: init.checkpoints ?? s.checkpoints,
           permissionMode: (init.permissionMode ?? "auto") as PermissionMode,
         }));
@@ -619,7 +678,7 @@ export function useChat(tabId: string) {
       .cancelStream(tabId)
       .catch(() => {})
       .finally(() => {
-        setState((s) => ({ ...s, isProcessing: false }));
+        setState((s) => ({ ...s, isProcessing: false, isCompacting: false }));
       });
   }, [tabId, flushRender]);
 
@@ -727,6 +786,7 @@ export function useChat(tabId: string) {
             cacheRead: init.tokenUsage?.cacheRead,
           },
           contextSize: init.contextSize ?? 0,
+          compactionThreshold: init.compactionThreshold ?? s.compactionThreshold,
           sessionList: null,
           tasks: [],
         }));
@@ -748,8 +808,8 @@ export function useChat(tabId: string) {
         messages: [],
         streamingBlocks: [],
         toolImages: {},
-    toolAfterContent: {},
-    checkpoints: [],
+        toolAfterContent: {},
+        checkpoints: [],
         tasks: [],
         tokenUsage: {
           input: 0,
@@ -758,6 +818,7 @@ export function useChat(tabId: string) {
           cacheRead: null,
         },
         contextSize: 0,
+        compactionThreshold: init.compactionThreshold ?? s.compactionThreshold,
       }));
     } catch (e) {
       setState((s) => ({ ...s, error: `Failed to create session: ${e}` }));
@@ -768,6 +829,52 @@ export function useChat(tabId: string) {
     api.setPermissionMode(mode).catch(() => {});
     setState((s) => ({ ...s, permissionMode: mode }));
   }, []);
+
+  const compactSession = useCallback(async () => {
+    if (state.isProcessing || state.isCompacting) return;
+    blocksRef.current = [{
+      type: "tool",
+      id: `compact-${blockIdCounter.current++}`,
+      tool: {
+        id: "system-compaction",
+        name: "compaction",
+        isRunning: true,
+        content: "Compacting conversation...",
+      },
+    } as StreamingBlock];
+    flushRender();
+    setState((s) => ({ ...s, isProcessing: true, isCompacting: true, error: null }));
+    try {
+      const result = await api.compactSession(tabId) as {
+        sessionId?: string;
+        messages?: Message[];
+        checkpoints?: import("../lib/types").CheckpointInfo[];
+        contextSize?: number;
+        compactionThreshold?: number;
+      } | undefined;
+      setState((s) => ({
+        ...s,
+        isProcessing: false,
+        isCompacting: false,
+        sessionId: result?.sessionId ?? s.sessionId,
+        messages: result?.messages ?? s.messages,
+        checkpoints: result?.checkpoints ?? s.checkpoints,
+        contextSize: result?.contextSize ?? 0,
+        compactionThreshold: result?.compactionThreshold ?? s.compactionThreshold,
+        streamingBlocks: [],
+      }));
+    } catch (e) {
+      blocksRef.current = [];
+      flushRender();
+      setState((s) => ({
+        ...s,
+        isProcessing: false,
+        isCompacting: false,
+        error: `Compact failed: ${e}`,
+        streamingBlocks: [],
+      }));
+    }
+  }, [tabId, flushRender, state.isProcessing, state.isCompacting]);
 
   const dismissError = useCallback(() => {
     setState((s) => ({ ...s, error: null }));
@@ -790,6 +897,7 @@ export function useChat(tabId: string) {
     listSessions: doListSessions,
     loadSession: doLoadSession,
     newSession: doNewSession,
+    compactSession,
     setPermissionMode: doSetPermissionMode,
     restoreCheckpoint: useCallback(
       async (checkpointId: string, restoreCode: boolean) => {

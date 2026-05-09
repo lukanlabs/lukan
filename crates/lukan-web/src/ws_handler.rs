@@ -31,6 +31,18 @@ async fn send_json_channel(tx: &mpsc::Sender<String>, msg: &ServerMessage) {
     }
 }
 
+const DEFAULT_COMPACTION_THRESHOLD: u64 = 150_000;
+
+fn effective_compaction_threshold(config: &lukan_core::config::ResolvedConfig) -> u64 {
+    let model = config.effective_model().unwrap_or_default();
+    config
+        .config
+        .model_settings
+        .get(&model)
+        .and_then(|s| s.compaction_threshold)
+        .unwrap_or(DEFAULT_COMPACTION_THRESHOLD)
+}
+
 /// WebSocket upgrade handler
 pub async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
@@ -1352,7 +1364,22 @@ async fn dispatch_message(
 
         ClientMessage::Compact { session_id } => {
             let tab_id = session_id.as_deref();
-            let (event_tx, _event_rx) = mpsc::channel::<StreamEvent>(256);
+            let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
+
+            let forward_tab = tab_id.map(str::to_string);
+            let outbound = outbound_tx.clone();
+            let forward_handle = tokio::spawn(async move {
+                while let Some(ev) = event_rx.recv().await {
+                    let json = if let Some(ref tid) = forward_tab {
+                        inject_tab_id(&ev, tid)
+                    } else {
+                        serde_json::to_string(&ev).unwrap_or_default()
+                    };
+                    if outbound.send(json).await.is_err() {
+                        break;
+                    }
+                }
+            });
 
             // Get agent from session
             let mut agent_opt = if let Some(tid) = tab_id {
@@ -1363,17 +1390,21 @@ async fn dispatch_message(
             };
 
             if let Some(ref mut agent) = agent_opt {
-                match agent.compact(event_tx).await {
+                match agent.compact(event_tx.clone()).await {
                     Ok(_) => {
                         let sid = agent.session_id().to_string();
                         let messages = agent.messages_json();
                         let checkpoints = agent.checkpoints().to_vec();
+                        let context_size = agent.last_context_size();
+                        let compaction_threshold = agent.compaction_threshold();
                         send_json(
                             ws_tx,
                             &ServerMessage::CompactComplete {
                                 session_id: sid,
                                 messages,
                                 checkpoints,
+                                context_size,
+                                compaction_threshold,
                             },
                         )
                         .await;
@@ -1398,7 +1429,9 @@ async fn dispatch_message(
                 .await;
             }
 
-            // Put agent back
+            drop(event_tx);
+            let _ = forward_handle.await;
+
             if let Some(agent) = agent_opt
                 && let Some(tid) = tab_id
             {
@@ -1719,12 +1752,14 @@ async fn handle_send_message(request: SendMessageRequest) {
             let messages = returned_agent.messages_json();
             let checkpoints = returned_agent.checkpoints().to_vec();
             let context_size = returned_agent.last_context_size();
+            let compaction_threshold = returned_agent.compaction_threshold();
 
             let complete_msg = ServerMessage::ProcessingComplete {
                 session_id,
                 messages,
                 checkpoints,
                 context_size: Some(context_size),
+                compaction_threshold: Some(compaction_threshold),
                 tab_id: Some(tab.clone()),
                 aborted: if aborted { Some(true) } else { None },
             };
@@ -1888,6 +1923,7 @@ async fn handle_load_session(
             let input_tokens = agent.input_tokens();
             let output_tokens = agent.output_tokens();
             let context_size = agent.last_context_size();
+            let compaction_threshold = agent.compaction_threshold();
             let sid = agent.session_id().to_string();
 
             // Store in session and restore cwd from saved session
@@ -1926,6 +1962,7 @@ async fn handle_load_session(
                         cache_read: None,
                     },
                     context_size,
+                    compaction_threshold,
                 },
             )
             .await;
@@ -2100,6 +2137,7 @@ async fn handle_set_model(
                 && let Ok(p) = create_provider(&config)
             {
                 agent.swap_provider(Arc::from(p));
+                agent.set_compaction_threshold(effective_compaction_threshold(&config));
             }
         }
     }
@@ -2223,6 +2261,11 @@ async fn send_init(
         }
     };
 
+    let compaction_threshold = {
+        let config = state.config.lock().await;
+        effective_compaction_threshold(&config)
+    };
+
     send_json(
         ws_tx,
         &ServerMessage::Init {
@@ -2235,6 +2278,7 @@ async fn send_init(
             provider_name,
             model_name,
             browser_screenshots: false,
+            compaction_threshold,
         },
     )
     .await;
@@ -2351,11 +2395,7 @@ async fn create_agent(
         Box::leak(Box::new(result.manager));
     }
 
-    let compaction_threshold = config
-        .config
-        .model_settings
-        .get(&model_name)
-        .and_then(|s| s.compaction_threshold);
+    let compaction_threshold = effective_compaction_threshold(&config);
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools,
@@ -2379,7 +2419,7 @@ async fn create_agent(
         )
         .map(Arc::from),
         extra_env: config.credentials.flatten_skill_env(),
-        compaction_threshold,
+        compaction_threshold: Some(compaction_threshold),
         tab_id: None,
     };
 
@@ -2478,11 +2518,7 @@ async fn create_agent_with_session(
         Box::leak(Box::new(result.manager));
     }
 
-    let compaction_threshold = config
-        .config
-        .model_settings
-        .get(&model_name)
-        .and_then(|s| s.compaction_threshold);
+    let compaction_threshold = effective_compaction_threshold(&config);
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools,
@@ -2506,7 +2542,7 @@ async fn create_agent_with_session(
         )
         .map(Arc::from),
         extra_env: config.credentials.flatten_skill_env(),
-        compaction_threshold,
+        compaction_threshold: Some(compaction_threshold),
         tab_id: None,
     };
 

@@ -528,6 +528,8 @@ export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "error";
 
 export type StreamEvent =
   | { type: "message_start" }
+  | { type: "compaction_start"; reason: string }
+  | { type: "compaction_end"; beforeMessages: number; afterMessages: number }
   | { type: "text_delta"; text: string }
   | { type: "thinking_delta"; text: string }
   | { type: "tool_use_start"; id: string; name: string }
@@ -619,6 +621,7 @@ export interface InitResponse {
   permissionMode: string;
   tokenUsage: TokenUsage;
   contextSize: number;
+  compactionThreshold: number;
 }
 
 export interface TokenUsage {
@@ -650,6 +653,7 @@ export interface TurnComplete {
   sessionId: string;
   messages: Message[];
   contextSize: number;
+  compactionThreshold?: number;
   tokenUsage: TokenUsage;
   checkpoints?: CheckpointInfo[];
   aborted?: boolean;

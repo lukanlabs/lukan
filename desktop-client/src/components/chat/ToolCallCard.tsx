@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ChevronRight,
   ArrowUpRight,
+  Archive,
   X,
 } from "lucide-react";
 import type { ToolStatus } from "../../hooks/useChat";
@@ -25,6 +26,7 @@ interface ToolCallCardProps {
 }
 
 const toolIcons: Record<string, React.ReactNode> = {
+  compaction: <Archive className="h-3.5 w-3.5" />,
   Bash: <Terminal className="h-3.5 w-3.5" />,
   ReadFiles: <FileCode className="h-3.5 w-3.5" />,
   WriteFile: <FilePlus className="h-3.5 w-3.5" />,
@@ -40,6 +42,7 @@ const toolIcons: Record<string, React.ReactNode> = {
 };
 
 const toolDisplayNames: Record<string, string> = {
+  compaction: "Compaction",
   SubAgent: "Sub-Agent",
   Explore: "Explore",
   ReadFiles: "Read",

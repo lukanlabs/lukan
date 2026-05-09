@@ -622,6 +622,16 @@ impl AgentLoop {
         self.provider = provider;
     }
 
+    /// Update the context token threshold used for auto-compaction.
+    pub fn set_compaction_threshold(&mut self, threshold: u64) {
+        self.compaction_threshold = threshold;
+    }
+
+    /// Context token threshold used for auto-compaction.
+    pub fn compaction_threshold(&self) -> u64 {
+        self.compaction_threshold
+    }
+
     /// Swap the tool registry (e.g. after config change) without losing history
     pub fn reload_tools(&mut self, new_registry: ToolRegistry) {
         self.tools = Arc::new(new_registry);
@@ -1991,12 +2001,10 @@ impl AgentLoop {
             return Ok(());
         }
 
-        // Notify TUI
+        // Notify TUI/UI and block user input until compaction finishes
         let _ = event_tx
-            .send(StreamEvent::ToolProgress {
-                id: String::new(),
-                name: "system".to_string(),
-                content: "Compacting conversation...".to_string(),
+            .send(StreamEvent::CompactionStart {
+                reason: "Compacting conversation...".to_string(),
             })
             .await;
 
@@ -2106,19 +2114,17 @@ impl AgentLoop {
         self.save_session().await?;
 
         let msg_count_after = self.history.messages().len();
+        let _ = event_tx
+            .send(StreamEvent::CompactionEnd {
+                before_messages: msg_count_before,
+                after_messages: msg_count_after,
+            })
+            .await;
         info!(
             before = msg_count_before,
             after = msg_count_after,
             "Compacted history"
         );
-
-        let _ = event_tx
-            .send(StreamEvent::ToolProgress {
-                id: String::new(),
-                name: "system".to_string(),
-                content: format!("Compacted: {msg_count_before} msgs → {msg_count_after} msgs."),
-            })
-            .await;
 
         Ok(())
     }

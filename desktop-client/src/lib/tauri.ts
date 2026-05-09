@@ -257,6 +257,8 @@ export const restoreCheckpoint = (
     checkpointId,
     restoreCode,
   });
+export const compactSession = (sessionId: string) =>
+  getTransport().call<void>("compact_session", { sessionId });
 
 // Terminal
 export const terminalCreate = (cwd?: string, cols?: number, rows?: number) =>

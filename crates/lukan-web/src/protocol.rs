@@ -90,6 +90,8 @@ pub enum ClientMessage {
     CreateAgentTab {
         #[serde(default)]
         cwd: Option<String>,
+        #[serde(default)]
+        start_agent: bool,
     },
     DestroyAgentTab {
         session_id: String,
@@ -304,6 +306,8 @@ pub enum ServerMessage {
     },
     AgentTabCreated {
         session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
     },
     AgentTabsLoaded {
         state: AgentTabsFileDto,
@@ -1227,6 +1231,7 @@ mod tests {
     fn test_server_message_agent_tab_created() {
         let msg = ServerMessage::AgentTabCreated {
             session_id: "tab-new".into(),
+            tab_id: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(

@@ -538,8 +538,8 @@ async fn dispatch_message(
             handle_new_session(session_id.as_deref(), state, ws_tx).await;
         }
 
-        ClientMessage::CreateAgentTab { cwd } => {
-            let tab_id = handle_create_agent_tab(state, ws_tx, cwd).await;
+        ClientMessage::CreateAgentTab { cwd, start_agent } => {
+            let tab_id = handle_create_agent_tab(state, ws_tx, cwd, start_agent).await;
             *active_session_id = Some(tab_id);
         }
 
@@ -2129,15 +2129,43 @@ async fn handle_create_agent_tab(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     cwd: Option<String>,
+    start_agent: bool,
 ) -> String {
     let tab_id = uuid::Uuid::new_v4().to_string();
+    let mut saved_session_id = None;
 
     let mut sessions = state.sessions.lock().await;
     let tab_number = sessions.len() + 1;
     let mut session = WebAgentSession::new();
     session.label = format!("Agent {tab_number}");
     session.cwd = cwd.clone();
-    sessions.insert(tab_id.clone(), session);
+    if start_agent {
+        let session_cwd = session.cwd.clone();
+        drop(sessions);
+        match create_agent(state, session_cwd.as_deref()).await {
+            Ok(agent) => {
+                let session_id = agent.session_id().to_string();
+                saved_session_id = Some(session_id.clone());
+                let mut sessions = state.sessions.lock().await;
+                session.last_session_id = Some(session_id);
+                session.set_agent(agent);
+                sessions.insert(tab_id.clone(), session);
+            }
+            Err(error) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to create agent: {error}"),
+                    },
+                )
+                .await;
+                let mut sessions = state.sessions.lock().await;
+                sessions.insert(tab_id.clone(), session);
+            }
+        }
+    } else {
+        sessions.insert(tab_id.clone(), session);
+    }
 
     // Update active_cwd for plugins
     if let Some(ref dir) = cwd {
@@ -2147,7 +2175,8 @@ async fn handle_create_agent_tab(
     send_json(
         ws_tx,
         &ServerMessage::AgentTabCreated {
-            session_id: tab_id.clone(),
+            session_id: saved_session_id.unwrap_or_else(|| tab_id.clone()),
+            tab_id: Some(tab_id.clone()),
         },
     )
     .await;

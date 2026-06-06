@@ -13,6 +13,15 @@ use tracing::{error, info, warn};
 use lukan_core::crypto::{self, E2EEnvelope, E2ESession};
 use lukan_core::relay::{DaemonToRelay, RelayConfig, RelayToDaemon};
 
+/// How long a detached relay connection is kept alive before it is reaped.
+///
+/// On `ConnectionClosed` we keep the local daemon WebSocket open so an in-flight
+/// agent turn can finish and persist instead of being cancelled. The turn runs
+/// in its own task and survives the WS teardown, so once this grace window
+/// elapses without the client reattaching we close the local WS to avoid leaking
+/// the forwarding task and the daemon-side connection for the daemon's lifetime.
+const DETACHED_REAP_GRACE: Duration = Duration::from_secs(300);
+
 /// Relay bridge: connects the local daemon to the cloud relay server.
 ///
 /// The bridge:
@@ -414,9 +423,40 @@ async fn handle_relay_message(
             // drop ws_handler's sender/receiver and cancel the tool as
             // "Cancelled by user". Keeping it open lets the turn finish and
             // persist; a later mobile reconnect loads the saved session.
-            let mut detached = detached_connections.lock().await;
-            detached.insert(connection_id.clone());
+            {
+                let mut detached = detached_connections.lock().await;
+                detached.insert(connection_id.clone());
+            }
             info!(connection_id = %connection_id, "Detached relay client from local WS connection");
+
+            // Reap the detached connection after a grace window. Without this the
+            // local WS task and the daemon-side connection live forever, since
+            // neither side ever closes the WS after a detach and reconnects use a
+            // fresh connection_id. Aborting the forwarding task drops the WS
+            // stream, which lets the daemon tear down its side too; the in-flight
+            // turn is unaffected because it runs in its own task.
+            let conns = Arc::clone(local_connections);
+            let states = Arc::clone(e2e_states);
+            let detached = Arc::clone(detached_connections);
+            let reap_id = connection_id.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(DETACHED_REAP_GRACE).await;
+                // Skip if the connection reattached (ConnectionOpened/Forward
+                // removes it from the detached set) in the meantime.
+                let still_detached = {
+                    let detached = detached.lock().await;
+                    detached.contains(&reap_id)
+                };
+                if !still_detached {
+                    return;
+                }
+                if let Some(conn) = conns.lock().await.remove(&reap_id) {
+                    conn.task.abort();
+                }
+                states.lock().await.remove(&reap_id);
+                detached.lock().await.remove(&reap_id);
+                info!(connection_id = %reap_id, "Reaped detached relay connection after grace window");
+            });
         }
         RelayToDaemon::Pong => {
             // Heartbeat response, nothing to do

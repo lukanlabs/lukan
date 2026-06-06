@@ -1613,6 +1613,10 @@ async fn handle_send_message(request: SendMessageRequest) {
                 Err(e) => {
                     drop(sessions);
                     release_processing_lock(conn_id, &tab, &state).await;
+                    {
+                        let mut active_tokens = state.active_cancel_tokens.lock().await;
+                        active_tokens.remove(&tab);
+                    }
                     send_agent_creation_error(e, &state, &outbound_tx).await;
                     let _ = done_tx.send(tab).await;
                     return;

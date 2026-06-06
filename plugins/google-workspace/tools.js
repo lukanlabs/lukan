@@ -177,6 +177,32 @@ async function googleGetBytes(url, token) {
   return Buffer.from(await resp.arrayBuffer());
 }
 
+async function googleUploadMultipart(url, metadata, bytes, mimeType, token) {
+  const boundary = `lukan_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const delimiter = Buffer.from(`--${boundary}\r\n`);
+  const closeDelimiter = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const metadataPart = Buffer.from(
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`
+  );
+  const mediaPartHeader = Buffer.from(`--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`);
+  const body = Buffer.concat([delimiter, metadataPart, mediaPartHeader, bytes, closeDelimiter]);
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": `multipart/related; boundary=${boundary}`,
+      "Content-Length": String(body.length),
+    },
+    body,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`API error ${resp.status}: ${text}`);
+  }
+  return resp.json();
+}
+
 // ── Formatting helpers ──────────────────────────────────────────────────
 
 function parseFormatting(raw) {
@@ -1064,6 +1090,39 @@ const handlers = {
     const bytes = await googleGetBytes(url, token);
     fs.writeFileSync(outputPath, bytes);
     return `Downloaded ${formatBytes(bytes.length)} to ${outputPath}`;
+  },
+
+  async DriveUpload(input, token) {
+    const { filePath, name, folderId, mimeType } = input;
+    if (!filePath) throw new Error("filePath is required");
+
+    const resolvedPath = path.resolve(filePath);
+    if (!fs.existsSync(resolvedPath)) {
+      throw new Error(`File not found: ${resolvedPath}`);
+    }
+    const stat = fs.statSync(resolvedPath);
+    if (!stat.isFile()) {
+      throw new Error(`Not a file: ${resolvedPath}`);
+    }
+
+    const fileName = name || path.basename(resolvedPath);
+    const fileMimeType = mimeType || "application/octet-stream";
+    const metadata = { name: fileName };
+    if (folderId) metadata.parents = [folderId];
+
+    const bytes = fs.readFileSync(resolvedPath);
+    const fields = encodeURIComponent("id,name,mimeType,size,webViewLink,webContentLink");
+    const url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=${fields}`;
+    const data = await googleUploadMultipart(url, metadata, bytes, fileMimeType, token);
+
+    const lines = [
+      `Uploaded ${fileName} (${formatBytes(bytes.length)}) to Google Drive`,
+      `ID: ${data.id}`,
+      `MIME: ${data.mimeType || fileMimeType}`,
+    ];
+    if (data.webViewLink) lines.push(`Link: ${data.webViewLink}`);
+    if (data.webContentLink) lines.push(`Download: ${data.webContentLink}`);
+    return lines.join("\n");
   },
 };
 

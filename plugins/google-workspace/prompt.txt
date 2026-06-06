@@ -6,7 +6,7 @@ You have direct API access to Google Sheets, Calendar, Docs, Slides, and Drive v
 - **Calendar**: Use `CalendarList`, `CalendarCreate`, `CalendarUpdate` — NOT the browser.
 - **Documents**: Use `DocsRead`, `DocsCreate`, `DocsUpdate` — NOT the browser.
 - **Presentations**: Use `SlidesRead`, `SlidesCreate`, `SlidesUpdate` — NOT the browser.
-- **Drive files**: Use `DriveList`, `DriveDownload` — NOT the browser.
+- **Drive files**: Use `DriveList`, `DriveDownload`, `DriveUpload` — NOT the browser.
 
 These API tools are faster, more reliable, and use less tokens than browser navigation. Never open Google Sheets, Docs, Slides, Calendar, or Drive in the browser when these tools are available.
 

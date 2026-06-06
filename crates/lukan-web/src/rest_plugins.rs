@@ -1,4 +1,9 @@
-use axum::{Json, extract::Path, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::Path,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 use lukan_core::config::LukanPaths;
 use lukan_plugins::PluginManager;
 use serde::Serialize;
@@ -551,6 +556,7 @@ pub async fn get_plugin_commands(Path(name): Path<String>) -> impl IntoResponse 
 /// POST /api/plugins/:name/commands/:command
 pub async fn run_plugin_command(
     Path((name, command)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     let manifest = match PluginManager::load_manifest(&name).await {
         Ok(m) => m,
@@ -606,13 +612,23 @@ pub async fn run_plugin_command(
         )
     };
 
-    let output = tokio::process::Command::new(&program)
+    let mut command_proc = tokio::process::Command::new(&program);
+    command_proc
         .args(&args)
         .current_dir(&plugin_dir)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output();
+        .stderr(std::process::Stdio::piped());
+
+    if headers.get("x-relay-internal").is_some() {
+        // Plugin commands launched from remote.lukan.ai execute on the daemon host,
+        // not in the user's browser. Localhost OAuth callbacks would bind a port on
+        // the daemon and hold the relay request open until timeout, so auth commands
+        // must fail fast with instructions instead of starting a local server.
+        command_proc.env("LUKAN_REMOTE_RELAY", "1");
+    }
+
+    let output = command_proc.output();
 
     let result = match tokio::time::timeout(std::time::Duration::from_secs(300), output).await {
         Ok(Ok(r)) => r,

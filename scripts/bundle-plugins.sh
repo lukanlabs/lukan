@@ -32,7 +32,10 @@ bundle_whatsapp() {
     (cd "$src" && bun install --frozen-lockfile 2>/dev/null || bun install)
   fi
   if [ ! -d "$src/whatsapp-connector/node_modules" ]; then
-    (cd "$src/whatsapp-connector" && bun install --frozen-lockfile 2>/dev/null || bun install)
+    # Fail closed: the connector pins exact versions and tracks bun.lock, so a
+    # frozen install must succeed. No `|| bun install` fallback — we never want
+    # the build to silently re-resolve to fresh (potentially compromised) versions.
+    (cd "$src/whatsapp-connector" && bun install --frozen-lockfile)
   fi
 
   mkdir -p "$dist/whatsapp-connector"

@@ -9,6 +9,10 @@
   },
   "dependencies": {
     "imapflow": "^1.2.9",
-    "nodemailer": "^8.0.4"
+    "nodemailer": "8.0.5"
+  },
+  "overrides": {
+    "ip-address": "10.1.1",
+    "nodemailer": "$nodemailer"
   }
 }

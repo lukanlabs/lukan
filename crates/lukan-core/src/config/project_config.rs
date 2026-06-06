@@ -26,6 +26,10 @@ pub struct ProjectConfig {
         alias = "blocked_env_vars"
     )]
     pub blocked_env_vars: Vec<String>,
+    /// Optional memory retrieval mode for the Remember tool: keyword, bm25, or hybrid.
+    /// Parsed by lukan-tools so core does not depend on retrieval implementation details.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_retrieval: Option<String>,
 }
 
 impl Default for ProjectConfig {
@@ -36,6 +40,7 @@ impl Default for ProjectConfig {
             trusted: false,
             allowed_paths: Vec::new(),
             blocked_env_vars: Vec::new(),
+            memory_retrieval: None,
         }
     }
 }
@@ -211,11 +216,13 @@ mod tests {
             trusted: true,
             allowed_paths: vec!["/tmp/extra".into(), "~/projects".into()],
             blocked_env_vars: vec!["SECRET_KEY".into()],
+            memory_retrieval: Some("bm25".into()),
         };
         let json = serde_json::to_string_pretty(&config).unwrap();
         let parsed: ProjectConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.permission_mode, PermissionMode::Manual);
         assert_eq!(parsed.blocked_env_vars, vec!["SECRET_KEY"]);
+        assert_eq!(parsed.memory_retrieval.as_deref(), Some("bm25"));
         assert!(parsed.trusted);
         assert_eq!(parsed.allowed_paths.len(), 2);
         assert_eq!(parsed.permissions.deny, vec!["rm -rf /"]);
@@ -229,6 +236,7 @@ mod tests {
         let config: ProjectConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.permission_mode, PermissionMode::Auto);
         assert!(!config.trusted);
+        assert!(config.memory_retrieval.is_none());
     }
 
     #[test]

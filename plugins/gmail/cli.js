@@ -38,6 +38,7 @@ const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const REDIRECT_PORT = 1456;
 const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/auth/callback`;
+const IS_REMOTE_RELAY = process.env.LUKAN_REMOTE_RELAY === "1";
 const SCOPES = "https://www.googleapis.com/auth/gmail.modify";
 
 function base64url(buf) {
@@ -45,6 +46,13 @@ function base64url(buf) {
 }
 
 async function authenticate() {
+  if (IS_REMOTE_RELAY) {
+    throw new Error(
+      "Gmail auth cannot run from remote.lukan.ai because it needs a localhost OAuth callback on this machine. " +
+        "Run `lukan gmail auth` directly on the daemon host, then refresh the remote UI."
+    );
+  }
+
   const config = loadConfig();
 
   const gwConfig = loadGoogleWorkspaceConfig();

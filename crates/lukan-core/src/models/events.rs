@@ -68,6 +68,15 @@ pub enum StreamEvent {
     /// Start of a new message
     MessageStart,
 
+    /// Conversation compaction started; UIs should block input until compaction ends.
+    CompactionStart { reason: String },
+
+    /// Conversation compaction finished.
+    CompactionEnd {
+        before_messages: usize,
+        after_messages: usize,
+    },
+
     /// Incremental text content
     TextDelta { text: String },
 

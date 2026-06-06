@@ -85,6 +85,7 @@ interface ChatPanelProps {
     tabId: string,
     tokenUsage: TokenUsage,
     contextSize: number,
+    compactionThreshold: number,
   ) => void;
   pendingSessionId?: string;
   onPendingLoadConsumed?: (tabId: string) => void;
@@ -113,8 +114,8 @@ export function ChatPanel({
 
   // Report stats to parent whenever they change
   useEffect(() => {
-    onStatsChange?.(tabId, chat.tokenUsage, chat.contextSize);
-  }, [tabId, chat.tokenUsage, chat.contextSize, onStatsChange]);
+    onStatsChange?.(tabId, chat.tokenUsage, chat.contextSize, chat.compactionThreshold);
+  }, [tabId, chat.tokenUsage, chat.contextSize, chat.compactionThreshold, onStatsChange]);
 
   // Report session ID changes to parent (so AgentView can track which tab has which session)
   useEffect(() => {
@@ -128,6 +129,16 @@ export function ChatPanel({
       onPendingLoadConsumed?.(tabId);
     }
   }, [pendingSessionId, tabId, chat.loadSession, onPendingLoadConsumed]);
+
+  useEffect(() => {
+    const onCompact = () => {
+      chat.compactSession();
+    };
+    window.addEventListener(`compact-agent-${tabId}`, onCompact);
+    return () => {
+      window.removeEventListener(`compact-agent-${tabId}`, onCompact);
+    };
+  }, [tabId, chat.compactSession]);
 
   // Listen for sidebar session events (only on the active panel)
   useEffect(() => {

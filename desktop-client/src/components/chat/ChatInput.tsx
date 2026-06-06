@@ -5,7 +5,7 @@ import { useAudioRecorder } from "../../hooks/useAudioRecorder";
 
 interface ChatInputProps {
   onSend: (message: string, attachments?: ImageAttachment[]) => void;
-  onAbort: () => void;
+  onAbort: () => void; // kept for API compatibility; input is hard-blocked while busy
   isProcessing: boolean;
   permissionMode: PermissionMode;
   onSetPermissionMode: (mode: PermissionMode) => void;
@@ -33,7 +33,7 @@ function formatDuration(seconds: number): string {
 
 export function ChatInput({
   onSend,
-  onAbort,
+  onAbort: _onAbort,
   isProcessing,
   permissionMode,
   onSetPermissionMode,
@@ -77,6 +77,7 @@ export function ChatInput({
   }, [input]);
 
   const handleSubmit = () => {
+    if (isProcessing) return;
     const trimmed = input.trim();
     if (!trimmed && attachments.length === 0) return;
     onSend(trimmed, attachments);
@@ -145,8 +146,6 @@ export function ChatInput({
     if (e.key === "Escape") {
       if (recorder.state === "recording") {
         recorder.cancel();
-      } else if (isProcessing) {
-        onAbort();
       }
     }
   };
@@ -249,10 +248,10 @@ export function ChatInput({
                   isTranscribing
                     ? "Transcribing audio..."
                     : isProcessing
-                      ? "Agent is thinking... (Esc to cancel)"
+                      ? "Agent is busy..."
                       : "What would you like to build?"
                 }
-                disabled={isTranscribing}
+                disabled={isTranscribing || isProcessing}
                 rows={1}
               />
             )}
@@ -314,8 +313,9 @@ export function ChatInput({
             {/* Send / Abort button */}
             {isProcessing ? (
               <button
-                onClick={onAbort}
-                className="h-9 w-9 shrink-0 rounded-none flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] border border-white/5 text-zinc-300 transition-all cursor-pointer"
+                onClick={() => {}}
+                disabled={true}
+                className="h-9 w-9 shrink-0 rounded-none flex items-center justify-center bg-white/[0.04] border border-white/5 text-zinc-700 transition-all cursor-not-allowed"
               >
                 <Square className="h-4 w-4" />
               </button>

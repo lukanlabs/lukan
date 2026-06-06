@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Plus, X, FolderOpen } from "lucide-react";
+import { Plus, X, FolderOpen, Archive } from "lucide-react";
 import type { AgentTab } from "../../hooks/useAgentSessions";
 import type { TokenUsage } from "../../lib/types";
 import FolderPicker from "./FolderPicker";
@@ -11,8 +11,11 @@ interface AgentTabBarProps {
   onClose: (id: string) => void;
   onCreate: (cwd?: string) => void;
   onRename: (id: string, label: string) => void;
+  onCompact?: () => void;
+  compactDisabled?: boolean;
   tokenUsage?: TokenUsage;
   contextSize?: number;
+  compactionThreshold?: number;
 }
 
 function formatTokens(n: number): string {
@@ -28,8 +31,11 @@ export default function AgentTabBar({
   onClose,
   onCreate,
   onRename,
+  onCompact,
+  compactDisabled = false,
   tokenUsage,
   contextSize,
+  compactionThreshold = 150000,
 }: AgentTabBarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -56,6 +62,14 @@ export default function AgentTabBar({
   const hasUsage =
     tokenUsage && (tokenUsage.input > 0 || tokenUsage.output > 0);
   const hasCtx = !!contextSize && contextSize > 0;
+  const ctxRatio = hasCtx ? contextSize / Math.max(1, compactionThreshold) : 0;
+  const ctxColor = ctxRatio >= 1
+    ? "#f87171"
+    : ctxRatio >= 0.85
+      ? "#fbbf24"
+      : ctxRatio >= 0.66
+        ? "#f59e0b"
+        : undefined;
 
   return (
     <div
@@ -101,6 +115,28 @@ export default function AgentTabBar({
           title="New agent in directory"
         >
           <FolderOpen size={14} />
+        </button>
+        <button
+          onClick={compactDisabled ? undefined : onCompact}
+          disabled={!onCompact || compactDisabled}
+          className="flex items-center justify-center w-7 h-7 rounded-none border-none transition-colors"
+          style={{
+            color: compactDisabled ? "#3f3f46" : "#a1a1aa",
+            background: "transparent",
+            cursor: compactDisabled ? "not-allowed" : "pointer",
+          }}
+          onMouseEnter={(e) => {
+            if (compactDisabled) return;
+            e.currentTarget.style.background = "rgba(50, 50, 50, 0.4)";
+            e.currentTarget.style.color = "#fafafa";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = compactDisabled ? "#3f3f46" : "#a1a1aa";
+          }}
+          title="Compact conversation"
+        >
+          <Archive size={14} />
         </button>
       </div>
 
@@ -181,8 +217,8 @@ export default function AgentTabBar({
       {(hasCtx || hasUsage) && (
         <div className="hidden sm:flex items-center gap-3 px-2 flex-shrink-0">
           {hasCtx && (
-            <span className="text-[10px] text-zinc-600 font-mono">
-              ctx {formatTokens(contextSize)}
+            <span className="text-[10px] text-zinc-600 font-mono" style={{ color: ctxColor }}>
+              ctx {formatTokens(contextSize)} / {formatTokens(compactionThreshold)}
             </span>
           )}
           {hasUsage && (

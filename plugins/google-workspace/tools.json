@@ -552,5 +552,35 @@
       },
       "required": ["fileId", "outputPath"]
     }
+  },
+  {
+    "name": "DriveUpload",
+    "description": "Upload a local file to Google Drive",
+    "readOnly": false,
+    "concurrencySafe": false,
+    "searchHint": "upload a file to Google Drive",
+    "activityLabel": "Uploading Drive file",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filePath": {
+          "type": "string",
+          "description": "Local path of the file to upload"
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional Drive file name. Defaults to the local filename."
+        },
+        "folderId": {
+          "type": "string",
+          "description": "Optional destination folder ID"
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "Optional MIME type. Defaults to application/octet-stream."
+        }
+      },
+      "required": ["filePath"]
+    }
   }
 ]

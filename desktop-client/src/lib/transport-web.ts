@@ -15,6 +15,7 @@ const WS_COMMANDS = new Set([
   "delete_all_sessions",
   "load_session",
   "new_session",
+  "compact_session",
   "restore_checkpoint",
   "set_permission_mode",
   "create_agent_tab",
@@ -74,6 +75,8 @@ const LOCAL_COMMANDS = new Set([
 const STREAM_EVENT_TYPES = new Set([
   "user_message",
   "message_start",
+  "compaction_start",
+  "compaction_end",
   "text_delta",
   "thinking_delta",
   "tool_use_start",
@@ -608,6 +611,15 @@ export class WebTransport implements Transport {
       return;
     }
 
+    if (type === "compact_complete") {
+      const routeId = (msg.tabId || msg.sessionId) as string | undefined;
+      if (routeId) {
+        this.dispatch(`compact-complete-${routeId}`, JSON.stringify(msg));
+      }
+      this.resolvePending("compact_session", msg);
+      return;
+    }
+
     if (type === "checkpoint_restored") {
       this.resolvePending("restore_checkpoint", {
         sessionId: msg.sessionId,
@@ -799,6 +811,8 @@ export class WebTransport implements Transport {
         };
       case "new_session":
         return { type: "new_session", name: null, sessionId: args?.sessionId };
+      case "compact_session":
+        return { type: "compact", sessionId: args?.sessionId };
       case "restore_checkpoint":
         return {
           type: "restore_checkpoint",
@@ -1411,6 +1425,7 @@ export class WebTransport implements Transport {
       permissionMode: msg.permissionMode,
       tokenUsage: msg.tokenUsage,
       contextSize: msg.contextSize,
+      compactionThreshold: msg.compactionThreshold,
     };
   }
 
@@ -1426,6 +1441,7 @@ export class WebTransport implements Transport {
       permissionMode: this.initData?.permissionMode,
       tokenUsage: msg.tokenUsage,
       contextSize: msg.contextSize,
+      compactionThreshold: msg.compactionThreshold ?? this.initData?.compactionThreshold,
     };
   }
 

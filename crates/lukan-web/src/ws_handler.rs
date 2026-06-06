@@ -31,6 +31,18 @@ async fn send_json_channel(tx: &mpsc::Sender<String>, msg: &ServerMessage) {
     }
 }
 
+const DEFAULT_COMPACTION_THRESHOLD: u64 = 150_000;
+
+fn effective_compaction_threshold(config: &lukan_core::config::ResolvedConfig) -> u64 {
+    let model = config.effective_model().unwrap_or_default();
+    config
+        .config
+        .model_settings
+        .get(&model)
+        .and_then(|s| s.compaction_threshold)
+        .unwrap_or(DEFAULT_COMPACTION_THRESHOLD)
+}
+
 /// WebSocket upgrade handler
 pub async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
@@ -239,25 +251,24 @@ async fn handle_connection(socket: WebSocket, state: Arc<AppState>, is_relay: bo
         .await;
     }
 
-    // Cancel any in-flight agent turns for this connection
-    for (_, token) in cancel_tokens.drain() {
-        token.cancel();
-    }
+    // On disconnect, detach from in-flight turns instead of cancelling them.
+    // Mobile browsers and relay clients routinely close/suspend WebSockets when
+    // minimized; the agent turn is session-owned and should keep running until
+    // it completes or the user explicitly sends Abort.
+    cancel_tokens.clear();
 
-    // On disconnect: release any processing locks owned by this connection
+    // On disconnect: keep processing locks owned by this connection so the
+    // detached turn remains protected from duplicate sends until it completes.
     {
-        let mut processing = state.processing_sessions.lock().await;
-        processing.retain(|session_id, &mut owner| {
-            if owner == conn_id {
+        let processing = state.processing_sessions.lock().await;
+        for (session_id, owner) in processing.iter() {
+            if *owner == conn_id {
                 info!(
                     conn_id,
-                    session_id, "Released session processing lock on disconnect"
+                    session_id, "Detached from processing session on disconnect"
                 );
-                false
-            } else {
-                true
             }
-        });
+        }
     }
 
     // Save all sessions (only if not stale, to avoid overwriting
@@ -346,6 +357,10 @@ async fn dispatch_message(
 
             let cancel_token = CancellationToken::new();
             cancel_tokens.insert(tab.clone(), cancel_token.clone());
+            {
+                let mut active_tokens = state.active_cancel_tokens.lock().await;
+                active_tokens.insert(tab.clone(), cancel_token.clone());
+            }
 
             let state = Arc::clone(state);
             let outbound_tx = outbound_tx.clone();
@@ -442,6 +457,10 @@ async fn dispatch_message(
                 let tab_for_turn = tab.clone();
                 let cancel_token = CancellationToken::new();
                 cancel_tokens.insert(tab.clone(), cancel_token.clone());
+                {
+                    let mut active_tokens = state.active_cancel_tokens.lock().await;
+                    active_tokens.insert(tab.clone(), cancel_token.clone());
+                }
 
                 tokio::spawn(async move {
                     handle_send_message(SendMessageRequest {
@@ -474,8 +493,16 @@ async fn dispatch_message(
 
         ClientMessage::Abort { session_id } => {
             if let Some(sid) = &session_id {
-                if let Some(token) = cancel_tokens.get(sid) {
-                    // Mid-turn abort: cancel the agent task
+                let token = if let Some(token) = cancel_tokens.get(sid).cloned() {
+                    Some(token)
+                } else {
+                    let active_tokens = state.active_cancel_tokens.lock().await;
+                    active_tokens.get(sid).cloned()
+                };
+
+                if let Some(token) = token {
+                    // Mid-turn abort: cancel the agent task, even if this client
+                    // reconnected after the turn was detached from its original WS.
                     info!(conn_id, session_id = %sid, "Abort received, cancelling agent");
                     token.cancel();
                     // Token + lock cleanup happens when the task signals done_tx
@@ -511,8 +538,8 @@ async fn dispatch_message(
             handle_new_session(session_id.as_deref(), state, ws_tx).await;
         }
 
-        ClientMessage::CreateAgentTab { cwd } => {
-            let tab_id = handle_create_agent_tab(state, ws_tx, cwd).await;
+        ClientMessage::CreateAgentTab { cwd, start_agent } => {
+            let tab_id = handle_create_agent_tab(state, ws_tx, cwd, start_agent).await;
             *active_session_id = Some(tab_id);
         }
 
@@ -1352,7 +1379,22 @@ async fn dispatch_message(
 
         ClientMessage::Compact { session_id } => {
             let tab_id = session_id.as_deref();
-            let (event_tx, _event_rx) = mpsc::channel::<StreamEvent>(256);
+            let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
+
+            let forward_tab = tab_id.map(str::to_string);
+            let outbound = outbound_tx.clone();
+            let forward_handle = tokio::spawn(async move {
+                while let Some(ev) = event_rx.recv().await {
+                    let json = if let Some(ref tid) = forward_tab {
+                        inject_tab_id(&ev, tid)
+                    } else {
+                        serde_json::to_string(&ev).unwrap_or_default()
+                    };
+                    if outbound.send(json).await.is_err() {
+                        break;
+                    }
+                }
+            });
 
             // Get agent from session
             let mut agent_opt = if let Some(tid) = tab_id {
@@ -1363,17 +1405,21 @@ async fn dispatch_message(
             };
 
             if let Some(ref mut agent) = agent_opt {
-                match agent.compact(event_tx).await {
+                match agent.compact(event_tx.clone()).await {
                     Ok(_) => {
                         let sid = agent.session_id().to_string();
                         let messages = agent.messages_json();
                         let checkpoints = agent.checkpoints().to_vec();
+                        let context_size = agent.last_context_size();
+                        let compaction_threshold = agent.compaction_threshold();
                         send_json(
                             ws_tx,
                             &ServerMessage::CompactComplete {
                                 session_id: sid,
                                 messages,
                                 checkpoints,
+                                context_size,
+                                compaction_threshold,
                             },
                         )
                         .await;
@@ -1398,7 +1444,9 @@ async fn dispatch_message(
                 .await;
             }
 
-            // Put agent back
+            drop(event_tx);
+            let _ = forward_handle.await;
+
             if let Some(agent) = agent_opt
                 && let Some(tid) = tab_id
             {
@@ -1565,6 +1613,10 @@ async fn handle_send_message(request: SendMessageRequest) {
                 Err(e) => {
                     drop(sessions);
                     release_processing_lock(conn_id, &tab, &state).await;
+                    {
+                        let mut active_tokens = state.active_cancel_tokens.lock().await;
+                        active_tokens.remove(&tab);
+                    }
                     send_agent_creation_error(e, &state, &outbound_tx).await;
                     let _ = done_tx.send(tab).await;
                     return;
@@ -1640,8 +1692,11 @@ async fn handle_send_message(request: SendMessageRequest) {
         (agent, result)
     });
 
-    // Forward stream events to outbound channel. The main WS loop reads
-    // from outbound_rx and writes to ws_tx — no direct WS access here.
+    // Forward stream events to the originating connection while it remains
+    // attached, and always broadcast them through shared stream state. If the
+    // WebSocket drops, continue draining events until the agent finishes so the
+    // turn can save/reinsert normally and other/reconnected clients can observe
+    // progress via broadcast.
     let mut client_disconnected = false;
     let mut aborted = false;
     loop {
@@ -1657,11 +1712,9 @@ async fn handle_send_message(request: SendMessageRequest) {
                             origin_conn_id: conn_id,
                             session_id: Some(broadcast_session_id.clone()),
                         });
-                        if outbound_tx.send(json).await.is_err() {
-                            warn!(conn_id, "Outbound channel closed, client disconnected");
+                        if !client_disconnected && outbound_tx.send(json).await.is_err() {
+                            warn!(conn_id, "Outbound channel closed, detaching client from running agent");
                             client_disconnected = true;
-                            cancel_token.cancel();
-                            break;
                         }
                     }
                     None => break, // event channel closed, agent turn finished
@@ -1675,10 +1728,20 @@ async fn handle_send_message(request: SendMessageRequest) {
     }
 
     // Drain remaining buffered events before dropping the receiver.
-    if !client_disconnected {
-        while let Ok(ev) = event_rx.try_recv() {
-            let json = inject_tab_id(&ev, &tab);
-            let _ = outbound_tx.send(json).await;
+    while let Ok(ev) = event_rx.try_recv() {
+        let json = inject_tab_id(&ev, &tab);
+        let broadcast_json = inject_field(&json, "savedSessionId", &broadcast_session_id);
+        let _ = state.stream_tx.send(StreamBroadcast {
+            json: broadcast_json,
+            origin_conn_id: conn_id,
+            session_id: Some(broadcast_session_id.clone()),
+        });
+        if !client_disconnected && outbound_tx.send(json).await.is_err() {
+            warn!(
+                conn_id,
+                "Outbound channel closed while draining, detaching client"
+            );
+            client_disconnected = true;
         }
     }
 
@@ -1686,8 +1749,9 @@ async fn handle_send_message(request: SendMessageRequest) {
     // instead of blocking on a full channel buffer when nobody is reading.
     drop(event_rx);
 
-    // Wait for agent turn to complete (with timeout for abort/disconnect cases)
-    let wait_result = if aborted || client_disconnected {
+    // Wait for the agent turn to complete. Disconnect is detach, not abort, so
+    // only explicit cancellation gets the short timeout path.
+    let wait_result = if aborted {
         match tokio::time::timeout(std::time::Duration::from_secs(10), agent_handle).await {
             Ok(result) => Some(result),
             Err(_) => {
@@ -1719,12 +1783,14 @@ async fn handle_send_message(request: SendMessageRequest) {
             let messages = returned_agent.messages_json();
             let checkpoints = returned_agent.checkpoints().to_vec();
             let context_size = returned_agent.last_context_size();
+            let compaction_threshold = returned_agent.compaction_threshold();
 
             let complete_msg = ServerMessage::ProcessingComplete {
                 session_id,
                 messages,
                 checkpoints,
                 context_size: Some(context_size),
+                compaction_threshold: Some(compaction_threshold),
                 tab_id: Some(tab.clone()),
                 aborted: if aborted { Some(true) } else { None },
             };
@@ -1773,8 +1839,12 @@ async fn handle_send_message(request: SendMessageRequest) {
         }
     }
 
-    // Release processing lock
+    // Release processing lock and active cancellation token
     release_processing_lock(conn_id, &tab, &state).await;
+    {
+        let mut active_tokens = state.active_cancel_tokens.lock().await;
+        active_tokens.remove(&tab);
+    }
 
     // Signal that this tab's turn is complete
     let _ = done_tx.send(tab).await;
@@ -1865,10 +1935,75 @@ async fn evict_session_from_memory(session_id: &str, state: &Arc<AppState>) {
 async fn handle_load_session(
     saved_session_id: &str,
     tab_id: Option<&str>,
-    _conn_id: usize,
+    conn_id: usize,
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) {
+    // If this tab is currently running a turn, loading the same saved session
+    // from a reconnected mobile/web client must not replace the in-flight
+    // AgentLoop. During a turn the live agent is temporarily taken out of
+    // `session.agent`; replacing that slot with a fresh copy from disk can race
+    // with the running turn and stale-save/overwrite state. Treat load_session
+    // as a read-only resync while processing.
+    if let Some(tid) = tab_id {
+        let is_processing = {
+            let processing = state.processing_sessions.lock().await;
+            processing.contains_key(tid)
+        };
+        if is_processing {
+            info!(
+                conn_id,
+                tab_id = tid,
+                saved_session_id,
+                "Serving load_session from disk while tab is processing"
+            );
+            match SessionManager::load(saved_session_id).await {
+                Ok(Some(saved)) => {
+                    let threshold = {
+                        let config = state.config.lock().await;
+                        effective_compaction_threshold(&config)
+                    };
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::SessionLoaded {
+                            session_id: saved.id,
+                            messages: saved.messages,
+                            checkpoints: saved.checkpoints,
+                            token_usage: TokenUsage {
+                                input: saved.total_input_tokens,
+                                output: saved.total_output_tokens,
+                                cache_creation: None,
+                                cache_read: None,
+                            },
+                            context_size: saved.last_context_size,
+                            compaction_threshold: threshold,
+                        },
+                    )
+                    .await;
+                }
+                Ok(None) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Session not found: {saved_session_id}"),
+                        },
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_json(
+                        ws_tx,
+                        &ServerMessage::Error {
+                            error: format!("Failed to load session: {e}"),
+                        },
+                    )
+                    .await;
+                }
+            }
+            return;
+        }
+    }
+
     // Save current session first (only if not stale, to avoid overwriting
     // newer data written by another client)
     if let Some(tid) = tab_id {
@@ -1888,6 +2023,7 @@ async fn handle_load_session(
             let input_tokens = agent.input_tokens();
             let output_tokens = agent.output_tokens();
             let context_size = agent.last_context_size();
+            let compaction_threshold = agent.compaction_threshold();
             let sid = agent.session_id().to_string();
 
             // Store in session and restore cwd from saved session
@@ -1926,6 +2062,7 @@ async fn handle_load_session(
                         cache_read: None,
                     },
                     context_size,
+                    compaction_threshold,
                 },
             )
             .await;
@@ -1996,15 +2133,43 @@ async fn handle_create_agent_tab(
     state: &Arc<AppState>,
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     cwd: Option<String>,
+    start_agent: bool,
 ) -> String {
     let tab_id = uuid::Uuid::new_v4().to_string();
+    let mut saved_session_id = None;
 
     let mut sessions = state.sessions.lock().await;
     let tab_number = sessions.len() + 1;
     let mut session = WebAgentSession::new();
     session.label = format!("Agent {tab_number}");
     session.cwd = cwd.clone();
-    sessions.insert(tab_id.clone(), session);
+    if start_agent {
+        let session_cwd = session.cwd.clone();
+        drop(sessions);
+        match create_agent(state, session_cwd.as_deref()).await {
+            Ok(agent) => {
+                let session_id = agent.session_id().to_string();
+                saved_session_id = Some(session_id.clone());
+                let mut sessions = state.sessions.lock().await;
+                session.last_session_id = Some(session_id);
+                session.set_agent(agent);
+                sessions.insert(tab_id.clone(), session);
+            }
+            Err(error) => {
+                send_json(
+                    ws_tx,
+                    &ServerMessage::Error {
+                        error: format!("Failed to create agent: {error}"),
+                    },
+                )
+                .await;
+                let mut sessions = state.sessions.lock().await;
+                sessions.insert(tab_id.clone(), session);
+            }
+        }
+    } else {
+        sessions.insert(tab_id.clone(), session);
+    }
 
     // Update active_cwd for plugins
     if let Some(ref dir) = cwd {
@@ -2014,7 +2179,8 @@ async fn handle_create_agent_tab(
     send_json(
         ws_tx,
         &ServerMessage::AgentTabCreated {
-            session_id: tab_id.clone(),
+            session_id: saved_session_id.unwrap_or_else(|| tab_id.clone()),
+            tab_id: Some(tab_id.clone()),
         },
     )
     .await;
@@ -2100,6 +2266,7 @@ async fn handle_set_model(
                 && let Ok(p) = create_provider(&config)
             {
                 agent.swap_provider(Arc::from(p));
+                agent.set_compaction_threshold(effective_compaction_threshold(&config));
             }
         }
     }
@@ -2223,6 +2390,11 @@ async fn send_init(
         }
     };
 
+    let compaction_threshold = {
+        let config = state.config.lock().await;
+        effective_compaction_threshold(&config)
+    };
+
     send_json(
         ws_tx,
         &ServerMessage::Init {
@@ -2235,6 +2407,7 @@ async fn send_init(
             provider_name,
             model_name,
             browser_screenshots: false,
+            compaction_threshold,
         },
     )
     .await;
@@ -2351,11 +2524,7 @@ async fn create_agent(
         Box::leak(Box::new(result.manager));
     }
 
-    let compaction_threshold = config
-        .config
-        .model_settings
-        .get(&model_name)
-        .and_then(|s| s.compaction_threshold);
+    let compaction_threshold = effective_compaction_threshold(&config);
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools,
@@ -2379,7 +2548,7 @@ async fn create_agent(
         )
         .map(Arc::from),
         extra_env: config.credentials.flatten_skill_env(),
-        compaction_threshold,
+        compaction_threshold: Some(compaction_threshold),
         tab_id: None,
     };
 
@@ -2478,11 +2647,7 @@ async fn create_agent_with_session(
         Box::leak(Box::new(result.manager));
     }
 
-    let compaction_threshold = config
-        .config
-        .model_settings
-        .get(&model_name)
-        .and_then(|s| s.compaction_threshold);
+    let compaction_threshold = effective_compaction_threshold(&config);
     let agent_config = AgentConfig {
         provider: Arc::from(provider),
         tools,
@@ -2506,7 +2671,7 @@ async fn create_agent_with_session(
         )
         .map(Arc::from),
         extra_env: config.credentials.flatten_skill_env(),
-        compaction_threshold,
+        compaction_threshold: Some(compaction_threshold),
         tab_id: None,
     };
 

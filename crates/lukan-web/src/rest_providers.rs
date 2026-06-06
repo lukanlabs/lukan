@@ -4,10 +4,22 @@ use axum::{Json, extract::Path, extract::State, http::StatusCode, response::Into
 use serde::Serialize;
 use tracing::error;
 
-use lukan_core::config::{ConfigManager, CredentialsManager, ProviderName};
+use lukan_core::config::{ConfigManager, CredentialsManager, ProviderName, ResolvedConfig};
 use lukan_providers::create_provider;
 
 use crate::state::AppState;
+
+const DEFAULT_COMPACTION_THRESHOLD: u64 = 150_000;
+
+fn effective_compaction_threshold(config: &ResolvedConfig) -> u64 {
+    let model = config.effective_model().unwrap_or_default();
+    config
+        .config
+        .model_settings
+        .get(&model)
+        .and_then(|s| s.compaction_threshold)
+        .unwrap_or(DEFAULT_COMPACTION_THRESHOLD)
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -363,6 +375,7 @@ pub async fn set_active_provider(
                             && let Ok(p) = create_provider(&config)
                         {
                             agent.swap_provider(Arc::from(p));
+                            agent.set_compaction_threshold(effective_compaction_threshold(&config));
                         }
                     }
                 }

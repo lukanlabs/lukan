@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,6 +12,15 @@ use tracing::{error, info, warn};
 
 use lukan_core::crypto::{self, E2EEnvelope, E2ESession};
 use lukan_core::relay::{DaemonToRelay, RelayConfig, RelayToDaemon};
+
+/// How long a detached relay connection is kept alive before it is reaped.
+///
+/// On `ConnectionClosed` we keep the local daemon WebSocket open so an in-flight
+/// agent turn can finish and persist instead of being cancelled. The turn runs
+/// in its own task and survives the WS teardown, so once this grace window
+/// elapses without the client reattaching we close the local WS to avoid leaking
+/// the forwarding task and the daemon-side connection for the daemon's lifetime.
+const DETACHED_REAP_GRACE: Duration = Duration::from_secs(300);
 
 /// Relay bridge: connects the local daemon to the cloud relay server.
 ///
@@ -165,9 +174,16 @@ async fn connect_and_run(
     let local_connections: Arc<tokio::sync::Mutex<HashMap<String, LocalWsConnection>>> =
         Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
-    // E2E state per connection — created on ConnectionOpened, shared with local WS
+    // E2E state per connection — created on ConnectionOpened, shared with local WS.
     let e2e_states: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<E2EState>>>>> =
         Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    // Cloud/mobile clients often drop the browser-side WebSocket while the
+    // agent is still running. Treat ConnectionClosed as detach: keep the local
+    // WS connected so the daemon's ws_handler continues draining stream events
+    // and the agent can finish/save. We only suppress outbound forwarding for
+    // detached connection IDs.
+    let detached_connections: Arc<tokio::sync::Mutex<HashSet<String>>> =
+        Arc::new(tokio::sync::Mutex::new(HashSet::new()));
 
     // Channel for daemon → relay messages (responses from local processing)
     let (response_tx, mut response_rx) = mpsc::unbounded_channel::<String>();
@@ -201,6 +217,7 @@ async fn connect_and_run(
                             local_port,
                             &local_connections,
                             &e2e_states,
+                            &detached_connections,
                             &response_tx,
                         ).await;
                     }
@@ -277,6 +294,7 @@ struct LocalWsConnection {
 }
 
 type E2EStates = Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<E2EState>>>>>;
+type DetachedConnections = Arc<tokio::sync::Mutex<HashSet<String>>>;
 
 /// Process a single message from the relay.
 async fn handle_relay_message(
@@ -284,6 +302,7 @@ async fn handle_relay_message(
     local_port: u16,
     local_connections: &Arc<tokio::sync::Mutex<HashMap<String, LocalWsConnection>>>,
     e2e_states: &E2EStates,
+    detached_connections: &DetachedConnections,
     response_tx: &mpsc::UnboundedSender<String>,
 ) {
     let msg: RelayToDaemon = match serde_json::from_str(text) {
@@ -304,6 +323,7 @@ async fn handle_relay_message(
                 message,
                 local_connections,
                 e2e_states,
+                detached_connections,
                 response_tx,
             )
             .await;
@@ -365,12 +385,18 @@ async fn handle_relay_message(
                 states.insert(connection_id.clone(), Arc::clone(&e2e));
             }
 
+            {
+                let mut detached = detached_connections.lock().await;
+                detached.remove(&connection_id);
+            }
+
             // Open a local WebSocket to the web server for this browser connection
             let conns = Arc::clone(local_connections);
             let response_tx = response_tx.clone();
             let port = local_port;
             let e2e_for_conn = Arc::clone(&e2e);
             let e2e_states_clone = Arc::clone(e2e_states);
+            let detached_clone = Arc::clone(detached_connections);
             tokio::spawn(async move {
                 if let Err(e) = open_local_ws_connection(
                     &connection_id,
@@ -379,6 +405,7 @@ async fn handle_relay_message(
                     &response_tx,
                     e2e_for_conn,
                     &e2e_states_clone,
+                    &detached_clone,
                 )
                 .await
                 {
@@ -391,15 +418,45 @@ async fn handle_relay_message(
             });
         }
         RelayToDaemon::ConnectionClosed { connection_id } => {
-            // Close the local WebSocket for this browser connection and abort its forwarding task
-            let mut conns = local_connections.lock().await;
-            if let Some(conn) = conns.remove(&connection_id) {
-                conn.task.abort();
-                info!(connection_id = %connection_id, "Closed local WS connection");
+            // Detach browser-side relay disconnects from the local daemon WS.
+            // Closing this local WS while an agent turn is blocked in Bash would
+            // drop ws_handler's sender/receiver and cancel the tool as
+            // "Cancelled by user". Keeping it open lets the turn finish and
+            // persist; a later mobile reconnect loads the saved session.
+            {
+                let mut detached = detached_connections.lock().await;
+                detached.insert(connection_id.clone());
             }
-            // Clean up E2E state
-            let mut states = e2e_states.lock().await;
-            states.remove(&connection_id);
+            info!(connection_id = %connection_id, "Detached relay client from local WS connection");
+
+            // Reap the detached connection after a grace window. Without this the
+            // local WS task and the daemon-side connection live forever, since
+            // neither side ever closes the WS after a detach and reconnects use a
+            // fresh connection_id. Aborting the forwarding task drops the WS
+            // stream, which lets the daemon tear down its side too; the in-flight
+            // turn is unaffected because it runs in its own task.
+            let conns = Arc::clone(local_connections);
+            let states = Arc::clone(e2e_states);
+            let detached = Arc::clone(detached_connections);
+            let reap_id = connection_id.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(DETACHED_REAP_GRACE).await;
+                // Skip if the connection reattached (ConnectionOpened/Forward
+                // removes it from the detached set) in the meantime.
+                let still_detached = {
+                    let detached = detached.lock().await;
+                    detached.contains(&reap_id)
+                };
+                if !still_detached {
+                    return;
+                }
+                if let Some(conn) = conns.lock().await.remove(&reap_id) {
+                    conn.task.abort();
+                }
+                states.lock().await.remove(&reap_id);
+                detached.lock().await.remove(&reap_id);
+                info!(connection_id = %reap_id, "Reaped detached relay connection after grace window");
+            });
         }
         RelayToDaemon::Pong => {
             // Heartbeat response, nothing to do
@@ -413,8 +470,14 @@ async fn handle_forward(
     message: serde_json::Value,
     local_connections: &Arc<tokio::sync::Mutex<HashMap<String, LocalWsConnection>>>,
     e2e_states: &E2EStates,
+    detached_connections: &DetachedConnections,
     response_tx: &mpsc::UnboundedSender<String>,
 ) {
+    {
+        let mut detached = detached_connections.lock().await;
+        detached.remove(connection_id);
+    }
+
     let msg_type = message.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
     match msg_type {
@@ -721,6 +784,7 @@ async fn open_local_ws_connection(
     response_tx: &mpsc::UnboundedSender<String>,
     e2e: Arc<tokio::sync::Mutex<E2EState>>,
     _e2e_states: &E2EStates,
+    detached_connections: &DetachedConnections,
 ) -> Result<()> {
     let ws_url = format!("ws://127.0.0.1:{local_port}/ws");
     // Add x-relay-internal header so daemon skips web_password auth
@@ -772,6 +836,7 @@ async fn open_local_ws_connection(
     let conn_id = connection_id.to_string();
     let response_tx = response_tx.clone();
     let connections_clone = Arc::clone(connections);
+    let detached_for_task = Arc::clone(detached_connections);
     let e2e_for_insert = Arc::clone(&e2e);
 
     // Spawn a task to handle bidirectional message forwarding
@@ -808,6 +873,14 @@ async fn open_local_ws_connection(
                             };
                             drop(state);
 
+                            let is_detached = {
+                                let detached = detached_for_task.lock().await;
+                                detached.contains(&conn_id)
+                            };
+                            if is_detached {
+                                continue;
+                            }
+
                             let forward = serde_json::to_string(&DaemonToRelay::Forward {
                                 connection_id: conn_id.clone(),
                                 message: outgoing,
@@ -824,6 +897,10 @@ async fn open_local_ws_connection(
         }
 
         // Cleanup
+        {
+            let mut detached = detached_for_task.lock().await;
+            detached.remove(&conn_id);
+        }
         let mut conns = connections_clone.lock().await;
         conns.remove(&conn_id);
     });

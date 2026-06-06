@@ -16,6 +16,7 @@ const MINIMAX_API_URL: &str = "https://api.minimax.io/anthropic/v1/messages";
 const MINIMAX_ANTHROPIC_VERSION: &str = "2023-06-01";
 
 const MINIMAX_MODELS: &[(&str, &str)] = &[
+    ("MiniMax-M3", "MiniMax M3"),
     ("MiniMax-M2.7", "MiniMax M2.7"),
     ("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
     ("MiniMax-M2.5", "MiniMax M2.5"),

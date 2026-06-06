@@ -194,6 +194,10 @@ const ZAI_MODELS: &[StaticModel] = &[
 
 const MINIMAX_MODELS: &[StaticModel] = &[
     StaticModel {
+        id: "MiniMax-M3",
+        name: "MiniMax M3",
+    },
+    StaticModel {
         id: "MiniMax-M2.7",
         name: "MiniMax M2.7",
     },
@@ -306,7 +310,7 @@ fn print_usage() {
     println!("  {CYAN}ollama-cloud{RESET}      Ollama Cloud (requires API key)");
     println!("  {CYAN}openai-compatible{RESET}  Generic OpenAI-compatible endpoint");
     println!("  {CYAN}zai{RESET}               z.ai (GLM models)");
-    println!("  {CYAN}minimax{RESET}           MiniMax M2 models (requires API key)");
+    println!("  {CYAN}minimax{RESET}           MiniMax M3/M2 models (requires API key)");
     println!("  {CYAN}lukan-cloud{RESET}       Lukan Cloud (requires API key)");
     println!("  {CYAN}gemini{RESET}            Google Gemini models (requires API key)");
     println!();

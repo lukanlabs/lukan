@@ -90,7 +90,7 @@ fn setup_provider(mut config: AppConfig) -> Result<AppConfig> {
         ("openai-compatible", "OpenAI-compatible endpoint"),
         ("lukan-cloud", "Lukan Cloud"),
         ("gemini", "Google Gemini"),
-        ("minimax", "MiniMax M2"),
+        ("minimax", "MiniMax M3/M2"),
     ];
 
     let current_str = config.provider.to_string();
@@ -621,7 +621,7 @@ pub async fn run_first_run_wizard() -> Result<bool> {
         ("fireworks", "Fireworks (open-source models)", false),
         ("nebius", "Nebius (DeepSeek, MiniMax, GLM)", false),
         ("gemini", "Google Gemini", false),
-        ("minimax", "MiniMax M2", false),
+        ("minimax", "MiniMax M3/M2", false),
         ("lukan-cloud", "Lukan Cloud", false),
         ("zai", "z.ai (GLM models)", false),
         ("ollama-cloud", "Ollama Cloud", false),

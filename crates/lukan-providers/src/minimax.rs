@@ -292,6 +292,10 @@ impl Provider for MiniMaxProvider {
                 match sse_event {
                     SseEvent::Done => break,
                     SseEvent::Data(data) => {
+                        if std::env::var_os("LUKAN_MINIMAX_DEBUG_USAGE").is_some() {
+                            log_minimax_usage_event(&data);
+                        }
+
                         let event: MiniMaxStreamEvent = match serde_json::from_str(&data) {
                             Ok(e) => e,
                             Err(err) => {
@@ -366,13 +370,25 @@ impl Provider for MiniMaxProvider {
                             }
                             MiniMaxStreamEvent::MessageDelta { delta, usage } => {
                                 if let Some(u) = usage {
-                                    output_tokens = u.output_tokens.unwrap_or(0);
+                                    input_tokens = u.input_tokens.unwrap_or(input_tokens);
+                                    cache_creation_tokens = u
+                                        .cache_creation_input_tokens
+                                        .unwrap_or(cache_creation_tokens);
+                                    cache_read_tokens =
+                                        u.cache_read_input_tokens.unwrap_or(cache_read_tokens);
+                                    output_tokens = u.output_tokens.unwrap_or(output_tokens);
                                 }
                                 let stop_reason =
                                     Self::map_stop_reason(delta.stop_reason.as_deref());
 
-                                tx.send(StreamEvent::Usage {
+                                let effective_input_tokens = minimax_effective_input_tokens(
                                     input_tokens,
+                                    cache_creation_tokens,
+                                    cache_read_tokens,
+                                );
+
+                                tx.send(StreamEvent::Usage {
+                                    input_tokens: effective_input_tokens,
                                     output_tokens,
                                     cache_creation_tokens: if cache_creation_tokens > 0 {
                                         Some(cache_creation_tokens)
@@ -406,6 +422,33 @@ impl Provider for MiniMaxProvider {
         }
 
         Ok(())
+    }
+}
+
+fn minimax_effective_input_tokens(
+    input_tokens: u64,
+    cache_creation_tokens: u64,
+    cache_read_tokens: u64,
+) -> u64 {
+    input_tokens
+        .saturating_add(cache_creation_tokens)
+        .saturating_add(cache_read_tokens)
+}
+
+fn log_minimax_usage_event(data: &str) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
+        return;
+    };
+
+    let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("?");
+    let usage = value.get("usage").or_else(|| {
+        value
+            .get("message")
+            .and_then(|message| message.get("usage"))
+    });
+
+    if let Some(usage) = usage {
+        eprintln!("MiniMax usage event: type={event_type} usage={usage}");
     }
 }
 
@@ -452,6 +495,9 @@ struct MiniMaxInputUsage {
 
 #[derive(Debug, Deserialize)]
 struct MiniMaxOutputUsage {
+    input_tokens: Option<u64>,
+    cache_creation_input_tokens: Option<u64>,
+    cache_read_input_tokens: Option<u64>,
     output_tokens: Option<u64>,
 }
 
@@ -504,4 +550,31 @@ pub fn minimax_models() -> Vec<MiniMaxModel> {
 
 pub async fn fetch_minimax_models(_api_key: &str) -> Result<Vec<MiniMaxModel>> {
     Ok(minimax_models())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_message_delta_usage_with_cache_fields() {
+        let json = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":114,"input_tokens":6862,"output_tokens":47}}"#;
+        let event: MiniMaxStreamEvent = serde_json::from_str(json).unwrap();
+
+        match event {
+            MiniMaxStreamEvent::MessageDelta { usage, .. } => {
+                let usage = usage.unwrap();
+                assert_eq!(usage.input_tokens, Some(6862));
+                assert_eq!(usage.cache_creation_input_tokens, Some(0));
+                assert_eq!(usage.cache_read_input_tokens, Some(114));
+                assert_eq!(usage.output_tokens, Some(47));
+            }
+            _ => panic!("Expected message_delta"),
+        }
+    }
+
+    #[test]
+    fn effective_input_tokens_include_cache_tokens() {
+        assert_eq!(minimax_effective_input_tokens(6862, 0, 114), 6976);
+    }
 }

@@ -72,7 +72,7 @@ hkdf = "0.12"
 open = "5"
 urlencoding = "2"
 fastembed = "5"
-toml = "0.8"
+toml = "0.9"
 portable-pty = "0.9"
 rust-embed = { version = "8", features = ["compression"] }
 

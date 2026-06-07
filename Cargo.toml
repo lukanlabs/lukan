@@ -77,7 +77,7 @@ portable-pty = "0.9"
 rust-embed = { version = "8", features = ["compression"] }
 
 # Audio
-cpal = "0.15"
+cpal = "0.17"
 
 # Tauri (desktop UI)
 tauri = { version = "2", features = [] }

@@ -34,7 +34,7 @@ jobs:
             runner: macos-latest
             platform: darwin-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
         with:
           submodules: true
 
@@ -106,7 +106,7 @@ jobs:
 
     runs-on: ${{ matrix.platform.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
@@ -197,7 +197,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
 
